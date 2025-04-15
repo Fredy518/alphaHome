@@ -11,7 +11,7 @@ sys.path.insert(0, os.path.abspath(os.path.dirname(os.path.dirname(__file__))))
 # 加载环境变量
 dotenv.load_dotenv()
 
-from data_module.factory import TaskFactory
+from data_module.task_factory import TaskFactory
 from config import get_concurrent_limit
 
 # 配置日志

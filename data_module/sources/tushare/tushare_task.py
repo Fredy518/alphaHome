@@ -3,8 +3,8 @@ import os
 import asyncio
 import pandas as pd
 from typing import Dict, List, Any, Optional
-from ...task import Task
-from .api import TushareAPI
+from ...base_task import Task
+from .tushare_api import TushareAPI
 from tqdm.asyncio import tqdm
 
 class TushareTask(Task):

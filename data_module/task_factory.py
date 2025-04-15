@@ -1,13 +1,12 @@
 import logging
 from typing import Dict, Type, Optional, Any
-
-from data_module.task import Task
 import os
 import json
-import logging
-from data_module.db_manager import DBManager
-from data_module.tasks.stock.daily import StockDailyTask
-from data_module.tasks.stock.daily_basic import StockDailyBasicTask
+
+from .base_task import Task
+from .db_manager import DBManager
+from .tasks.stock.daily import StockDailyTask
+from .tasks.stock.daily_basic import StockDailyBasicTask
 # 导入其他任务类
 
 # 配置文件路径

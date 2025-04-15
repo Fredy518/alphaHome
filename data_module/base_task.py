@@ -15,7 +15,6 @@ class Task(ABC):
     # 可选属性（有合理默认值）
     primary_keys = []
     date_column = None
-    dependencies = []
     description = ""
     
     def __init__(self, db_connection):
@@ -32,10 +31,6 @@ class Task(ABC):
         
         try:
             await self.pre_execute()
-            
-            # 检查依赖任务
-            if self.dependencies:
-                await self._check_dependencies()
             
             # 获取数据
             self.logger.info(f"获取数据，参数: {kwargs}")
@@ -169,13 +164,6 @@ class Task(ABC):
             self.logger.warning(f"获取最新日期失败: {str(e)}")
         
         return None
-    
-    async def _check_dependencies(self):
-        """检查依赖任务"""
-        self.logger.info(f"检查依赖任务: {self.dependencies}")
-        # 这里可以实现依赖任务的检查逻辑
-        # 例如，检查依赖表是否存在，是否有数据等
-        pass
     
     async def pre_execute(self):
         """任务执行前的准备工作"""

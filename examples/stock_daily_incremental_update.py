@@ -7,7 +7,7 @@ import sys
 # 添加项目根目录到系统路径
 sys.path.insert(0, os.path.abspath(os.path.dirname(os.path.dirname(__file__))))
 
-from data_module.factory import TaskFactory, get_task
+from data_module.task_factory import TaskFactory, get_task
 from config import get_concurrent_limit
 
 # 配置日志
