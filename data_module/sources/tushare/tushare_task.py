@@ -84,9 +84,8 @@ class TushareTask(Task):
         try:
             await self.pre_execute()
             
-            # 检查依赖任务
-            if self.dependencies:
-                await self._check_dependencies()
+            # 依赖任务检查已移除
+            # 直接进行数据获取
             
             # 获取批处理参数列表
             self.logger.info(f"获取数据，参数: {kwargs}")

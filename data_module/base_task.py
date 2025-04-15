@@ -61,23 +61,6 @@ class Task(ABC):
             self.logger.error(f"任务执行失败: {str(e)}", exc_info=True)
             return self.handle_error(e)
     
-    async def full_update(self, **kwargs):
-        """
-        执行全量数据更新
-        
-        这是一个快捷方法，用于获取并存储所有可用数据，不指定日期范围
-        
-        Args:
-            **kwargs: 传递给fetch_data的额外参数
-            
-        Returns:
-            Dict[str, Any]: 执行结果
-        """
-        self.logger.info(f"开始执行{self.name}的全量更新...")
-        result = await self.execute(**kwargs)
-        self.logger.info(f"全量更新完成: {result}")
-        return result
-    
     async def incremental_update(self, days_lookback=None, safety_days=1, **kwargs):
         """
         执行增量数据更新

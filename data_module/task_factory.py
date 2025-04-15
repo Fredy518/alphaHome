@@ -5,8 +5,7 @@ import json
 
 from .base_task import Task
 from .db_manager import DBManager
-from .tasks.stock.daily import StockDailyTask
-from .tasks.stock.daily_basic import StockDailyBasicTask
+from .tasks.stock import *  # 导入所有任务类
 # 导入其他任务类
 
 # 配置文件路径
