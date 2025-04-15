@@ -61,6 +61,10 @@ async def get_trade_cal(start_date: str = None, end_date: str = None, exchange: 
     # 直接使用await调用异步API，不再创建新的事件循环
     df = await api.query('trade_cal', params=params)
     
+    # !! 重要：确保返回的数据按日期升序排列 !!
+    if not df.empty:
+        df = df.sort_values(by='cal_date', ascending=True).reset_index(drop=True)
+    
     # 处理上一个交易日信息
     df_open = df[df['is_open'] == 1].copy()
     df_open['pretrade_date'] = df_open['cal_date'].shift(1)
@@ -151,7 +155,7 @@ async def get_last_trade_day(date: Union[str, datetime.datetime, datetime.date] 
 
 async def get_next_trade_day(date: Union[str, datetime.datetime, datetime.date] = None, 
                       n: int = 1, 
-                      exchange: str = 'SSE') -> str:
+                      exchange: str = 'SSE') -> Optional[str]:
     """获取指定日期后n个交易日
     
     Args:
@@ -161,7 +165,7 @@ async def get_next_trade_day(date: Union[str, datetime.datetime, datetime.date] 
         exchange (str, optional): 交易所代码，默认为 'SSE'
         
     Returns:
-        str: 后n个交易日的日期，格式：YYYYMMDD
+        Optional[str]: 后n个交易日的日期（格式：YYYYMMDD），如果找不到则返回None
     """
     # 处理默认日期
     if date is None:
@@ -173,31 +177,56 @@ async def get_next_trade_day(date: Union[str, datetime.datetime, datetime.date] 
     else:
         date_str = date
     
-    # 获取较长时间段的交易日历，确保能找到后n个交易日
-    year_later = (datetime.datetime.strptime(date_str, '%Y%m%d') + 
-                 datetime.timedelta(days=365)).strftime('%Y%m%d')
+    # 获取更长时间段的交易日历（例如，未来两年），确保能找到后n个交易日
+    future_end_date = (datetime.datetime.strptime(date_str, '%Y%m%d') + 
+                 datetime.timedelta(days=365 * 2)).strftime('%Y%m%d') # Increased to 2 years
     
-    calendar = await get_trade_cal(start_date=date_str, end_date=year_later, exchange=exchange)
+    try:
+        # 尝试获取从 date_str 开始的日历
+        calendar = await get_trade_cal(start_date=date_str, end_date=future_end_date, exchange=exchange)
+    except Exception as e:
+        # Log error if fetching calendar fails
+        # Consider adding logging here if not already present in get_trade_cal
+        print(f"Error fetching trade calendar: {e}") # Basic print, replace with logger if available
+        return None
+    
+    if calendar.empty:
+        return None
     
     # 过滤出交易日
     trade_days = calendar[calendar['is_open'] == 1]['cal_date'].tolist()
     
-    # 找到当前日期在交易日列表中的位置
-    try:
-        today_index = trade_days.index(date_str)
-    except ValueError:
-        # 如果当前日期不是交易日，找到后一个交易日
-        greater_than_today = [d for d in trade_days if d > date_str]
-        if not greater_than_today:
-            raise ValueError(f"无法找到{date_str}之后的交易日")
-        # 为了获取后n个交易日，需要从今天开始算
-        today_index = trade_days.index(min(greater_than_today)) - 1
+    if not trade_days:
+        return None # No trade days found in the fetched range
     
-    # 获取后n个交易日
-    if today_index + n >= len(trade_days):
-        raise ValueError(f"交易日历中没有足够的未来交易日，请扩大日期范围")
+    # 找到当前日期在交易日列表中的位置或之后的位置
+    today_index = -1
+    for i, day in enumerate(trade_days):
+        if day >= date_str:
+            today_index = i
+            break
     
-    return trade_days[today_index + n]
+    if today_index == -1:
+        # date_str is after the last known trade day in the range
+        return None
+    
+    # Adjust index if date_str itself is not a trade day but we found the next one
+    if trade_days[today_index] > date_str:
+         # If date_str is not a trade day, the first day >= date_str is the next one.
+         # We want the nth day *after* date_str, so effectively we need the (n)th day from today_index
+        target_index = today_index + n - 1 # Example: date=Sun, n=1 (next trade day Mon). day[today_index]=Mon. target=Mon (index + 1 - 1)
+    else: # date_str is a trade day
+         # We want the nth day *after* date_str, so target is index + n
+        target_index = today_index + n
+    
+    # 获取目标交易日
+    if target_index < len(trade_days):
+        return trade_days[target_index]
+    else:
+        # 如果计算出的索引超出了范围，说明获取的日历数据仍然不足
+        # Log this situation
+        print(f"Warning: Could not find {n} trade days after {date_str} within the {future_end_date} range.") # Basic print
+        return None # Return None instead of raising error
 
 async def get_trade_days_between(start_date: Union[str, datetime.datetime, datetime.date],
                          end_date: Union[str, datetime.datetime, datetime.date],

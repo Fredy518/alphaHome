@@ -94,130 +94,105 @@ class StockDailyBasicTask(TushareTask):
         {"name": "idx_daily_basic_code", "columns": "ts_code"},
         {"name": "idx_daily_basic_date", "columns": "trade_date"}
     ]
-    
-    def get_batch_list(self, start_date: str = None, end_date: str = None, **kwargs) -> List[Dict]:
-        """获取批处理列表
-        
-        根据日期范围和其他参数生成批处理参数列表，用于分批获取数据。
-        对于daily_basic接口，我们按照日期和股票代码进行批处理。
-        
+
+    def get_batch_list(self, **kwargs) -> List[Dict]:
+        """生成批处理参数列表
+
+        对于每日基本面指标，主要按时间范围和股票代码进行分批。
+        与日线数据类似，分批策略有助于管理API调用频率和单次数据量。
+
         Args:
-            start_date: 开始日期，格式：YYYYMMDD
-            end_date: 结束日期，格式：YYYYMMDD
-            **kwargs: 其他参数，如ts_code（股票代码列表）
-            
+            **kwargs: 查询参数，包括start_date、end_date、ts_code等
+
         Returns:
             List[Dict]: 批处理参数列表
         """
-        batch_list = []
-        
-        # 处理日期范围
-        if start_date and end_date:
-            # 将日期字符串转换为datetime对象
+        # 获取查询参数
+        ts_code = kwargs.get('ts_code')
+        start_date = kwargs.get('start_date', '19910101') # 股票市场最早的交易日
+        end_date = kwargs.get('end_date', datetime.now().strftime('%Y%m%d'))
+
+        # 构建基本参数
+        base_params = {}
+        if ts_code:
+            base_params['ts_code'] = ts_code
+        if start_date:
+            base_params['start_date'] = start_date
+        if end_date:
+            base_params['end_date'] = end_date
+
+        # 分批策略：与StockDailyTask保持一致
+        # 1. 如果指定了ts_code，按年度分批
+        # 2. 如果未指定ts_code（全市场数据），按月分批
+
+        try:
             start = pd.to_datetime(start_date)
             end = pd.to_datetime(end_date)
-            
-            # 生成日期序列
-            date_range = pd.date_range(start=start, end=end, freq='D')
-            
-            # 处理股票代码
-            ts_codes = kwargs.get('ts_code', '')
-            if ts_codes:
-                # 如果提供了多个股票代码，按照代码分批
-                codes = ts_codes.split(',')
-                for date in date_range:
-                    date_str = date.strftime('%Y%m%d')
-                    for code in codes:
-                        batch_list.append({
-                            'ts_code': code.strip(),
-                            'trade_date': date_str
-                        })
-            else:
-                # 如果没有提供股票代码，只按日期分批
-                for date in date_range:
-                    batch_list.append({
-                        'trade_date': date.strftime('%Y%m%d')
-                    })
+        except ValueError as e:
+            self.logger.error(f"无效的日期格式: start={start_date}, end={end_date}. Error: {e}")
+            return [] # 返回空列表表示无法生成批次
+
+        if ts_code:
+            # 有ts_code时按年度分批
+            freq = 'Y'
         else:
-            # 如果没有提供日期范围，使用其他参数
-            batch_list.append(kwargs)
-        
+            # 无ts_code时按周分批
+            freq = 'W'
+
+        # 生成日期序列
+        date_range = pd.date_range(start=start, end=end, freq=freq)
+
+        # 确保第一天和最后一天都被包含
+        if date_range.empty or date_range[-1] < end:
+            date_range = date_range.append(pd.DatetimeIndex([end]))
+        if date_range.empty or date_range[0] > start:
+            date_range = pd.DatetimeIndex([start]).append(date_range)
+
+        batch_list = []
+        for i in range(len(date_range) - 1):
+            # Tushare接口通常包含开始和结束日期
+            batch_start_dt = date_range[i]
+            batch_end_dt = date_range[i+1]
+
+            # 下一个周期的开始作为当前周期的结束，避免重叠
+            # 但 daily_basic 似乎可以直接用范围查询
+            batch_start = batch_start_dt.strftime('%Y%m%d')
+            # 如果下一个日期不是序列的最后一个，则取下一个日期的前一天
+            if i + 1 < len(date_range) -1 :
+                 batch_end = (batch_end_dt - pd.Timedelta(days=1)).strftime('%Y%m%d')
+            else:
+                 # 如果是最后一个区间，结束日期就是end_date
+                 batch_end = end.strftime('%Y%m%d')
+
+            # 复制基本参数并添加日期范围
+            batch_params = base_params.copy()
+            batch_params['start_date'] = batch_start
+            batch_params['end_date'] = batch_end
+
+            batch_list.append(batch_params)
+
+        # 如果没有生成批次（可能是因为日期范围太小），则使用原始参数作为单个批次
+        if not batch_list and base_params.get('start_date') and base_params.get('end_date'):
+            # 确保有起止日期才添加
+            return [base_params]
+            
+        # 如果 base_params 为空（例如只提供了kwargs但无有效参数），返回空列表
+        if not base_params and not batch_list:
+             return []
+
         return batch_list
-    
+
     def prepare_params(self, batch_params: Dict) -> Dict:
         """准备API调用参数
-        
+
         将批处理参数转换为Tushare API调用所需的确切参数格式。
-        
+        对于daily_basic接口，参数可以直接使用。
+
         Args:
             batch_params: 批处理参数字典
-            
+
         Returns:
             Dict: 准备好的API调用参数
         """
-        # 对于daily_basic接口，参数可以直接使用
+        # daily_basic接口参数无需特殊处理，直接返回
         return batch_params
-    
-    async def pre_execute(self):
-        """任务执行前的准备工作"""
-        await super().pre_execute()
-        self.logger.info("准备执行股票每日基本面指标任务...")
-        
-        # 检查依赖任务是否已完成
-        if self.db and "stock_daily" in self.dependencies:
-            # 获取最新的股票日线数据日期
-            latest_date_query = f"""SELECT MAX(trade_date) FROM stock_daily"""
-            latest_date = await self.db.fetch_one(latest_date_query)
-            
-            if latest_date and latest_date[0]:
-                self.logger.info(f"股票日线数据最新日期: {latest_date[0]}")
-            else:
-                self.logger.warning("未找到股票日线数据，依赖任务可能未完成")
-    
-    async def post_execute(self, result):
-        """任务执行后的清理工作"""
-        await super().post_execute(result)
-        self.logger.info(f"股票每日基本面指标任务执行完成，结果: {result}")
-        
-        # 执行数据质量检查
-        if self.db:
-            await self._check_data_quality()
-    
-    async def _check_data_quality(self):
-        """执行数据质量检查"""
-        try:
-            # 检查数据完整性
-            today = datetime.now().date()
-            last_trading_day = today - timedelta(days=1)  # 简化处理，实际应该查询交易日历
-            
-            # 检查最新数据日期
-            latest_date_query = f"""SELECT MAX(trade_date) FROM {self.table_name}"""
-            latest_date = await self.db.fetch_one(latest_date_query)
-            
-            if latest_date and latest_date[0]:
-                days_diff = (today - latest_date[0]).days
-                if days_diff > 5:  # 假设5天是合理的延迟
-                    self.logger.warning(f"数据可能不是最新的，最新日期: {latest_date[0]}, 相差: {days_diff}天")
-            
-            # 检查主要股票是否都有数据
-            major_stocks_query = """
-            SELECT COUNT(DISTINCT ts_code) FROM stock_daily 
-            WHERE trade_date = (SELECT MAX(trade_date) FROM stock_daily)
-            """
-            daily_count = await self.db.fetch_one(major_stocks_query)
-            
-            basic_stocks_query = f"""
-            SELECT COUNT(DISTINCT ts_code) FROM {self.table_name} 
-            WHERE trade_date = (SELECT MAX(trade_date) FROM {self.table_name})
-            """
-            basic_count = await self.db.fetch_one(basic_stocks_query)
-            
-            if daily_count and basic_count and daily_count[0] > 0 and basic_count[0] > 0:
-                coverage = (basic_count[0] / daily_count[0]) * 100
-                if coverage < 95:  # 假设95%是合理的覆盖率
-                    self.logger.warning(f"基本面数据覆盖率较低: {coverage:.2f}%, 日线数据: {daily_count[0]}只股票, 基本面数据: {basic_count[0]}只股票")
-            
-            self.logger.info("数据质量检查完成")
-            
-        except Exception as e:
-            self.logger.error(f"数据质量检查失败: {str(e)}")
