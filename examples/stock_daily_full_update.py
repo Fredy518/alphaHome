@@ -59,7 +59,7 @@ async def main():
         raise
     finally:
         # 关闭数据库连接
-        await db_manager.close()
+        await TaskFactory.shutdown()
     
     end_time = datetime.now()
     duration = end_time - start_time
