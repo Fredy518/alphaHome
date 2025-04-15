@@ -65,7 +65,6 @@
 | column_mapping | Dict | 源数据到数据库列名的映射，例如: {'source_field': 'db_column'} |
 | transformations | Dict | 列名到转换函数的映射，例如: {"col_name": float} |
 | validations | List[Callable] | 验证函数列表，每个函数接收DataFrame并返回布尔值 |
-| dependencies | List[str] | 依赖的其他任务列表 |
 
 #### 核心方法
 
@@ -586,17 +585,6 @@ def validate_data(self, data):
     return True
 ```
 
-#### 4. 设置任务依赖关系
-
-如果任务依赖于其他任务，可以通过`dependencies`属性定义依赖关系：
-
-```python
-class StockDailyBasicTask(TushareTask):
-    # 其他属性...
-    
-    # 依赖于StockDailyTask
-    dependencies = ["stock_daily"]
-```
 
 ### 使用标准数据任务
 
@@ -1008,41 +996,29 @@ await task.incremental_update(
 )
 ```
 
-### 2. 任务依赖管理
+### 2. 任务组合和流程编排
 
-系统支持任务依赖管理，确保任务按正确的顺序执行：
-
-#### 2.1 定义任务依赖
-
-在任务类中通过`dependencies`属性定义依赖关系：
+对于需要按特定顺序执行多个任务的场景，可以创建任务组合或流程：
 
 ```python
-class StockDailyBasicTask(TushareTask):
-    # 其他属性...
+async def update_stock_data(start_date, end_date, ts_code):
+    """更新股票相关的所有数据"""
+    # 创建任务实例
+    daily_task = StockDailyTask(db_manager, api_client)
+    basic_task = StockDailyBasicTask(db_manager, api_client)
     
-    # 依赖于StockDailyTask
-    dependencies = ["stock_daily"]
-```
-
-#### 2.2 使用TaskManager执行带依赖的任务
-
-`TaskManager`会自动处理任务依赖，确保依赖任务先执行：
-
-```python
-# 创建任务管理器
-task_manager = TaskManager(db_manager, api_client)
-
-# 注册任务
-task_manager.register_task(StockDailyTask)
-task_manager.register_task(StockDailyBasicTask)
-
-# 执行任务（会自动先执行StockDailyTask）
-await task_manager.execute_task(
-    "stock_daily_basic",
-    start_date="20220101",
-    end_date="20220131",
-    ts_code="000001.SZ"
-)
+    # 按顺序执行任务
+    await daily_task.execute(
+        start_date=start_date,
+        end_date=end_date,
+        ts_code=ts_code
+    )
+    
+    await basic_task.execute(
+        start_date=start_date,
+        end_date=end_date,
+        ts_code=ts_code
+    )
 ```
 
 ### 3. 批量任务执行
