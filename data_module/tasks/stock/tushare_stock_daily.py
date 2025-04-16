@@ -3,6 +3,7 @@ from datetime import datetime
 from typing import Dict, List
 from ...sources.tushare import TushareTask
 from ...task_decorator import task_register
+from ...tools.calendar import get_trade_days_between # 导入交易日工具
 
 @task_register()
 class TushareStockDailyTask(TushareTask):
@@ -25,16 +26,12 @@ class TushareStockDailyTask(TushareTask):
         {"name": "idx_tushare_stock_daily_date", "columns": "trade_date"}
     ]
 
-    # 3.默认配置
-    default_concurrent_limit = 5  # 默认并发限制
-    default_page_size = 6000  # 默认每页数据量
-
-    # 4.Tushare特有属性
+    # 3.Tushare特有属性
     api_name = "daily"
     fields = ["ts_code", "trade_date", "open", "high", "low", "close", 
               "pre_close", "change", "pct_chg", "vol", "amount"]
     
-    # 5.数据类型转换
+    # 4.数据类型转换
     transformations = {
         "open": float,
         "high": float,
@@ -47,12 +44,12 @@ class TushareStockDailyTask(TushareTask):
         "amount": float
     }
     
-    # 6.列名映射
+    # 5.列名映射
     column_mapping = {
         "vol": "volume"  # 将vol映射为volume
     }
 
-    # 7.表结构定义
+    # 6.表结构定义
     schema = {
         "ts_code": {"type": "VARCHAR(10)", "constraints": "NOT NULL"},
         "trade_date": {"type": "DATE", "constraints": "NOT NULL"},
@@ -67,7 +64,7 @@ class TushareStockDailyTask(TushareTask):
         "amount": {"type": "NUMERIC(20,4)"}
     }
     
-    # 8.数据验证规则 (使用目标字段名 volume)
+    # 7.数据验证规则 (使用目标字段名 volume)
     validations = [
         # 验证价格字段是否合理
         lambda df: all(df["close"] >= 0),
@@ -78,11 +75,15 @@ class TushareStockDailyTask(TushareTask):
         lambda df: all(df["amount"] >= 0)
     ]
     
-    def get_batch_list(self, **kwargs) -> List[Dict]:
-        """生成批处理参数列表
+    # 8. 分批配置
+    batch_trade_days_single_code = 240 # 单代码查询时，每个批次的交易日数量 (约1年)
+    batch_trade_days_all_codes = 15    # 全市场查询时，每个批次的交易日数量 (3周)
+
+    async def get_batch_list(self, **kwargs) -> List[Dict]:
+        """生成批处理参数列表 (基于精确交易日数量)
         
         将查询参数转换为一系列批处理参数，每个批处理参数用于一次API调用。
-        对于股票日线数据，主要按照时间范围和股票代码进行分批。
+        使用 get_trade_days_between 获取实际交易日，然后按指定数量分批。
         
         Args:
             **kwargs: 查询参数，包括start_date、end_date、ts_code等
@@ -94,56 +95,65 @@ class TushareStockDailyTask(TushareTask):
         ts_code = kwargs.get('ts_code')
         start_date = kwargs.get('start_date', '19910101') # 股票市场最早的交易日
         end_date = kwargs.get('end_date', datetime.now().strftime('%Y%m%d'))
-        
-        # 构建基本参数
-        base_params = {}
+        exchange = kwargs.get('exchange', 'SSE') # 允许指定交易所，默认为上交所
+
+        self.logger.info(f"开始生成批处理列表，范围: {start_date} 到 {end_date}, 代码: {ts_code or '全部'}")
+
+        # 获取范围内的所有交易日
+        try:
+            trade_days = await get_trade_days_between(start_date, end_date, exchange=exchange)
+        except Exception as e:
+            self.logger.error(f"获取交易日历失败: {e}")
+            return []
+
+        if not trade_days:
+            self.logger.warning(f"在 {start_date} 和 {end_date} 之间没有找到交易日")
+            return []
+
+        self.logger.info(f"找到 {len(trade_days)} 个交易日")
+
+        # 确定批次大小 N
         if ts_code:
-            base_params['ts_code'] = ts_code
-        if start_date:
-            base_params['start_date'] = start_date
-        if end_date:
-            base_params['end_date'] = end_date
-            
-        # 分批策略
-        # 1. 如果指定了ts_code，按季度分批（约60-65个交易日）
-        # 2. 如果未指定ts_code（全市场数据），按周分批
-        
-        # 将日期字符串转换为datetime对象
-        start = pd.to_datetime(start_date)
-        end = pd.to_datetime(end_date)
-        
-        if ts_code:
-            # 有ts_code时按年度分批
-            freq = 'Y'
+            batch_size_n = self.batch_trade_days_single_code
+            self.logger.info(f"使用单代码批次大小: {batch_size_n} 个交易日")
         else:
-            # 无ts_code时按月分批
-            freq = 'M'
-            
-        # 生成日期序列
-        date_range = pd.date_range(start=start, end=end, freq=freq)
-        
-        # 确保第一天和最后一天都被包含
-        if date_range.empty or date_range[-1] < end:
-            date_range = date_range.append(pd.DatetimeIndex([end]))
-        if date_range.empty or date_range[0] > start:
-            date_range = pd.DatetimeIndex([start]).append(date_range)
-            
+            batch_size_n = self.batch_trade_days_all_codes
+            self.logger.info(f"使用全市场批次大小: {batch_size_n} 个交易日")
+
         batch_list = []
-        for i in range(len(date_range) - 1):
-            batch_start = date_range[i].strftime('%Y%m%d')
-            batch_end = (date_range[i+1] - pd.Timedelta(days=1)).strftime('%Y%m%d')
-            
-            # 复制基本参数并添加日期范围
-            batch_params = base_params.copy()
-            batch_params['start_date'] = batch_start
-            batch_params['end_date'] = batch_end
-            
+        for i in range(0, len(trade_days), batch_size_n):
+            batch_days = trade_days[i : i + batch_size_n]
+            if not batch_days:
+                continue
+
+            batch_start = batch_days[0]
+            batch_end = batch_days[-1]
+
+            # 构建批次参数
+            batch_params = {
+                'start_date': batch_start,
+                'end_date': batch_end
+            }
+            if ts_code:
+                batch_params['ts_code'] = ts_code
+
             batch_list.append(batch_params)
-            
-        # 如果没有生成批次（可能是因为日期范围太小），则使用原始参数作为单个批次
-        if not batch_list and base_params:
-            return [base_params]
-            
+            self.logger.debug(f"创建批次 {len(batch_list)}: {batch_start} - {batch_end}")
+
+        # 检查：如果原始参数定义了一个非常小的范围（例如 start=end 且为交易日），但未生成批次
+        # 这通常不应该发生，因为 trade_days 非空，上面的循环至少会执行一次
+        # 但以防万一，如果批次列表为空但有交易日，生成一个包含所有交易日的批次
+        if not batch_list and trade_days:
+             self.logger.warning("交易日列表非空但未生成批次，将使用整个范围作为单个批次")
+             batch_params = {
+                'start_date': trade_days[0],
+                'end_date': trade_days[-1]
+             }
+             if ts_code:
+                batch_params['ts_code'] = ts_code
+             return [batch_params]
+
+        self.logger.info(f"成功生成 {len(batch_list)} 个批次")
         return batch_list
     
     def prepare_params(self, batch_params: Dict) -> Dict:

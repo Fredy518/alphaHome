@@ -19,6 +19,8 @@ class TushareTask(Task):
     # 默认配置
     default_concurrent_limit = 5  # 默认并发限制
     default_page_size = 5000  # 默认每页数据量
+    default_max_retries = 3     # 默认最大重试次数
+    default_retry_delay = 2     # 默认重试延迟（秒）
     
     api_name = None  # Tushare API名称，子类必须定义
     fields = None    # 需要获取的字段列表，子类必须定义
@@ -48,6 +50,8 @@ class TushareTask(Task):
         # 初始化配置
         self.concurrent_limit = self.default_concurrent_limit
         self.page_size = self.default_page_size
+        self.max_retries = self.default_max_retries
+        self.retry_delay = self.default_retry_delay
         
     def set_config(self, config):
         """设置任务配置
@@ -67,6 +71,14 @@ class TushareTask(Task):
         if 'page_size' in config:
             self.page_size = config['page_size']
             self.logger.debug(f"设置每页数据量: {self.page_size}")
+
+        # 设置重试配置
+        if 'max_retries' in config:
+            self.max_retries = config['max_retries']
+            self.logger.debug(f"设置最大重试次数: {self.max_retries}")
+        if 'retry_delay' in config:
+            self.retry_delay = config['retry_delay']
+            self.logger.debug(f"设置重试延迟: {self.retry_delay}s")
     
     async def execute(self, **kwargs):
         """执行任务的完整生命周期
@@ -90,7 +102,7 @@ class TushareTask(Task):
             
             # 获取批处理参数列表
             self.logger.info(f"获取数据，参数: {kwargs}")
-            batch_list = self.get_batch_list(**kwargs)
+            batch_list = await self.get_batch_list(**kwargs)
             if not batch_list:
                 self.logger.info("批处理参数列表为空，无法获取数据")
                 return {"status": "no_data", "rows": 0}
@@ -99,6 +111,7 @@ class TushareTask(Task):
             
             # 处理并保存每个批次的数据
             total_rows = 0
+            failed_batches = 0 # 记录失败的批次数
             
             # 获取并发限制参数，优先使用传入的参数，其次使用实例属性
             concurrent_limit = kwargs.get('concurrent_limit', self.concurrent_limit)
@@ -112,7 +125,11 @@ class TushareTask(Task):
                 
                 async def process_batch(i, batch_params):
                     async with semaphore:
-                        return await self._process_single_batch(i, len(batch_list), batch_params)
+                        # _process_single_batch 现在返回行数或在最终失败时返回 0
+                        processed_rows = await self._process_single_batch(i, len(batch_list), batch_params)
+                        if processed_rows == 0: # 假设返回 0 表示失败
+                            return None # 返回 None 表示失败，以便后续计数
+                        return processed_rows # 返回成功处理的行数
                 
                 # 创建所有批次的任务
                 tasks = [process_batch(i, batch_params) for i, batch_params in enumerate(batch_list)]
@@ -121,34 +138,41 @@ class TushareTask(Task):
                 if show_progress:
                     batch_results = await tqdm.gather(*tasks, desc=progress_desc, total=len(batch_list), ascii=True, position=0, leave=True)
                 else:
-                    batch_results = await asyncio.gather(*tasks, return_exceptions=True)
+                    batch_results = await asyncio.gather(*tasks, return_exceptions=True) # 保持捕获异常
                 
                 # 处理结果
                 for result in batch_results:
                     if isinstance(result, Exception):
-                        self.logger.error(f"批次处理失败: {str(result)}")
-                    elif result:
+                        # gather 捕获的异常通常表示 process_batch 内部未处理的异常
+                        self.logger.error(f"批次处理中发生未捕获异常: {str(result)}")
+                        failed_batches += 1
+                    elif result is None: # 我们用 None 表示批次处理失败（重试后）
+                        failed_batches += 1
+                    elif isinstance(result, int): # 成功处理的行数
                         total_rows += result
+            
             else:
                 # 串行处理批次
+                progress_iterator = range(len(batch_list))
                 if show_progress:
-                    # 使用tqdm创建进度条
-                    pbar = tqdm(total=len(batch_list), desc=progress_desc, ascii=True, position=0, leave=True)
-                    for i, batch_params in enumerate(batch_list):
-                        rows = await self._process_single_batch(i, len(batch_list), batch_params)
-                        if rows:
-                            total_rows += rows
-                        pbar.update(1)
-                    pbar.close()
-                else:
-                    # 不显示进度条
-                    for i, batch_params in enumerate(batch_list):
-                        rows = await self._process_single_batch(i, len(batch_list), batch_params)
-                        if rows:
-                            total_rows += rows
+                    progress_iterator = tqdm(progress_iterator, desc=progress_desc, ascii=True, position=0, leave=True)
+
+                for i in progress_iterator:
+                    batch_params = batch_list[i]
+                    rows = await self._process_single_batch(i, len(batch_list), batch_params)
+                    if rows > 0:
+                        total_rows += rows
+                    else: # rows == 0 表示失败
+                        failed_batches += 1
             
             # 后处理
-            result = {"status": "success", "rows": total_rows}
+            if failed_batches > 0:
+                status = "partial_success" if total_rows > 0 else "failure"
+                self.logger.warning(f"任务执行完成，但有 {failed_batches} 个批次处理失败。")
+            else:
+                status = "success"
+
+            result = {"status": status, "rows": total_rows, "failed_batches": failed_batches}
             await self.post_execute(result)
             
             self.logger.info(f"任务执行完成: {result}")
@@ -158,9 +182,10 @@ class TushareTask(Task):
             return self.handle_error(e)
             
     async def _process_single_batch(self, batch_index, total_batches, batch_params):
-        """处理单个批次的数据
+        """处理单个批次的数据（包含重试逻辑）
         
         获取、处理、验证并保存单个批次的数据。
+        针对获取和保存步骤实现了重试机制。
         
         Args:
             batch_index: 批次索引
@@ -168,42 +193,79 @@ class TushareTask(Task):
             batch_params: 批次参数
             
         Returns:
-            int: 处理的行数，如果处理失败则返回0
+            int: 处理的行数，如果最终处理失败则返回 0
         """
-        try:
-            # 获取批次数据
-            if not hasattr(self, '_progress_shown') or not self._progress_shown:
-                self.logger.info(f"批次 {batch_index+1}/{total_batches}: 开始获取数据")
-            batch_data = await self.fetch_batch(batch_params)
-            
-            if batch_data is None or batch_data.empty:
-                if not hasattr(self, '_progress_shown') or not self._progress_shown:
-                    self.logger.info(f"批次 {batch_index+1}/{total_batches}: 没有获取到数据")
-                return 0
-                
-            # 处理数据
-            if not hasattr(self, '_progress_shown') or not self._progress_shown:
-                self.logger.info(f"批次 {batch_index+1}/{total_batches}: 处理 {len(batch_data)} 行数据")
-            processed_data = self.process_data(batch_data)
-            
-            # 验证数据
-            if not hasattr(self, '_progress_shown') or not self._progress_shown:
-                self.logger.info(f"批次 {batch_index+1}/{total_batches}: 验证数据")
-            self.validate_data(processed_data)
-            
-            # 保存数据
-            if not hasattr(self, '_progress_shown') or not self._progress_shown:
-                self.logger.info(f"批次 {batch_index+1}/{total_batches}: 保存数据到表 {self.table_name}")
-            result = await self.save_data(processed_data)
-            
-            rows = result.get('rows', 0)
-            if not hasattr(self, '_progress_shown') or not self._progress_shown:
-                self.logger.info(f"批次 {batch_index+1}/{total_batches}: 已保存 {rows} 行数据")
-            return rows
-        except Exception as e:
-            if not hasattr(self, '_progress_shown') or not self._progress_shown:
-                self.logger.error(f"批次 {batch_index+1}/{total_batches} 处理失败: {str(e)}")
+        batch_log_prefix = f"批次 {batch_index+1}/{total_batches}"
+        batch_data = None
+        processed_data = None
+        rows = 0
+
+        # 1. 获取数据（带重试）
+        for attempt in range(self.max_retries + 1):
+            try:
+                if attempt > 0: # 如果是重试
+                    self.logger.info(f"{batch_log_prefix}: 重试获取数据 (尝试 {attempt+1}/{self.max_retries+1})")
+                else:
+                     self.logger.info(f"{batch_log_prefix}: 开始获取数据")
+
+                batch_data = await self.fetch_batch(batch_params)
+                # 如果成功获取数据（即使是空的），则跳出重试循环
+                self.logger.info(f"{batch_log_prefix}: 获取数据成功")
+                break
+            except Exception as e:
+                self.logger.warning(f"{batch_log_prefix}: 获取数据时发生错误 (尝试 {attempt+1}/{self.max_retries+1}): {str(e)}")
+                if attempt >= self.max_retries:
+                    self.logger.error(f"{batch_log_prefix}: 获取数据失败，已达最大重试次数。")
+                    return 0 # 获取数据最终失败
+                # 等待后重试
+                await asyncio.sleep(self.retry_delay)
+                continue # 继续下一次尝试
+
+        # 如果获取的数据为空，直接返回
+        if batch_data is None or batch_data.empty:
+            self.logger.info(f"{batch_log_prefix}: 没有获取到数据或获取最终失败")
             return 0
+
+        # 2. 处理数据 (通常不重试逻辑错误)
+        try:
+            self.logger.info(f"{batch_log_prefix}: 处理 {len(batch_data)} 行数据")
+            processed_data = self.process_data(batch_data)
+        except Exception as e:
+            self.logger.error(f"{batch_log_prefix}: 处理数据时发生错误: {str(e)}")
+            return 0 # 处理数据失败
+
+        # 3. 验证数据 (通常不重试逻辑错误)
+        try:
+            self.logger.info(f"{batch_log_prefix}: 验证数据")
+            if not self.validate_data(processed_data):
+                 self.logger.error(f"{batch_log_prefix}: 数据验证失败")
+                 return 0 # 验证失败
+        except Exception as e:
+            self.logger.error(f"{batch_log_prefix}: 验证数据时发生错误: {str(e)}")
+            return 0 # 验证过程中出错
+
+        # 4. 保存数据（带重试）
+        for attempt in range(self.max_retries + 1):
+            try:
+                if attempt > 0:
+                    self.logger.info(f"{batch_log_prefix}: 重试保存数据 (尝试 {attempt+1}/{self.max_retries+1})")
+                else:
+                    self.logger.info(f"{batch_log_prefix}: 保存数据到表 {self.table_name}")
+
+                result = await self.save_data(processed_data)
+                rows = result.get('rows', 0)
+                self.logger.info(f"{batch_log_prefix}: 已保存 {rows} 行数据")
+                return rows # 保存成功，返回行数
+            except Exception as e:
+                self.logger.warning(f"{batch_log_prefix}: 保存数据时发生错误 (尝试 {attempt+1}/{self.max_retries+1}): {str(e)}")
+                if attempt >= self.max_retries:
+                    self.logger.error(f"{batch_log_prefix}: 保存数据失败，已达最大重试次数。")
+                    return 0 # 保存数据最终失败
+                # 等待后重试
+                await asyncio.sleep(self.retry_delay)
+                continue # 继续下一次尝试
+
+        return 0 # 如果代码能执行到这里，说明保存逻辑有问题，返回 0
             
     async def fetch_batch(self, batch_params: Dict) -> pd.DataFrame:
         """获取单批次数据

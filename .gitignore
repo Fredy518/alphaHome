@@ -1,0 +1,26 @@
+# Git ignore rules
+
+# Ignore python cache files
+__pycache__/
+*.pyc
+*.pyo
+
+# Ignore OS-specific files
+.DS_Store
+Thumbs.db
+
+# Ignore virtual environment directories
+venv/
+.venv/
+env/
+
+# Ignore sensitive configuration files
+data_module/config.json
+
+# Ignore log files
+*.log
+
+# Ignore IDE/Editor specific files
+.idea/
+.vscode/
+*.swp 

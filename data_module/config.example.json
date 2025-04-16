@@ -1,0 +1,23 @@
+{
+    "database": {
+        "url": "postgresql://<your_user>:<your_password>@<your_host>:<your_port>/<your_db>"
+    },
+    "api": {
+        "tushare_token": "<your_tushare_api_token>"
+    },
+    "tasks": {
+        "_comment": "在此处为特定任务覆盖默认设置",
+        "tushare_stock_daily": {
+            "concurrent_limit": 10,
+            "page_size": 6000,
+            "max_retries": 3,
+            "retry_delay": 2
+        },
+        "tushare_stock_dailybasic": {
+            "concurrent_limit": 10,
+            "page_size": 6000,
+            "max_retries": 3,
+            "retry_delay": 2
+        }
+    }
+} 
