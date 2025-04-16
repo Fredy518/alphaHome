@@ -222,12 +222,12 @@ def prepare_params(self, batch_params: Dict) -> Dict:
 
 ```python
 # 创建Tushare任务子类
-class StockDailyTask(TushareTask):
-    """股票日线数据任务"""
+class TushareStockDailyTask(TushareTask):  # 修改类名
+    \"\"\"股票日线数据任务\"\"\"
     
     # 任务标识
-    name = "stock_daily"
-    table_name = "stock_daily"
+    name = "tushare_stock_daily"  # 修改name属性
+    table_name = "tushare_stock_daily"  # 修改table_name属性
     primary_keys = ["ts_code", "trade_date"]
     date_column = "trade_date"
     
@@ -247,13 +247,13 @@ class StockDailyTask(TushareTask):
 # 使用任务类
 async def main():
     # 创建任务实例
-    task = StockDailyTask(db_manager, api_token="your_tushare_token")
+    task = TushareStockDailyTask(db_manager, api_token="your_tushare_token")  # 修改类名
     
     # 执行任务
     result = await task.execute(
         start_date="20220101", 
         end_date="20220131",
-        ts_code="000001.SZ,000002.SZ",
+        ts_code="000001.SZ",
         concurrent_limit=5  # 并发处理5个批次
     )
     

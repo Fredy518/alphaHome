@@ -3,6 +3,6 @@ from .tushare_stock_daily import *
 from .tushare_stock_dailybasic import *
 
 __all__ = [
-    "StockDailyTask",
-    "StockDailyBasicTask"
+    "TushareStockDailyTask",
+    "TushareStockDailyBasicTask"
 ]

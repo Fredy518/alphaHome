@@ -3,33 +3,65 @@ from typing import Dict, List, Any, Optional
 from datetime import datetime, timedelta
 
 from ...sources.tushare import TushareTask
+from ...task_decorator import task_register
 
-class StockDailyBasicTask(TushareTask):
+@task_register()
+class TushareStockDailyBasicTask(TushareTask):
     """股票每日基本面指标任务
     
     获取股票的每日基本面指标，包括市盈率、市净率、换手率、总市值等数据。
     该任务使用Tushare的daily_basic接口获取数据，并依赖于股票日线数据任务。
     """
     
-    # 核心属性
-    name = "stock_daily_basic"
+    # 1.核心属性
+    name = "tushare_stock_dailybasic"
     description = "获取股票每日基本面指标"
-    table_name = "stock_daily_basic"
+    table_name = "tushare_stock_dailybasic"
     primary_keys = ["ts_code", "trade_date"]
     date_column = "trade_date"
+
+    # 2.自定义索引
+    indexes = [
+        {"name": "idx_tushare_daily_basic_code", "columns": "ts_code"},
+        {"name": "idx_tushare_daily_basic_date", "columns": "trade_date"}
+    ]
+
+    # 3.默认配置
+    default_concurrent_limit = 5  # 默认并发限制
+    default_page_size = 6000  # 默认每页数据量
     
-    # 依赖关系
-    dependencies = ["stock_daily"]
-    
-    # Tushare特有属性
+    # 4.Tushare特有属性
     api_name = "daily_basic"
     fields = [
         "ts_code", "trade_date", "close", "turnover_rate", "turnover_rate_f", 
         "volume_ratio", "pe", "pe_ttm", "pb", "ps", "ps_ttm", "dv_ratio", 
         "dv_ttm", "total_share", "float_share", "free_share", "total_mv", "circ_mv"
-    ]
+    ]   
+
+    # 5.数据类型转换
+    transformations = {
+        "close": float,
+        "turnover_rate": float,
+        "turnover_rate_f": float,
+        "volume_ratio": float,
+        "pe": float,
+        "pe_ttm": float,
+        "pb": float,
+        "ps": float,
+        "ps_ttm": float,
+        "dv_ratio": float,
+        "dv_ttm": float,
+        "total_share": float,
+        "float_share": float,
+        "free_share": float,
+        "total_mv": float,
+        "circ_mv": float
+    }
+
+    # 6.列名映射
+    column_mapping = {}
     
-    # 表结构定义
+    # 7.表结构定义
     schema = {
         "ts_code": {"type": "VARCHAR(10)", "constraints": "NOT NULL"},
         "trade_date": {"type": "DATE", "constraints": "NOT NULL"},
@@ -54,28 +86,8 @@ class StockDailyBasicTask(TushareTask):
         "bp_ratio": {"type": "NUMERIC(10,4)"},
         "annual_div_yield": {"type": "NUMERIC(10,4)"}
     }
-    
-    # 数据处理规则
-    transformations = {
-        "close": float,
-        "turnover_rate": float,
-        "turnover_rate_f": float,
-        "volume_ratio": float,
-        "pe": float,
-        "pe_ttm": float,
-        "pb": float,
-        "ps": float,
-        "ps_ttm": float,
-        "dv_ratio": float,
-        "dv_ttm": float,
-        "total_share": float,
-        "float_share": float,
-        "free_share": float,
-        "total_mv": float,
-        "circ_mv": float
-    }
-    
-    # 数据验证规则
+
+    # 8.数据验证规则
     validations = [
         # 验证市值是否为正
         lambda df: all(df["total_mv"].fillna(0) >= 0),
@@ -87,12 +99,6 @@ class StockDailyBasicTask(TushareTask):
         lambda df: all(df["total_share"].fillna(0) >= df["float_share"].fillna(0)),
         # 验证日期格式
         lambda df: all(pd.to_datetime(df["trade_date"], errors="coerce").notna())
-    ]
-    
-    # 自定义索引
-    indexes = [
-        {"name": "idx_daily_basic_code", "columns": "ts_code"},
-        {"name": "idx_daily_basic_date", "columns": "trade_date"}
     ]
 
     def get_batch_list(self, **kwargs) -> List[Dict]:

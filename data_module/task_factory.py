@@ -111,12 +111,6 @@ class TaskFactory:
             logger.info("数据库连接已关闭")
     
     @classmethod
-    def register_task(cls, task_name: str, task_class: Type[Task]):
-        """注册新的任务类型"""
-        cls._task_registry[task_name] = task_class
-        logger.debug(f"注册任务类型: {task_name}")
-    
-    @classmethod
     def get_db_manager(cls):
         """获取数据库管理器实例"""
         if not cls._initialized:
@@ -154,10 +148,11 @@ class TaskFactory:
                 
         return cls._task_instances[task_name]
 
-# 注册默认的任务类型
-TaskFactory.register_task('stock_daily', StockDailyTask)
-TaskFactory.register_task('stock_daily_basic', StockDailyBasicTask)
-# 在这里注册其他任务类型
+# 导入装饰器模块中的函数，将已装饰的任务注册到工厂
+from .task_decorator import register_tasks_to_factory
+
+# 初始化并注册所有通过装饰器注册的任务
+register_tasks_to_factory()
 
 # 便捷函数
 async def get_task(task_name: str) -> Task:

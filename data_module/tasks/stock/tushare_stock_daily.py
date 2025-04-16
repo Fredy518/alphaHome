@@ -2,35 +2,57 @@ import pandas as pd
 from datetime import datetime
 from typing import Dict, List
 from ...sources.tushare import TushareTask
+from ...task_decorator import task_register
 
-class StockDailyTask(TushareTask):
+@task_register()
+class TushareStockDailyTask(TushareTask):
     """股票日线数据任务
     
     获取股票的日线交易数据，包括开盘价、收盘价、最高价、最低价、成交量、成交额等信息。
     该任务使用Tushare的daily接口获取数据。
     """
     
-    # 核心属性
-    name = "stock_daily"
+    # 1.核心属性
+    name = "tushare_stock_daily"
     description = "获取股票日线交易数据"
-    table_name = "stock_daily"
+    table_name = "tushare_stock_daily"
     primary_keys = ["ts_code", "trade_date"]
     date_column = "trade_date" # 日期列名，用于确认最新数据日期
     
-    # 自定义索引
+    # 2.自定义索引
     indexes = [
-        {"name": "idx_stock_daily_code", "columns": "ts_code"},
-        {"name": "idx_stock_daily_date", "columns": "trade_date"}
+        {"name": "idx_tushare_stock_daily_code", "columns": "ts_code"},
+        {"name": "idx_tushare_stock_daily_date", "columns": "trade_date"}
     ]
-    # 默认配置
+
+    # 3.默认配置
     default_concurrent_limit = 5  # 默认并发限制
     default_page_size = 6000  # 默认每页数据量
-    # Tushare特有属性
+
+    # 4.Tushare特有属性
     api_name = "daily"
     fields = ["ts_code", "trade_date", "open", "high", "low", "close", 
               "pre_close", "change", "pct_chg", "vol", "amount"]
     
-    # 表结构定义
+    # 5.数据类型转换
+    transformations = {
+        "open": float,
+        "high": float,
+        "low": float,
+        "close": float,
+        "pre_close": float,
+        "change": float,
+        "pct_chg": float,
+        "vol": float,  # 原始字段名
+        "amount": float
+    }
+    
+    # 6.列名映射
+    column_mapping = {
+        "vol": "volume"  # 将vol映射为volume
+    }
+
+    # 7.表结构定义
     schema = {
         "ts_code": {"type": "VARCHAR(10)", "constraints": "NOT NULL"},
         "trade_date": {"type": "DATE", "constraints": "NOT NULL"},
@@ -45,25 +67,7 @@ class StockDailyTask(TushareTask):
         "amount": {"type": "NUMERIC(20,4)"}
     }
     
-    # 数据类型转换
-    transformations = {
-        "open": float,
-        "high": float,
-        "low": float,
-        "close": float,
-        "pre_close": float,
-        "change": float,
-        "pct_chg": float,
-        "vol": float,  # 原始字段名
-        "amount": float
-    }
-    
-    # 列名映射
-    column_mapping = {
-        "vol": "volume"  # 将vol映射为volume
-    }
-    
-    # 数据验证规则 (使用目标字段名 volume)
+    # 8.数据验证规则 (使用目标字段名 volume)
     validations = [
         # 验证价格字段是否合理
         lambda df: all(df["close"] >= 0),
