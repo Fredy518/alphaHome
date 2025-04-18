@@ -159,17 +159,3 @@ class TushareStockDailyTask(TushareTask):
 
         self.logger.info(f"成功生成 {len(batch_list)} 个批次")
         return batch_list
-    
-    def prepare_params(self, batch_params: Dict) -> Dict:
-        """准备API调用参数
-        
-        将批处理参数转换为Tushare API调用所需的确切参数格式。
-        
-        Args:
-            batch_params: 批处理参数字典
-            
-        Returns:
-            Dict: 准备好的API调用参数
-        """
-        # 对于daily接口，参数可以直接使用
-        return batch_params

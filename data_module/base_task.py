@@ -16,6 +16,7 @@ class Task(ABC):
     primary_keys = []
     date_column = None
     description = ""
+    auto_add_update_time = True  # 是否自动添加更新时间
     
     def __init__(self, db_connection):
         """初始化任务"""
@@ -178,6 +179,10 @@ class Task(ABC):
             else:
                 columns.append(f"{col_name} {col_def}")
         
+        # 如果配置自动添加更新时间，且schema中没有定义update_time列
+        if self.auto_add_update_time and 'update_time' not in self.schema:
+            columns.append("update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
+        
         # 添加主键约束
         if self.primary_keys:
             primary_key_clause = f"PRIMARY KEY ({', '.join(self.primary_keys)})"
@@ -233,48 +238,16 @@ class Task(ABC):
         if data.empty:
             return 0
         
-        # 将DataFrame转换为记录列表
-        records = data.to_dict('records')
-        if not records:
-            return 0
+        # 这里不再需要手动转换和处理数据，直接使用db_manager的upsert方法
+        timestamp_column = 'update_time' if self.auto_add_update_time else None
         
-        # 构建插入语句
-        columns = list(records[0].keys())
-        # 使用PostgreSQL的$1, $2格式的参数占位符
-        placeholders = ', '.join([f'${i+1}' for i in range(len(columns))])
-        column_str = ', '.join(columns)
-        
-        # 构建 UPSERT 语句（INSERT ... ON CONFLICT DO UPDATE ...)
-        if self.primary_keys:
-            # 如果有主键，则使用UPSERT
-            update_clause = ', '.join([f"{col} = EXCLUDED.{col}" for col in columns if col not in self.primary_keys])
-            if update_clause:
-                upsert_sql = f"""
-                INSERT INTO {self.table_name} ({column_str})
-                VALUES ({placeholders})
-                ON CONFLICT ({', '.join(self.primary_keys)}) 
-                DO UPDATE SET {update_clause};
-                """
-            else:
-                # 如果没有需要更新的列，则什么也不做
-                upsert_sql = f"""
-                INSERT INTO {self.table_name} ({column_str})
-                VALUES ({placeholders})
-                ON CONFLICT ({', '.join(self.primary_keys)}) 
-                DO NOTHING;
-                """
-        else:
-            # 如果没有主键，则使用普通的INSERT
-            upsert_sql = f"""
-            INSERT INTO {self.table_name} ({column_str})
-            VALUES ({placeholders});
-            """
-        
-        # 准备数据
-        values = [[record.get(col) for col in columns] for record in records]
-        
-        # 执行插入
-        affected_rows = await self.db.executemany(upsert_sql, values)
+        affected_rows = await self.db.upsert(
+            table_name=self.table_name,
+            data=data,
+            conflict_columns=self.primary_keys,
+            update_columns=None,  # 自动更新所有非冲突列
+            timestamp_column=timestamp_column
+        )
         
         return affected_rows
 

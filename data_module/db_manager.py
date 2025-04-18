@@ -293,3 +293,105 @@ class DBManager:
                 result = result.strftime('%Y%m%d')
         
         return result
+
+    async def upsert(self, 
+                    table_name: str, 
+                    data: Union[pd.DataFrame, List[Dict[str, Any]]], 
+                    conflict_columns: List[str], 
+                    update_columns: Optional[List[str]] = None,
+                    timestamp_column: Optional[str] = None) -> int:
+        """通用UPSERT操作：插入数据，如有冲突则更新
+        
+        PostgreSQL的UPSERT实现：当插入的记录与已有记录在指定的列上发生冲突时，
+        可以选择更新部分列或者忽略此次插入。
+        
+        Args:
+            table_name: 目标表名
+            data: 要插入的数据，可以是DataFrame或字典列表
+            conflict_columns: 用于检测冲突的列名列表（通常是主键或唯一索引）
+            update_columns: 发生冲突时要更新的列名列表，如果为None，则更新所有非冲突列
+            timestamp_column: 时间戳列名，如果指定，该列将自动更新为当前时间
+            
+        Returns:
+            影响的行数
+            
+        Raises:
+            ValueError: 当数据为空或参数无效时
+            Exception: 数据库操作错误
+        """
+        if self.pool is None:
+            await self.connect()
+        
+        # 检查参数有效性
+        if not table_name:
+            raise ValueError("表名不能为空")
+        
+        if not conflict_columns:
+            raise ValueError("必须指定冲突检测列")
+            
+        # 将DataFrame转换为字典列表
+        records = []
+        if isinstance(data, pd.DataFrame):
+            if data.empty:
+                return 0
+            records = data.to_dict('records')
+        elif isinstance(data, list):
+            if not data:
+                return 0
+            records = data
+        else:
+            raise ValueError("data参数必须是DataFrame或字典列表")
+        
+        # 准备时间戳
+        from datetime import datetime
+        current_time = datetime.now()
+        
+        # 添加时间戳列
+        if timestamp_column:
+            for record in records:
+                record[timestamp_column] = current_time
+        
+        # 获取列名
+        columns = list(records[0].keys())
+        
+        # 如果未指定更新列，则更新所有非冲突列
+        if update_columns is None:
+            update_columns = [col for col in columns if col not in conflict_columns]
+        
+        # 检查更新列的有效性
+        for col in update_columns:
+            if col not in columns:
+                raise ValueError(f"更新列 '{col}' 不在数据列中")
+        
+        # 构建UPSERT SQL语句
+        placeholders = ', '.join([f'${i+1}' for i in range(len(columns))])
+        column_str = ', '.join(columns)
+        
+        if update_columns:
+            # 构建更新子句
+            update_clause = ', '.join([f"{col} = EXCLUDED.{col}" for col in update_columns])
+            upsert_sql = f"""
+            INSERT INTO {table_name} ({column_str})
+            VALUES ({placeholders})
+            ON CONFLICT ({', '.join(conflict_columns)}) 
+            DO UPDATE SET {update_clause};
+            """
+        else:
+            # 如果没有需要更新的列，则冲突时不做任何操作
+            upsert_sql = f"""
+            INSERT INTO {table_name} ({column_str})
+            VALUES ({placeholders})
+            ON CONFLICT ({', '.join(conflict_columns)}) 
+            DO NOTHING;
+            """
+        
+        # 准备数据
+        values = [[record.get(col) for col in columns] for record in records]
+        
+        try:
+            # 执行UPSERT
+            affected_rows = await self.executemany(upsert_sql, values)
+            return affected_rows
+        except Exception as e:
+            self.logger.error(f"UPSERT操作失败: {str(e)}\n表: {table_name}")
+            raise

@@ -476,55 +476,32 @@ class TushareTask(Task):
         2. API的限制（如单次查询的最大记录数）
         3. 性能考虑（如并行查询的优化）
         
-        典型的实现示例：
-        - 按日期范围分批：将长时间范围分割为多个短时间段
-        - 按代码分批：将多个股票代码分组为多个小批次
-        - 混合策略：同时考虑时间和代码的分批策略
-        
         Args:
             **kwargs: 用户提供的查询参数，如start_date, end_date, ts_code等
             
         Returns:
             List[Dict]: 批处理参数列表，每个元素是一个参数字典，将用于一次API调用
-                例如：[
-                    {"start_date": "20220101", "end_date": "20220131", "ts_code": "000001.SZ,000002.SZ"},
-                    {"start_date": "20220201", "end_date": "20220228", "ts_code": "000001.SZ,000002.SZ"},
-                ]
         """
         pass
     
-    @abc.abstractmethod
     def prepare_params(self, batch_params: Dict) -> Dict:
         """准备API调用参数
         
         该方法负责将批处理参数转换为Tushare API调用所需的确切参数格式。
         这个方法的主要目的是处理参数格式转换、默认值设置、参数验证等工作。
         
-        实现此方法时，应考虑以下几点：
-        1. Tushare API的具体参数要求（参数名称、格式等）
-        2. 必要时进行参数格式转换（如日期格式转换）
-        3. 添加API调用所需的任何额外参数
-        4. 验证参数的有效性
-        
-        典型的实现示例：
-        - 日期格式转换：将datetime对象转换为'YYYYMMDD'格式字符串
-        - 代码格式处理：确保股票代码格式符合API要求
-        - 参数重命名：将内部使用的参数名映射到API要求的参数名
-        - 添加默认参数：如未指定字段列表时使用默认字段
+        默认实现直接返回批处理参数，适用于参数无需特殊处理的API。
+        子类可以根据需要重写此方法，以处理更复杂的参数转换。
         
         Args:
             batch_params: 由get_batch_list方法生成的单个批次参数字典
             
         Returns:
-            Dict: 准备好的API调用参数字典，将直接传递给TushareAPI.query方法的params参数
-                例如：{
-                    "ts_code": "000001.SZ,000002.SZ",
-                    "start_date": "20220101",
-                    "end_date": "20220131",
-                    "fields": "trade_date,open,high,low,close,vol"
-                }
+            Dict: 准备好的API调用参数字典
         """
-        pass
+        # 提供默认实现，直接返回批次参数
+        # 仅当API需要特殊参数处理时，子类才需要重写此方法
+        return batch_params
         
     async def fetch_data(self, **kwargs):
         """从Tushare获取数据
