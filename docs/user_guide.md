@@ -19,8 +19,9 @@
    - [任务执行方式](#1-任务执行方式)
    - [任务依赖管理](#2-任务依赖管理)
    - [批量任务执行](#3-批量任务执行)
-   - [错误处理和重试](#4-错误处理和重试)
-   - [定时调度](#5-定时调度)
+   - [全局数据更新工具](#4-全局数据更新工具)
+   - [错误处理和重试](#5-错误处理和重试)
+   - [定时调度](#6-定时调度)
 7. [扩展和定制](#扩展和定制)
    - [添加新数据源](#1-添加新数据源)
    - [自定义数据处理组件](#2-自定义数据处理组件)
@@ -630,55 +631,86 @@ await stock_daily_basic_task.execute(
 await stock_daily_task.full_update(ts_code="000001.SZ")
 
 # 执行智能增量更新
-await stock_daily_basic_task.incremental_update(ts_code="000001.SZ")
+await stock_daily_basic_task.smart_incremental_update(
+    use_trade_days=True,  # 使用交易日模式
+    ts_code="000001.SZ"
+)
 
 # 指定安全天数的增量更新
-await stock_daily_task.incremental_update(
+await stock_daily_task.smart_incremental_update(
     safety_days=1,  # 回溯1天确保数据连续性
     ts_code="000001.SZ",
     show_progress=True  # 显示进度条
 )
 ```
 
-##### 3.1 智能增量更新机制
+## 智能增量更新机制
 
-系统实现了一种智能增量更新机制，可以自动检测数据库中最新的数据日期，并只获取该日期之后的新数据：
+系统实现了一种智能增量更新机制，可以自动检测数据库中最新的数据日期，并只获取该日期之后的新数据。该机制支持两种模式：基于交易日和基于自然日的更新。
 
 ```python
 # 智能增量更新的工作原理
 # 1. 查询数据库中最新的数据日期
-# 2. 从最新日期开始，减去安全天数（默认为1天）作为开始日期
-# 3. 获取从开始日期到当前日期的数据
+# 2. 根据模式选择日期计算方式：
+#    - 交易日模式：使用交易日历API计算
+#    - 自然日模式：使用时间差计算
+# 3. 从计算出的开始日期到当前日期获取数据
 # 4. 如果数据库中没有数据，则默认获取近30天的数据
 
-# 使用智能增量更新获取股票数据
-await stock_daily_task.incremental_update(
-    safety_days=1,  # 安全天数，默认为1
-    ts_code="000001.SZ,000002.SZ",  # 股票代码
-    show_progress=True,  # 显示进度条
+# 使用交易日模式获取股票数据
+await stock_daily_task.smart_incremental_update(
+    use_trade_days=True,     # 使用交易日模式
+    safety_days=1,           # 安全天数，默认为1
+    ts_code="000001.SZ",     # 股票代码
+    show_progress=True,      # 显示进度条
     progress_desc='增量更新股票日线数据'  # 进度条描述
+)
+
+# 使用自然日模式获取数据
+await stock_daily_task.smart_incremental_update(
+    use_trade_days=False,    # 使用自然日模式
+    safety_days=1,           # 安全天数
+    ts_code="000001.SZ",
+    show_progress=True
 )
 ```
 
-##### 3.2 增量更新参数说明
+### 增量更新参数说明
 
 | 参数名 | 类型 | 默认值 | 描述 |
 |--------|------|------|----|
-| safety_days | int | 1 | 安全天数，为了确保数据连续性，会额外回溯的天数 |
-| days_lookback | int | None | 向后兼容参数，如果指定则相当于设置 safety_days |
+| lookback_days | int | None | 回溯的天数（交易日或自然日，取决于use_trade_days） |
+| end_date | str | None | 更新结束日期（YYYYMMDD格式），默认为当前日期 |
+| use_trade_days | bool | False | 是否使用交易日计算 |
+| safety_days | int | 1 | 安全天数，确保数据连续性（仅在自然日模式下使用） |
 | show_progress | bool | False | 是否显示进度条 |
 | progress_desc | str | None | 进度条描述文本 |
 
-##### 3.3 增量更新的优势
+### 智能增量更新的优势
 
-智能增量更新相比传统的增量更新方式有以下优势：
+1. **灵活的更新模式**：
+   - 支持交易日模式：适用于股票交易数据
+   - 支持自然日模式：适用于其他类型数据
 
-1. **精确获取数据**：只获取数据库中最新日期之后的数据，避免重复获取和处理
-2. **自动判断**：智能判断是否需要更新，如果数据已是最新则跳过
-3. **安全回溯**：通过 `safety_days` 参数确保数据连续性
-4. **高效资源利用**：减少不必要的API调用和数据库操作
-5. **自动处理空数据库**：当数据库中没有数据时，会自动获取近30天的数据
+2. **精确的数据获取**：
+   - 智能判断最新数据日期
+   - 根据模式选择合适的日期计算方法
+   - 避免重复获取和处理数据
 
+3. **可靠的错误处理**：
+   - 完善的异常处理机制
+   - 详细的日志记录
+   - 交易日历API调用保护
+
+4. **自动化处理**：
+   - 自动处理空数据库情况
+   - 智能判断是否需要更新
+   - 自动选择合适的起始日期
+
+5. **高效资源利用**：
+   - 减少不必要的API调用
+   - 优化数据库操作
+   - 避免重复处理
 
 ### 实际案例：指数成分股任务
 
@@ -1073,11 +1105,105 @@ for start_date, end_date in date_ranges:
     )
 ```
 
-### 4. 错误处理和重试
+### 4. 全局数据更新工具
+
+系统提供了一个全局数据更新工具 `update_all_tasks.py`，可以自动识别和更新所有已注册的数据任务。这个工具特别适合定期数据同步和批量更新场景。
+
+#### 4.1 功能特点
+
+全局数据更新工具具有以下特点：
+
+- **自动识别任务**：通过任务注册机制，自动识别系统中所有已注册的数据任务
+- **多种更新模式**：支持智能增量更新、指定交易日数量更新、特定日期范围更新和全量更新
+- **并行执行**：所有任务并行执行，提高效率
+- **预加载交易日历**：根据更新模式智能预加载交易日历数据，减少重复API调用
+- **详细日志**：提供详细的执行日志和结果汇总
+- **错误隔离**：单个任务的错误不会影响其他任务的执行
+
+#### 4.2 使用方法
+
+全局数据更新工具位于 `examples/update_all_tasks.py`，支持多种命令行参数：
+
+```bash
+python examples/update_all_tasks.py [参数选项]
+```
+
+##### 参数说明
+
+| 参数 | 描述 |
+|------|------|
+| `--days N` | 增量更新: 更新最近 N 个交易日的数据 |
+| `--start-date YYYYMMDD` | 更新起始日期 (格式: YYYYMMDD) |
+| `--end-date YYYYMMDD` | 更新结束日期 (格式: YYYYMMDD, 默认为当天) |
+| `--full-update` | 全量更新模式: 从最早日期开始更新 |
+| `--show-progress/--no-show-progress` | 是否显示进度条 (默认: 显示) |
+
+##### 使用示例
+
+以下是使用全局数据更新工具的几种常见场景：
+
+```bash
+# 默认: 智能增量更新所有任务
+python examples/update_all_tasks.py
+
+# 更新最近5个交易日的数据
+python examples/update_all_tasks.py --days 5
+
+# 更新特定日期范围的数据
+python examples/update_all_tasks.py --start-date 20230101 --end-date 20230131
+
+# 全量更新所有数据（从Tushare最早支持的日期开始）
+python examples/update_all_tasks.py --full-update
+
+# 增量更新但不显示进度条
+python examples/update_all_tasks.py --no-show-progress
+```
+
+#### 4.3 工作原理
+
+全局数据更新工具的工作流程如下：
+
+1. **初始化**：连接数据库，初始化任务工厂
+2. **预加载日历**：根据更新模式预加载交易日历数据
+3. **获取任务列表**：获取所有已注册的数据任务
+4. **并行执行**：为每个任务创建异步协程并行执行
+5. **结果汇总**：收集所有任务的执行结果并生成汇总报告
+6. **资源释放**：关闭数据库连接
+
+#### 4.4 执行结果解读
+
+执行全局数据更新工具后，你会看到类似以下的输出：
+
+```
+2025-04-18 14:29:46,043 - update_all_tasks - INFO - TaskFactory已关闭
+2025-04-18 14:29:46,044 - update_all_tasks - INFO -
+更新结果汇总:
+2025-04-18 14:29:46,044 - update_all_tasks - INFO - - tushare_stock_daily: 成功, 更新 117403 行数据
+2025-04-18 14:29:46,044 - update_all_tasks - INFO - - tushare_stock_dailybasic: 成功, 更新 117403 行数据
+2025-04-18 14:29:46,045 - update_all_tasks - INFO - 全局数据更新执行完毕。总耗时: 0:00:42.808911
+```
+
+结果中包含了每个任务的更新状态和更新的数据行数，以及总耗时。可能的状态包括：
+
+- **成功 (success)**: 任务执行成功，显示更新的数据行数
+- **部分成功 (partial_success)**: 部分批次执行成功，显示成功更新的数据行数和失败的批次数
+- **失败 (error)**: 任务执行失败，显示错误信息
+
+#### 4.5 最佳实践
+
+使用全局数据更新工具的一些最佳实践：
+
+- **定期执行**：设置定时任务，每个交易日收盘后执行增量更新
+- **智能增量**：日常使用默认的智能增量模式，无需指定参数
+- **资源考虑**：全量更新会消耗大量API调用额度，请谨慎使用
+- **日志归档**：工具会自动生成带日期的日志文件，便于追踪历史执行记录
+- **失败处理**：对于失败的任务，查看日志文件了解详细错误信息，然后单独为这些任务执行更新
+
+### 5. 错误处理和重试
 
 系统提供了错误处理和重试机制，确保任务执行的稳定性：
 
-#### 4.1 使用retry装饰器
+#### 5.1 使用retry装饰器
 
 ```python
 from functools import wraps
@@ -1108,7 +1234,7 @@ class MyTask(Task):
         # 获取数据的代码...
 ```
 
-#### 4.2 任务执行异常处理
+#### 5.2 任务执行异常处理
 
 ```python
 try:
@@ -1124,11 +1250,32 @@ except Exception as e:
     # 执行回滚操作
 ```
 
-### 5. 定时调度
+#### 5.3 全局数据更新工具中的错误处理
+
+全局数据更新工具 `update_all_tasks.py` 实现了错误隔离机制，确保单个任务的失败不会影响其他任务的执行：
+
+```python
+# 并行执行所有任务，即使有任务失败也继续执行其他任务
+results = await asyncio.gather(*update_tasks, return_exceptions=True)
+
+# 处理结果
+for result in results:
+    if isinstance(result, Exception):
+        # 处理任务执行过程中的异常
+        logger.error(f"任务执行失败: {str(result)}")
+    else:
+        # 处理正常执行结果
+        status = result.get('status', 'unknown')
+        task_name = result.get('task_name', 'unknown')
+        if status == 'success':
+            logger.info(f"任务 {task_name} 执行成功")
+```
+
+### 6. 定时调度
 
 对于需要定期执行的任务，可以使用定时调度功能：
 
-#### 5.1 使用asyncio定时执行
+#### 6.1 使用asyncio定时执行
 
 ```python
 import asyncio
@@ -1169,7 +1316,7 @@ async def scheduler():
 asyncio.run(scheduler())
 ```
 
-#### 5.2 使用第三方调度库
+#### 6.2 使用第三方调度库
 
 也可以使用更强大的第三方调度库，如APScheduler：
 
@@ -1195,6 +1342,50 @@ try:
     asyncio.get_event_loop().run_forever()
 except (KeyboardInterrupt, SystemExit):
     scheduler.shutdown()
+```
+
+#### 6.3 定时执行全局数据更新
+
+可以设置定时任务执行全局数据更新工具，自动更新所有注册的任务：
+
+```python
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.cron import CronTrigger
+import subprocess
+import sys
+
+def run_global_update():
+    """执行全局数据更新脚本"""
+    # 使用subprocess执行命令行脚本
+    result = subprocess.run(
+        [
+            sys.executable, 
+            "examples/update_all_tasks.py",  # 全局更新脚本路径
+            "--days", "1"  # 更新最近1个交易日的数据
+        ], 
+        capture_output=True,
+        text=True
+    )
+    
+    # 输出执行结果
+    print(f"更新结果: {result.returncode}")
+    if result.stdout:
+        print(f"标准输出: {result.stdout}")
+    if result.stderr:
+        print(f"错误输出: {result.stderr}")
+
+# 在Linux/Unix系统上，可以使用crontab设置定时任务
+# 例如，设置每个工作日下午4点执行更新:
+# 0 16 * * 1-5 cd /path/to/project && python examples/update_all_tasks.py
+
+# 或者使用Python调度器
+scheduler = AsyncIOScheduler()
+scheduler.add_job(
+    run_global_update,
+    CronTrigger(hour=16, minute=0, day_of_week="1-5"),  # 工作日下午4点
+    id="daily_market_update"
+)
+scheduler.start()
 ```
 
 ### 创建特殊数据任务
@@ -1302,7 +1493,7 @@ class CustomExecutionTask(Task):
             return self.handle_error(e)
 ```
 
-### 3. 适配智能增量更新机制
+### 3. 适配增量更新机制
 
 对于特殊的数据任务，可能需要调整智能增量更新的逻辑：
 
@@ -1465,6 +1656,7 @@ for quarter in quarters:
         end_date="20221231",
         report_type=quarter
     )
+```
 
 ## 扩展和定制
 
@@ -2164,3 +2356,71 @@ async def initialize_system():
         show_progress=True   # 显示进度条
     )
 ``` 
+
+### 数据更新方式
+
+系统提供了多种数据更新方式，可以根据需要选择：
+
+#### 1. 智能增量更新（推荐）
+
+使用 `smart_incremental_update` 方法可以智能地进行增量更新，支持自然日和交易日两种模式：
+
+```python
+# 使用交易日模式
+await task.smart_incremental_update(
+    lookback_days=5,          # 回溯5个交易日
+    use_trade_days=True,      # 使用交易日模式
+    show_progress=True        # 显示进度条
+)
+
+# 使用自然日模式
+await task.smart_incremental_update(
+    lookback_days=7,          # 回溯7个自然日
+    use_trade_days=False,     # 使用自然日模式
+    safety_days=1,            # 额外回溯1天确保数据连续性
+    show_progress=True        # 显示进度条
+)
+```
+
+主要参数说明：
+- `lookback_days`: 回溯天数（交易日或自然日）
+- `end_date`: 更新结束日期，默认为当前日期
+- `use_trade_days`: 是否使用交易日计算
+- `safety_days`: 安全天数（仅在自然日模式下使用）
+
+#### 2. 传统增量更新（已弃用）
+
+以下方法仍然可用，但建议使用 `smart_incremental_update` 替代：
+
+- `incremental_update`: 基于自然日的增量更新
+- `update_by_trade_day`: 基于交易日的增量更新（已弃用）
+
+```python
+# 不推荐使用的旧方法
+await task.incremental_update(days_lookback=7)
+await task.update_by_trade_day(trade_days_lookback=5)
+```
+
+#### 3. 全量更新
+
+对于需要更新全部历史数据的场景：
+
+```python
+await task.execute(
+    start_date="19901219",  # Tushare最早的数据日期
+    end_date="20240101"     # 结束日期
+)
+```
+
+### 更新模式选择建议
+
+1. 日常增量更新：使用 `smart_incremental_update`
+   - 股票交易数据：使用交易日模式（`use_trade_days=True`）
+   - 其他数据：使用自然日模式（`use_trade_days=False`）
+
+2. 历史数据补充：使用 `execute` 方法直接指定日期范围
+
+3. 特殊场景：
+   - 数据校验：使用较大的 `lookback_days` 或 `safety_days`
+   - 数据修复：使用精确的日期范围
+   - 全量更新：使用 `execute` 方法指定完整日期范围

@@ -1,0 +1,211 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+"""
+全局数据更新脚本
+
+自动更新所有已注册的数据任务。支持以下功能：
+1. 自动识别所有已注册的任务
+2. 支持多种更新模式（增量/全量）
+3. 支持并行执行任务
+4. 详细的日志记录
+5. 错误处理和重试机制
+"""
+
+import os
+import sys
+import asyncio
+import logging
+import argparse
+from datetime import datetime, timedelta
+import dotenv
+from pathlib import Path
+from typing import List, Dict, Any
+
+# 添加项目根目录到系统路径
+project_root = Path(__file__).resolve().parent.parent
+sys.path.append(str(project_root))
+
+# 加载环境变量
+dotenv_path = project_root / '.env'
+dotenv.load_dotenv(dotenv_path=dotenv_path)
+
+from data_module.task_factory import TaskFactory
+from data_module.task_decorator import get_registered_tasks
+from data_module.tools.calendar import get_last_trade_day
+
+# 配置日志
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout),
+        logging.FileHandler(f'update_all_tasks_{datetime.now().strftime("%Y%m%d")}.log')
+    ]
+)
+
+logger = logging.getLogger('update_all_tasks')
+
+async def update_task(task_name: str, args: argparse.Namespace) -> Dict[str, Any]:
+    """更新单个任务的数据
+    
+    Args:
+        task_name: 任务名称
+        args: 命令行参数
+        
+    Returns:
+        Dict: 更新结果
+    """
+    try:
+        # 获取任务实例
+        task = await TaskFactory.get_task(task_name)
+        logger.info(f"开始更新任务: {task_name}")
+        
+        # 准备更新参数
+        update_kwargs = {
+            'show_progress': args.show_progress,
+            'use_trade_days': True  # 默认使用交易日模式
+        }
+        
+        # 根据不同的更新模式设置参数
+        if args.full_update:
+            # 全量更新模式
+            start_date = '19901219'  # Tushare最早的数据日期
+            end_date = datetime.now().strftime('%Y%m%d')
+            result = await task.execute(
+                start_date=start_date,
+                end_date=end_date,
+                **update_kwargs
+            )
+        elif args.days:
+            # 指定天数的增量更新
+            result = await task.smart_incremental_update(
+                lookback_days=args.days,
+                **update_kwargs
+            )
+        elif args.start_date:
+            # 指定日期范围的更新
+            end_date = args.end_date or datetime.now().strftime('%Y%m%d')
+            result = await task.execute(
+                start_date=args.start_date,
+                end_date=end_date,
+                **update_kwargs
+            )
+        else:
+            # 默认智能增量更新
+            result = await task.smart_incremental_update(**update_kwargs)
+        
+        return {
+            'task_name': task_name,
+            'status': result.get('status'),
+            'rows': result.get('rows', 0),
+            'failed_batches': result.get('failed_batches', 0)
+        }
+        
+    except Exception as e:
+        logger.error(f"任务 {task_name} 更新失败: {str(e)}", exc_info=True)
+        return {
+            'task_name': task_name,
+            'status': 'error',
+            'error': str(e)
+        }
+
+async def update_all_tasks(args: argparse.Namespace) -> List[Dict[str, Any]]:
+    """更新所有任务的数据
+    
+    Args:
+        args: 命令行参数
+        
+    Returns:
+        List[Dict]: 所有任务的更新结果
+    """
+    # 初始化TaskFactory
+    await TaskFactory.initialize()
+    logger.info("TaskFactory初始化成功")
+    
+    try:
+        # 获取所有已注册的任务
+        registered_tasks = get_registered_tasks()
+        logger.info(f"发现 {len(registered_tasks)} 个已注册的任务")
+        
+        # 创建任务更新协程
+        update_tasks = [
+            update_task(task_name, args)
+            for task_name in registered_tasks
+        ]
+        
+        # 并行执行所有任务
+        results = await asyncio.gather(*update_tasks, return_exceptions=True)
+        
+        # 处理结果
+        success_count = sum(1 for r in results if isinstance(r, dict) and r.get('status') in ['success', 'partial_success'])
+        error_count = len(results) - success_count
+        
+        logger.info(f"任务更新完成: {success_count} 成功, {error_count} 失败")
+        
+        return results
+    
+    finally:
+        # 关闭TaskFactory
+        await TaskFactory.shutdown()
+        logger.info("TaskFactory已关闭")
+
+async def main():
+    # 解析命令行参数
+    parser = argparse.ArgumentParser(description='全局数据更新工具')
+    parser.add_argument('--days', type=int, help='增量更新: 更新最近 N 个交易日的数据')
+    parser.add_argument('--start-date', help='更新起始日期 (格式: YYYYMMDD)')
+    parser.add_argument('--end-date', help='更新结束日期 (格式: YYYYMMDD, 默认为当天)')
+    parser.add_argument('--full-update', action='store_true', help='全量更新模式: 从最早日期开始更新')
+    parser.add_argument('--show-progress', action=argparse.BooleanOptionalAction, default=True, help='是否显示进度条')
+    
+    args = parser.parse_args()
+    
+    # 记录开始时间
+    start_time = datetime.now()
+    logger.info("开始执行全局数据更新...")
+    
+    try:
+        # 执行更新
+        results = await update_all_tasks(args)
+        
+        # 输出详细结果
+        logger.info("\n更新结果汇总:")
+        for result in results:
+            status = result.get('status', 'unknown')
+            task_name = result.get('task_name', 'unknown')
+            if status == 'success':
+                rows = result.get('rows', 0)
+                logger.info(f"- {task_name}: 成功, 更新 {rows} 行数据")
+            elif status == 'partial_success':
+                rows = result.get('rows', 0)
+                failed_batches = result.get('failed_batches', 0)
+                logger.info(f"- {task_name}: 部分成功, 更新 {rows} 行数据, {failed_batches} 个批次失败")
+            else:
+                error = result.get('error', 'unknown error')
+                logger.error(f"- {task_name}: 失败, 错误: {error}")
+        
+    except Exception as e:
+        logger.error(f"全局更新过程中发生错误: {str(e)}", exc_info=True)
+    
+    # 计算总耗时
+    end_time = datetime.now()
+    duration = end_time - start_time
+    logger.info(f"全局数据更新执行完毕。总耗时: {duration}")
+
+if __name__ == "__main__":
+    """
+    使用示例:
+    1. 默认增量更新（智能模式）:
+       python examples/update_all_tasks.py
+       
+    2. 更新最近N个交易日:
+       python examples/update_all_tasks.py --days 5
+       
+    3. 指定日期范围更新:
+       python examples/update_all_tasks.py --start-date 20230101 --end-date 20230131
+       
+    4. 全量更新:
+       python examples/update_all_tasks.py --full-update
+    """
+    asyncio.run(main()) 

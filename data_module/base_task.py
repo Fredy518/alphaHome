@@ -61,65 +61,6 @@ class Task(ABC):
             self.logger.error(f"任务执行失败: {str(e)}", exc_info=True)
             return self.handle_error(e)
     
-    async def incremental_update(self, days_lookback=None, safety_days=1, **kwargs):
-        """
-        执行增量数据更新
-        
-        智能增量更新方法，它会查询数据库中最新的数据日期，
-        然后只获取该日期之后的新数据，避免不必要的数据重复获取。
-        
-        Args:
-            days_lookback (int, optional): 向后兼容参数，如果指定则相当于设置safety_days
-            safety_days (int): 安全天数，为了确保数据连续性，会额外回溯的天数，默认为1天
-            **kwargs: 传递给fetch_data的额外参数
-            
-        Returns:
-            Dict[str, Any]: 执行结果，包含新增数据行数和状态信息
-        """
-        # 向后兼容：如果指定了days_lookback，则使用它作为safety_days
-        if days_lookback is not None:
-            safety_days = days_lookback
-            self.logger.info(f"使用days_lookback={days_lookback}作为safety_days参数（向后兼容）")
-            
-        # 获取数据库中最新的数据日期
-        latest_date = await self._get_latest_date()
-        
-        # 计算当前日期
-        current_date = datetime.now().strftime('%Y%m%d')
-        
-        if latest_date:
-            # 将最新日期转换为datetime对象
-            latest_dt = datetime.strptime(latest_date, '%Y%m%d')
-            
-            # 计算开始日期（最新日期减去安全天数）
-            start_dt = latest_dt - timedelta(days=safety_days)
-            start_date = start_dt.strftime('%Y%m%d')
-            
-            # 检查是否需要更新（如果最新日期是今天，则可能不需要更新）
-            current_dt = datetime.strptime(current_date, '%Y%m%d')
-            days_diff = (current_dt - latest_dt).days
-            
-            if days_diff <= 0 and safety_days == 0:
-                self.logger.info(f"数据库中已有最新数据（{latest_date}），无需更新")
-                return {"status": "up_to_date", "rows": 0}
-        else:
-            # 如果数据库中没有数据，则从30天前开始获取（可根据需要调整）
-            start_dt = datetime.now() - timedelta(days=30)
-            start_date = start_dt.strftime('%Y%m%d')
-            self.logger.info(f"数据库中没有数据，将从 {start_date} 开始获取")
-        
-        # 执行数据获取和保存
-        self.logger.info(f"开始执行{self.name}的增量更新，日期范围: {start_date} 至 {current_date}...")
-        result = await self.execute(start_date=start_date, end_date=current_date, **kwargs)
-        
-        # 记录结果
-        if result.get("status") == "no_data":
-            self.logger.info(f"没有新数据需要更新")
-        else:
-            self.logger.info(f"增量更新完成: 新增/更新 {result.get('rows', 0)} 行数据")
-            
-        return result
-    
     async def _get_latest_date(self):
         """获取数据库中该表的最新数据日期"""
         if not self.table_name or not self.date_column:
@@ -336,3 +277,111 @@ class Task(ABC):
         affected_rows = await self.db.executemany(upsert_sql, values)
         
         return affected_rows
+
+    async def smart_incremental_update(self, lookback_days=None, end_date=None, use_trade_days=False, safety_days=1, **kwargs):
+        """智能增量更新方法
+        
+        整合了基于自然日和交易日的增量更新功能。可以根据需要选择使用自然日或交易日进行更新。
+        
+        Args:
+            lookback_days (int, optional): 回溯的天数。
+                                         如果 use_trade_days=True，表示回溯的交易日数。
+                                         如果 use_trade_days=False，表示回溯的自然日数。
+            end_date (str, optional): 更新的结束日期 (YYYYMMDD)，默认为当前日期。
+            use_trade_days (bool): 是否使用交易日计算。
+                                 True: 使用交易日计算（通过交易日历）
+                                 False: 使用自然日计算（通过timedelta）
+            safety_days (int): 安全天数，为了确保数据连续性，会额外回溯的天数。
+                             仅在 use_trade_days=False 时使用。
+            **kwargs: 传递给 execute 方法的其他参数。
+            
+        Returns:
+            Dict[str, Any]: 执行结果，包含新增数据行数和状态信息
+        """
+        self.logger.info(f"开始执行 {self.name} 的智能增量更新")
+        
+        # 确定结束日期
+        if end_date is None:
+            end_date = datetime.now().strftime('%Y%m%d')
+            self.logger.info(f"未指定结束日期，使用当前日期: {end_date}")
+            
+        # 获取数据库中最新的数据日期
+        latest_date = await self._get_latest_date()
+        start_date = None
+        
+        if use_trade_days:
+            # 使用交易日模式
+            from .tools.calendar import get_last_trade_day, get_next_trade_day
+            
+            if lookback_days is not None and lookback_days > 0:
+                # 按指定交易日回溯天数计算起始日期
+                try:
+                    start_date = await get_last_trade_day(end_date, n=lookback_days)
+                    self.logger.info(f"按回溯 {lookback_days} 个交易日计算，起始日期为: {start_date}")
+                except Exception as e:
+                    self.logger.error(f"计算回溯 {lookback_days} 个交易日失败: {e}")
+                    return self.handle_error(e)
+            elif latest_date:
+                try:
+                    next_day = await get_next_trade_day(latest_date, n=1)
+                    if next_day and next_day <= end_date:
+                        start_date = next_day
+                        self.logger.info(f"数据库最新日期为 {latest_date}，从下一个交易日 {start_date} 开始更新")
+                    elif not next_day:
+                        self.logger.info(f"无法确定 {latest_date} 的下一个交易日。数据可能已最新。")
+                        return {"status": "up_to_date", "rows": 0}
+                    else:  # next_day > end_date
+                        self.logger.info(f"数据库最新日期 {latest_date} 之后无新交易日需要更新")
+                        return {"status": "up_to_date", "rows": 0}
+                except Exception as e:
+                    self.logger.error(f"获取 {latest_date} 的下一个交易日时发生错误: {e}")
+                    return self.handle_error(e)
+            else:
+                # 数据库无记录，获取最近30个交易日
+                try:
+                    start_date = await get_last_trade_day(end_date, n=30)
+                    self.logger.info(f"数据库无记录，默认更新最近30个交易日，起始日期: {start_date}")
+                except Exception as e:
+                    self.logger.error(f"计算最近30个交易日失败: {e}")
+                    return self.handle_error(e)
+        else:
+            # 使用自然日模式
+            if latest_date:
+                # 将最新日期转换为datetime对象
+                latest_dt = datetime.strptime(latest_date, '%Y%m%d')
+                
+                if lookback_days is not None:
+                    # 使用指定的回溯天数
+                    start_dt = datetime.strptime(end_date, '%Y%m%d') - timedelta(days=lookback_days)
+                else:
+                    # 从最新日期开始，考虑安全天数
+                    start_dt = latest_dt - timedelta(days=safety_days)
+                
+                start_date = start_dt.strftime('%Y%m%d')
+                
+                # 检查是否需要更新
+                if datetime.strptime(end_date, '%Y%m%d') <= latest_dt and safety_days == 0:
+                    self.logger.info(f"数据库中已有最新数据（{latest_date}），无需更新")
+                    return {"status": "up_to_date", "rows": 0}
+            else:
+                # 数据库中没有数据，则从30天前开始获取
+                start_dt = datetime.strptime(end_date, '%Y%m%d') - timedelta(days=30)
+                start_date = start_dt.strftime('%Y%m%d')
+                self.logger.info(f"数据库中没有数据，将从 {start_date} 开始获取")
+        
+        # 执行更新
+        if start_date and end_date:
+            self.logger.info(f"最终执行更新范围: {start_date} 到 {end_date}")
+            kwargs['start_date'] = start_date
+            kwargs['end_date'] = end_date
+            result = await self.execute(**kwargs)
+            
+            if result.get("status") == "no_data":
+                self.logger.info("没有新数据需要更新")
+            else:
+                self.logger.info(f"增量更新完成: 新增/更新 {result.get('rows', 0)} 行数据")
+            
+            return result
+        else:
+            self.logger.warning("未能确定有效的更新日期范围，任务未执行")
+            return {"status": "no_range", "rows": 0}

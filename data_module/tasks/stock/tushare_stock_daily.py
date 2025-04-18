@@ -93,9 +93,13 @@ class TushareStockDailyTask(TushareTask):
         """
         # 获取查询参数
         ts_code = kwargs.get('ts_code')
-        start_date = kwargs.get('start_date', '19910101') # 股票市场最早的交易日
-        end_date = kwargs.get('end_date', datetime.now().strftime('%Y%m%d'))
+        start_date = kwargs.get('start_date')  # 移除默认值
+        end_date = kwargs.get('end_date')      # 移除默认值
         exchange = kwargs.get('exchange', 'SSE') # 允许指定交易所，默认为上交所
+
+        if not start_date or not end_date:
+            self.logger.error("必须提供 start_date 和 end_date 参数")
+            return []
 
         self.logger.info(f"开始生成批处理列表，范围: {start_date} 到 {end_date}, 代码: {ts_code or '全部'}")
 
