@@ -334,7 +334,11 @@ class DBManager:
         if isinstance(data, pd.DataFrame):
             if data.empty:
                 return 0
-            records = data.to_dict('records')
+            # 使用 fillna(pd.NA).to_dict('records') 可能更优雅地处理 NaN 转 None
+            # 但为了明确处理逻辑，我们先手动转换
+            # Important: Convert NaN to None *before* converting to dict might lose distinction
+            # Better to handle it during value extraction below.
+            records = data.to_dict('records') 
         elif isinstance(data, list):
             if not data:
                 return 0
@@ -365,15 +369,16 @@ class DBManager:
         
         # 构建UPSERT SQL语句
         placeholders = ', '.join([f'${i+1}' for i in range(len(columns))])
-        column_str = ', '.join(columns)
+        column_str = ', '.join([f'"{col}"' for col in columns]) # Ensure columns are quoted
+        conflict_col_str = ', '.join([f'"{col}"' for col in conflict_columns]) # Quote conflict columns
         
         if update_columns:
             # 构建更新子句
-            update_clause = ', '.join([f"{col} = EXCLUDED.{col}" for col in update_columns])
+            update_clause = ', '.join([f'"{col}" = EXCLUDED."{col}"' for col in update_columns]) # Quote update columns
             upsert_sql = f"""
             INSERT INTO {table_name} ({column_str})
             VALUES ({placeholders})
-            ON CONFLICT ({', '.join(conflict_columns)}) 
+            ON CONFLICT ({conflict_col_str}) 
             DO UPDATE SET {update_clause};
             """
         else:
@@ -381,17 +386,61 @@ class DBManager:
             upsert_sql = f"""
             INSERT INTO {table_name} ({column_str})
             VALUES ({placeholders})
-            ON CONFLICT ({', '.join(conflict_columns)}) 
+            ON CONFLICT ({conflict_col_str}) 
             DO NOTHING;
             """
         
-        # 准备数据
-        values = [[record.get(col) for col in columns] for record in records]
+        # 准备数据，并将 NaN 替换为 None
+        values = []
+        for record in records:
+            row_values = []
+            for col in columns:
+                val = record.get(col)
+                # 检查是否为 NaN (使用 pandas.isna)
+                if pd.isna(val):
+                    row_values.append(None) # 将 NaN 替换为 None
+                else:
+                    row_values.append(val)
+            values.append(row_values)
         
+        # Filter rows where any conflict column value is None
+        if conflict_columns:
+            try:
+                conflict_indices = [columns.index(col) for col in conflict_columns]
+            except ValueError as e:
+                self.logger.error(f"UPSERT 失败：冲突列 '{str(e).split()[-1]}' 不在数据列中。")
+                raise ValueError(f"Conflict column {str(e).split()[-1]} not found in data columns")
+            
+            filtered_values = []
+            invalid_rows_count = 0
+            for row_values in values:
+                has_null_in_conflict = False
+                for index in conflict_indices:
+                    if row_values[index] is None:
+                        has_null_in_conflict = True
+                        break
+                if not has_null_in_conflict:
+                    filtered_values.append(row_values)
+                else:
+                    invalid_rows_count += 1
+            
+            if invalid_rows_count > 0:
+                self.logger.warning(
+                    f"UPSERT ({table_name}): 发现 {invalid_rows_count} 行的冲突列 "
+                    f"({', '.join(conflict_columns)}) 包含NULL值，将移除这些行。"
+                )
+            
+            if not filtered_values:
+                self.logger.info(f"UPSERT ({table_name}): 移除包含NULL的主键行后，没有有效数据可执行。")
+                return 0 # No valid rows left to upsert
+            
+            values = filtered_values # Use the filtered list for execution
+
         try:
             # 执行UPSERT
             affected_rows = await self.executemany(upsert_sql, values)
             return affected_rows
         except Exception as e:
-            self.logger.error(f"UPSERT操作失败: {str(e)}\n表: {table_name}")
+            # Log the problematic SQL and values for easier debugging
+            self.logger.error(f"UPSERT操作失败: {str(e)}\n表: {table_name}\nSQL: {upsert_sql}\n第一行数据示例: {values[0] if values else '无数据'}")
             raise

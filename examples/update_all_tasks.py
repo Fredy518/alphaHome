@@ -70,8 +70,10 @@ async def update_task(task_name: str, args: argparse.Namespace) -> Dict[str, Any
         # 根据不同的更新模式设置参数
         if args.full_update:
             # 全量更新模式
-            start_date = '19901219'  # Tushare最早的数据日期
+            # 使用任务定义的默认起始日期
+            start_date = task.default_start_date if hasattr(task, 'default_start_date') else '19900101'
             end_date = datetime.now().strftime('%Y%m%d')
+            logger.info(f"任务 {task_name}: 执行全量更新，从 {start_date} 到 {end_date}")
             result = await task.execute(
                 start_date=start_date,
                 end_date=end_date,
@@ -189,6 +191,7 @@ async def main():
     parser.add_argument('--start-date', help='更新起始日期 (格式: YYYYMMDD)')
     parser.add_argument('--end-date', help='更新结束日期 (格式: YYYYMMDD, 默认为当天)')
     parser.add_argument('--full-update', action='store_true', help='全量更新模式: 从最早日期开始更新')
+    parser.add_argument('--auto', action='store_true', help='自动增量模式: 从数据库最新日期开始更新（默认行为）')
     parser.add_argument('--show-progress', action=argparse.BooleanOptionalAction, default=True, help='是否显示进度条')
     
     args = parser.parse_args()

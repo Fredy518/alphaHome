@@ -2,6 +2,7 @@ import abc
 import os
 import asyncio
 import pandas as pd
+import numpy as np  # 导入 numpy
 from typing import Dict, List, Any, Optional
 from ...base_task import Task
 from .tushare_api import TushareAPI
@@ -52,6 +53,54 @@ class TushareTask(Task):
         self.page_size = self.default_page_size
         self.max_retries = self.default_max_retries
         self.retry_delay = self.default_retry_delay
+        
+    async def get_latest_date(self) -> Optional[datetime.date]:
+        """获取当前任务对应表中的最新日期。
+        
+        Returns:
+            Optional[datetime.date]: 最新日期，如果表不存在或没有数据则返回 None。
+        """
+        if not hasattr(self, 'db') or not self.db:
+            self.logger.error("数据库管理器未初始化 (self.db is missing)，无法获取最新日期。")
+            return None
+            
+        if not self.table_name or not self.date_column:
+            self.logger.error("任务未定义 table_name 或 date_column，无法获取最新日期。")
+            return None
+            
+        try:
+            query = f"SELECT MAX({self.date_column}) as latest_date FROM {self.table_name}"
+            result = await self.db.fetch_one(query)
+            
+            if result and result['latest_date']:
+                latest_date = result['latest_date']
+                from datetime import date, datetime 
+                if isinstance(latest_date, datetime):
+                    return latest_date.date() # 如果是 datetime 对象，返回 date 部分
+                elif isinstance(latest_date, date):
+                    return latest_date # 如果已经是 date 对象，直接返回
+                else:
+                    self.logger.warning(f"从数据库获取的最新日期类型未知: {type(latest_date)}")
+                    # 尝试解析常见日期格式
+                    try:
+                        return datetime.strptime(str(latest_date), '%Y-%m-%d').date()
+                    except ValueError:
+                        try:
+                            return datetime.strptime(str(latest_date), '%Y%m%d').date()
+                        except ValueError:
+                            self.logger.error(f"无法将 {latest_date} 解析为日期。")
+                            return None
+            else:
+                self.logger.info(f"表 '{self.table_name}' 中没有找到日期数据。")
+                return None
+        except Exception as e:
+            # 特别处理表不存在的情况
+            if "does not exist" in str(e).lower() or "relation" in str(e).lower() and "does not exist" in str(e).lower():
+                self.logger.info(f"表 '{self.table_name}' 不存在，无法获取最新日期。")
+                return None
+            else:
+                self.logger.error(f"查询最新日期时出错: {e}", exc_info=True)
+                return None
         
     def set_config(self, config):
         """设置任务配置
@@ -206,7 +255,7 @@ class TushareTask(Task):
                 if attempt > 0: # 如果是重试
                     self.logger.info(f"{batch_log_prefix}: 重试获取数据 (尝试 {attempt+1}/{self.max_retries+1})")
                 else:
-                     self.logger.info(f"{batch_log_prefix}: 开始获取数据")
+                    self.logger.info(f"{batch_log_prefix}: 开始获取数据")
 
                 batch_data = await self.fetch_batch(batch_params)
                 # 如果成功获取数据（即使是空的），则跳出重试循环
@@ -235,16 +284,22 @@ class TushareTask(Task):
             return 0 # 处理数据失败
 
         # 3. 验证数据 (通常不重试逻辑错误)
+        validated_data = None # 初始化变量
         try:
             self.logger.info(f"{batch_log_prefix}: 验证数据")
-            if not self.validate_data(processed_data):
-                 self.logger.error(f"{batch_log_prefix}: 数据验证失败")
-                 return 0 # 验证失败
+            validated_data = self.validate_data(processed_data) # 获取验证和过滤后的数据
+            
+            # 检查返回的是否是DataFrame以及是否为空
+            if not isinstance(validated_data, pd.DataFrame) or validated_data.empty:
+                # 如果不是DataFrame或为空，则认为验证失败或无数据
+                self.logger.error(f"{batch_log_prefix}: 数据验证失败或所有数据均被过滤")
+                return 0 # 验证失败或没有数据可保存
+                
         except Exception as e:
             self.logger.error(f"{batch_log_prefix}: 验证数据时发生错误: {str(e)}")
             return 0 # 验证过程中出错
 
-        # 4. 保存数据（带重试）
+        # 4. 保存数据（带重试） - 使用验证后的数据 validated_data
         for attempt in range(self.max_retries + 1):
             try:
                 if attempt > 0:
@@ -252,7 +307,12 @@ class TushareTask(Task):
                 else:
                     self.logger.info(f"{batch_log_prefix}: 保存数据到表 {self.table_name}")
 
-                result = await self.save_data(processed_data)
+                # 确保 validated_data 是 DataFrame 且不为空
+                if not isinstance(validated_data, pd.DataFrame) or validated_data.empty:
+                     self.logger.info(f"{batch_log_prefix}: 没有有效数据需要保存。")
+                     return 0 # 没有数据保存，返回0行
+
+                result = await self.save_data(validated_data) # 使用 validated_data
                 rows = result.get('rows', 0)
                 self.logger.info(f"{batch_log_prefix}: 已保存 {rows} 行数据")
                 return rows # 保存成功，返回行数
@@ -397,6 +457,7 @@ class TushareTask(Task):
         """应用数据转换
         
         根据转换规则对指定列应用转换函数。
+        增加了对None/NaN值的安全处理。
         
         Args:
             data (DataFrame): 原始数据
@@ -410,59 +471,147 @@ class TushareTask(Task):
         for column, transform_func in self.transformations.items():
             if column in data.columns:
                 try:
-                    data[column] = data[column].apply(transform_func)
+                    # 确保处理前列中没有Python原生的None，统一使用np.nan
+                    # （虽然理论上在process_data开始时已经处理，但这里再确认一次更保险）
+                    if data[column].dtype == 'object':
+                       data[column] = data[column].fillna(np.nan)
+                    
+                    # 定义一个安全的转换函数，处理np.nan值
+                    def safe_transform(x):
+                        if pd.isna(x):
+                            return np.nan  # 保持np.nan
+                        try:
+                            return transform_func(x) # 应用原始转换
+                        except Exception as e:
+                            # 记录详细错误，但只记录一次或采样记录，避免日志爆炸
+                            # 这里暂时只记录警告，具体策略可以后续优化
+                            # self.logger.warning(f"转换值 '{x}' (类型: {type(x)}) 到列 '{column}' 时失败: {str(e)}")
+                            return np.nan # 转换失败时返回np.nan
+
+                    # 应用安全转换
+                    original_dtype = data[column].dtype
+                    data[column] = data[column].apply(safe_transform)
+                    
+                    # 尝试恢复原始数据类型（如果转换后类型改变且非object）
+                    # 例如，如果原来是float，转换后可能变成object（因为混入了nan），尝试转回float
+                    try:
+                        if data[column].dtype == 'object' and original_dtype != 'object':
+                            data[column] = pd.to_numeric(data[column], errors='coerce')
+                    except Exception as type_e:
+                        self.logger.debug(f"尝试恢复列 '{column}' 类型失败: {str(type_e)}")
+                        
                 except Exception as e:
-                    self.logger.warning(f"列 '{column}' 应用转换函数时发生错误: {str(e)}")
+                    self.logger.error(f"处理列 '{column}' 的转换时发生意外错误: {str(e)}", exc_info=True)
+                    # 如果整个列的处理失败，可以选择将该列填充为NaN，而不是中断
+                    # data[column] = np.nan 
+                    # 暂时保持原样，让错误暴露
                     
         return data
         
     def process_data(self, data):
         """处理从Tushare获取的数据
         
-        除了基类的数据处理外，还处理Tushare特有的数据格式问题，并进行排序。
         包括列名映射、日期处理、数据排序和数据转换。
         """
         if data is None or data.empty:
             self.logger.warning("没有数据需要处理")
             return pd.DataFrame()
             
-        # 首先应用列名映射
+        # 1. 应用列名映射
         data = self._apply_column_mapping(data)
         
-        # 处理日期列
-        data = self._process_date_column(data)
+        # 2. 处理主要的 date_column (如果定义)
+        data = self._process_date_column(data) 
         
-        # 应用数据转换
+        # 3. 应用通用数据类型转换 (from transformations dict)
         data = self._apply_transformations(data)
-        
-        # 对数据进行排序
+
+        # 4. 显式处理 schema 中定义的其他 DATE/TIMESTAMP 列
+        if hasattr(self, 'schema') and self.schema:
+            date_columns_to_process = []
+            # 识别需要处理的日期列
+            for col_name, col_def in self.schema.items():
+                col_type = col_def.get('type', '').upper() if isinstance(col_def, dict) else str(col_def).upper()
+                if ('DATE' in col_type or 'TIMESTAMP' in col_type) and col_name in data.columns and col_name != self.date_column:
+                     # 仅处理尚未是日期时间类型的列
+                    if data[col_name].dtype == 'object' or pd.api.types.is_string_dtype(data[col_name]):
+                         date_columns_to_process.append(col_name)
+            
+            # 批量处理识别出的日期列
+            if date_columns_to_process:
+                 self.logger.info(f"转换以下列为日期时间格式 (YYYYMMDD): {', '.join(date_columns_to_process)}")
+                 original_count = len(data)
+                 for col_name in date_columns_to_process:
+                    # 尝试使用 YYYYMMDD 格式转换
+                    converted_col = pd.to_datetime(data[col_name], format='%Y%m%d', errors='coerce')
+                    
+                    # 检查失败率，如果过高则尝试通用解析
+                    # if converted_col.isna().sum() > len(data) * 0.5: # 可选：添加失败率高的回退逻辑
+                    #    self.logger.warning(f"列 '{col_name}': YYYYMMDD 转换失败率高，尝试通用解析...")
+                    #    converted_col_alt = pd.to_datetime(data[col_name], errors='coerce')
+                    #    if converted_col_alt.isna().sum() < converted_col.isna().sum():
+                    #        converted_col = converted_col_alt
+                        
+                    data[col_name] = converted_col
+                 
+                 # 一次性移除所有日期转换失败的行
+                 data.dropna(subset=date_columns_to_process, inplace=True)
+                 if len(data) < original_count:
+                    self.logger.warning(f"处理日期列: 移除了 {original_count - len(data)} 行，因为日期格式无效或转换失败。")
+
+        # 5. 对数据进行排序 (应该在所有转换后进行)
         data = self._sort_data(data)
         
-        # 调用基类的处理方法
-        return super().process_data(data)
+        # 6. 不再调用 super().process_data() 因为 TushareTask 应该处理其特定需求
+        # return super().process_data(data) 
+        return data
         
     def validate_data(self, data):
         """验证从Tushare获取的数据
         
-        除了基类的数据验证外，还添加了Tushare特有的数据验证
+        除了基类的数据验证外，还添加了Tushare特有的数据验证。
+        不符合验证规则的数据会被过滤掉，而不是整批拒绝。
+        
+        Args:
+            data (pd.DataFrame): 待验证的数据
+            
+        Returns:
+            pd.DataFrame: 验证后的数据（已过滤掉不符合规则的数据）
         """
         if data is None or data.empty:
             self.logger.warning("没有数据需要验证")
-            return True
+            return data
             
+        # 记录原始数据行数
+        original_count = len(data)
+        valid_mask = pd.Series(True, index=data.index)
+        
         # 应用自定义验证规则
         if hasattr(self, 'validations') and self.validations:
             for validation_func in self.validations:
                 try:
-                    if not validation_func(data):
-                        self.logger.warning(f"数据验证失败: {validation_func.__name__ if hasattr(validation_func, '__name__') else '未命名验证'}")
-                        return False
+                    # 获取每行数据的验证结果
+                    validation_result = validation_func(data[valid_mask])
+                    if isinstance(validation_result, pd.Series):
+                        # 如果验证函数返回Series，直接使用
+                        valid_mask &= validation_result
+                    else:
+                        # 如果验证函数返回单个布尔值，应用到所有行
+                        if not validation_result:
+                            self.logger.warning(f"整批数据未通过验证: {validation_func.__name__ if hasattr(validation_func, '__name__') else '未命名验证'}")
+                            valid_mask &= False
                 except Exception as e:
                     self.logger.warning(f"执行验证时发生错误: {str(e)}")
-                    return False
-                    
-        # 调用基类的验证方法
-        return super().validate_data(data)
+                    # 发生错误时，将对应的数据标记为无效
+                    valid_mask &= False
+        # 应用验证结果
+        filtered_data = data[valid_mask].copy()
+        filtered_count = len(filtered_data)
+        
+        if filtered_count < original_count:
+            self.logger.warning(f"数据验证: 过滤掉 {original_count - filtered_count} 行不符合规则的数据")
+            
+        return filtered_data
         
     @abc.abstractmethod
     def get_batch_list(self, **kwargs) -> List[Dict]:

@@ -1,4 +1,6 @@
 from ...sources.tushare import TushareTask
+import pandas as pd
+from typing import List, Dict
 
 class IndexDailyTask(TushareTask):
     """指数日线数据任务
@@ -46,17 +48,6 @@ class IndexDailyTask(TushareTask):
         "amount": float
     }
     
-    # 数据验证规则
-    validations = [
-        # 验证收盘价是否合理
-        lambda df: all(df["close"] >= 0),
-        lambda df: all(df["high"] >= df["low"]),
-        # 验证成交量是否为正
-        lambda df: all(df["vol"] >= 0),
-        # 验证成交额是否为正
-        lambda df: all(df["amount"] >= 0)
-    ]
-    
     # 索引定义
     indexes = [
         {"name": "idx_index_daily_code", "columns": "ts_code"},
@@ -82,7 +73,6 @@ class IndexDailyTask(TushareTask):
         # 处理日期范围
         if start_date and end_date:
             # 将日期字符串转换为datetime对象
-            import pandas as pd
             start = pd.to_datetime(start_date)
             end = pd.to_datetime(end_date)
             

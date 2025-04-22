@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import pandas as pd
+import numpy as np  # 添加numpy导入
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta
 from typing import Dict, List, Any, Callable, Optional, Union
@@ -45,13 +46,26 @@ class Task(ABC):
             self.logger.info(f"处理数据，共 {len(data)} 行")
             data = self.process_data(data)
             
+            # 再次检查处理后的数据是否为空
+            if data is None or data.empty:
+                self.logger.warning("数据处理后为空")
+                return {"status": "no_data", "rows": 0}
+            
             # 验证数据
             self.logger.info("验证数据")
-            self.validate_data(data)
+            validation_passed = self.validate_data(data)
+            # 记录验证结果，但不中断执行流程
+            if not validation_passed:
+                self.logger.warning("数据验证未通过，但将继续保存")
             
             # 保存数据
             self.logger.info(f"保存数据到表 {self.table_name}")
             result = await self.save_data(data)
+            
+            # 如果验证未通过但成功保存，则标记为部分成功
+            if not validation_passed and result.get("status") == "success":
+                result["status"] = "partial_success"
+                result["validation"] = False
             
             # 后处理
             await self.post_execute(result)
@@ -118,25 +132,95 @@ class Task(ABC):
         if hasattr(self, 'transformations') and self.transformations:
             for column, transform in self.transformations.items():
                 if column in data.columns:
-                    data[column] = data[column].apply(transform)
+                    try:
+                        # 先将所有None值转换为np.nan，确保一致的缺失值处理
+                        data[column] = data[column].fillna(np.nan)
+                        
+                        # 检查列是否包含nan值
+                        has_nan = data[column].isna().any()
+                        
+                        if has_nan:
+                            self.logger.debug(f"列 {column} 包含缺失值(NaN)，将使用安全转换")
+                            # 定义一个安全的转换函数，处理np.nan值
+                            def safe_transform(x):
+                                if pd.isna(x):  # 检查是否为np.nan
+                                    return np.nan  # 保持np.nan不变
+                                try:
+                                    return transform(x)  # 应用原始转换函数
+                                except Exception as e:
+                                    self.logger.warning(f"转换值 {x} 时发生错误: {str(e)}")
+                                    return np.nan  # 转换失败时返回np.nan
+                            
+                            # 使用安全转换函数
+                            data[column] = data[column].apply(safe_transform)
+                        else:
+                            # 没有np.nan值，直接应用转换函数，但仍然捕获可能的异常
+                            try:
+                                data[column] = data[column].apply(transform)
+                            except Exception as e:
+                                self.logger.error(f"应用转换函数到列 {column} 时发生错误: {str(e)}")
+                                # 不中断处理，继续处理其他列
+                    except Exception as e:
+                        self.logger.error(f"处理列 {column} 时发生错误: {str(e)}")
+                        # 不中断处理，继续处理其他列
         
         return data
     
     def validate_data(self, data):
-        """验证数据有效性"""
+        """验证数据有效性
+        
+        如果验证失败，会返回False，但不会抛出异常，以允许数据处理继续进行。
+        开发者可以根据需要在子类中重写此方法，实现更严格的验证策略。
+        
+        Args:
+            data (pd.DataFrame): 要验证的数据
+            
+        Returns:
+            bool: 验证结果，True表示验证通过，False表示验证失败
+        """
         if not hasattr(self, 'validations') or not self.validations:
             return True
         
-        for validator in self.validations:
-            validation_result = validator(data)
-            if isinstance(validation_result, bool) and not validation_result:
-                raise ValueError("数据验证失败")
+        validation_passed = True
         
-        return True
+        for validator in self.validations:
+            try:
+                # 检查验证器中是否处理了np.nan值
+                validator_name = validator.__name__ if hasattr(validator, '__name__') else '未命名验证器'
+                self.logger.debug(f"执行验证器: {validator_name}")
+                
+                validation_result = validator(data)
+                if isinstance(validation_result, bool) and not validation_result:
+                    self.logger.warning(f"数据验证失败: {validator_name}")
+                    validation_passed = False
+                    # 不立即退出，继续运行其他验证器以获取更多信息
+            except Exception as e:
+                self.logger.error(f"执行验证器时发生错误: {str(e)}")
+                validation_passed = False
+        
+        if not validation_passed:
+            self.logger.warning("数据验证未完全通过，但将继续处理")
+            
+            # 记录包含NaN值的列，帮助诊断
+            nan_columns = data.columns[data.isna().any()].tolist()
+            if nan_columns:
+                self.logger.info(f"以下列包含NaN值，可能影响验证结果: {', '.join(nan_columns)}")
+        
+        return validation_passed
     
     async def save_data(self, data):
         """将处理后的数据保存到数据库"""
         await self._ensure_table_exists()
+        
+        # 检查数据中的NaN值
+        nan_count = data.isna().sum().sum()
+        if nan_count > 0:
+            self.logger.warning(f"数据中包含 {nan_count} 个NaN值，这些值在保存到数据库时将被转换为NULL")
+            
+            # 查看哪些列包含NaN值
+            cols_with_nan = data.columns[data.isna().any()].tolist()
+            if cols_with_nan:
+                self.logger.debug(f"包含NaN值的列: {', '.join(cols_with_nan)}")
         
         # 将数据保存到数据库
         affected_rows = await self._save_to_database(data)

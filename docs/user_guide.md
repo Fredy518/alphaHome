@@ -26,6 +26,7 @@
    - [添加新数据源](#1-添加新数据源)
    - [自定义数据处理组件](#2-自定义数据处理组件)
    - [自定义数据验证器](#3-自定义数据验证器)
+   - [批处理工具函数](#批处理工具函数)
 8. [最佳实践](#最佳实践)
    - [任务设计原则](#1-任务设计原则)
    - [数据处理最佳实践](#2-数据处理最佳实践)
@@ -152,11 +153,44 @@ TushareTask是专门用于从Tushare金融数据API获取数据的任务基类�
 
 这个方法负责将用户的查询参数转换为一系列批处理参数，每个批处理参数将用于一次API调用。主要目的是将大型查询分解为多个小型查询，以避免超出API限制或提高并行性。
 
-实现此方法时，应考虑以下几点：
+实现此方法时，有两种推荐的方式：
 
-1. 如何根据日期范围、股票代码列表等参数拆分成多个批次
-2. 每个批次的大小应适中，既不会导致单次请求数据量过大，也不会产生过多的请求次数
-3. 对于小数据量查询，可以直接返回单个批次，避免不必要的拆分
+1. **使用专用批处理工具函数（推荐）**
+   - 使用系统提供的专用批处理工具函数如`generate_trade_day_batches`、`generate_natural_day_batches`等
+   - 这些函数参数更少、更直观，更适合初学者使用
+   - 所有专用函数都是异步的，保持API的一致性
+   - 详见[批处理工具函数](#批处理工具函数)小节
+
+2. **自定义实现**
+   - 适用于需要特殊批处理逻辑的场景
+   - 需要考虑以下几点：
+     - 如何根据日期范围、股票代码列表等参数拆分成多个批次
+     - 每个批次的大小应适中，既不会导致单次请求数据量过大，也不会产生过多的请求次数
+     - 对于小数据量查询，可以直接返回单个批次，避免不必要的拆分
+
+**使用专用工具函数的示例**:
+
+```python
+async def get_batch_list(self, **kwargs) -> List[Dict]:
+    """使用专用交易日批次工具生成批处理参数列表"""
+    start_date = kwargs.get('start_date')
+    end_date = kwargs.get('end_date')
+    ts_code = kwargs.get('ts_code')
+    
+    try:
+        return await generate_trade_day_batches(
+            start_date=start_date,
+            end_date=end_date,
+            batch_size=self.batch_trade_days_single_code if ts_code else self.batch_trade_days_all_codes,
+            ts_code=ts_code,
+            logger=self.logger
+        )
+    except Exception as e:
+        self.logger.error(f"生成批次时出错: {e}")
+        return []
+```
+
+**自定义实现示例**:
 
 ```python
 def get_batch_list(self, **kwargs) -> List[Dict]:
@@ -2424,3 +2458,96 @@ await task.execute(
    - 数据校验：使用较大的 `lookback_days` 或 `safety_days`
    - 数据修复：使用精确的日期范围
    - 全量更新：使用 `execute` 方法指定完整日期范围
+
+### 批处理工具函数
+
+系统提供了一系列专用批处理工具函数，用于简化任务类中`get_batch_list`方法的实现。这些工具函数位于`data_module/tools/batch_utils.py`文件中。
+
+#### 专用批处理函数
+
+系统提供了以下专用批处理函数，所有函数都是异步的，以保持API的一致性：
+
+1. **`generate_trade_day_batches`**: 生成基于交易日的批次
+   ```python
+   async def generate_trade_day_batches(
+       start_date: str,
+       end_date: str,
+       batch_size: int,
+       ts_code: Optional[str] = None,
+       exchange: str = 'SSE',
+       logger: Optional[logging.Logger] = None
+   ) -> List[Dict[str, Any]]
+   ```
+
+2. **`generate_natural_day_batches`**: 生成基于自然日的批次
+   ```python
+   async def generate_natural_day_batches(
+       start_date: str,
+       end_date: str,
+       batch_size: int,
+       ts_code: Optional[str] = None,
+       date_format: str = '%Y%m%d',
+       logger: Optional[logging.Logger] = None
+   ) -> List[Dict[str, Any]]
+   ```
+
+3. **`generate_quarter_end_batches`**: 生成基于季度末的批次
+   ```python
+   async def generate_quarter_end_batches(
+       start_date: str,
+       end_date: str,
+       ts_code: Optional[str] = None,
+       date_format: str = '%Y%m%d',
+       logger: Optional[logging.Logger] = None
+   ) -> List[Dict[str, str]]
+   ```
+
+这些专用函数的参数更少、更直观，更适合初学者使用。
+
+#### 在任务类中使用批处理工具函数
+
+在任务类的`get_batch_list`方法中，可以直接调用这些工具函数：
+
+```python
+async def get_batch_list(self, **kwargs) -> List[Dict]:
+    """生成批处理参数列表 (使用专用交易日批次工具)"""
+    
+    # 获取参数
+    start_date = kwargs.get('start_date')
+    end_date = kwargs.get('end_date')
+    ts_code = kwargs.get('ts_code')
+    exchange = kwargs.get('exchange', 'SSE')
+    
+    # 调用专用批处理工具函数
+    try:
+        batch_list = await generate_trade_day_batches(
+            start_date=start_date,
+            end_date=end_date,
+            batch_size=self.batch_trade_days_single_code if ts_code else self.batch_trade_days_all_codes,
+            ts_code=ts_code,
+            exchange=exchange,
+            logger=self.logger
+        )
+        return batch_list
+    except Exception as e:
+        self.logger.error(f"生成交易日批次时出错: {e}")
+        return []
+```
+
+#### 通用批处理函数
+
+系统也提供了一个通用批处理函数`generate_date_batches`，但推荐使用上述专用函数，因为它们的参数更少、更易于理解。通用函数主要用于向后兼容。
+
+```python
+async def generate_date_batches(
+    start_date_str: str,
+    end_date_str: str,
+    batch_size_single: int,
+    batch_size_all: int,
+    item_key: Optional[str] = None, 
+    split_by: Literal['trade_days', 'natural_days', 'quarter_end'] = 'trade_days',
+    date_format: str = '%Y%m%d',
+    logger: Optional[logging.Logger] = None,
+    **kwargs: Any
+) -> List[Dict[str, Any]]
+```
