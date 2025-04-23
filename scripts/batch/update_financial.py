@@ -27,7 +27,7 @@ import pandas as pd
 import numpy as np
 
 # 添加项目根目录到系统路径
-project_root = Path(__file__).resolve().parent.parent
+project_root = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.append(str(project_root))
 
 # 加载环境变量
@@ -38,13 +38,20 @@ from data_module.task_factory import TaskFactory
 from data_module.task_decorator import get_registered_tasks
 from data_module.tools.calendar import get_last_trade_day, get_trade_cal
 
-# 配置日志
+# --- 日志配置 ---
+# 确保 logs 目录存在
+log_dir = project_root / 'logs'
+log_dir.mkdir(parents=True, exist_ok=True)
+
+# 构建日志文件完整路径
+log_file_path = log_dir / f'update_financial_tasks_{datetime.now().strftime("%Y%m%d")}.log'
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
         logging.StreamHandler(sys.stdout),
-        logging.FileHandler(f'update_financial_tasks_{datetime.now().strftime("%Y%m%d")}.log')
+        logging.FileHandler(log_file_path) # 使用完整路径
     ]
 )
 

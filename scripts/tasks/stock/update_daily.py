@@ -132,8 +132,8 @@ async def main():
             
         # 将 update_mode 添加回 run_args，因为它可能在 --days 模式下被覆盖
         if 'update_mode' not in run_args:
-             run_args['update_mode'] = 'trade_day' # 默认按交易日
-             
+            run_args['update_mode'] = 'trade_day' # 默认按交易日
+    
         result = await task.execute(**run_args, **common_kwargs) # 调用 task 实例的 execute
         updater.logger.info(f"{update_mode_desc} 更新结果: {result}")
 

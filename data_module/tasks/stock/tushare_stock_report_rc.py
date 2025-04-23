@@ -94,21 +94,27 @@ class TushareStockReportRcTask(TushareTask):
         """生成批处理参数列表 (使用自然日批次工具, 基于 report_date)
         
         Args:
-            **kwargs: 查询参数，包括start_date、end_date (对应 report_date), ts_code等
+            **kwargs: 查询参数，包括start_date、end_date (对应 report_date), ts_code, full_update等
             
         Returns:
             List[Dict]: 批处理参数列表
         """
-        start_date = kwargs.get('start_date')
-        end_date = kwargs.get('end_date')
+        full_update = kwargs.get('full_update', False)
         ts_code = kwargs.get('ts_code') # Allow filtering by ts_code if provided
 
-        if not start_date or not end_date:
-            self.logger.error(f"任务 {self.name}: 必须提供 start_date 和 end_date 参数 (对应 report_date)")
-            return []
+        if full_update:
+            start_date = self.default_start_date
+            end_date = datetime.now().strftime('%Y%m%d')
+            self.logger.info(f"任务 {self.name}: 全量更新模式，自动设置日期范围: {start_date} 到 {end_date}")
+        else:
+            start_date = kwargs.get('start_date')
+            end_date = kwargs.get('end_date')
+            if not start_date or not end_date:
+                self.logger.error(f"任务 {self.name}: 非全量更新模式下，必须提供 start_date 和 end_date 参数 (对应 report_date)")
+                return []
+            self.logger.info(f"任务 {self.name}: 使用自然日批次工具生成批处理列表 (基于 report_date)，范围: {start_date} 到 {end_date}")
 
         batch_size_days = 30 # User requested 30-day batches
-        self.logger.info(f"任务 {self.name}: 使用自然日批次工具生成批处理列表 (基于 report_date)，范围: {start_date} 到 {end_date}，批次大小: {batch_size_days} 天")
 
         try:
             # Note: The batch generator uses start_date/end_date keys. 
@@ -125,3 +131,27 @@ class TushareStockReportRcTask(TushareTask):
         except Exception as e:
             self.logger.error(f"任务 {self.name}: 生成自然日批次时出错: {e}", exc_info=True)
             return [] 
+
+    def process_data(self, df: pd.DataFrame) -> pd.DataFrame:
+        """数据处理方法
+        
+        首先调用父类的处理方法，然后填充 org_name 和 author_name 中的空值。
+        
+        Args:
+            df: 从API获取的原始DataFrame
+            
+        Returns:
+            pd.DataFrame: 处理后的DataFrame
+        """
+        # 1. 调用父类的标准处理
+        df = super().process_data(df)
+        
+        # 2. 填充特定列的空值
+        if 'org_name' in df.columns:
+            # fillna处理None/NaN, replace处理空字符串
+            df['org_name'] = df['org_name'].fillna('无').replace('', '无')
+            
+        if 'author_name' in df.columns:
+            df['author_name'] = df['author_name'].fillna('无').replace('', '无')
+            
+        return df 

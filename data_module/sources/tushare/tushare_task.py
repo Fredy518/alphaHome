@@ -309,8 +309,8 @@ class TushareTask(Task):
 
                 # 确保 validated_data 是 DataFrame 且不为空
                 if not isinstance(validated_data, pd.DataFrame) or validated_data.empty:
-                     self.logger.info(f"{batch_log_prefix}: 没有有效数据需要保存。")
-                     return 0 # 没有数据保存，返回0行
+                    self.logger.info(f"{batch_log_prefix}: 没有有效数据需要保存。")
+                    return 0 # 没有数据保存，返回0行
 
                 result = await self.save_data(validated_data) # 使用 validated_data
                 rows = result.get('rows', 0)
@@ -474,7 +474,7 @@ class TushareTask(Task):
                     # 确保处理前列中没有Python原生的None，统一使用np.nan
                     # （虽然理论上在process_data开始时已经处理，但这里再确认一次更保险）
                     if data[column].dtype == 'object':
-                       data[column] = data[column].fillna(np.nan)
+                        data[column] = data[column].fillna(np.nan)
                     
                     # 定义一个安全的转换函数，处理np.nan值
                     def safe_transform(x):
@@ -533,15 +533,15 @@ class TushareTask(Task):
             for col_name, col_def in self.schema.items():
                 col_type = col_def.get('type', '').upper() if isinstance(col_def, dict) else str(col_def).upper()
                 if ('DATE' in col_type or 'TIMESTAMP' in col_type) and col_name in data.columns and col_name != self.date_column:
-                     # 仅处理尚未是日期时间类型的列
+                    # 仅处理尚未是日期时间类型的列
                     if data[col_name].dtype == 'object' or pd.api.types.is_string_dtype(data[col_name]):
-                         date_columns_to_process.append(col_name)
+                        date_columns_to_process.append(col_name)
             
             # 批量处理识别出的日期列
             if date_columns_to_process:
-                 self.logger.info(f"转换以下列为日期时间格式 (YYYYMMDD): {', '.join(date_columns_to_process)}")
-                 original_count = len(data)
-                 for col_name in date_columns_to_process:
+                self.logger.info(f"转换以下列为日期时间格式 (YYYYMMDD): {', '.join(date_columns_to_process)}")
+                original_count = len(data)
+                for col_name in date_columns_to_process:
                     # 尝试使用 YYYYMMDD 格式转换
                     converted_col = pd.to_datetime(data[col_name], format='%Y%m%d', errors='coerce')
                     
@@ -553,10 +553,10 @@ class TushareTask(Task):
                     #        converted_col = converted_col_alt
                         
                     data[col_name] = converted_col
-                 
-                 # 一次性移除所有日期转换失败的行
-                 data.dropna(subset=date_columns_to_process, inplace=True)
-                 if len(data) < original_count:
+                
+                # 一次性移除所有日期转换失败的行
+                data.dropna(subset=date_columns_to_process, inplace=True)
+                if len(data) < original_count:
                     self.logger.warning(f"处理日期列: 移除了 {original_count - len(data)} 行，因为日期格式无效或转换失败。")
 
         # 5. 对数据进行排序 (应该在所有转换后进行)
