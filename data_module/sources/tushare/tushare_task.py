@@ -278,7 +278,7 @@ class TushareTask(Task):
         # 2. 处理数据 (通常不重试逻辑错误)
         try:
             self.logger.info(f"{batch_log_prefix}: 处理 {len(batch_data)} 行数据")
-            processed_data = self.process_data(batch_data)
+            processed_data = await self.process_data(batch_data)
         except Exception as e:
             self.logger.error(f"{batch_log_prefix}: 处理数据时发生错误: {str(e)}")
             return 0 # 处理数据失败
@@ -287,7 +287,7 @@ class TushareTask(Task):
         validated_data = None # 初始化变量
         try:
             self.logger.info(f"{batch_log_prefix}: 验证数据")
-            validated_data = self.validate_data(processed_data) # 获取验证和过滤后的数据
+            validated_data = await self.validate_data(processed_data) # 获取验证和过滤后的数据
             
             # 检查返回的是否是DataFrame以及是否为空
             if not isinstance(validated_data, pd.DataFrame) or validated_data.empty:
@@ -508,7 +508,7 @@ class TushareTask(Task):
                     
         return data
         
-    def process_data(self, data):
+    async def process_data(self, data):
         """处理从Tushare获取的数据
         
         包括列名映射、日期处理、数据排序和数据转换。
@@ -555,9 +555,11 @@ class TushareTask(Task):
                     data[col_name] = converted_col
                 
                 # 一次性移除所有日期转换失败的行
-                data.dropna(subset=date_columns_to_process, inplace=True)
+                # data.dropna(subset=date_columns_to_process, inplace=True) # <-- 注释掉这一行
                 if len(data) < original_count:
-                    self.logger.warning(f"处理日期列: 移除了 {original_count - len(data)} 行，因为日期格式无效或转换失败。")
+                    # 这个警告现在可能需要调整，因为它可能不再准确反映因为dropna而移除的行
+                    # 或者在转换失败时(产生NaT)记录更具体的警告信息
+                    self.logger.warning(f"处理日期列: 移除了 {original_count - len(data)} 行 (注意：移除逻辑已修改)。") # 调整警告信息
 
         # 5. 对数据进行排序 (应该在所有转换后进行)
         data = self._sort_data(data)
@@ -566,7 +568,7 @@ class TushareTask(Task):
         # return super().process_data(data) 
         return data
         
-    def validate_data(self, data):
+    async def validate_data(self, data):
         """验证从Tushare获取的数据
         
         除了基类的数据验证外，还添加了Tushare特有的数据验证。
@@ -614,7 +616,7 @@ class TushareTask(Task):
         return filtered_data
         
     @abc.abstractmethod
-    def get_batch_list(self, **kwargs) -> List[Dict]:
+    async def get_batch_list(self, **kwargs) -> List[Dict]:
         """生成批处理参数列表
         
         该方法负责将用户的查询参数转换为一系列批处理参数，每个批处理参数将用于一次API调用。

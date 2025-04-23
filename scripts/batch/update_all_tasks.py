@@ -136,12 +136,12 @@ async def update_all_tasks(args: argparse.Namespace) -> List[Dict[str, Any]]:
             await get_trade_cal(start_date=start_date, end_date=today)
             logger.info(f"已预加载从 {start_date} 到 {today} 的交易日历数据")
         elif args.days:
-            # 如果使用增量更新模式，预加载从1年前到当前日期的交易日历
-            # 使用1年是为了确保能够覆盖任何可能的lookback_days值
-            one_year_ago = (datetime.now() - timedelta(days=365)).strftime('%Y%m%d')
-            logger.info("预加载交易日历数据（增量更新模式）...")
-            await get_trade_cal(start_date=one_year_ago, end_date=today)
-            logger.info(f"已预加载从 {one_year_ago} 到 {today} 的交易日历数据")
+            # 如果使用增量更新模式，预加载近期交易日历
+            # 预加载最近约2个月的日历，平衡效率和常见的回看需求
+            lookback_start_date = (datetime.now() - timedelta(days=60)).strftime('%Y%m%d')
+            logger.info("预加载交易日历数据（指定天数增量模式）...")
+            await get_trade_cal(start_date=lookback_start_date, end_date=today)
+            logger.info(f"已预加载从 {lookback_start_date} 到 {today} 的交易日历数据")
         elif args.start_date:
             # 如果指定了日期范围，则预加载该范围的交易日历
             end_date = args.end_date or today
@@ -150,10 +150,10 @@ async def update_all_tasks(args: argparse.Namespace) -> List[Dict[str, Any]]:
             logger.info(f"已预加载从 {args.start_date} 到 {end_date} 的交易日历数据")
         else:
             # 默认方式：预加载近期数据
-            one_year_ago = (datetime.now() - timedelta(days=365)).strftime('%Y%m%d')
-            logger.info("预加载交易日历数据（默认模式）...")
-            await get_trade_cal(start_date=one_year_ago, end_date=today) 
-            logger.info(f"已预加载从 {one_year_ago} 到 {today} 的交易日历数据")
+            lookback_start_date = (datetime.now() - timedelta(days=60)).strftime('%Y%m%d')
+            logger.info("预加载交易日历数据（默认增量模式）...")
+            await get_trade_cal(start_date=lookback_start_date, end_date=today) 
+            logger.info(f"已预加载从 {lookback_start_date} 到 {today} 的交易日历数据")
     except Exception as e:
         logger.warning(f"预加载交易日历数据失败: {str(e)}")
     

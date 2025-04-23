@@ -79,7 +79,7 @@ class CustomExampleTask(Task):
             
         return data
         
-    def validate_data(self, data):
+    async def validate_data(self, data):
         """验证数据
         
         验证处理后的数据是否符合要求。

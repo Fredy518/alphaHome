@@ -258,9 +258,12 @@ class Task(ABC):
         for col_name, col_def in self.schema.items():
             if isinstance(col_def, dict):
                 col_type = col_def.get('type', 'TEXT')
-                constraints = col_def.get('constraints', '')
-                columns.append(f"{col_name} {col_type} {constraints}")
+                constraints_val = col_def.get('constraints') # 获取原始约束值 (可能为 None)
+                # 仅当约束值不是 None 时，才将其转换为空格分隔的字符串，否则使用空字符串
+                constraints_str = str(constraints_val).strip() if constraints_val is not None else ""
+                columns.append(f"{col_name} {col_type} {constraints_str}".strip()) # 确保末尾无多余空格
             else:
+                # 如果 schema 值不是字典，直接作为类型使用
                 columns.append(f"{col_name} {col_def}")
         
         # 如果配置自动添加更新时间，且schema中没有定义update_time列

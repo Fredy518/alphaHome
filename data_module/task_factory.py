@@ -5,9 +5,7 @@ import json
 
 from .base_task import Task
 from .db_manager import DBManager
-from .tasks.stock import *  # 导入所有股票任务类
-from .tasks.finance import *  # 导入所有财务任务类
-# 导入其他任务类
+from .tasks import *  # 导入所有任务类
 
 # 配置文件路径
 CONFIG_FILE = os.path.join(os.path.dirname(__file__), 'config.json')
