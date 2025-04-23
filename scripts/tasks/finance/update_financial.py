@@ -52,11 +52,11 @@ logger = logging.getLogger('update_financial_tasks')
 
 # 定义财务相关任务列表
 FINANCIAL_TASKS = [
-    "tushare_stock_balancesheet",  # 资产负债表
-    "tushare_stock_income",        # 利润表
-    "tushare_stock_cashflow",      # 现金流量表
-    "tushare_stock_express",       # 业绩快报
-    "tushare_stock_forecast"       # 业绩预告
+    "tushare_fina_balancesheet",  # 资产负债表
+    "tushare_fina_income",        # 利润表
+    "tushare_fina_cashflow",      # 现金流量表
+    "tushare_fina_express",       # 业绩快报
+    "tushare_fina_forecast"       # 业绩预告
 ]
 
 def calculate_report_dates(args: argparse.Namespace) -> Tuple[str, str]:
@@ -426,11 +426,11 @@ def summarize_financial_results(results: List[Dict[str, Any]], args: argparse.Na
     
     # 按任务类型分组显示结果
     task_type_map = {
-        "tushare_stock_balancesheet": "资产负债表",
-        "tushare_stock_income": "利润表",
-        "tushare_stock_cashflow": "现金流量表",
-        "tushare_stock_express": "业绩快报",
-        "tushare_stock_forecast": "业绩预告"
+        "tushare_fina_balancesheet": "资产负债表",
+        "tushare_fina_income": "利润表",
+        "tushare_fina_cashflow": "现金流量表",
+        "tushare_fina_express": "业绩快报",
+        "tushare_fina_forecast": "业绩预告"
     }
     
     try:
@@ -478,7 +478,7 @@ def summarize_financial_results(results: List[Dict[str, Any]], args: argparse.Na
         # 数据一致性检查提示
         if total_rows > 0:
             # 过滤出主要报表
-            main_reports = ["tushare_stock_balancesheet", "tushare_stock_income", "tushare_stock_cashflow"]
+            main_reports = ["tushare_fina_balancesheet", "tushare_fina_income", "tushare_fina_cashflow"]
             main_report_results = results_df[results_df['task_name'].isin(main_reports)]
             main_report_success = main_report_results[main_report_results['status'].isin(['success', 'partial_success'])]
             
@@ -550,7 +550,7 @@ def summarize_financial_results(results: List[Dict[str, Any]], args: argparse.Na
         # 简化的数据一致性检查
         if total_rows > 0:
             # 过滤出主要报表的结果
-            main_reports = ["tushare_stock_balancesheet", "tushare_stock_income", "tushare_stock_cashflow"]
+            main_reports = ["tushare_fina_balancesheet", "tushare_fina_income", "tushare_fina_cashflow"]
             main_report_results = [r for r in results if isinstance(r, dict) and r.get('task_name') in main_reports]
             main_report_success = [r for r in main_report_results if r.get('status') in ['success', 'partial_success']]
             

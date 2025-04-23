@@ -8,27 +8,27 @@ from ...tools.batch_utils import generate_natural_day_batches
 import numpy as np
 
 @task_register()
-class TushareStockIncomeTask(TushareTask):
+class TushareFinaIncomeTask(TushareTask):
     """股票利润表数据任务
     
-    获取上市公司财务利润表数据，包括营业总收入、营业总成本、营业利润等多个利润表项目。
+    获取上市公司利润表数据，包括营业收入、营业成本、营业利润等数据。
     该任务使用Tushare的income接口获取数据。
     """
     
     # 1.核心属性
-    name = "tushare_stock_income"
+    name = "tushare_fina_income"
     description = "获取股票利润表数据"
-    table_name = "tushare_stock_income"
+    table_name = "tushare_fina_income"
     primary_keys = ["ts_code", "end_date", "f_ann_date"]
     date_column = "end_date"
     default_start_date = "19901231"  # 最早的财报日期
     
     # 2.自定义索引
     indexes = [
-        {"name": "idx_tushare_income_code", "columns": "ts_code"},
-        {"name": "idx_tushare_income_end_date", "columns": "end_date"},
-        {"name": "idx_tushare_income_ann_date", "columns": "f_ann_date"},
-        {"name": "idx_tushare_income_report_type", "columns": "report_type"}
+        {"name": "idx_fina_income_code", "columns": "ts_code"},
+        {"name": "idx_fina_income_end_date", "columns": "end_date"},
+        {"name": "idx_fina_income_ann_date", "columns": "f_ann_date"},
+        {"name": "idx_fina_income_report_type", "columns": "report_type"}
     ]
     
     # 3.Tushare特有属性

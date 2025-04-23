@@ -1,14 +1,28 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+"""
+股票复权因子数据更新脚本
+
+使用 TaskUpdaterBase 基类实现的股票复权因子数据更新工具。
+支持以下功能：
+1. 按天数更新数据
+2. 支持指定日期范围更新
+3. 支持多种更新模式（增量/全量）
+4. 详细的日志记录和结果汇总
+"""
+
+import os
+import sys
 import asyncio
 import logging
-import sys
-import os
 import argparse
 from datetime import datetime, timedelta
 import dotenv
 from pathlib import Path
 
-# Add project root to sys.path
-project_root = Path(__file__).resolve().parent.parent
+# 添加项目根目录到系统路径
+project_root = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.append(str(project_root))
 
 # 加载环境变量
@@ -26,8 +40,20 @@ logging.basicConfig(
     ]
 )
 
-# 使用脚本名称作为logger名称
-logger = logging.getLogger('tushare_stock_adjfactor_updater')
+# 定义目标任务名称常量
+TARGET_TASK_NAME = "tushare_stock_adjfactor"
+
+class AdjfactorUpdater(TaskUpdaterBase):
+    """股票复权因子数据更新器"""
+    
+    def __init__(self):
+        super().__init__(
+            task_name=TARGET_TASK_NAME,
+            task_type="股票复权因子",
+            description="股票复权因子数据更新工具",
+            support_report_period=False
+        )
+        self.logger = logging.getLogger('update_adjfactor')
 
 async def main():
     # ---- 命令行参数解析 ----

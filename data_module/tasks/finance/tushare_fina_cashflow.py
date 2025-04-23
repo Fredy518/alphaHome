@@ -7,27 +7,27 @@ from ...tools.calendar import get_trade_days_between
 from ...tools.batch_utils import generate_natural_day_batches
 
 @task_register()
-class TushareStockCashflowTask(TushareTask):
+class TushareFinaCashflowTask(TushareTask):
     """股票现金流量表数据任务
     
-    获取上市公司现金流量表数据，包括经营活动、投资活动和筹资活动的现金流量等信息。
+    获取上市公司现金流量表数据，包括经营活动、投资活动和筹资活动的现金流等数据。
     该任务使用Tushare的cashflow接口获取数据。
     """
     
     # 1.核心属性
-    name = "tushare_stock_cashflow"
+    name = "tushare_fina_cashflow"
     description = "获取股票现金流量表数据"
-    table_name = "tushare_stock_cashflow"
+    table_name = "tushare_fina_cashflow"
     primary_keys = ["ts_code", "end_date", "f_ann_date"]
     date_column = "end_date"
     default_start_date = "19901231"  # 最早的财报日期
     
     # 2.自定义索引
     indexes = [
-        {"name": "idx_tushare_cashflow_code", "columns": "ts_code"},
-        {"name": "idx_tushare_cashflow_end_date", "columns": "end_date"},
-        {"name": "idx_tushare_cashflow_ann_date", "columns": "f_ann_date"},
-        {"name": "idx_tushare_cashflow_report_type", "columns": "report_type"}
+        {"name": "idx_fina_cashflow_code", "columns": "ts_code"},
+        {"name": "idx_fina_cashflow_end_date", "columns": "end_date"},
+        {"name": "idx_fina_cashflow_ann_date", "columns": "f_ann_date"},
+        {"name": "idx_fina_cashflow_report_type", "columns": "report_type"}
     ]
     
     # 3.Tushare特有属性

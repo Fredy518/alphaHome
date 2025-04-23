@@ -7,27 +7,26 @@ from ...tools.calendar import get_trade_days_between
 from ...tools.batch_utils import generate_natural_day_batches
 
 @task_register()
-class TushareStockForecastTask(TushareTask):
+class TushareFinaForecastTask(TushareTask):
     """股票业绩预告数据任务
     
-    获取上市公司业绩预告数据，包括预告类型、预告内容、预告指标等信息。
+    获取上市公司业绩预告数据。业绩预告是上市公司对未来一个报告期业绩的预计。
     该任务使用Tushare的forecast接口获取数据。
     """
     
     # 1.核心属性
-    name = "tushare_stock_forecast"
+    name = "tushare_fina_forecast"
     description = "获取股票业绩预告数据"
-    table_name = "tushare_stock_forecast"
+    table_name = "tushare_fina_forecast"
     primary_keys = ["ts_code", "end_date", "ann_date"]
     date_column = "end_date"
     default_start_date = "19901231"  # 最早的财报日期
     
     # 2.自定义索引
     indexes = [
-        {"name": "idx_tushare_forecast_code", "columns": "ts_code"},
-        {"name": "idx_tushare_forecast_end_date", "columns": "end_date"},
-        {"name": "idx_tushare_forecast_ann_date", "columns": "ann_date"},
-        {"name": "idx_tushare_forecast_type", "columns": "type"}
+        {"name": "idx_fina_forecast_code", "columns": "ts_code"},
+        {"name": "idx_fina_forecast_end_date", "columns": "end_date"},
+        {"name": "idx_fina_forecast_ann_date", "columns": "ann_date"}
     ]
     
     # 3.Tushare特有属性

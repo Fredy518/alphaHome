@@ -7,26 +7,26 @@ from ...tools.calendar import get_trade_days_between
 from ...tools.batch_utils import generate_natural_day_batches
 
 @task_register()
-class TushareStockExpressTask(TushareTask):
+class TushareFinaExpressTask(TushareTask):
     """股票业绩快报数据任务
     
-    获取上市公司业绩快报数据，包括营业收入、营业利润、净利润等指标。
-    该任务使用Tushare的express_vip接口获取数据。
+    获取上市公司业绩快报数据。业绩快报是上市公司在财报发布前的初步财务数据。
+    该任务使用Tushare的express接口获取数据。
     """
     
     # 1.核心属性
-    name = "tushare_stock_express"
+    name = "tushare_fina_express"
     description = "获取股票业绩快报数据"
-    table_name = "tushare_stock_express"
+    table_name = "tushare_fina_express"
     primary_keys = ["ts_code", "end_date", "ann_date"]
     date_column = "end_date"
     default_start_date = "19901231"  # 最早的财报日期
     
     # 2.自定义索引
     indexes = [
-        {"name": "idx_tushare_express_code", "columns": "ts_code"},
-        {"name": "idx_tushare_express_end_date", "columns": "end_date"},
-        {"name": "idx_tushare_express_ann_date", "columns": "ann_date"}
+        {"name": "idx_fina_express_code", "columns": "ts_code"},
+        {"name": "idx_fina_express_end_date", "columns": "end_date"},
+        {"name": "idx_fina_express_ann_date", "columns": "ann_date"}
     ]
     
     # 3.Tushare特有属性

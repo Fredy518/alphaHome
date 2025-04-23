@@ -6,29 +6,30 @@ from ...task_decorator import task_register
 from ...tools.batch_utils import generate_natural_day_batches
 
 @task_register()
-class TushareStockFinaIndicatorTask(TushareTask):
-    """获取上市公司财务指标数据任务
+class TushareFinaIndicatorTask(TushareTask):
+    """股票财务指标数据任务
     
-    数据来源: Tushare fina_indicator 接口
+    获取上市公司财务指标数据，包括每股指标、盈利能力、营运能力、成长能力、偿债能力等指标。
+    该任务使用Tushare的fina_indicator接口获取数据。
     """
     
     # 1.核心属性
-    name = "tushare_stock_fina_indicator"
+    name = "tushare_fina_indicator"
     description = "获取股票财务指标数据"
-    table_name = "tushare_stock_fina_indicator"
-    primary_keys = ["ts_code", "end_date", "ann_date"] # Ann_date is crucial for uniqueness
+    table_name = "tushare_fina_indicator"
+    primary_keys = ["ts_code", "end_date"]
     date_column = "end_date"
-    default_start_date = "19901231"
-
+    default_start_date = "19901231"  # 最早的财报日期
+    
     # 2.自定义索引
     indexes = [
         {"name": "idx_fina_indicator_code", "columns": "ts_code"},
         {"name": "idx_fina_indicator_end_date", "columns": "end_date"},
-        {"name": "idx_fina_indicator_ann_date", "columns": "ann_date"} # Index ann_date as well
+        {"name": "idx_fina_indicator_ann_date", "columns": "ann_date"}
     ]
-
+    
     # 3.Tushare特有属性
-    api_name = "fina_indicator_vip"
+    api_name = "fina_indicator"
     fields = [
         "ts_code", "ann_date", "end_date", "eps", "dt_eps", "total_revenue_ps", 
         "revenue_ps", "capital_rese_ps", "surplus_rese_ps", "undist_profit_ps", 

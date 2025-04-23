@@ -7,7 +7,7 @@ from ...tools.calendar import get_trade_days_between
 from ...tools.batch_utils import generate_natural_day_batches
 
 @task_register()
-class TushareStockBalancesheetTask(TushareTask):
+class TushareFinaBalancesheetTask(TushareTask):
     """股票资产负债表数据任务
     
     获取上市公司资产负债表数据，包括总资产、总负债、流动资产、流动负债等多个资产负债表项目。
@@ -15,19 +15,19 @@ class TushareStockBalancesheetTask(TushareTask):
     """
     
     # 1.核心属性
-    name = "tushare_stock_balancesheet"
+    name = "tushare_fina_balancesheet"
     description = "获取股票资产负债表数据"
-    table_name = "tushare_stock_balancesheet"
+    table_name = "tushare_fina_balancesheet"
     primary_keys = ["ts_code", "end_date", "f_ann_date"]
     date_column = "end_date"
     default_start_date = "19901231"  # 最早的财报日期
     
     # 2.自定义索引
     indexes = [
-        {"name": "idx_tushare_balancesheet_code", "columns": "ts_code"},
-        {"name": "idx_tushare_balancesheet_end_date", "columns": "end_date"},
-        {"name": "idx_tushare_balancesheet_ann_date", "columns": "f_ann_date"},
-        {"name": "idx_tushare_balancesheet_report_type", "columns": "report_type"}
+        {"name": "idx_fina_balancesheet_code", "columns": "ts_code"},
+        {"name": "idx_fina_balancesheet_end_date", "columns": "end_date"},
+        {"name": "idx_fina_balancesheet_ann_date", "columns": "f_ann_date"},
+        {"name": "idx_fina_balancesheet_report_type", "columns": "report_type"}
     ]
     
     # 3.Tushare特有属性

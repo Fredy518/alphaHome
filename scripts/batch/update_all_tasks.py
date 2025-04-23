@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import List, Dict, Any
 
 # 添加项目根目录到系统路径
-project_root = Path(__file__).resolve().parent.parent
+project_root = Path(__file__).resolve().parent.parent.parent
 sys.path.append(str(project_root))
 
 # 加载环境变量
