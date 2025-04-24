@@ -161,6 +161,7 @@ class TushareTask(Task):
             # 处理并保存每个批次的数据
             total_rows = 0
             failed_batches = 0 # 记录失败的批次数
+            first_error = None # 记录第一个遇到的异常信息以备返回
             
             # 获取并发限制参数，优先使用传入的参数，其次使用实例属性
             concurrent_limit = kwargs.get('concurrent_limit', self.concurrent_limit)
@@ -195,8 +196,14 @@ class TushareTask(Task):
                         # gather 捕获的异常通常表示 process_batch 内部未处理的异常
                         self.logger.error(f"批次处理中发生未捕获异常: {str(result)}")
                         failed_batches += 1
+                        # 记录第一个遇到的异常信息以备返回
+                        if first_error is None:
+                            first_error = str(result)
                     elif result is None: # 我们用 None 表示批次处理失败（重试后）
                         failed_batches += 1
+                        # 记录一个通用错误信息（因为具体错误可能已在 _process_single_batch 中记录）
+                        if first_error is None:
+                            first_error = "批次处理失败 (重试后仍失败)"
                     elif isinstance(result, int): # 成功处理的行数
                         total_rows += result
             
@@ -215,17 +222,25 @@ class TushareTask(Task):
                         failed_batches += 1
             
             # 后处理
+            final_status = "success"
+            error_message = None # 初始化错误信息
             if failed_batches > 0:
-                status = "partial_success" if total_rows > 0 else "failure"
+                final_status = "failure" if failed_batches == len(batch_list) else "partial_success"
                 self.logger.warning(f"任务执行完成，但有 {failed_batches} 个批次处理失败。")
-            else:
-                status = "success"
+                error_message = first_error # 使用记录的第一个错误信息
 
-            result = {"status": status, "rows": total_rows, "failed_batches": failed_batches}
-            await self.post_execute(result)
-            
-            self.logger.info(f"任务执行完成: {result}")
-            return result
+            result_dict = {
+                "status": final_status,
+                "rows": total_rows,
+                "failed_batches": failed_batches
+            }
+            # 如果有错误信息，添加到字典中
+            if error_message:
+                result_dict['error'] = error_message 
+
+            await self.post_execute(result_dict)
+            self.logger.info(f"任务执行完成: {result_dict}")
+            return result_dict
         except Exception as e:
             self.logger.error(f"任务执行失败: {str(e)}", exc_info=True)
             return self.handle_error(e)

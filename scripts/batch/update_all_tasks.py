@@ -207,8 +207,21 @@ async def main():
         # 输出详细结果
         logger.info("\n更新结果汇总:")
         for result in results:
+            # 首先检查 gather 是否返回了异常
+            if isinstance(result, Exception):
+                # 尝试从异常中获取更多信息，但 task_name 可能未知
+                # logging 框架会自动记录异常类型和堆栈
+                logger.error(f"- unknown_task: 失败 (gather 捕获到异常), 错误: {result}", exc_info=False) # exc_info=False 因为日志框架可能已记录
+                continue # 处理下一个结果
+                
+            # 确认 result 是字典
+            if not isinstance(result, dict):
+                logger.error(f"- unknown_task: 失败, 无效的结果类型: {type(result)}")
+                continue
+                
             status = result.get('status', 'unknown')
             task_name = result.get('task_name', 'unknown')
+            
             if status == 'success':
                 rows = result.get('rows', 0)
                 logger.info(f"- {task_name}: 成功, 更新 {rows} 行数据")
@@ -216,9 +229,12 @@ async def main():
                 rows = result.get('rows', 0)
                 failed_batches = result.get('failed_batches', 0)
                 logger.info(f"- {task_name}: 部分成功, 更新 {rows} 行数据, {failed_batches} 个批次失败")
-            else:
-                error = result.get('error', 'unknown error')
-                logger.error(f"- {task_name}: 失败, 错误: {error}")
+            else: # status 不是 success 或 partial_success (可能是 'error', 'no_data', 'up_to_date', 'failure', 'unknown' 等)
+                error = result.get('error') # 尝试获取 error 键
+                # 如果 status 是 error 但 error 键不存在或为 None，使用 'unknown error'
+                error_msg = error if error else 'unknown error'
+                logger.error(f"- {task_name}: 失败, 错误: {error_msg}")
+                # 如果有更详细的原始异常，也可能需要记录，但这取决于 update_task 如何返回错误
         
     except Exception as e:
         logger.error(f"全局更新过程中发生错误: {str(e)}", exc_info=True)

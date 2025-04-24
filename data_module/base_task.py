@@ -73,7 +73,8 @@ class Task(ABC):
             self.logger.info(f"任务执行完成: {result}")
             return result
         except Exception as e:
-            self.logger.error(f"任务执行失败: {str(e)}", exc_info=True)
+            # Enhanced logging: include exception type
+            self.logger.error(f"任务执行失败: 类型={type(e).__name__}, 错误={str(e)}", exc_info=True)
             return self.handle_error(e)
     
     async def _get_latest_date(self):

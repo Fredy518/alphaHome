@@ -1,266 +1,356 @@
-# 自动金融数据库系统
+# AlphaHome: 自动化金融数据任务系统
 
-自动金融数据库系统是一个高效的工具集，用于自动化处理金融数据获取、数据清洗、存储和验证。支持多种金融数据源，灵活的更新策略，以及全面的数据质量检查。
+## 项目简介
 
-## 特性
+AlphaHome 是一个基于 Python 异步框架构建的、灵活且可扩展的金融数据获取、处理和存储系统。它旨在简化从 Tushare 等数据源自动同步金融数据的过程，并将其存储到 PostgreSQL 数据库中。
 
-- **异步数据获取**：使用Python异步编程提高数据获取效率
-- **声明式任务定义**：通过简单的配置即可定义新的数据任务
-- **自动数据处理**：支持自动数据清洗、转换和验证
-- **灵活更新模式**：支持全量更新、增量更新和指定日期更新
-- **数据质量检查**：自动检测数据缺失、异常和一致性问题
-- **多数据源支持**：目前支持Tushare，可扩展支持更多数据源
-- **可视化报告**：生成数据质量和覆盖度的可视化报告
+系统采用模块化任务设计，每个数据任务（例如获取股票日线、获取财务指标）都被封装为独立的类，易于管理和扩展。
+
+## 主要特性
+
+*   **异步高效**: 基于 `asyncio` 构建，支持高并发数据获取。
+*   **声明式任务定义**: 通过类属性清晰地定义任务元数据（如 API 名称、表名、主键、字段等）。
+*   **自动化数据处理**: 内置数据类型转换、列名映射和基本验证。
+*   **灵活的更新模式**: 支持全量更新、增量更新（按天数、按日期范围、自动检测）。
+*   **配置驱动**: 通过 `.env` 文件管理数据库连接和 API 密钥。
+*   **易于扩展**: 可以方便地添加新的数据源和数据任务。
+*   **数据库集成**: 自动处理数据库表创建和数据插入/更新（基于 `upsert`）。
+*   **速率限制管理**: 支持按 Tushare API 接口设置不同的调用频率限制。
+*   **命令行工具**: 提供方便的命令行脚本来执行数据更新任务。
+*   **智能批处理**: 支持按交易日历智能分批获取数据，可针对单一股票和全市场设置不同批次大小。
+*   **交易日历集成**: 内置交易日历工具，自动识别交易日并优化数据获取流程。
 
 ## 环境配置
 
-### 系统要求
+### 1. 克隆项目
 
-- Python 3.8+
-- PostgreSQL 12+
-- 必要的Python库（详见`requirements.txt`）
-
-### 配置
-
-1. 克隆项目
 ```bash
-git clone https://github.com/yourusername/autoDatabase.git
-cd autoDatabase
+git clone <your-repository-url>
+cd alphaHome
 ```
 
-2. 安装依赖
+### 2. 安装依赖
+
+建议使用虚拟环境：
+
 ```bash
+python -m venv venv
+# Windows
+venv\Scripts\activate
+# macOS/Linux
+source venv/bin/activate
+
 pip install -r requirements.txt
 ```
 
-3. 设置环境变量
+### 3. 配置环境变量
 
-创建`.env`文件，包含以下配置：
-```
-DB_HOST=localhost
-DB_PORT=5432
-DB_NAME=auto_finance
-DB_USER=your_username
-DB_PASSWORD=your_password
+在项目根目录下创建一个 `.env` 文件，并填入以下内容：
 
-# Tushare API
-TUSHARE_TOKEN=your_tushare_token
-```
+```dotenv
+# .env 文件示例
 
-4. 初始化数据库
-```bash
-python scripts/init_database.py
-```
+# Tushare API Token (必需)
+# 请替换为你的 Tushare Pro API Token
+TUSHARE_API_TOKEN=your_actual_tushare_api_token
 
-## 使用方法
+# PostgreSQL 数据库连接字符串 (必需)
+# 格式: postgresql+asyncpg://<user>:<password>@<host>:<port>/<database>
+# 例如: postgresql+asyncpg://user:password@localhost:5432/finance_db
+DB_CONNECTION_STRING=your_database_connection_string
 
-系统提供多种命令行工具用于数据管理和质量控制。
+# 并发限制 (可选, 默认值在 config.py 中定义)
+# 控制同时向 Tushare API 发送请求的数量
+CONCURRENT_LIMIT=5
 
-### 命令行工具
-
-#### 1. 股票数据更新
-
-更新股票日线数据：
-```bash
-python scripts/tushare_stock_daily_updater.py
-
-# 可用选项：
-# --auto          自动确定更新时间范围（默认）
-# --start_date    指定开始日期，格式：YYYYMMDD
-# --end_date      指定结束日期，格式：YYYYMMDD
-# --full          执行全量更新（从1990年开始）
+# Tushare API 速率限制 (可选, 默认值在 TushareAPI 类中定义)
+# 可以为特定的 Tushare 接口设置每分钟的请求次数限制
+# TUSHARE_API_RATE_LIMIT_DAILY=500
+# TUSHARE_API_RATE_LIMIT_DEFAULT=50
 ```
 
-更新股票基本面数据：
-```bash
-python scripts/tushare_stock_dailybasic_updater.py
+**重要**:
+*   确保已安装并运行 PostgreSQL 数据库。
+*   将 `your_actual_tushare_api_token` 替换为你的 Tushare Pro 账户的有效 Token。
+*   将 `your_database_connection_string` 替换为你的 PostgreSQL 数据库的实际连接信息。
 
-# 选项与股票日线数据更新相同
-```
+## 添加新任务
 
-#### 2. 基金数据更新
+要添加一个新的数据获取任务（例如，获取指数数据）：
 
-更新基金净值数据：
-```bash
-python scripts/tushare_fund_nav_updater.py
-
-# 可用选项：
-# --auto          自动确定更新时间范围（默认）
-# --start_date    指定开始日期，格式：YYYYMMDD
-# --end_date      指定结束日期，格式：YYYYMMDD
-# --full          执行全量更新
-```
-
-#### 3. 指数数据更新
-
-更新指数日线数据：
-```bash
-python scripts/tushare_index_daily_updater.py
-
-# 可用选项：
-# --auto          自动确定更新时间范围（默认）
-# --start_date    指定开始日期，格式：YYYYMMDD
-# --end_date      指定结束日期，格式：YYYYMMDD
-# --index_code    指定指数代码（可选）
-# --full          执行全量更新
-```
-
-#### 4. 数据库质量检查工具
-
-运行全面的数据库表质量检查：
-```bash
-python scripts/check_db_quality.py
-
-# 可用选项：
-# -t, --tables       指定要检查的表名列表，用空格分隔多个表名
-# -s, --start_date   指定开始日期，格式：YYYYMMDD
-# -e, --end_date     指定结束日期，格式：YYYYMMDD
-# -o, --output_dir   指定输出目录路径
-# -v, --verbose      显示详细日志
-# -h, --help         显示帮助信息
-```
-
-功能特点：
-- 自动检测数据库中的所有表并进行质量分析
-- 检查各表的日期覆盖情况并生成直观的日期覆盖率图表
-- 分析数据完整性，检测空值和异常值
-- 生成全面的HTML报告，包含图表和详细的问题描述
-- 支持导出JSON格式的详细结果和摘要信息
-
-使用示例：
-
-检查特定表：
-```bash
-python scripts/check_db_quality.py -t stock_daily fund_nav
-```
-
-检查特定日期范围：
-```bash
-python scripts/check_db_quality.py -s 20230101 -e 20231231
-```
-
-指定输出目录：
-```bash
-python scripts/check_db_quality.py -o logs/custom_quality_check
-```
-
-### 批量处理脚本
-
-#### 每日数据更新
-
-执行所有数据类型的日常更新：
-```bash
-python scripts/batch/daily_update.py
-```
-
-#### 周期性全面更新
-
-执行全面的数据更新和质量检查：
-```bash
-python scripts/batch/weekly_full_update.py
-```
+1.  在 `data_module/tasks/` 下创建一个新的 Python 文件（例如 `data_module/tasks/index/tushare_index_daily.py`）。
+2.  在该文件中创建一个新的类，继承自 `data_module.task.TushareTask` (或其他合适的数据源基类)。
+3.  在类中定义必要的属性：
+    *   `name`: 任务的唯一标识符 (例如 `"tushare_index_daily"`)。
+    *   `description`: 任务描述。
+    *   `table_name`: 对应的数据库表名。
+    *   `primary_keys`: 数据表的主键列表。
+    *   `date_column`: 用于增量更新的日期列名。
+    *   `api_name`: 对应的 Tushare API 接口名称 (例如 `"index_daily"`)。
+    *   `fields`: 需要从 API 获取的字段列表。
+    *   `(可选)` `column_mapping`: API 字段名到数据库列名的映射。
+    *   `(可选)` `transformations`: 列的数据类型转换规则。
+    *   `(可选)` `validations`: 数据验证规则。
+    *   `(可选)` `indexes`: 需要在数据库表中创建的自定义索引。
+    *   `(可选)` `batch_trade_days_single_code`: 单代码查询时的批次大小（交易日数量）。
+    *   `(可选)` `batch_trade_days_all_codes`: 全市场查询时的批次大小（交易日数量）。
+4.  根据需要实现或重写方法：
+    *   `get_batch_list`: 定义如何根据输入参数（如日期范围、代码列表）生成 API 调用批次。可使用系统提供的 `generate_trade_day_batches` 工具函数简化实现。
+    *   `prepare_params`: 准备每次 API 调用所需的具体参数。
+    *   `(可选)` `process_data`: 添加自定义的数据处理逻辑。
+    *   `(可选)` `validate_data`: 添加自定义的数据验证逻辑。
+5.  (重要) 在 `data_module/tasks/__init__.py` 文件中导入你新创建的任务类，以便 `TaskFactory` 能够发现它。
+6.  现在你可以通过 `TaskFactory.get_task("your_new_task_name")` 来获取和使用你的新任务了。
 
 ## 项目结构
 
 ```
-autoDatabase/
-├── data_module/           # 核心数据处理模块
-│   ├── sources/           # 数据源适配器
-│   │   └── tushare/       # Tushare数据源
-│   ├── tasks/             # 任务定义
-│   │   ├── stock/         # 股票相关任务
-│   │   ├── fund/          # 基金相关任务
-│   │   └── index/         # 指数相关任务
-│   └── tools/             # 工具函数
-├── scripts/               # 命令行脚本
-│   ├── batch/             # 批处理脚本
-│   └── tasks/             # 任务执行脚本
-├── logs/                  # 日志文件
-│   └── db_quality_*/      # 数据质量检查结果和图表
-├── docs/                  # 文档
-├── examples/              # 示例代码
-└── .env                   # 环境变量配置
+alphaHome/
+├── .env                    # 环境变量配置文件 (需手动创建)
+├── .gitignore              # Git 忽略文件配置
+├── config.py               # 应用配置 (如并发限制)
+├── requirements.txt        # Python 依赖库
+├── data_module/            # 数据模块核心
+│   ├── __init__.py         # data_module 包初始化
+│   ├── base_task.py        # 基础任务类 Task
+│   ├── config.json         # (用途待定) 配置文件?
+│   ├── db_manager.py       # 数据库交互 (连接, 表管理, CRUD)
+│   ├── task_decorator.py   # (用途待定) 任务装饰器?
+│   ├── task_factory.py     # 任务工厂，用于创建和管理任务实例
+│   ├── sources/            # 数据源 API 封装
+│   │   ├── __init__.py
+│   │   └── tushare/        # Tushare 数据源
+│   │       ├── __init__.py
+│   │       ├── tushare_api.py  # Tushare API 客户端 (速率限制)
+│   │       └── tushare_task.py # Tushare 任务基类 TushareTask
+│   ├── tasks/              # 具体的业务数据任务实现
+│   │   ├── __init__.py     # !! 需要在此导入所有任务类 !!
+│   │   ├── examples/       # (待确认用途) 任务示例?
+│   │   ├── index/          # (待确认用途) 指数相关任务?
+│   │   └── stock/          # 股票相关任务
+│   │       ├── __init__.py
+│   │       ├── tushare_stock_daily.py
+│   │       └── tushare_stock_dailybasic.py
+│   └── tools/              # 通用工具
+│       ├── __init__.py
+│       ├── calendar.py     # 交易日历工具 (异步)
+│       └── batch_utils.py  # 批处理工具 (包含交易日批次生成函数)
+├── docs/                   # 文档目录
+│   └── user_guide.md       # 用户指南
+├── stock_data.log          # 全局日志文件?
+├── industry_crowd_factor.py # (用途待定) 行业拥挤度因子计算?
+└── README.md               # 本文档
+
+# 注： .git, __pycache__ 等目录已省略
 ```
 
-## 表名对应关系
+## 批处理功能说明
 
-系统中的表名与实际数据内容的对应关系如下：
+系统提供了智能批处理功能，可以根据交易日历自动将数据获取任务分成多个批次进行处理：
 
-| 表名 | 数据内容 | 来源 |
-|------|----------|------|
-| tushare_stock_daily | 股票日线行情数据 | Tushare |
-| tushare_stock_dailybasic | 股票每日基本面指标 | Tushare |
-| tushare_index_daily | 指数日线行情数据 | Tushare |
-| tushare_fund_nav | 基金净值数据 | Tushare |
-| tushare_fund_daily | 场内基金日线数据 | Tushare |
-| tushare_stock_income | 股票利润表 | Tushare |
-| tushare_stock_balancesheet | 股票资产负债表 | Tushare |
-| tushare_stock_cashflow | 股票现金流量表 | Tushare |
+### 批处理参数配置
 
-每个任务的`table_name`参数对应的就是数据库表名。
+在任务类中，可以通过以下属性配置批处理：
 
-## 扩展和自定义
+```python
+# 批处理配置示例
+batch_trade_days_single_code = 240  # 单代码查询时，每个批次的交易日数量 (约1年)
+batch_trade_days_all_codes = 15    # 全市场查询时，每个批次的交易日数量 (约3周)
+```
 
-查看[开发者指南](docs/developer_guide.md)了解如何扩展系统功能，包括：
+### 批处理工具函数
 
-- 添加新的数据源
-- 创建自定义任务
-- 修改数据处理逻辑
-- 开发新的分析工具
+系统提供了 `generate_trade_day_batches` 工具函数，可以简化批处理实现：
 
-## 数据质量管理
+```python
+from ...tools.batch_utils import generate_trade_day_batches
 
-### 数据质量工具
+async def get_batch_list(self, **kwargs) -> List[Dict]:
+    """生成批处理参数列表
 
-项目提供了全面的数据质量管理工具，用于检查和维护数据的完整性与准确性：
+    Args:
+        **kwargs: 查询参数，包括start_date、end_date、ts_code等
 
-1. **数据库表质量全面检查工具** (`scripts/check_db_quality.py`)：
-   - 全表自动探测和分析
-   - 空值分析和统计
-   - 日期覆盖率分析
-   - 按月份的数据覆盖分析
-   - 自动问题分类和标记
-   - 图表可视化报告
-   - 灵活的配置选项
-   
-   使用示例：
-   ```bash
-   # 检查整个数据库的表质量
-   python scripts/check_db_quality.py
-   
-   # 检查特定表的数据质量
-   python scripts/check_db_quality.py -t tushare_stock_daily tushare_fund_daily
-   
-   # 检查特定日期范围的数据质量
-   python scripts/check_db_quality.py -s 20230101 -e 20231231
-   
-   # 指定输出目录
-   python scripts/check_db_quality.py -o logs/custom_quality_check
-   
-   # 启用详细日志输出
-   python scripts/check_db_quality.py -v
-   ```
+    Returns:
+        List[Dict]: 批处理参数列表
+    """
+    # 获取查询参数
+    start_date = kwargs.get('start_date', '19910101')
+    end_date = kwargs.get('end_date', datetime.now().strftime('%Y%m%d'))
+    ts_code = kwargs.get('ts_code')  # 可选的股票代码
+    exchange = kwargs.get('exchange', 'SSE')  # 可选的交易所参数
+    
+    # 使用批次生成工具
+    batch_list = await generate_trade_day_batches(
+        start_date=start_date,
+        end_date=end_date,
+        batch_size=self.batch_trade_days_single_code if ts_code else self.batch_trade_days_all_codes,
+        ts_code=ts_code,
+        exchange=exchange,
+        logger=self.logger
+    )
+    return batch_list
+```
 
-2. **股票日线数据质量检查工具** (`scripts/tools/check_stock_daily_quality.py`)：
-   - 专门针对股票日线数据的质量检查
-   - 分析数据间隔和缺失情况
-   - 生成详细的问题报告
+该工具函数会：
+1. 根据交易日历自动识别指定日期范围内的实际交易日
+2. 根据是否提供了股票代码，选择合适的批次大小
+3. 将交易日分批并生成适合API调用的参数列表
 
-   使用示例：
-   ```bash
-   python scripts/tools/check_stock_daily_quality.py --start-date 20230101 --end-date 20230331
-   ```
+## 脚本使用说明
 
-### 质量报告查看
+本节包含了 `scripts` 目录下的脚本使用指南，提供详细的数据更新和质量检查工具使用方法。
 
-质量检查完成后，会在指定目录（默认为 `logs/db_quality_时间戳/`）生成以下报告：
+### 脚本目录结构
 
-- `report.html`: 包含所有质量指标的综合HTML报告
-- `charts/`: 包含数据覆盖率和完整性的可视化图表
-- `results.json`: 包含所有质量检查的详细结果数据
+```
+scripts/
+├── base/                    # 基础类文件
+│   └── task_updater_base.py  # 更新任务的基类
+├── tasks/                   # 任务更新脚本
+│   ├── finance/            # 财务数据相关
+│   │   ├── update_balancesheet.py  # 资产负债表更新
+│   │   ├── update_cashflow.py      # 现金流量表更新
+│   │   ├── update_express.py       # 业绩快报更新
+│   │   ├── update_forecast.py      # 业绩预告更新
+│   │   ├── update_income.py        # 利润表更新
+│   │   └── update_indicator.py     # 财务指标更新
+│   ├── stock/              # 股票数据相关
+│   │   ├── update_adjfactor.py     # 复权因子更新
+│   │   ├── update_daily.py         # 日线行情更新
+│   │   └── update_dailybasic.py    # 每日指标更新
+│   └── index/              # 指数数据相关（预留）
+├── check_db_quality.py     # 数据库表质量全面检查工具
+├── tools/                  # 工具脚本
+│   └── check_stock_daily_quality.py  # 股票日线数据质量检查
+└── batch/                  # 批量更新脚本
+    └── update_all_tasks.py          # 全量更新脚本
+```
 
-通过Web浏览器打开HTML报告可查看所有质量分析结果和建议的修复措施。
+### 单任务更新
 
-## 常见问题
+每个更新脚本都支持以下参数：
 
-参考[用户指南](docs/user_guide.md)的常见问题解答部分，或提交Issue获取帮助。
+- `--quarters`: 指定要更新的季度数
+- `--years`: 指定要更新的年数
+- `--report-period`: 指定要更新的报告期（如 20230331）
+- `--start-date`: 指定更新的起始日期
+- `--end-date`: 指定更新的结束日期
+- `--full-update`: 执行全量更新
+
+示例：
+```bash
+# 更新最近4个季度的现金流量表数据
+python scripts/tasks/finance/update_cashflow.py --quarters 4
+
+# 更新指定报告期的利润表数据
+python scripts/tasks/finance/update_income.py --report-period 20230331
+
+# 更新指定日期范围的股票日线数据
+python scripts/tasks/stock/update_daily.py --start-date 20230101 --end-date 20230331
+```
+
+### 批量更新
+
+使用 `update_all_tasks.py` 可以批量更新多个任务：
+
+```bash
+# 更新所有任务的最新数据
+python scripts/batch/update_all_tasks.py
+
+# 更新指定任务列表的数据
+python scripts/batch/update_all_tasks.py --tasks "tushare_fina_cashflow,tushare_fina_income"
+```
+
+### 数据质量检查
+
+#### 单表数据质量检查
+
+使用 `check_stock_daily_quality.py` 可以检查股票日线数据的质量：
+
+```bash
+# 检查指定日期范围的数据质量
+python scripts/tools/check_stock_daily_quality.py --start-date 20230101 --end-date 20230331
+```
+
+#### 全面数据库质量检查
+
+使用 `check_db_quality.py` 可以对整个数据库或指定表进行全面质量检查：
+
+```bash
+# 运行全面的数据库表质量检查
+python scripts/check_db_quality.py
+
+# 检查特定表的数据质量
+python scripts/check_db_quality.py -t tushare_stock_daily tushare_fund_daily
+
+# 检查特定日期范围的数据质量
+python scripts/check_db_quality.py -s 20230101 -e 20231231
+
+# 指定输出目录（默认为logs/db_quality_时间戳）
+python scripts/check_db_quality.py -o logs/custom_quality_check
+
+# 启用详细日志输出
+python scripts/check_db_quality.py -v
+```
+
+支持的参数：
+- `-t, --tables`: 指定要检查的表名（多个表用空格分隔）
+- `-s, --start-date`: 指定检查的起始日期（格式：YYYYMMDD）
+- `-e, --end-date`: 指定检查的结束日期（格式：YYYYMMDD）
+- `-o, --output-dir`: 指定输出目录路径
+- `-v, --verbose`: 启用详细日志输出
+- `-h, --help`: 显示帮助信息
+
+检查完成后，脚本会生成包含以下内容的报告：
+- HTML格式的综合质量报告
+- 各表数据覆盖率的可视化图表
+- 详细的JSON格式质量数据
+- 按月数据覆盖分析
+
+### 开发说明
+
+1. 所有更新脚本都继承自 `TaskUpdaterBase` 类
+2. 新增更新脚本时，请遵循现有的目录结构和命名规范
+3. 请确保添加适当的日志记录和错误处理
+4. 建议在更新脚本中添加数据质量检查逻辑
+
+## 示例任务说明
+
+本节介绍 `data_module/tasks/examples` 目录下的示例任务，用于演示如何创建和注册自定义任务。
+
+### 示例任务说明
+
+- `custom_task_example.py`: 包含两个示例任务类
+  - `CustomExampleTask`: 使用带参数的装饰器注册
+  - `AnotherExampleTask`: 使用不带参数的装饰器注册
+
+### 当前状态
+
+这些示例任务已在 `__init__.py` 中被禁用，原因是它们在实际的全局更新脚本中会导致错误，因为它们需要 `api_token` 参数，而这个参数在当前的 `Task` 类实现中不支持。
+
+### 使用方法
+
+如果需要重新启用这些示例任务，请修改 `__init__.py` 文件，取消注释相关导入语句和 `__all__` 列表中的条目。同时，您需要更新 `custom_task_example.py` 中的任务实现，使其兼容当前的 `Task` 类接口。
+
+### 错误信息参考
+
+运行全局更新脚本时，这些示例任务会产生以下错误：
+
+```
+TypeError: Task.__init__() got an unexpected keyword argument 'api_token'
+```
+
+## 贡献指南
+
+欢迎对本项目做出贡献！请遵循标准的 GitHub Flow：
+
+1.  Fork 本仓库。
+2.  创建新的特性分支 (`git checkout -b feature/AmazingFeature`)。
+3.  提交你的更改 (`git commit -m 'Add some AmazingFeature'`)。
+4.  将更改推送到分支 (`git push origin feature/AmazingFeature`)。
+5.  打开一个 Pull Request。
+
+## 许可证
+
+本项目采用 MIT 许可证。详情请见 `LICENSE` 文件 (如果存在)。
