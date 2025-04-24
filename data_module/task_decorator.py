@@ -73,4 +73,4 @@ def register_tasks_to_factory():
     # 注册所有任务
     for task_name, task_class in _task_registry.items():
         TaskFactory.register_task(task_name, task_class)
-        logger.info(f"任务 '{task_name}' 已从装饰器注册表同步到 TaskFactory") 
+        logger.debug(f"任务 '{task_name}' 已从装饰器注册表同步到 TaskFactory") 

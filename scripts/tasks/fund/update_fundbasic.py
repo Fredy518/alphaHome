@@ -40,8 +40,7 @@ logging.basicConfig(
 )
 
 # 导入必要的模块 (确保在添加 sys.path 之后)
-from data_module.db_manager import DBManager # 假设存在 DBManager
-from data_module.task_factory import TaskFactory # 导入 TaskFactory
+from data_module import DBManager, TaskFactory
 from scripts.base.task_updater_base import TaskUpdaterBase # 导入基类
 # from data_module.tasks.fund.tushare_fund_basic import TushareFundBasicTask # TaskFactory 会处理加载
 
@@ -57,8 +56,8 @@ class FundBasicUpdater(TaskUpdaterBase):
         super().__init__(
             task_name=TARGET_TASK_NAME,
             task_type="公募基金列表",
-            description="公募基金列表全量更新工具",
-            support_report_period=False
+            description="公募基金列表全量更新工具"
+            # support_report_period=False (default is False)
         )
         self.logger.name = self.__class__.__name__
 
@@ -145,12 +144,11 @@ async def main():
         logging.error("错误：未设置 DATABASE_URL 环境变量或提供默认值")
         sys.exit(1)
 
-    db_manager = None
     result = None
     try:
-        db_manager = DBManager(db_dsn)
-        await db_manager.connect()
-        await TaskFactory.initialize()
+        # 使用TaskFactory初始化数据库连接，传入数据库连接字符串
+        await TaskFactory.initialize(db_dsn)
+        # 执行任务
         result = await updater.update_task(args)
         updater.summarize_result(result, args)
     except Exception as e:
@@ -160,10 +158,9 @@ async def main():
         updater.summarize_result(result, args)
         sys.exit(1)
     finally:
+        # 关闭TaskFactory管理的数据库连接
         await TaskFactory.shutdown()
-        if db_manager:
-            await db_manager.close() # 使用 close
-            logging.info("数据库连接已关闭")
+        logging.info("数据库连接已关闭")
 
 if __name__ == "__main__":
     asyncio.run(main()) 

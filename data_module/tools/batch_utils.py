@@ -232,3 +232,65 @@ async def generate_quarter_end_batches(
     except Exception as e:
         _logger.error(f"生成季度末批次时出错: {e}", exc_info=True)
         raise RuntimeError(f"生成季度末批次失败: {e}") from e
+
+
+async def generate_single_date_batches(
+    start_date: str,
+    end_date: str,
+    date_field: str = 'trade_date',
+    ts_code: Optional[str] = None,
+    exchange: str = 'SSE',
+    additional_params: Optional[Dict[str, Any]] = None,
+    logger: Optional[logging.Logger] = None
+) -> List[Dict[str, Any]]:
+    """
+    为指定日期范围内的每一个交易日生成单独的批次，每个批次包含单一日期。
+    适用于需要对每个日期单独查询的API，如 fund_nav 等。
+
+    参数:
+        start_date: 开始日期字符串（YYYYMMDD格式）
+        end_date: 结束日期字符串（YYYYMMDD格式）
+        date_field: 日期字段名称，如'nav_date', 'trade_date'等
+        ts_code: 可选的股票/基金代码，如提供会添加到每个批次参数中
+        exchange: 交易所代码，默认为'SSE'（上交所）
+        additional_params: 可选的额外参数字典，将添加到每个批次中
+        logger: 可选的日志记录器
+
+    返回:
+        批次参数列表，每个批次包含一个指定日期字段，如{'nav_date': '20210101'}
+    """
+    _logger = logger if logger else logging.getLogger(__name__)
+    _logger.info(f"生成单日期批次: {start_date} 到 {end_date}, 日期字段: {date_field}")
+
+    try:
+        # 获取交易日列表
+        trade_days = await get_trade_days_between(start_date, end_date, exchange=exchange)
+        
+        if not trade_days:
+            _logger.warning(f"在 {start_date} 和 {end_date} 之间未找到交易日")
+            return []
+            
+        _logger.info(f"找到 {len(trade_days)} 个交易日")
+        
+        # 为每个交易日创建一个批次
+        batch_list = []
+        for trade_day in trade_days:
+            # 创建基本参数字典，使用指定的日期字段
+            batch_params = {date_field: trade_day}
+            
+            # 如果提供了ts_code，添加到批次参数中
+            if ts_code:
+                batch_params['ts_code'] = ts_code
+                
+            # 添加额外参数
+            if additional_params:
+                batch_params.update(additional_params)
+                
+            batch_list.append(batch_params)
+            
+        _logger.info(f"成功生成 {len(batch_list)} 个单日期批次")
+        return batch_list
+        
+    except Exception as e:
+        _logger.error(f"生成单日期批次时出错: {e}", exc_info=True)
+        raise RuntimeError(f"生成单日期批次失败: {e}") from e

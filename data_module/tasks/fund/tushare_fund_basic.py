@@ -111,14 +111,15 @@ class TushareFundBasicTask(TushareTask):
         """
         覆盖基类的数据处理方法，特别处理多个日期列。
         1. 使用 errors='coerce' 转换日期列，允许无效格式。
-        2. 将转换失败产生的 NaT 填充为 '1970-01-01'。
-        3. 调用基类的 process_data 完成剩余处理 (包括 transformations)。
+        2. list_date (date_column) 的 NaT 填充为 '1970-01-01'。
+        3. 其他日期列的 NaT 保持 NaT (将被保存为 NULL)。
+        4. 调用基类的 process_data 完成剩余处理 (包括 transformations)。
         """
         date_cols_to_process = [
             'found_date', 'due_date', 'list_date', 'issue_date', 'delist_date',
             'purc_startdate', 'redm_startdate'
         ]
-        fill_date = pd.Timestamp('1970-01-01') # 默认填充日期
+        fill_date = pd.Timestamp('1970-01-01') # 仅用于 date_column
 
         for col_name in date_cols_to_process:
             if col_name in df.columns:
@@ -130,9 +131,16 @@ class TushareFundBasicTask(TushareTask):
                     df[col_name] = pd.to_datetime(df[col_name], errors='coerce')
 
                 nat_count = df[col_name].isnull().sum()
-                if nat_count > 0:
-                    df[col_name].fillna(fill_date, inplace=True)
-                    self.logger.info(f"任务 {self.name}: 将 {nat_count} 个无效或缺失的 '{col_name}' 填充为 {fill_date.date()}")
+                
+                # 只对主要的日期列 (self.date_column) 填充默认值
+                if col_name == self.date_column:
+                    if nat_count > 0:
+                        df[col_name].fillna(fill_date, inplace=True)
+                        self.logger.info(f"任务 {self.name}: 将 {nat_count} 个无效或缺失的 '{col_name}' (主日期列) 填充为 {fill_date.date()}")
+                # 对于其他日期列，记录 NaT 数量但不填充
+                elif nat_count > 0:
+                    self.logger.info(f"任务 {self.name}: 列 '{col_name}' 包含 {nat_count} 个无效或缺失日期 (将保存为 NULL)")
+
             else:
                 self.logger.warning(f"任务 {self.name}: DataFrame 中未找到日期列 '{col_name}'，跳过预处理。")
 

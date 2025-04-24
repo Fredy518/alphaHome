@@ -276,7 +276,7 @@ class Task(ABC):
             columns.append(primary_key_clause)
         
         create_table_sql = f"""
-        CREATE TABLE {self.table_name} (
+        CREATE TABLE IF NOT EXISTS {self.table_name} (
             {',\n            '.join(columns)}
         );
         """

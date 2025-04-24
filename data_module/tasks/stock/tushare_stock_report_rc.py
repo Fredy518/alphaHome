@@ -132,7 +132,7 @@ class TushareStockReportRcTask(TushareTask):
             self.logger.error(f"任务 {self.name}: 生成自然日批次时出错: {e}", exc_info=True)
             return [] 
 
-    def process_data(self, df: pd.DataFrame) -> pd.DataFrame:
+    async def process_data(self, df: pd.DataFrame) -> pd.DataFrame:
         """数据处理方法
         
         首先调用父类的处理方法，然后填充 org_name 和 author_name 中的空值。

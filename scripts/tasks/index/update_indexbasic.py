@@ -60,8 +60,8 @@ class IndexBasicUpdater(TaskUpdaterBase):
         super().__init__(
             task_name=TARGET_TASK_NAME,
             task_type="指数基本信息",
-            description="指数基本信息全量更新工具",
-            support_report_period=False # 不支持财报周期
+            description="指数基本信息全量更新工具"
+            # support_report_period=False (default is False)
         )
         # self.logger 已由基类初始化
         self.logger.name = self.__class__.__name__ # 可以重命名 logger

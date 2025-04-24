@@ -100,28 +100,36 @@ class TushareStockBasicTask(TushareTask):
         """
         覆盖基类的数据处理方法，特别处理日期列 list_date 和 delist_date。
         1. 使用 errors='coerce' 转换日期列，允许无效格式。
-        2. 将转换失败产生的 NaT 填充为 '1970-01-01'。
-        3. 调用基类的 process_data 完成剩余处理。
+        2. list_date (date_column) 的 NaT 填充为 '1970-01-01'。
+        3. delist_date 的 NaT 保持 NaT (将被保存为 NULL)。
+        4. 调用基类的 process_data 完成剩余处理。
         """
         date_cols_to_process = ['list_date', 'delist_date']
-        fill_date = pd.Timestamp('1970-01-01') # 默认填充日期
+        fill_date = pd.Timestamp('1970-01-01') # 仅用于 date_column
 
         for col_name in date_cols_to_process:
             if col_name in df.columns:
                 original_dtype = df[col_name].dtype
                 # 尝试直接用 YYYYMMDD 转换，如果失败再用通用转换
                 try:
-                    df[col_name] = pd.to_datetime(df[col_name], format='%Y%m%d', errors='coerce')
+                    # 确保输入是字符串类型，避免因混合类型（如整数）导致 format='%Y%m%d' 失败
+                    df[col_name] = pd.to_datetime(df[col_name].astype(str), format='%Y%m%d', errors='coerce')
                 except Exception:
                     # 如果 format='%Y%m%d' 出错（例如数据不是纯粹的YYYYMMDD字符串），尝试通用转换
+                    self.logger.warning(f"任务 {self.name}: 列 '{col_name}' 使用 YYYYMMDD 格式转换失败，尝试通用解析。")
                     df[col_name] = pd.to_datetime(df[col_name], errors='coerce')
 
                 nat_count = df[col_name].isnull().sum()
-                if nat_count > 0:
-                    df[col_name].fillna(fill_date, inplace=True)
-                    self.logger.info(f"任务 {self.name}: 将 {nat_count} 个无效或缺失的 '{col_name}' 填充为 {fill_date.date()}")
-                #else:
-                #    self.logger.debug(f"任务 {self.name}: '{col_name}' 列无需填充默认日期。") # Debug 级别信息
+                
+                # 只对主要的日期列 (self.date_column) 填充默认值
+                if col_name == self.date_column:
+                    if nat_count > 0:
+                        df[col_name].fillna(fill_date, inplace=True)
+                        self.logger.info(f"任务 {self.name}: 将 {nat_count} 个无效或缺失的 '{col_name}' (主日期列) 填充为 {fill_date.date()}")
+                # 对于其他日期列 (如 delist_date)，记录 NaT 数量但不填充
+                elif nat_count > 0:
+                    self.logger.info(f"任务 {self.name}: 列 '{col_name}' 包含 {nat_count} 个无效或缺失日期 (将保存为 NULL)")
+
             else:
                 self.logger.warning(f"任务 {self.name}: DataFrame 中未找到日期列 '{col_name}'，跳过预处理。")
 
