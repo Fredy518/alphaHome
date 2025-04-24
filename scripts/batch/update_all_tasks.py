@@ -31,7 +31,6 @@ dotenv_path = project_root / '.env'
 dotenv.load_dotenv(dotenv_path=dotenv_path)
 
 from data_module.task_factory import TaskFactory
-from data_module.task_decorator import get_registered_tasks
 from data_module.tools.calendar import get_last_trade_day, get_trade_cal
 
 # 配置日志
@@ -158,14 +157,18 @@ async def update_all_tasks(args: argparse.Namespace) -> List[Dict[str, Any]]:
         logger.warning(f"预加载交易日历数据失败: {str(e)}")
     
     try:
-        # 获取所有已注册的任务
-        registered_tasks = get_registered_tasks()
-        logger.info(f"发现 {len(registered_tasks)} 个已注册的任务")
+        # 获取'fetch'类型的任务
+        fetch_task_names = TaskFactory.get_task_names_by_type('fetch')
+        logger.info(f"发现 {len(fetch_task_names)} 个 'fetch' 类型的任务: {fetch_task_names}")
         
+        if not fetch_task_names:
+            logger.warning("未找到任何 'fetch' 类型的任务可执行")
+            return []
+            
         # 创建任务更新协程
         update_tasks = [
             update_task(task_name, args)
-            for task_name in registered_tasks
+            for task_name in fetch_task_names # 只执行 fetch 类型的任务
         ]
         
         # 并行执行所有任务

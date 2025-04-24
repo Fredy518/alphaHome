@@ -1,7 +1,8 @@
 import logging
-from typing import Dict, Type, Optional, Any
+from typing import Dict, Type, Optional, Any, List
 import os
 import json
+from concurrent.futures import ProcessPoolExecutor
 
 from .base_task import Task
 from .db_manager import DBManager
@@ -64,11 +65,12 @@ logger = logging.getLogger('task_factory')
 class TaskFactory:
     """任务工厂类
     
-    管理任务实例的创建和数据库连接
+    管理任务实例的创建、数据库连接和进程池
     """
     
     # 类变量
     _db_manager = None
+    _process_executor = None
     _task_instances = {}
     _task_registry = {}
     _initialized = False
@@ -96,18 +98,42 @@ class TaskFactory:
         
         cls._db_manager = DBManager(db_url)
         await cls._db_manager.connect()
+        
+        # 创建进程池
+        if cls._process_executor is None:
+            try:
+                num_workers = os.cpu_count()
+                cls._process_executor = ProcessPoolExecutor(max_workers=num_workers)
+                logger.info(f"进程池已创建，工作进程数: {num_workers}")
+            except Exception as e:
+                logger.error(f"创建进程池失败: {e}", exc_info=True)
+                # 考虑是否要在这里抛出异常或允许在没有进程池的情况下继续
+        
         cls._initialized = True
-        logger.info(f"数据库连接已初始化: {db_url}")
+        logger.info(f"TaskFactory 已初始化: db_url={db_url}")
     
     @classmethod
     async def shutdown(cls):
-        """关闭数据库连接"""
+        """关闭数据库连接和进程池"""
+        # 关闭进程池
+        if cls._process_executor:
+            logger.info("开始关闭进程池...")
+            try:
+                cls._process_executor.shutdown(wait=True) # 等待任务完成
+                cls._process_executor = None
+                logger.info("进程池已关闭")
+            except Exception as e:
+                logger.error(f"关闭进程池时发生错误: {e}", exc_info=True)
+        
+        # 关闭数据库连接
         if cls._db_manager:
             await cls._db_manager.close()
             cls._db_manager = None
-            cls._task_instances.clear()
-            cls._initialized = False
             logger.info("数据库连接已关闭")
+        
+        cls._task_instances.clear()
+        cls._initialized = False
+        logger.info("TaskFactory 已关闭")
     
     @classmethod
     def get_db_manager(cls):
@@ -115,6 +141,31 @@ class TaskFactory:
         if not cls._initialized:
             raise RuntimeError("TaskFactory 尚未初始化，请先调用 initialize() 方法")
         return cls._db_manager
+    
+    @classmethod
+    def get_process_executor(cls) -> Optional[ProcessPoolExecutor]:
+        """获取进程池执行器实例"""
+        if not cls._initialized:
+            raise RuntimeError("TaskFactory 尚未初始化，请先调用 initialize() 方法")
+        # 根据初始化逻辑，这里可能返回 None 如果创建失败
+        return cls._process_executor
+    
+    @classmethod
+    def get_task_names_by_type(cls, task_type: str) -> List[str]:
+        """根据任务类型获取已注册的任务名称列表"""
+        if not cls._initialized:
+            # 考虑是否应该在这里自动初始化或抛出更明确的错误
+            # 暂时保持与 get_db_manager 一致的行为
+            raise RuntimeError("TaskFactory 尚未初始化，请先调用 initialize() 方法")
+        
+        matching_tasks = []
+        for task_name, task_class in cls._task_registry.items():
+            # 使用 getattr 获取 task_type，提供默认值以处理可能未定义的旧任务
+            if getattr(task_class, 'task_type', None) == task_type:
+                matching_tasks.append(task_name)
+                
+        logger.debug(f"找到 {len(matching_tasks)} 个类型为 '{task_type}' 的任务: {matching_tasks}")
+        return matching_tasks
     
     @classmethod
     async def get_task(cls, task_name: str):

@@ -385,6 +385,7 @@ affected_rows = await db_manager.upsert(
 4. **智能增量更新**：内置增量更新策略
 5. **错误处理**：统一的错误处理机制
 6. **自动时间戳**：自动添加更新时间戳
+7. **任务类型标识**: 每个任务类都包含一个 `task_type` 类属性 (字符串)，用于区分不同类型的任务。默认值为 `'fetch'` (表示数据获取任务)。衍生数据计算任务的基类 (`BaseDerivativeTask`) 将此属性覆盖为 `'derivative'`。这有助于脚本根据需要筛选和执行特定类型的任务。
 
 每个Task子类必须定义以下属性：
 - `name`：任务的唯一标识符
@@ -739,6 +740,36 @@ fund_nav_config = get_task_config("tushare_fund_nav")
 # 获取特定配置项，并指定默认值
 concurrent_limit = get_task_config("tushare_fund_nav", "concurrent_limit", 2)
 ```
+
+### 按类型获取任务名称
+
+`TaskFactory` 提供了一个方便的方法来获取特定类型的已注册任务的名称列表。
+
+```python
+from data_module.task_factory import TaskFactory
+
+async def example_get_tasks_by_type():
+    await TaskFactory.initialize()
+    
+    try:
+        # 获取所有数据获取任务的名称
+        fetch_task_names = TaskFactory.get_task_names_by_type('fetch')
+        print(f"数据获取任务: {fetch_task_names}")
+        
+        # 获取所有衍生数据计算任务的名称
+        derivative_task_names = TaskFactory.get_task_names_by_type('derivative')
+        print(f"衍生数据任务: {derivative_task_names}")
+        
+        # 可以根据名称列表获取并执行任务
+        for task_name in fetch_task_names:
+            task = await TaskFactory.get_task(task_name)
+            # ... 执行 task.execute() 或 task.smart_incremental_update() ...
+            
+    finally:
+        await TaskFactory.shutdown()
+```
+
+这个功能对于区分数据获取和数据计算任务、按顺序执行任务或为不同类型的任务应用不同的执行逻辑（例如传递不同的参数）非常有用。
 
 ## 数据质量检查
 

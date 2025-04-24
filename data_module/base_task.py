@@ -9,6 +9,9 @@ from typing import Dict, List, Any, Callable, Optional, Union
 class Task(ABC):
     """数据任务基类"""
     
+    # 任务类型标识 ('fetch', 'derivative', etc.)
+    task_type: str = 'fetch'
+    
     # 必须由子类定义的属性
     name = None
     table_name = None
