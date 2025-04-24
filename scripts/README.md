@@ -21,6 +21,7 @@ scripts/
 │   │   ├── update_daily.py         # 日线行情更新
 │   │   └── update_dailybasic.py    # 每日指标更新
 │   └── index/              # 指数数据相关（预留）
+├── check_db_quality.py     # 数据库表质量全面检查工具
 ├── tools/                  # 工具脚本
 │   └── check_stock_daily_quality.py  # 股票日线数据质量检查
 ├── batch/                  # 批量更新脚本
@@ -66,12 +67,49 @@ python scripts/batch/update_all_tasks.py --tasks "tushare_fina_cashflow,tushare_
 
 ### 3. 数据质量检查
 
+#### 3.1 单表数据质量检查
+
 使用 `check_stock_daily_quality.py` 可以检查股票日线数据的质量：
 
 ```bash
 # 检查指定日期范围的数据质量
 python scripts/tools/check_stock_daily_quality.py --start-date 20230101 --end-date 20230331
 ```
+
+#### 3.2 全面数据库质量检查
+
+使用 `check_db_quality.py` 可以对整个数据库或指定表进行全面质量检查：
+
+```bash
+# 运行全面的数据库表质量检查
+python scripts/check_db_quality.py
+
+# 检查特定表的数据质量
+python scripts/check_db_quality.py -t tushare_stock_daily tushare_fund_daily
+
+# 检查特定日期范围的数据质量
+python scripts/check_db_quality.py -s 20230101 -e 20231231
+
+# 指定输出目录（默认为logs/db_quality_时间戳）
+python scripts/check_db_quality.py -o logs/custom_quality_check
+
+# 启用详细日志输出
+python scripts/check_db_quality.py -v
+```
+
+支持的参数：
+- `-t, --tables`: 指定要检查的表名（多个表用空格分隔）
+- `-s, --start-date`: 指定检查的起始日期（格式：YYYYMMDD）
+- `-e, --end-date`: 指定检查的结束日期（格式：YYYYMMDD）
+- `-o, --output-dir`: 指定输出目录路径
+- `-v, --verbose`: 启用详细日志输出
+- `-h, --help`: 显示帮助信息
+
+检查完成后，脚本会生成包含以下内容的报告：
+- HTML格式的综合质量报告
+- 各表数据覆盖率的可视化图表
+- 详细的JSON格式质量数据
+- 按月数据覆盖分析
 
 ## 开发说明
 
