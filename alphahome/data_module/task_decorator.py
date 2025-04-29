@@ -8,6 +8,8 @@ logger = logging.getLogger('task_decorator')
 # 任务注册表
 _task_registry = {}
 
+_tasks_registered = False
+
 def task_register(task_name=None):
     """任务注册装饰器
     
@@ -67,10 +69,11 @@ def register_tasks_to_factory():
     
     注意：该函数需要在导入所有任务类之后调用
     """
-    # 延迟导入以避免循环依赖
+    global _tasks_registered
+    if _tasks_registered:
+        logger.debug("任务注册已完成，跳过。"); return
     from .task_factory import TaskFactory
-    
-    # 注册所有任务
     for task_name, task_class in _task_registry.items():
         TaskFactory.register_task(task_name, task_class)
-        logger.debug(f"任务 '{task_name}' 已从装饰器注册表同步到 TaskFactory") 
+        logger.debug(f"任务 '{task_name}' 已从装饰器注册表同步到 TaskFactory")
+    _tasks_registered = True 

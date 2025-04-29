@@ -14,38 +14,62 @@ APP_AUTHOR = "YourAppNameOrAuthor" # <--- 确保与 controller.py 中的值相�
 CONFIG_DIR = appdirs.user_config_dir(APP_NAME, APP_AUTHOR)
 CONFIG_FILE = os.path.join(CONFIG_DIR, 'config.json')
 
+# --- 配置缓存 ---
+_config_cache = None
+_config_loaded = False
+
 # 读取配置文件
 def load_config():
+    global _config_cache, _config_loaded
+    if _config_loaded and _config_cache is not None:
+        logger.debug("从缓存加载配置。")
+        return _config_cache
+        
+    logger.info(f"尝试从用户配置路径加载设置: {CONFIG_FILE}") # 只有首次加载或重载时打印
+
+    config_data = {}
     # 首先尝试读取配置文件
-    logging.info(f"TaskFactory 尝试从用户配置路径加载设置: {CONFIG_FILE}") # 添加日志
     if os.path.exists(CONFIG_FILE):
         try:
             with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
-                return json.load(f)
+                config_data = json.load(f)
         except Exception as e:
             logger.warning(f"读取配置文件 {CONFIG_FILE} 失败: {e}，使用环境变量或默认值")
     else:
          logger.warning(f"配置文件 {CONFIG_FILE} 未找到，将尝试环境变量。")
     
-    # 如果配置文件不存在或读取失败，尝试环境变量
-    db_url_from_env = os.environ.get('DATABASE_URL') # 先尝试环境变量
-    if db_url_from_env:
-         logger.info("从环境变量 DATABASE_URL 加载数据库 URL。")
-    else:
-         logger.warning("环境变量 DATABASE_URL 未设置。")
-    
-    # 如果环境变量也没有，则 db_url 为 None
-    db_url = db_url_from_env # 如果 env 有值就是它，否则是 None
+    # 合并/处理环境变量 (只在首次加载或配置文件不存在/错误时检查)
+    db_url = config_data.get("database", {}).get("url")
+    tushare_token = config_data.get("api", {}).get("tushare_token")
 
-    return {
-        "database": {
-            "url": db_url # 可能为 None
-        },
-        "api": {
-            "tushare_token": os.environ.get('TUSHARE_TOKEN', '') # Token 可以默认为空
-        },
-        "tasks": {}  # 任务配置为空，让任务类使用自己的默认值
+    if not db_url:
+        db_url_from_env = os.environ.get('DATABASE_URL')
+        if db_url_from_env:
+            logger.info("从环境变量 DATABASE_URL 加载数据库 URL。")
+            db_url = db_url_from_env
+        else:
+            logger.warning("配置文件和环境变量均未设置有效的数据库 URL。")
+    
+    if not tushare_token:
+        tushare_token_from_env = os.environ.get('TUSHARE_TOKEN')
+        if tushare_token_from_env:
+             logger.info("从环境变量 TUSHARE_TOKEN 加载 Tushare Token。")
+             tushare_token = tushare_token_from_env
+        # Token 可以为空，不强制要求
+        
+    # 确保返回的结构完整
+    final_config = {
+        "database": {"url": db_url},
+        "api": {"tushare_token": tushare_token or ''},
+        "tasks": config_data.get("tasks", {})
     }
+
+    _config_cache = final_config
+    _config_loaded = True
+    logger.debug("配置已加载并缓存。")
+    return _config_cache
+
+# --- 配置缓存结束 ---
 
 # 获取配置值的函数
 def get_database_url():
@@ -91,12 +115,9 @@ class TaskFactory:
     
     @classmethod
     def register_task(cls, task_name, task_class):
-        """注册任务类型
-        
-        Args:
-            task_name: 任务名称
-            task_class: 任务类
-        """
+        if task_name in cls._task_registry:
+            logger.debug(f"任务 {task_name} 已注册，跳过重复注册。")
+            return
         cls._task_registry[task_name] = task_class
         logger.debug(f"注册任务类型: {task_name}")
     
@@ -140,12 +161,14 @@ class TaskFactory:
     @classmethod
     async def reload_config(cls):
         """重新加载配置并重新初始化数据库连接。"""
+        global _config_cache, _config_loaded # 引入全局变量
         logger.info("开始重新加载 TaskFactory 配置...")
-        # if not cls._initialized or not cls._db_manager:
-        #     # 如果之前未初始化，直接尝试初始化可能更好？
-        #     logger.warning("TaskFactory 尚未初始化，无法重载。将执行首次初始化。")
-        #     await cls.initialize()
-        #     return
+        
+        # --- 清空配置缓存 ---
+        _config_cache = None
+        _config_loaded = False
+        logger.info("配置缓存已清除，将重新加载。")
+        # --- 清空配置缓存结束 ---
 
         try:
             # 1. 关闭现有数据库连接 (如果存在)

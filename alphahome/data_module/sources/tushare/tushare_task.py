@@ -57,9 +57,6 @@ class TushareTask(Task):
         self.retry_delay = self.default_retry_delay
         self.task_specific_config = {} # 存储原始任务配置
         
-        # 应用默认配置 (传递空字典以触发默认值设置)
-        self._apply_config({}) 
-        
     def set_config(self, task_config: Dict):
         """应用来自配置文件的设置，覆盖代码默认值"""
         self._apply_config(task_config)
