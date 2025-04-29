@@ -23,14 +23,18 @@ class TushareFundAdjFactorTask(TushareTask):
 
     # 1. 核心属性
     name = "tushare_fund_adjfactor"
-    description = "获取公募基金复权因子数据"
+    description = "获取公募基金复权因子"
     table_name = "tushare_fund_adjfactor" # 使用独立的表存储基金复权因子
     primary_keys = ["ts_code", "trade_date"]
     date_column = "trade_date"
-    default_start_date = "20000101" # 根据基金行情数据的起始时间调整
+    default_start_date = "20000101" # 与基金净值/日线保持一致
+
+    # --- 代码级默认配置 (会被 config.json 覆盖) --- #
+    default_concurrent_limit = 5
+    default_page_size = 2000
 
     # 2. TushareTask 特有属性
-    api_name = "adj_factor" # 使用与股票相同的 adj_factor 接口
+    api_name = "fund_adj" # Tushare API 名称
     fields = ["ts_code", "trade_date", "adj_factor"]
 
     # 3. 列名映射 (无需映射)
@@ -96,6 +100,10 @@ class TushareFundAdjFactorTask(TushareTask):
                 ts_code=ts_code,
                 logger=self.logger
             )
+            # Note: The 'fund_adj' API supports multiple ts_codes. This batching strategy primarily splits by date.
+            # For multi-code requests within a date range, the API handles it directly if no ts_code is passed in the batch params,
+            # or if a single ts_code is passed.
+            # Handling a list of specific ts_codes would require adjusting this batch generation logic.
             return batch_list
         except Exception as e:
             self.logger.error(f"任务 {self.name}: 生成交易日批次时出错: {e}", exc_info=True)

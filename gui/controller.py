@@ -5,8 +5,10 @@ import logging
 import json
 import os
 from datetime import datetime
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple, Callable
 import urllib.parse # 需要导入 urllib.parse
+import appdirs # <-- 导入 appdirs
+import traceback
 
 # 假设 data_module 在父目录中
 # from ..data_module import TaskFactory, base_task  # Relative import fails when run with -m
@@ -14,8 +16,11 @@ import urllib.parse # 需要导入 urllib.parse
 from data_module import TaskFactory, base_task
 
 # --- 配置 ---
-# 确定相对于此文件的路径
-CONFIG_FILE_PATH = os.path.join(os.path.dirname(__file__), '..', 'data_module', 'config.json')
+# 使用 appdirs 获取用户配置目录
+APP_NAME = "alphaHomeApp" # <--- 您可以修改应用名称
+APP_AUTHOR = "YourAppNameOrAuthor" # <--- 建议修改为您的名称或组织名
+CONFIG_DIR = appdirs.user_config_dir(APP_NAME, APP_AUTHOR)
+CONFIG_FILE_PATH = os.path.join(CONFIG_DIR, 'config.json') # 配置文件路径现在指向用户目录
 
 # --- 用于线程通信的队列 ---
 request_queue = queue.Queue()  # GUI -> 后端线程
@@ -27,6 +32,7 @@ _running_task_status: Dict[str, Dict[str, Any]] = {} # 当前运行中任务的�
 _stop_requested = False # 用于发出停止任务信号的标志 (基础版本)
 _backend_thread: Optional[threading.Thread] = None # 跟踪线程
 _backend_running = False # 指示异步循环是否活动的标志
+_current_stop_event: Optional[asyncio.Event] = None
 
 # --- 日志设置 ---
 class QueueHandler(logging.Handler):
@@ -98,8 +104,11 @@ async def _process_requests():
                 # 在后台执行，不阻塞队列处理
                 asyncio.create_task(_handle_execute_tasks(data['mode'], data['start_date']))
             elif request_type == 'REQUEST_STOP':
-                 _stop_requested = True
-                 response_queue.put(('LOG_ENTRY', "收到停止请求，将尝试在下一个任务开始前停止..."))
+                 if _current_stop_event:
+                      _current_stop_event.set()
+                      response_queue.put(('LOG_ENTRY', "收到停止请求，信号已发送给当前任务..."))
+                 else:
+                      response_queue.put(('LOG_ENTRY', "收到停止请求，但当前没有任务在运行或任务不支持停止。"))
             elif request_type == 'SHUTDOWN':
                 logging.info("收到关闭请求，开始关闭...")
                 await TaskFactory.shutdown()
@@ -124,8 +133,10 @@ async def _handle_get_tasks():
     """Fetch task list from factory, update cache, and send formatted list to GUI."""
     global _task_list_cache
     try:
-        # TaskFactory.get_all_task_names() 可能是同步的
-        task_names = TaskFactory.get_all_task_names() # 移除了 await
+        # 尝试获取任务名称，这可能会因为 TaskFactory 未初始化而失败
+        task_names = TaskFactory.get_all_task_names() # 可能引发 RuntimeError
+        
+        # --- 如果成功获取 task_names，继续正常处理 ---
         new_cache = []
         existing_selection = {item['name']: item['selected'] for item in _task_list_cache} # 保留选择状态
 
@@ -234,8 +245,24 @@ async def _handle_get_tasks():
         logging.info(f"Sending updated TASK_LIST with {len(_task_list_cache)} tasks to GUI.")
         response_queue.put(('TASK_LIST_UPDATE', _task_list_cache))
         response_queue.put(('STATUS', '任务列表已刷新')) # 添加状态更新
+    except RuntimeError as e:
+        # --- 专门处理 TaskFactory 未初始化的 RuntimeError ---
+        if "TaskFactory 尚未初始化" in str(e):
+            logging.warning("获取任务列表失败，因为 TaskFactory 尚未初始化。请用户配置数据库。")
+            # 发送状态消息，而不是错误弹窗
+            response_queue.put(('STATUS', "数据库未配置，无法加载任务。请前往'存储设置'配置并保存。"))
+            # 清空缓存并更新 GUI 列表为空
+            _task_list_cache = []
+            response_queue.put(('TASK_LIST_UPDATE', _task_list_cache))
+        else:
+            # 其他类型的 RuntimeError，仍然作为错误处理
+            logging.exception("获取任务列表时发生意外的 RuntimeError")
+            response_queue.put(('ERROR', f"获取任务列表时发生运行时错误: {e}"))
+            
     except Exception as e:
+        # --- 处理其他所有异常 --- 
         logging.exception("获取任务列表失败")
+        # 仍然作为错误发送给 GUI
         response_queue.put(('ERROR', f"获取任务列表失败: {e}"))
 
 def _format_task_list_for_tkinter_treeview() -> List[Dict[str, Any]]:
@@ -283,7 +310,7 @@ def _handle_deselect_specific(task_names: List[str]):
 
 async def _handle_execute_tasks(mode: str, start_date_str: Optional[str]):
     """Handle the request to execute selected tasks."""
-    global _running_task_status, _stop_requested
+    global _running_task_status, _current_stop_event
     
     selected_tasks = [task for task in _task_list_cache if task['selected']]
     if not selected_tasks:
@@ -299,16 +326,31 @@ async def _handle_execute_tasks(mode: str, start_date_str: Optional[str]):
     response_queue.put(('RUN_TABLE_INIT', list(_running_task_status.values())))
     response_queue.put(('STATUS', '开始执行任务批次...'))
 
+    # <<< Define the progress callback >>>
+    async def _update_gui_progress(task_name: str, progress_str: str):
+        """Callback function to update GUI progress from the task."""
+        if task_name in _running_task_status:
+            # Only update if the status is still '运行中' to avoid overwriting final status
+            if _running_task_status[task_name]['status'] == '运行中':
+                 _running_task_status[task_name]['progress'] = progress_str
+                 response_queue.put(('RUN_STATUS_UPDATE', _running_task_status[task_name]))
+        else:
+            # Log if task is not found, might indicate a race condition or error
+            logging.warning(f"Received progress update for unknown or completed task: {task_name}")
+
     tasks_executed_count = 0
     tasks_succeeded_count = 0
     tasks_failed_count = 0
 
+    stop_event = asyncio.Event()
+    _current_stop_event = stop_event
+
     for task_info in selected_tasks:
-        if _stop_requested:
-            response_queue.put(('LOG_ENTRY', "任务执行已手动停止。"))
-            _running_task_status[task_info['name']]['status'] = '已跳过'
+        if stop_event.is_set():
+            logging.info(f"任务 '{task_info['name']}' 因收到停止请求而被跳过 (循环中断)")
+            _running_task_status[task_info['name']] = {'name': task_info['name'], 'status': '已停止', 'start_time': datetime.now().strftime("%H:%M:%S"), 'end_time': '-', 'progress': '-', 'details': '-'}
             response_queue.put(('RUN_STATUS_UPDATE', _running_task_status[task_info['name']]))
-            continue # 跳过剩余任务
+            break
 
         task_name = task_info['name']
         start_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -319,22 +361,28 @@ async def _handle_execute_tasks(mode: str, start_date_str: Optional[str]):
             task: base_task.Task = await TaskFactory.get_task(task_name)
             
             # 根据模式准备参数
-            kwargs = {}
+            kwargs = {
+                'start_date': start_date_str,
+                'end_date': datetime.now().strftime('%Y%m%d'),
+                'progress_callback': _update_gui_progress,
+                'concurrent_limit': task_settings.get('concurrent_limit', 1), # 从设置或默认值获取并发限制
+                'batch_size': task_settings.get('batch_size'),
+                'stop_event': stop_event
+            }
             execute_method = None
 
             if mode == "全量导入":
-                 # 如果任务支持 'full' 模式，则使用一个非常早的日期或进行特殊处理
-                 kwargs['start_date'] = '19900101' # 示例最早日期
+                 kwargs['start_date'] = '19900101'
                  kwargs['end_date'] = datetime.now().strftime('%Y%m%d')
                  execute_method = task.execute
             elif mode == "智能增量":
-                 # 假设 smart_incremental_update 存在并且不从 GUI 获取额外的日期参数
-                 execute_method = task.smart_incremental_update
-                 # smart_incremental_update 可能需要 **kwargs，暂时传递空字典
+                 #智能增量现在也需要传递回调
+                 execute_method = task.smart_incremental_update 
+                 # smart_incremental_update 会把 kwargs 传给 execute, 所以回调也会被传递
             elif mode == "手动增量":
                  if not start_date_str:
                      raise ValueError("手动增量模式需要指定开始日期")
-                 kwargs['start_date'] = start_date_str.replace('-', '') # 确保格式为 YYYYMMDD
+                 kwargs['start_date'] = start_date_str.replace('-', '')
                  kwargs['end_date'] = datetime.now().strftime('%Y%m%d')
                  execute_method = task.execute
             else:
@@ -343,7 +391,7 @@ async def _handle_execute_tasks(mode: str, start_date_str: Optional[str]):
             if not execute_method:
                  raise NotImplementedError(f"任务 {task_name} 不支持模式 {mode}")
 
-            # 执行任务方法
+            # 执行任务方法, 传递 kwargs (包含回调)
             result = await execute_method(**kwargs)
             
             tasks_executed_count += 1
@@ -353,6 +401,7 @@ async def _handle_execute_tasks(mode: str, start_date_str: Optional[str]):
                 tasks_succeeded_count += 1
                 final_status = '完成' if status != 'partial_success' else '部分完成'
                 _running_task_status[task_name]['status'] = final_status
+                # Ensure final progress is 100% on success/completion
                 _running_task_status[task_name]['progress'] = '100%'
             else:
                 tasks_failed_count += 1
@@ -376,12 +425,14 @@ async def _handle_execute_tasks(mode: str, start_date_str: Optional[str]):
     final_summary = f"批次执行完成: 共执行{tasks_executed_count}个任务, 成功{tasks_succeeded_count}, 失败{tasks_failed_count}."
     response_queue.put(('LOG_ENTRY', final_summary))
     response_queue.put(('RUN_COMPLETED', final_summary))
-    _stop_requested = False # 批处理完成后重置停止标志
+    _current_stop_event = None
 
 # --- 设置处理 ---
 def _load_settings() -> Dict:
-    """加载配置文件 (config.json)"""
+    """加载配置文件 (config.json) - 现在从用户配置目录加载"""
     try:
+        # 确保在使用前打印或记录最终的 CONFIG_FILE_PATH 以便调试
+        logging.info(f"尝试从用户配置路径加载设置: {CONFIG_FILE_PATH}")
         with open(CONFIG_FILE_PATH, 'r', encoding='utf-8') as f:
             settings = json.load(f)
             logging.info(f"从 {CONFIG_FILE_PATH} 加载设置成功。")
@@ -390,31 +441,31 @@ def _load_settings() -> Dict:
         logging.warning(f"配置文件 {CONFIG_FILE_PATH} 未找到，将使用空设置。")
         return {}
     except json.JSONDecodeError:
-        logging.error(f"解析配置文件 {CONFIG_FILE_PATH} 失败。")
-        return {}
+        logging.error(f"解析配置文件 {CONFIG_FILE_PATH} 失败。文件可能已损坏。")
+        return {} # 返回空字典而不是抛出异常
     except Exception as e:
-        logging.exception(f"加载配置文件时发生未知错误")
+        logging.exception(f"加载配置文件时发生未知错误: {CONFIG_FILE_PATH}")
         return {}
 
 def _save_settings(settings: Dict) -> bool:
-    """保存设置到配置文件 (config.json)"""
+    """保存设置到配置文件 (config.json) - 现在保存到用户配置目录"""
     try:
-        # 确保目录存在
+        # 确保目录存在 (这是关键步骤)
+        logging.info(f"尝试保存设置到用户配置路径: {CONFIG_FILE_PATH}")
         os.makedirs(os.path.dirname(CONFIG_FILE_PATH), exist_ok=True)
         with open(CONFIG_FILE_PATH, 'w', encoding='utf-8') as f:
             json.dump(settings, f, indent=4, ensure_ascii=False)
         logging.info(f"设置已成功保存到 {CONFIG_FILE_PATH}")
-        response_queue.put(('LOG_ENTRY', '配置设置已成功保存。')) # 反馈给 GUI
-        # 可以考虑重新初始化 TaskFactory 或通知它配置已更改
-        # asyncio.create_task(TaskFactory.reload_config(settings)) # 如果需要动态重载
+        # 保存成功后不再发送 LOG_ENTRY，由 _perform_save_settings 或 _handle_save_settings 发送状态
         return True
     except IOError as e:
         logging.error(f"写入配置文件 {CONFIG_FILE_PATH} 时出错: {e}")
-        response_queue.put(('ERROR', f"保存配置失败: 文件写入错误 ({e})。"))
+        # 保存失败时也不发送 ERROR，让上层函数处理错误报告
+        # response_queue.put(('ERROR', f"保存配置失败: 文件写入错误 ({e})。"))
         return False
     except Exception as e:
-        logging.exception(f"保存配置文件时发生未知错误")
-        response_queue.put(('ERROR', f"保存配置失败: 未知错误 ({e})。"))
+        logging.exception(f"保存配置文件时发生未知错误: {CONFIG_FILE_PATH}")
+        # response_queue.put(('ERROR', f"保存配置失败: 未知错误 ({e})。"))
         return False
 
 # --- GUI 公共接口 ---
@@ -452,17 +503,42 @@ def get_cached_task_list() -> List[Dict[str, Any]]:
     return list(_task_list_cache)
 
 def get_current_settings() -> Dict:
-    """加载完整配置，提取 GUI 需要的部分返回。"""
-    full_config = _load_settings()
-    # 提取 token
-    tushare_token = full_config.get('api', {}).get('tushare_token', '')
-    # 提取 database 字典 (可能为空)
-    database_config = full_config.get('database', {})
-    # 返回给 GUI 处理
-    return {
-        'tushare_token': tushare_token,
-        'database': database_config # 包含 url 或其他可能的 db 设置
-    }
+    """Load settings from config file or return defaults."""
+    try:
+        settings = _load_settings()
+        # 确保返回的字典结构完整，即使文件为空或部分缺失
+        # 这样 GUI 端就不需要处理 None 或 KeyError
+        default_settings = {
+            "database": {"url": ""}, 
+            "api": {"tushare_token": ""}
+        }
+        # 合并加载的设置和默认设置，加载的优先
+        # 注意：这只是浅层合并
+        merged_settings = default_settings.copy()
+        if isinstance(settings, dict):
+            if "database" in settings and isinstance(settings["database"], dict):
+                 merged_settings["database"].update(settings["database"])
+            if "api" in settings and isinstance(settings["api"], dict):
+                 merged_settings["api"].update(settings["api"])
+        else:
+            # 如果 _load_settings 返回的不是字典（例如 None 或异常被捕获返回空），则返回默认
+            logging.warning("无法从 config.json 加载有效设置，返回默认空设置。")
+            return default_settings
+            
+        # 清理 None 值，替换为空字符串，以便 GUI 显示
+        if merged_settings["database"].get("url") is None:
+            merged_settings["database"]["url"] = ""
+        if merged_settings["api"].get("tushare_token") is None:
+            merged_settings["api"]["tushare_token"] = ""
+            
+        return merged_settings
+    except Exception as e:
+        logging.error(f"获取当前设置时出错: {e}")
+        # 发生任何异常，都返回安全的默认值
+        return {
+            "database": {"url": ""}, 
+            "api": {"tushare_token": ""}
+        }
 
 def save_settings(settings_from_gui: Dict):
     """(接口) 请求后台异步保存给定的设置字典。"""
@@ -554,3 +630,7 @@ async def _handle_save_settings(settings_from_gui: Dict):
             response_queue.put(('STATUS', '设置已保存但重载失败。'))
     # else: # 保存失败，错误消息已由 _perform_save_settings 发送
     #     response_queue.put(('STATUS', '设置保存失败。'))
+
+def _fail_all_running_tasks():
+    # Implementation of _fail_all_running_tasks method
+    pass

@@ -23,6 +23,10 @@ class TushareStockDailyBasicTask(TushareTask):
     date_column = "trade_date"
     default_start_date = "19910101" # Tushare 股票日基本指标大致起始日期
 
+    # --- 代码级默认配置 (会被 config.json 覆盖) --- #
+    default_concurrent_limit = 10
+    default_page_size = 6000
+
     # 2.自定义索引
     indexes = [
         {"name": "idx_tushare_daily_basic_code", "columns": "ts_code"},

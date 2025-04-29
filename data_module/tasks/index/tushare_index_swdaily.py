@@ -25,11 +25,15 @@ class TushareIndexSwDailyTask(TushareTask):
 
     # 1. 核心属性
     name = "tushare_index_swdaily"
-    description = "获取申万行业日线行情数据"
+    description = "获取申万行业日线行情"
     table_name = "tushare_index_swdaily"
     primary_keys = ["ts_code", "trade_date"]
     date_column = "trade_date"
-    default_start_date = "20050101" # 申万行业指数通常在此日期后开始
+    default_start_date = "20050101" # 根据 Tushare 数据起始调整
+
+    # --- 代码级默认配置 (会被 config.json 覆盖) --- #
+    default_concurrent_limit = 5
+    default_page_size = 4000
 
     # 2. TushareTask 特有属性
     api_name = "sw_daily" # Tushare API 名称

@@ -26,15 +26,16 @@ class TushareIndexBasicTask(TushareTask):
 
     # 1. 核心属性
     name = "tushare_index_basic"
-    description = "获取指数基本信息 (UPSERT 更新)"
-    table_name = "tushare_index_basic"  # 请确认实际表名
+    description = "获取指数基础信息"
+    table_name = "tushare_index_basic"
     primary_keys = ["ts_code"]
-    date_column = "list_date" # 明确有 list_date 列，但不用作增量更新
-    
-    # TushareTask 继承自 Task，默认 auto_add_update_time=True
-    # 如果不需要自动添加 update_time 列，可以设置：
-    # auto_add_update_time = False
-    
+    date_column = None # 全量任务
+    default_start_date = None # 全量任务
+
+    # --- 代码级默认配置 (会被 config.json 覆盖) --- #
+    default_concurrent_limit = 1
+    default_page_size = 8000
+
     # 2. TushareTask 特有属性
     api_name = "index_basic"
     # Tushare index_basic 接口实际返回的字段 (根据用户反馈更新)

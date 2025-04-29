@@ -1,0 +1,6 @@
+data_module
+dist
+docs
+gui
+logs
+scripts

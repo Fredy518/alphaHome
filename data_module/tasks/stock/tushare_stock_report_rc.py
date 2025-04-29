@@ -14,11 +14,15 @@ class TushareStockReportRcTask(TushareTask):
     
     # 1.核心属性
     name = "tushare_stock_report_rc"
-    description = "获取券商盈利预测数据"
+    description = "获取上市公司业绩报告期次数据"
     table_name = "tushare_stock_report_rc"
     primary_keys = ["ts_code", "report_date", "org_name", "author_name", "quarter"]
-    date_column = "report_date" 
-    default_start_date = "20100101"
+    date_column = "report_date" # 使用报告日期作为主要日期
+    default_start_date = "19900101"
+
+    # --- 代码级默认配置 (会被 config.json 覆盖) --- #
+    default_concurrent_limit = 10
+    default_page_size = 3000
 
     # 2.自定义索引
     indexes = [
@@ -29,7 +33,7 @@ class TushareStockReportRcTask(TushareTask):
     ]
 
     # 3.Tushare特有属性
-    api_name = "report_rc"
+    api_name = "report_rc" # Tushare API 名称
     fields = [
         "ts_code", "name", "report_date", "report_title", "report_type", 
         "classify", "org_name", "author_name", "quarter", "op_rt", "op_pr", 
@@ -61,9 +65,9 @@ class TushareStockReportRcTask(TushareTask):
         # Primary Keys
         "ts_code": {"type": "VARCHAR(10)", "constraints": "NOT NULL"},
         "report_date": {"type": "DATE", "constraints": "NOT NULL"},
-        "org_name": {"type": "VARCHAR(100)", "constraints": "NOT NULL"}, # Allow longer org names
-        "author_name": {"type": "VARCHAR(255)", "constraints": "NOT NULL"}, # Allow multiple authors potentially
-        "quarter": {"type": "VARCHAR(10)", "constraints": "NOT NULL"}, # e.g., 2023Q4
+        "org_name": {"type": "VARCHAR(100)", "constraints": "NOT NULL"},
+        "author_name": {"type": "VARCHAR(255)", "constraints": "NOT NULL"},
+        "quarter": {"type": "VARCHAR(10)", "constraints": "NOT NULL"},
         
         # Other Fields
         "name": {"type": "VARCHAR(50)"},

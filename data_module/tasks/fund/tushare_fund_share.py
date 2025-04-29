@@ -30,7 +30,11 @@ class TushareFundShareTask(TushareTask):
     table_name = "tushare_fund_share"
     primary_keys = ["ts_code", "trade_date"]
     date_column = "trade_date"
-    default_start_date = "20000101" # 设定一个较早的默认开始日期
+    default_start_date = "20000101" # 根据实际情况调整
+
+    # --- 代码级默认配置 (会被 config.json 覆盖) --- #
+    default_concurrent_limit = 5
+    default_page_size = 2000
 
     # 2. TushareTask 特有属性
     api_name = "fund_share"

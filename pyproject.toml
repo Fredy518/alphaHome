@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "alphaHome"
+version = "1.0.0" # 您可以根据需要修改版本号
+authors = [
+  { name="Your Name", email="youremail@example.com" }, # 请替换为您的信息
+]
+description = "AlphaHome 数据管理工具"
+readme = "README.md" # 假设您有 README.md 文件
+requires-python = ">=3.9" # 根据您的项目实际使用的 Python 版本调整
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License", # 假设您选择 MIT 许可证, 如果不同请修改
+    "Operating System :: OS Independent",
+    "Topic :: Office/Business :: Financial :: Investment",
+    "Framework :: Tkinter",
+]
+dependencies = [
+    "aiohttp>=3.11.11",
+    "asyncpg>=0.30.0",
+    "matplotlib>=3.10.1",
+    "numpy>=2.2.5",
+    "pandas>=2.2.3",
+    "python-dotenv>=1.1.0",
+    "tkcalendar>=1.6.1",
+    "tqdm>=4.67.1",
+    "appdirs>=1.4.4",
+    # 添加 Tushare Pro 依赖 (如果 Tushare Pro 是通过 pip 安装的)
+    # "tushare>=1.2.0", # 取消注释并调整版本（如果需要）
+]
+
+# 定义如何找到您的包
+[tool.setuptools.packages.find]
+where = ["."] # 在根目录查找
+# exclude = ["tests*"] # 如果您有测试目录，可以排除
+
+# 定义 GUI 启动脚本
+[project.gui-scripts]
+alphahome = "gui.main_window:run_gui" # 当用户安装后，可以运行 alphahome 命令启动 GUI 

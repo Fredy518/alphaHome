@@ -16,11 +16,15 @@ class TushareFinaForecastTask(TushareTask):
     
     # 1.核心属性
     name = "tushare_fina_forecast"
-    description = "获取股票业绩预告数据"
+    description = "获取上市公司业绩预告数据"
     table_name = "tushare_fina_forecast"
     primary_keys = ["ts_code", "end_date", "ann_date"]
     date_column = "end_date"
-    default_start_date = "19901231"  # 最早的财报日期
+    default_start_date = "19900101"
+
+    # --- 代码级默认配置 (会被 config.json 覆盖) --- #
+    default_concurrent_limit = 5
+    default_page_size = 3000
     
     # 2.自定义索引
     indexes = [
@@ -30,7 +34,7 @@ class TushareFinaForecastTask(TushareTask):
     ]
     
     # 3.Tushare特有属性
-    api_name = "forecast_vip"
+    api_name = "forecast"
     fields = [
         "ts_code", "ann_date", "end_date", "type", "p_change_min",
         "p_change_max", "net_profit_min", "net_profit_max", "last_parent_net",

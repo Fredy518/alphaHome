@@ -16,11 +16,15 @@ class TushareFinaCashflowTask(TushareTask):
     
     # 1.核心属性
     name = "tushare_fina_cashflow"
-    description = "获取股票现金流量表数据"
+    description = "获取上市公司现金流量表数据"
     table_name = "tushare_fina_cashflow"
     primary_keys = ["ts_code", "end_date", "f_ann_date"]
     date_column = "end_date"
     default_start_date = "19901231"  # 最早的财报日期
+    
+    # --- 代码级默认配置 (会被 config.json 覆盖) --- #
+    default_concurrent_limit = 5
+    default_page_size = 6000
     
     # 2.自定义索引
     indexes = [

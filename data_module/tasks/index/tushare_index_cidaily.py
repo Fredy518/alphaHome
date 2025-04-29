@@ -31,6 +31,9 @@ class TushareIndexCiDailyTask(TushareTask):
     date_column = "trade_date"
     # 中信指数发布日期可能也较早，暂定与申万一致
     default_start_date = "20050101"
+    # --- 代码级默认配置 (会被 config.json 覆盖) --- #
+    default_concurrent_limit = 5
+    default_page_size = 4000
 
     # 2. TushareTask 特有属性
     api_name = "ci_daily" # Tushare API 名称

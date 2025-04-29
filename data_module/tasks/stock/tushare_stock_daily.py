@@ -3,7 +3,7 @@ from datetime import datetime
 from typing import Dict, List
 from ...sources.tushare import TushareTask
 from ...task_decorator import task_register
-from ...tools.calendar import get_trade_days_between # 导入交易日工具
+# from ...tools.calendar import get_trade_days_between # 导入交易日工具 # <-- REMOVE
 from ...tools.batch_utils import generate_trade_day_batches # 导入交易日批次生成工具函数
 
 @task_register()
@@ -16,16 +16,20 @@ class TushareStockDailyTask(TushareTask):
     
     # 1.核心属性
     name = "tushare_stock_daily"
-    description = "获取股票日线交易数据"
+    description = "获取A股股票日线行情数据"
     table_name = "tushare_stock_daily"
     primary_keys = ["ts_code", "trade_date"]
     date_column = "trade_date" # 日期列名，用于确认最新数据日期
-    default_start_date = "19901219" # Tushare 股票日线最早可用日期
+    default_start_date = "19901219" # A股最早交易日
     
+    # --- 代码级默认配置 (会被 config.json 覆盖) --- #
+    default_concurrent_limit = 10
+    default_page_size = 6000
+
     # 2.自定义索引
     indexes = [
-        {"name": "idx_tushare_stock_daily_code", "columns": "ts_code"},
-        {"name": "idx_tushare_stock_daily_date", "columns": "trade_date"}
+        {"name": "idx_stock_daily_code", "columns": "ts_code"},
+        {"name": "idx_stock_daily_date", "columns": "trade_date"}
     ]
 
     # 3.Tushare特有属性
@@ -86,6 +90,8 @@ class TushareStockDailyTask(TushareTask):
         Returns:
             List[Dict]: 批处理参数列表
         """
+        from ...tools.calendar import get_trade_days_between
+
         start_date = kwargs.get('start_date')
         end_date = kwargs.get('end_date')
         ts_code = kwargs.get('ts_code')  # 获取可能的ts_code

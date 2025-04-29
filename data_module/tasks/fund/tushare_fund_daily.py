@@ -24,14 +24,18 @@ class TushareFundDailyTask(TushareTask):
 
     # 1. 核心属性
     name = "tushare_fund_daily"
-    description = "获取基金日线行情数据"
+    description = "获取场内基金日线行情"
     table_name = "tushare_fund_daily"
     primary_keys = ["ts_code", "trade_date"]
     date_column = "trade_date"
-    default_start_date = "20040101"
+    default_start_date = "20000101" # 调整为合理的起始日期
+
+    # --- 代码级默认配置 (会被 config.json 覆盖) --- #
+    default_concurrent_limit = 2
+    default_page_size = 6000
 
     # 2. TushareTask 特有属性
-    api_name = "fund_daily"
+    api_name = "fund_daily" # Tushare API 名称
     fields = [
         'ts_code', 'trade_date', 'open', 'high', 'low', 'close',
         'pre_close', 'change', 'pct_chg', 'vol', 'amount'

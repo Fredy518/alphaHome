@@ -24,10 +24,15 @@ class TushareStockBasicTask(TushareTask):
 
     # 1. 核心属性
     name = "tushare_stock_basic"
-    description = "获取所有股票基础信息 (全量更新)"
+    description = "获取上市公司基础信息"
     table_name = "tushare_stock_basic"
     primary_keys = ["ts_code"]
-    date_column = "list_date" # 主要日期列
+    date_column = None # 该任务不以日期为主，全量更新
+    default_start_date = None # 全量任务不需要起始日期
+
+    # --- 代码级默认配置 (会被 config.json 覆盖) --- #
+    default_concurrent_limit = 1
+    default_page_size = 8000
 
     # 2. TushareTask 特有属性
     api_name = "stock_basic"
@@ -71,11 +76,9 @@ class TushareStockBasicTask(TushareTask):
 
     # 6. 自定义索引
     indexes = [
-        {"name": "idx_stock_basic_symbol", "columns": "symbol"},
-        {"name": "idx_stock_basic_market", "columns": "market"},
-        {"name": "idx_stock_basic_exchange", "columns": "exchange"},
+        {"name": "idx_stock_basic_name", "columns": "name"},
         {"name": "idx_stock_basic_industry", "columns": "industry"},
-        {"name": "idx_stock_basic_list_date", "columns": "list_date"},
+        {"name": "idx_stock_basic_market", "columns": "market"}
     ]
 
     def __init__(self, db_connection, api_token=None, api=None):

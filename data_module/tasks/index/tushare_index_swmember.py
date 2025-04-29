@@ -25,8 +25,13 @@ class TushareIndexSwmemberTask(TushareTask): # <-- 类名改回
     description = "获取最新的申万(SW)行业成分 (分级) 数据" # 描述可以保留
     table_name = "tushare_index_swmember" # <-- 改回
     primary_keys = ["ts_code", "l3_code", "in_date"] # <-- 增加 in_date
-    date_column = None 
-    
+    date_column = None # 全量任务
+    default_start_date = None # 全量任务
+
+    # --- 代码级默认配置 (会被 config.json 覆盖) --- #
+    default_concurrent_limit = 2
+    default_page_size = 3000
+
     # 2. TushareTask 特有属性
     api_name = "index_member_all" # API 名称保持不变
     fields = [

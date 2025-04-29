@@ -16,12 +16,16 @@ class TushareFinaExpressTask(TushareTask):
     
     # 1.核心属性
     name = "tushare_fina_express"
-    description = "获取股票业绩快报数据"
+    description = "获取上市公司业绩快报数据"
     table_name = "tushare_fina_express"
     primary_keys = ["ts_code", "end_date", "ann_date"]
     date_column = "end_date"
-    default_start_date = "19901231"  # 最早的财报日期
-    
+    default_start_date = "19900101"
+
+    # --- 代码级默认配置 (会被 config.json 覆盖) --- #
+    default_concurrent_limit = 5
+    default_page_size = 5000
+
     # 2.自定义索引
     indexes = [
         {"name": "idx_fina_express_code", "columns": "ts_code"},
@@ -30,7 +34,7 @@ class TushareFinaExpressTask(TushareTask):
     ]
     
     # 3.Tushare特有属性
-    api_name = "express_vip"
+    api_name = "express"
     fields = [
         "ts_code", "ann_date", "end_date", "revenue", "operate_profit",
         "total_profit", "n_income", "total_assets", "total_hldr_eqy_exc_min_int",

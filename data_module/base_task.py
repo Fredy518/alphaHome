@@ -5,6 +5,7 @@ import numpy as np  # 添加numpy导入
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta
 from typing import Dict, List, Any, Callable, Optional, Union
+import inspect # <<< Add import inspect >>>
 
 class Task(ABC):
     """数据任务基类"""
@@ -30,25 +31,40 @@ class Task(ABC):
         self.db = db_connection
         self.logger = logging.getLogger(f"task.{self.name}")
     
-    async def execute(self, **kwargs):
+    async def execute(self, stop_event: Optional[asyncio.Event] = None, **kwargs): # <<< Add stop_event >>>
         """执行任务的完整生命周期"""
         self.logger.info(f"开始执行任务: {self.name}")
         
         try:
-            await self.pre_execute()
+            # <<< Check stop event before starting >>>
+            if stop_event and stop_event.is_set():
+                 self.logger.warning(f"任务 {self.name} 在开始前被取消。")
+                 raise asyncio.CancelledError("任务在开始前被取消")
+
+            await self.pre_execute(stop_event=stop_event) # <<< Pass stop_event >>>
             
+            # 检查停止事件
+            if stop_event and stop_event.is_set(): raise asyncio.CancelledError("任务在 pre_execute 后被取消")
+
             # 获取数据
             self.logger.info(f"获取数据，参数: {kwargs}")
-            data = await self.fetch_data(**kwargs)
+            data = await self.fetch_data(stop_event=stop_event, **kwargs) # <<< Pass stop_event >>>
             
+            # 检查停止事件
+            if stop_event and stop_event.is_set(): raise asyncio.CancelledError("任务在 fetch_data 后被取消")
+
             if data is None or data.empty:
                 self.logger.info("没有获取到数据")
                 return {"status": "no_data", "rows": 0}
             
             # 处理数据
             self.logger.info(f"处理数据，共 {len(data)} 行")
-            data = self.process_data(data)
+            # Note: process_data is synchronous in this class, no stop event needed unless overridden
+            data = self.process_data(data, stop_event=stop_event, **kwargs) # <<< Pass stop_event (for potential overrides) >>>
             
+            # 检查停止事件 (虽然 process_data 是同步的，但保留检查点以防万一)
+            if stop_event and stop_event.is_set(): raise asyncio.CancelledError("任务在 process_data 后被取消")
+
             # 再次检查处理后的数据是否为空
             if data is None or data.empty:
                 self.logger.warning("数据处理后为空")
@@ -56,6 +72,7 @@ class Task(ABC):
             
             # 验证数据
             self.logger.info("验证数据")
+            # Note: validate_data is synchronous in this class
             validation_passed = self.validate_data(data)
             # 记录验证结果，但不中断执行流程
             if not validation_passed:
@@ -63,18 +80,24 @@ class Task(ABC):
             
             # 保存数据
             self.logger.info(f"保存数据到表 {self.table_name}")
-            result = await self.save_data(data)
+            result = await self.save_data(data, stop_event=stop_event) # <<< Pass stop_event >>>
             
             # 如果验证未通过但成功保存，则标记为部分成功
             if not validation_passed and result.get("status") == "success":
                 result["status"] = "partial_success"
                 result["validation"] = False
             
+            # 检查停止事件
+            if stop_event and stop_event.is_set(): raise asyncio.CancelledError("任务在 save_data 后被取消")
+
             # 后处理
-            await self.post_execute(result)
+            await self.post_execute(result, stop_event=stop_event) # <<< Pass stop_event >>>
             
             self.logger.info(f"任务执行完成: {result}")
             return result
+        except asyncio.CancelledError: # <<< Catch CancelledError specifically >>>
+             self.logger.warning(f"任务 {self.name} 被取消。")
+             return self.handle_error(asyncio.CancelledError("任务被用户取消")) # <<< Handle cancellation >>>
         except Exception as e:
             # Enhanced logging: include exception type
             self.logger.error(f"任务执行失败: 类型={type(e).__name__}, 错误={str(e)}", exc_info=True)
@@ -108,18 +131,32 @@ class Task(ABC):
         
         return None
     
-    async def pre_execute(self):
+    async def pre_execute(self, stop_event: Optional[asyncio.Event] = None, **kwargs): # <<< Add stop_event >>>
         """任务执行前的准备工作"""
         # 可以在子类中重写该方法来添加自定义的准备工作
+        # Example check:
+        # if stop_event and stop_event.is_set():
+        #     raise asyncio.CancelledError("Pre-execute cancelled")
         pass
     
-    async def post_execute(self, result):
+    async def post_execute(self, result, stop_event: Optional[asyncio.Event] = None, **kwargs): # <<< Add stop_event >>>
         """任务执行后的清理工作"""
         # 可以在子类中重写该方法来添加自定义的清理工作
+        # Example check:
+        # if stop_event and stop_event.is_set():
+        #     logging.info("Post-execute skipped due to cancellation")
+        #     return
         pass
     
     def handle_error(self, error):
         """处理任务执行过程中的错误"""
+        # <<< Handle CancelledError specifically >>>
+        if isinstance(error, asyncio.CancelledError):
+            return {
+                "status": "cancelled",
+                "error": str(error),
+                "task": self.name
+            }
         return {
             "status": "error",
             "error": str(error),
@@ -127,12 +164,16 @@ class Task(ABC):
         }
     
     @abstractmethod
-    async def fetch_data(self, **kwargs):
+    async def fetch_data(self, stop_event: Optional[asyncio.Event] = None, **kwargs): # <<< Add stop_event >>>
         """获取原始数据（子类必须实现）"""
+        # 子类实现应定期检查 stop_event.is_set()
         raise NotImplementedError
     
-    def process_data(self, data):
+    # process_data is synchronous, but accept stop_event for potential async overrides
+    def process_data(self, data, stop_event: Optional[asyncio.Event] = None, **kwargs): # <<< Add stop_event >>>
         """处理原始数据"""
+        # Base implementation is synchronous. 
+        # If overridden with async logic, it should check stop_event.
         if hasattr(self, 'transformations') and self.transformations:
             for column, transform in self.transformations.items():
                 if column in data.columns:
@@ -170,6 +211,7 @@ class Task(ABC):
         
         return data
     
+    # validate_data is synchronous
     def validate_data(self, data):
         """验证数据有效性
         
@@ -212,9 +254,10 @@ class Task(ABC):
         
         return validation_passed
     
-    async def save_data(self, data):
+    async def save_data(self, data, stop_event: Optional[asyncio.Event] = None, **kwargs): # <<< Add stop_event >>>
         """将处理后的数据保存到数据库"""
-        await self._ensure_table_exists()
+        await self._ensure_table_exists(stop_event=stop_event) # <<< Pass stop_event >>>
+        if stop_event and stop_event.is_set(): raise asyncio.CancelledError("任务在 _ensure_table_exists 后被取消")
         
         # 检查数据中的NaN值
         nan_count = data.isna().sum().sum()
@@ -227,17 +270,18 @@ class Task(ABC):
                 self.logger.debug(f"包含NaN值的列: {', '.join(cols_with_nan)}")
         
         # 将数据保存到数据库
-        affected_rows = await self._save_to_database(data)
-        
+        affected_rows = await self._save_to_database(data, stop_event=stop_event) # <<< Pass stop_event >>>
+        if stop_event and stop_event.is_set(): raise asyncio.CancelledError("任务在 _save_to_database 后被取消")
+
         return {
             "status": "success",
             "table": self.table_name,
             "rows": affected_rows
         }
     
-    async def _ensure_table_exists(self):
+    async def _ensure_table_exists(self, stop_event: Optional[asyncio.Event] = None, **kwargs): # <<< Add stop_event >>>
         """确保表存在，如果不存在则创建"""
-        # 检查表是否存在
+        # 检查表是否存在 (通常很快，但仍添加检查点)
         query = f"""
         SELECT EXISTS (
             SELECT FROM information_schema.tables 
@@ -247,12 +291,14 @@ class Task(ABC):
         result = await self.db.fetch_one(query)
         table_exists = result[0] if result else False
         
+        if stop_event and stop_event.is_set(): raise asyncio.CancelledError("任务在检查表存在后被取消")
+
         if not table_exists and hasattr(self, 'schema'):
             # 如果表不存在且定义了schema，则创建表
             self.logger.info(f"表 {self.table_name} 不存在，正在创建...")
-            await self._create_table()
+            await self._create_table(stop_event=stop_event) # <<< Pass stop_event >>>
     
-    async def _create_table(self):
+    async def _create_table(self, stop_event: Optional[asyncio.Event] = None, **kwargs): # <<< Add stop_event >>>
         """创建数据表"""
         if not hasattr(self, 'schema') or not self.schema:
             raise ValueError(f"无法创建表 {self.table_name}，未定义schema")
@@ -285,14 +331,15 @@ class Task(ABC):
         );
         """
         
-        # 执行创建表的SQL
+        # 执行创建表的SQL (可能耗时)
         await self.db.execute(create_table_sql)
+        if stop_event and stop_event.is_set(): raise asyncio.CancelledError("任务在 CREATE TABLE 后被取消")
         self.logger.info(f"表 {self.table_name} 创建成功")
         
-        # 创建索引
-        await self._create_indexes()
+        # 创建索引 (可能耗时)
+        await self._create_indexes(stop_event=stop_event) # <<< Pass stop_event >>>
     
-    async def _create_indexes(self):
+    async def _create_indexes(self, stop_event: Optional[asyncio.Event] = None, **kwargs): # <<< Add stop_event >>>
         """创建必要的索引"""
         # 如果定义了日期列，为其创建索引
         if self.date_column and self.date_column not in self.primary_keys:
@@ -302,11 +349,13 @@ class Task(ABC):
             ON {self.table_name} ({self.date_column});
             """
             await self.db.execute(create_index_sql)
+            if stop_event and stop_event.is_set(): raise asyncio.CancelledError("任务在创建日期索引后被取消")
             self.logger.info(f"为表 {self.table_name} 的 {self.date_column} 列创建索引")
         
         # 如果定义了自定义索引，也创建它们
         if hasattr(self, 'indexes') and self.indexes:
-            for index_def in self.indexes:
+            for i, index_def in enumerate(self.indexes):
+                if stop_event and stop_event.is_set(): raise asyncio.CancelledError(f"任务在创建第 {i+1} 个自定义索引前被取消")
                 if isinstance(index_def, dict):
                     index_name = index_def.get('name', f"idx_{self.table_name}_{index_def['columns'].replace(',', '_')}")
                     columns = index_def['columns']
@@ -324,7 +373,7 @@ class Task(ABC):
                 await self.db.execute(create_index_sql)
                 self.logger.info(f"为表 {self.table_name} 的 {columns} 列创建索引")
     
-    async def _save_to_database(self, data):
+    async def _save_to_database(self, data, stop_event: Optional[asyncio.Event] = None, **kwargs): # <<< Add stop_event >>>
         """将DataFrame保存到数据库"""
         if data.empty:
             return 0
@@ -332,17 +381,35 @@ class Task(ABC):
         # 这里不再需要手动转换和处理数据，直接使用db_manager的upsert方法
         timestamp_column = 'update_time' if self.auto_add_update_time else None
         
-        affected_rows = await self.db.upsert(
-            table_name=self.table_name,
-            data=data,
-            conflict_columns=self.primary_keys,
-            update_columns=None,  # 自动更新所有非冲突列
-            timestamp_column=timestamp_column
-        )
+        # DBManager.upsert 需要支持 stop_event 才能在此处中断
+        # 假设 db_manager.upsert 不直接支持，我们可以在调用前检查
+        if stop_event and stop_event.is_set():
+             raise asyncio.CancelledError("任务在调用 upsert 前被取消")
+
+        # 检查 DBManager.upsert 是否接受 stop_event 参数
+        sig = inspect.signature(self.db.upsert)
+        if 'stop_event' in sig.parameters:
+             affected_rows = await self.db.upsert(
+                 table_name=self.table_name,
+                 data=data,
+                 conflict_columns=self.primary_keys,
+                 update_columns=None,  # 自动更新所有非冲突列
+                 timestamp_column=timestamp_column,
+                 stop_event=stop_event # <<< Pass if accepted >>>
+             )
+        else:
+             self.logger.debug("DBManager.upsert 不支持 stop_event 参数，无法在保存过程中取消。")
+             affected_rows = await self.db.upsert(
+                 table_name=self.table_name,
+                 data=data,
+                 conflict_columns=self.primary_keys,
+                 update_columns=None,
+                 timestamp_column=timestamp_column
+             )
         
         return affected_rows
 
-    async def smart_incremental_update(self, lookback_days=None, end_date=None, use_trade_days=False, safety_days=1, **kwargs):
+    async def smart_incremental_update(self, stop_event: Optional[asyncio.Event] = None, lookback_days=None, end_date=None, use_trade_days=False, safety_days=1, **kwargs): # <<< Add stop_event >>>
         """智能增量更新方法
         
         整合了基于自然日和交易日的增量更新功能。可以根据需要选择使用自然日或交易日进行更新。
@@ -364,13 +431,18 @@ class Task(ABC):
         """
         self.logger.info(f"开始执行 {self.name} 的智能增量更新")
         
+        # <<< Check stop event at the beginning >>>
+        if stop_event and stop_event.is_set():
+             self.logger.warning(f"智能增量更新 {self.name} 在开始前被取消。")
+             raise asyncio.CancelledError("智能增量更新在开始前被取消")
+
         # 确定结束日期
         if end_date is None:
             end_date = datetime.now().strftime('%Y%m%d')
             self.logger.info(f"未指定结束日期，使用当前日期: {end_date}")
             
         # 获取数据库中最新的数据日期
-        latest_date = await self._get_latest_date()
+        latest_date = await self._get_latest_date() # Assume _get_latest_date is fast or add stop_event if needed
         start_date = None
         
         if use_trade_days:
@@ -438,10 +510,14 @@ class Task(ABC):
             self.logger.info(f"最终执行更新范围: {start_date} 到 {end_date}")
             kwargs['start_date'] = start_date
             kwargs['end_date'] = end_date
-            result = await self.execute(**kwargs)
+            # <<< Pass stop_event to execute >>>
+            result = await self.execute(stop_event=stop_event, **kwargs) 
             
             if result.get("status") == "no_data":
                 self.logger.info("没有新数据需要更新")
+            # <<< Handle cancellation result from execute >>>
+            elif result.get("status") == "cancelled":
+                 self.logger.warning(f"增量更新被取消: {result.get('error')}")
             else:
                 self.logger.info(f"增量更新完成: 新增/更新 {result.get('rows', 0)} 行数据")
             

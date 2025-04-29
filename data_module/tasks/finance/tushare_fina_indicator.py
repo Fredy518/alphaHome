@@ -15,12 +15,16 @@ class TushareFinaIndicatorTask(TushareTask):
     
     # 1.核心属性
     name = "tushare_fina_indicator"
-    description = "获取股票财务指标数据"
+    description = "获取上市公司财务指标数据"
     table_name = "tushare_fina_indicator"
     primary_keys = ["ts_code", "end_date"]
     date_column = "end_date"
-    default_start_date = "19901231"  # 最早的财报日期
-    
+    default_start_date = "19900101"
+
+    # --- 代码级默认配置 (会被 config.json 覆盖) --- #
+    default_concurrent_limit = 5
+    default_page_size = 10000
+
     # 2.自定义索引
     indexes = [
         {"name": "idx_fina_indicator_code", "columns": "ts_code"},
@@ -29,7 +33,7 @@ class TushareFinaIndicatorTask(TushareTask):
     ]
     
     # 3.Tushare特有属性
-    api_name = "fina_indicator_vip"
+    api_name = "fina_indicator"
     fields = [
         "ts_code", "ann_date", "end_date", "eps", "dt_eps", "total_revenue_ps", 
         "revenue_ps", "capital_rese_ps", "surplus_rese_ps", "undist_profit_ps", 

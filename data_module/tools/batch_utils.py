@@ -5,11 +5,11 @@ import logging
 
 # 假设 get_trade_days_between 位于 tools.calendar 中
 # 根据实际项目结构调整导入路径
-try:
-    from .calendar import get_trade_days_between
-except ImportError:
-    # 提供备选导入路径，如有必要请调整
-    from ..tools.calendar import get_trade_days_between
+# try:
+#     from .calendar import get_trade_days_between # <-- REMOVE
+# except ImportError:
+#     # 提供备选导入路径，如有必要请调整
+#     from ..tools.calendar import get_trade_days_between # <-- REMOVE
 
 
 # 定义切分策略类型 (保留作为类型提示)
@@ -41,6 +41,8 @@ async def generate_trade_day_batches(
     返回:
         批次参数列表，每个批次是包含'start_date'和'end_date'的字典
     """
+    from .calendar import get_trade_days_between
+
     _logger = logger if logger else logging.getLogger(__name__)
     _logger.info(f"生成交易日批次: {start_date} 到 {end_date}, 批次大小: {batch_size}")
 
@@ -250,20 +252,22 @@ async def generate_single_date_batches(
     参数:
         start_date: 开始日期字符串（YYYYMMDD格式）
         end_date: 结束日期字符串（YYYYMMDD格式）
-        date_field: 日期字段名称，如'nav_date', 'trade_date'等
-        ts_code: 可选的股票/基金代码，如提供会添加到每个批次参数中
-        exchange: 交易所代码，默认为'SSE'（上交所）
-        additional_params: 可选的额外参数字典，将添加到每个批次中
+        date_field: API调用时使用的日期字段名（例如 'trade_date', 'nav_date'），默认为'trade_date'
+        ts_code: 可选的股票/基金代码，如果提供则会添加到每个批次参数中
+        exchange: 交易所代码，用于获取交易日历，默认为'SSE'
+        additional_params: 可选的附加参数字典，将合并到每个批次中
         logger: 可选的日志记录器
 
     返回:
-        批次参数列表，每个批次包含一个指定日期字段，如{'nav_date': '20210101'}
+        批次参数列表，每个批次是包含指定日期字段和可选附加参数的字典
     """
+    from .calendar import get_trade_days_between
+
     _logger = logger if logger else logging.getLogger(__name__)
-    _logger.info(f"生成单日期批次: {start_date} 到 {end_date}, 日期字段: {date_field}")
+    _logger.info(f"生成单交易日批次: {start_date} 到 {end_date}, 日期字段: {date_field}")
 
     try:
-        # 获取交易日列表
+        # 获取指定范围内的所有交易日
         trade_days = await get_trade_days_between(start_date, end_date, exchange=exchange)
         
         if not trade_days:

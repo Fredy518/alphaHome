@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 
 from ...sources.tushare import TushareTask
 from ...task_decorator import task_register
-from ...tools.calendar import get_trade_days_between
+# from ...tools.calendar import get_trade_days_between # <-- REMOVE
 from ...tools.batch_utils import generate_trade_day_batches
 
 @task_register()
@@ -23,10 +23,14 @@ class TushareStockAdjFactorTask(TushareTask):
     date_column = "trade_date"
     default_start_date = "19901219"  # Tushare最早的日期
 
+    # --- 代码级默认配置 (会被 config.json 覆盖) --- #
+    default_concurrent_limit = 10
+    default_page_size = 6000
+
     # 2.自定义索引
     indexes = [
-        {"name": "idx_tushare_adjfactor_code", "columns": "ts_code"},
-        {"name": "idx_tushare_adjfactor_date", "columns": "trade_date"}
+        {"name": "idx_stock_adjfactor_code", "columns": "ts_code"},
+        {"name": "idx_stock_adjfactor_date", "columns": "trade_date"}
     ]
     
     # 3.Tushare特有属性
@@ -71,6 +75,9 @@ class TushareStockAdjFactorTask(TushareTask):
         Returns:
             List[Dict]: 批处理参数列表
         """
+        # <<< ADD IMPORT HERE >>>
+        from ...tools.calendar import get_trade_days_between
+        
         # 获取查询参数
         start_date = kwargs.get('start_date', self.default_start_date)
         end_date = kwargs.get('end_date', datetime.now().strftime('%Y%m%d'))

@@ -24,10 +24,15 @@ class TushareFundBasicTask(TushareTask):
 
     # 1. 核心属性
     name = "tushare_fund_basic"
-    description = "获取公募基金列表 (全量更新)"
+    description = "获取公募基金基础信息"
     table_name = "tushare_fund_basic"
     primary_keys = ["ts_code"]
-    date_column = "list_date" # 主要日期列
+    date_column = None # 全量更新
+    default_start_date = None # 全量更新
+
+    # --- 代码级默认配置 (会被 config.json 覆盖) --- #
+    default_concurrent_limit = 1
+    default_page_size = 10000
 
     # 2. TushareTask 特有属性
     api_name = "fund_basic"

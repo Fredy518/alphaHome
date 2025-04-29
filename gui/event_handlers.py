@@ -354,68 +354,96 @@ def handle_task_tree_click(event, tree: ttk.Treeview):
                 print(f"处理任务列表点击时发生意外错误: {e}")
 
 def handle_load_settings(widgets: Dict[str, tk.Widget]):
-    """加载设置 (Token 和 DB URL 解析后) 并显示在界面上"""
-    print("DEBUG: handle_load_settings - Called.")
-    settings = controller.get_current_settings() # 现在返回 {'tushare_token': ..., 'database': {'url': ...}}
-    print(f"DEBUG: handle_load_settings - Settings loaded from controller: {settings}")
-
-    # --- 更新 Token --- #
-    tushare_token = settings.get('tushare_token', '')
-    token_key = 'tushare_token'
-    if token_key in widgets and isinstance(widgets[token_key], (tk.Entry, ttk.Entry)):
-        widgets[token_key].config(state=tk.NORMAL)
-        widgets[token_key].delete(0, tk.END)
-        widgets[token_key].insert(0, tushare_token)
-        print(f"DEBUG: handle_load_settings - Set {token_key} = \"{tushare_token}\"")
-    else:
-        print(f"DEBUG: handle_load_settings - Warning: Missing or wrong type for widget '{token_key}'")
-
-    # --- 解析并更新数据库字段 --- #
-    db_config = settings.get('database', {})
-    db_url = db_config.get('url', '') # 获取 URL
-    db_values = {
-        'db_host': '',
-        'db_port': '',
-        'db_name': '',
-        'db_user': '',
-        'db_password': ''
-    }
-
-    if db_url:
-        print(f"DEBUG: handle_load_settings - Parsing DB URL: {db_url}")
-        try:
-            parsed_url = urllib.parse.urlparse(db_url)
-            db_values['db_host'] = parsed_url.hostname or ''
-            db_values['db_port'] = str(parsed_url.port or '') # Port might be None
-            db_values['db_user'] = parsed_url.username or ''
-            db_values['db_password'] = parsed_url.password or ''
-            # Database name is the path part, removing leading slash
-            db_values['db_name'] = parsed_url.path.lstrip('/') or ''
-            print(f"DEBUG: handle_load_settings - Parsed DB values: {db_values}")
-        except Exception as e:
-            print(f"DEBUG: handle_load_settings - Error parsing URL \"{db_url}\": {e}")
-            messagebox.showwarning("URL 解析错误", f"无法解析配置文件中的数据库 URL:\n{db_url}\n错误: {e}\n请检查 config.json 或在界面中重新输入。")
-            # Keep db_values as empty strings in case of parsing error
-    else:
-        print("DEBUG: handle_load_settings - No DB URL found in config.")
-
-    # --- 填充数据库输入框 --- #
-    print("DEBUG: handle_load_settings - Populating DB fields...")
+    """加载配置并填充存储设置标签页的各个字段"""
+    print("回调：加载设置...")
     try:
-        for key, value in db_values.items():
-            if key in widgets and isinstance(widgets[key], (tk.Entry, ttk.Entry)):
-                widgets[key].config(state=tk.NORMAL) # Ensure enabled before modifying
+        # 从控制器获取设置 ({'database': {'url': ...}, 'api': {'token': ...}})
+        settings = controller.get_current_settings()
+        print(f"DEBUG: 从控制器获取的设置: {settings}")
+
+        # 检查必要控件是否存在
+        db_keys = ['db_host', 'db_port', 'db_name', 'db_user', 'db_password']
+        token_key = 'tushare_token'
+        all_keys = db_keys + [token_key]
+        missing_keys = [k for k in all_keys if k not in widgets or not hasattr(widgets[k], 'get')]
+        
+        if missing_keys:
+            messagebox.showwarning("加载错误", f"存储设置界面的输入框控件未找到: {', '.join(missing_keys)}")
+            return
+
+        # 清空所有输入框
+        for key in all_keys:
+            try:
+                widgets[key].config(state=tk.NORMAL) # Ensure enabled before deleting
                 widgets[key].delete(0, tk.END)
-                widgets[key].insert(0, value)
-                print(f"DEBUG: handle_load_settings - Set {key} = \"{value}\"")
-            else:
-                print(f"DEBUG: handle_load_settings - Warning: Missing or wrong type for widget '{key}' during DB population")
-    except tk.TclError as e:
-        print(f"DEBUG: handle_load_settings - TclError during DB field population: {e}")
-        messagebox.showerror("界面错误", f"更新数据库设置输入框时出错: {e}")
+            except tk.TclError as e:
+                 print(f"警告：清空输入框 {key} 时出错: {e} (控件可能已被禁用或销毁?)")
+
+        # 解析并填充
+        db_config = settings.get('database', {})
+        api_config = settings.get('api', {})
+        db_url = db_config.get('url') # 可能为 None 或空字符串
+        tushare_token = api_config.get('tushare_token', '') # 默认空字符串
+
+        db_values = {
+            'db_host': '',
+            'db_port': '',
+            'db_name': '',
+            'db_user': '',
+            'db_password': ''
+        }
+
+        statusbar = widgets.get('statusbar')
+        status_msg = ""
+
+        if db_url:
+            print(f"DEBUG: 尝试解析 DB URL: {db_url}")
+            try:
+                parsed_url = urllib.parse.urlparse(db_url)
+                db_values['db_host'] = parsed_url.hostname or ''
+                db_values['db_port'] = str(parsed_url.port or '') # Port might be None
+                db_values['db_user'] = parsed_url.username or ''
+                db_values['db_password'] = parsed_url.password or ''
+                db_values['db_name'] = parsed_url.path.lstrip('/') or ''
+                print(f"DEBUG: 解析成功: {db_values}")
+                status_msg = "数据库设置已加载。"
+            except Exception as e:
+                print(f"错误：解析 URL \"{db_url}\" 失败: {e}")
+                messagebox.showwarning("URL 解析错误", f"加载的数据库 URL 无法解析:\n{db_url}\n错误: {e}\n请检查格式或重新输入。")
+                status_msg = "数据库 URL 解析失败，请重新输入。"
+                # 保留 db_values 为空字符串，因为解析失败
+        else:
+             print("DEBUG: 未找到 DB URL 配置。")
+             # 如果 URL 为空，db_values 保持为空字符串
+
+        # 填充数据库字段
+        for key in db_keys:
+            widgets[key].insert(0, db_values[key])
+
+        # 填充 Token 字段
+        widgets[token_key].insert(0, tushare_token)
+        if tushare_token:
+             print("DEBUG: Tushare Token 已加载。")
+             if status_msg: status_msg += " " # 添加空格分隔
+             status_msg += "Tushare Token 已加载。"
+        else:
+             print("DEBUG: 未找到 Tushare Token 配置。")
+
+        # 设置状态栏消息
+        if not db_url and not tushare_token:
+            status_msg = "未找到配置文件或配置为空，请输入配置信息。"
+        elif not status_msg: # 如果 URL 和 Token 都为空，但前面没有设置消息
+             status_msg = "设置已加载 (空)。"
+
+        if statusbar:
+            statusbar.config(text=status_msg)
+        print(f"INFO: {status_msg}")
+
     except Exception as e:
-        print(f"DEBUG: handle_load_settings - Exception during DB field population: {e}")
-        messagebox.showerror("加载错误", f"更新数据库设置时发生意外错误: {e}")
+        print(f"加载设置时发生未预料的错误: {e}")
+        messagebox.showerror("加载错误", f"加载设置时出错: {e}")
+        if widgets.get('statusbar'):
+            widgets['statusbar'].config(text=f"加载设置错误: {e}")
 
 def handle_save_settings(widgets: Dict[str, tk.Widget]):
     """从界面提取 Token 和 DB 字段，构建 URL 并请求保存"""

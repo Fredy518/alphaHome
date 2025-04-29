@@ -3,11 +3,13 @@ import os
 import asyncio
 import pandas as pd
 import numpy as np  # 导入 numpy
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Callable
 from ...base_task import Task
 from .tushare_api import TushareAPI
 from tqdm.asyncio import tqdm
 from datetime import datetime, timedelta
+import time
+import logging # 确保导入 logging
 
 class TushareTask(Task):
     """基于 Tushare API 的数据任务基类
@@ -49,10 +51,57 @@ class TushareTask(Task):
         self.api = api or TushareAPI(api_token)
         
         # 初始化配置
-        self.concurrent_limit = self.default_concurrent_limit
-        self.page_size = self.default_page_size
+        self.concurrent_limit = None
+        self.page_size = None
         self.max_retries = self.default_max_retries
         self.retry_delay = self.default_retry_delay
+        self.task_specific_config = {} # 存储原始任务配置
+        
+        # 应用默认配置 (传递空字典以触发默认值设置)
+        self._apply_config({}) 
+        
+    def set_config(self, task_config: Dict):
+        """应用来自配置文件的设置，覆盖代码默认值"""
+        self._apply_config(task_config)
+
+    def _apply_config(self, task_config: Dict):
+        """合并代码默认值和配置文件设置"""
+        cls = type(self) # 获取实际的子类类型
+
+        # 从子类或基类获取代码默认值
+        code_default_limit = getattr(cls, 'default_concurrent_limit', TushareTask.default_concurrent_limit)
+        code_default_page_size = getattr(cls, 'default_page_size', TushareTask.default_page_size)
+
+        # 从 task_config (来自 config.json) 获取值，如果不存在则使用代码默认值
+        self.concurrent_limit = task_config.get('concurrent_limit', code_default_limit)
+        self.page_size = task_config.get('page_size', code_default_page_size)
+
+        # 添加类型检查和转换，确保是整数
+        try:
+            self.concurrent_limit = int(self.concurrent_limit)
+        except (ValueError, TypeError):
+            self.logger.warning(f"配置中的 concurrent_limit \"{task_config.get('concurrent_limit')}\" 无效，将使用代码默认值 {code_default_limit}")
+            self.concurrent_limit = code_default_limit
+        
+        try:
+            self.page_size = int(self.page_size)
+        except (ValueError, TypeError):
+             self.logger.warning(f"配置中的 page_size \"{task_config.get('page_size')}\" 无效，将使用代码默认值 {code_default_page_size}")
+             self.page_size = code_default_page_size
+
+        # 确保存储为整数后记录日志
+        self.logger.info(f"任务 {self.name}: 应用配置 concurrent_limit={self.concurrent_limit}, page_size={self.page_size}")
+        
+        # 存储原始配置字典以供子类可能需要访问其他特定键
+        self.task_specific_config = task_config
+        
+        # 设置重试配置
+        if 'max_retries' in task_config:
+            self.max_retries = task_config['max_retries']
+            self.logger.debug(f"设置最大重试次数: {self.max_retries}")
+        if 'retry_delay' in task_config:
+            self.retry_delay = task_config['retry_delay']
+            self.logger.debug(f"设置重试延迟: {self.retry_delay}s")
         
     async def get_latest_date(self) -> Optional[datetime.date]:
         """获取当前任务对应表中的最新日期。
@@ -102,33 +151,6 @@ class TushareTask(Task):
                 self.logger.error(f"查询最新日期时出错: {e}", exc_info=True)
                 return None
         
-    def set_config(self, config):
-        """设置任务配置
-        
-        Args:
-            config: 配置字典，包含任务特定的配置项
-        """
-        if not config:
-            return
-            
-        # 设置并发限制
-        if 'concurrent_limit' in config:
-            self.concurrent_limit = config['concurrent_limit']
-            self.logger.debug(f"设置并发限制: {self.concurrent_limit}")
-            
-        # 设置每页数据量
-        if 'page_size' in config:
-            self.page_size = config['page_size']
-            self.logger.debug(f"设置每页数据量: {self.page_size}")
-
-        # 设置重试配置
-        if 'max_retries' in config:
-            self.max_retries = config['max_retries']
-            self.logger.debug(f"设置最大重试次数: {self.max_retries}")
-        if 'retry_delay' in config:
-            self.retry_delay = config['retry_delay']
-            self.logger.debug(f"设置重试延迟: {self.retry_delay}s")
-    
     async def execute(self, **kwargs):
         """执行任务的完整生命周期
         
@@ -136,6 +158,8 @@ class TushareTask(Task):
         这种方式更适合处理大数据集，因为它避免了将所有数据一次性加载到内存中。
         
         Args:
+            progress_callback (Callable, optional): 异步回调函数，用于报告进度。
+                                                  签名: async def callback(task_name: str, progress: str)
             **kwargs: 额外参数，将传递给get_batch_list和prepare_params方法
             
         Returns:
@@ -143,6 +167,9 @@ class TushareTask(Task):
         """
         self.logger.info(f"开始执行任务: {self.name}")
         
+        # <<< Get the callback >>>
+        progress_callback = kwargs.get('progress_callback')
+
         try:
             await self.pre_execute()
             
@@ -172,23 +199,50 @@ class TushareTask(Task):
                 # 并发处理批次
                 self.logger.info(f"使用并发模式处理批次，并发数: {concurrent_limit}")
                 semaphore = asyncio.Semaphore(concurrent_limit)
+                pbar = None # 初始化进度条变量
                 
-                async def process_batch(i, batch_params):
-                    async with semaphore:
-                        # _process_single_batch 现在返回行数或在最终失败时返回 0
-                        processed_rows = await self._process_single_batch(i, len(batch_list), batch_params)
-                        if processed_rows == 0: # 假设返回 0 表示失败
-                            return None # 返回 None 表示失败，以便后续计数
-                        return processed_rows # 返回成功处理的行数
-                
-                # 创建所有批次的任务
-                tasks = [process_batch(i, batch_params) for i, batch_params in enumerate(batch_list)]
-                
-                # 等待所有任务完成，显示进度条
+                # 如果需要显示进度，则创建 tqdm 实例
                 if show_progress:
-                    batch_results = await tqdm.gather(*tasks, desc=progress_desc, total=len(batch_list), ascii=True, position=0, leave=True)
-                else:
-                    batch_results = await asyncio.gather(*tasks, return_exceptions=True) # 保持捕获异常
+                    pbar = tqdm(total=len(batch_list), desc=progress_desc, ascii=True, position=0, leave=True)
+                
+                # 修改内部函数以接受并更新 pbar 和调用回调
+                async def process_batch(i, batch_params, pbar_instance, cb):
+                    processed_rows = 0 # Default value
+                    try:
+                        async with semaphore:
+                            processed_rows = await self._process_single_batch(i, len(batch_list), batch_params)
+                            if processed_rows == 0:
+                                return None
+                            return processed_rows
+                    finally:
+                        # 无论成功或失败，都更新进度条和调用回调
+                        if pbar_instance:
+                            pbar_instance.update(1)
+                            # <<< Call the progress callback >>>
+                            if cb and pbar_instance.total > 0:
+                                completed_count = pbar_instance.n
+                                total_count = pbar_instance.total
+                                percentage = int((completed_count / total_count) * 100)
+                                try:
+                                    # Ensure callback is awaited if it's a coroutine
+                                    if asyncio.iscoroutinefunction(cb):
+                                        await cb(self.name, f"{percentage}%")
+                                    else:
+                                         cb(self.name, f"{percentage}%") # Allow non-async callback too
+                                except Exception as cb_err:
+                                     self.logger.error(f"执行进度回调时出错: {cb_err}", exc_info=False) # Avoid too much noise
+                            # 添加一个微小的延迟，尝试让tqdm有机会渲染 (Keep this for console smoothness)
+                            await asyncio.sleep(0.01)
+                
+                # 创建所有批次的任务, 传递 pbar 实例和回调
+                tasks = [process_batch(i, batch_params, pbar, progress_callback) for i, batch_params in enumerate(batch_list)]
+                
+                # 使用 asyncio.gather 等待所有任务完成 (不再使用 tqdm.gather)
+                batch_results = await asyncio.gather(*tasks, return_exceptions=True)
+                
+                # 如果创建了进度条，确保关闭它
+                if pbar:
+                    pbar.close()
                 
                 # 处理结果
                 for result in batch_results:
@@ -211,15 +265,31 @@ class TushareTask(Task):
                 # 串行处理批次
                 progress_iterator = range(len(batch_list))
                 if show_progress:
-                    progress_iterator = tqdm(progress_iterator, desc=progress_desc, ascii=True, position=0, leave=True)
+                    # Keep using tqdm for the iterator itself for console
+                    progress_iterator = tqdm(range(len(batch_list)), desc=progress_desc, ascii=True, position=0, leave=True)
 
-                for i in progress_iterator:
+                for i in progress_iterator: # i is now the index 0, 1, 2...
                     batch_params = batch_list[i]
                     rows = await self._process_single_batch(i, len(batch_list), batch_params)
                     if rows > 0:
                         total_rows += rows
                     else: # rows == 0 表示失败
                         failed_batches += 1
+                    
+                    # <<< Call the progress callback for serial execution >>>
+                    if progress_callback:
+                        completed_count = i + 1 # Current iteration index + 1
+                        total_count = len(batch_list)
+                        if total_count > 0:
+                            percentage = int((completed_count / total_count) * 100)
+                            try:
+                                # Ensure callback is awaited if it's a coroutine
+                                if asyncio.iscoroutinefunction(progress_callback):
+                                     await progress_callback(self.name, f"{percentage}%")
+                                else:
+                                     progress_callback(self.name, f"{percentage}%") # Allow non-async callback
+                            except Exception as cb_err:
+                                self.logger.error(f"执行进度回调时出错: {cb_err}", exc_info=False)
             
             # 后处理
             final_status = "success"

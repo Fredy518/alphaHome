@@ -31,6 +31,10 @@ class TushareFundNavTask(TushareTask):
     date_column = "nav_date" # 主要日期列用于增量更新
     default_start_date = "20000101" # 设定一个较早的默认开始日期
 
+    # --- 代码级默认配置 (会被 config.json 覆盖) --- #
+    default_concurrent_limit = 10
+    default_page_size = 10000
+
     # 2. TushareTask 特有属性
     api_name = "fund_nav"
     fields = [
