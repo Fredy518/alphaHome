@@ -22,6 +22,11 @@ AlphaHome 是一个基于 Python 异步框架构建的、灵活且可扩展的�
 
 ## 环境配置
 
+### 配置文件说明
+- 项目根目录下提供了 `config.example.json`，作为配置模板文件。
+- **请将该文件复制到你的用户配置目录，并重命名为 `config.json`，然后根据实际情况填写内容。**
+- 用户配置目录路径通常为：`C:/Users/<你的用户名>/AppData/Local/YourAppNameOrAuthor/alphaHomeApp/config.json`，也可参考日志中的路径提示。
+
 ### 1. 克隆项目
 
 ```bash

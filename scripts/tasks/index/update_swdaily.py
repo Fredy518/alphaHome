@@ -18,6 +18,8 @@ from typing import Dict, Any
 from datetime import datetime # 添加 datetime 导入
 import dotenv # 添加 dotenv 导入
 from pathlib import Path # 添加 pathlib 导入
+from alphahome.data_module.task_factory import TaskFactory
+from scripts.base.task_updater_base import TaskUpdaterBase
 
 # 动态调整 sys.path 和加载 .env (与 update_fundshare.py 一致)
 project_root = Path(__file__).resolve().parent.parent.parent.parent

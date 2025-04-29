@@ -33,8 +33,8 @@ sys.path.append(str(project_root))
 dotenv_path = project_root / '.env'
 dotenv.load_dotenv(dotenv_path=dotenv_path)
 
-from data_module.task_factory import TaskFactory
-from data_module.tools.calendar import get_last_trade_day, get_trade_cal
+from alphahome.data_module.task_factory import TaskFactory
+from alphahome.data_module.tools.calendar import get_last_trade_day, get_trade_cal
 from scripts.base.task_updater_base import TaskUpdaterBase
 
 # 配置日志

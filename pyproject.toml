@@ -35,6 +35,7 @@ dependencies = [
 # 定义如何找到您的包
 [tool.setuptools.packages.find]
 where = ["."] # 在根目录查找
+include = ["alphahome", "alphahome.*"]
 # exclude = ["tests*"] # 如果您有测试目录，可以排除
 
 # 定义 GUI 启动脚本

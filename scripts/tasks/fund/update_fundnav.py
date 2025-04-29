@@ -41,7 +41,7 @@ logging.basicConfig(
 )
 
 # 导入必要的模块
-from data_module.task_factory import TaskFactory
+from alphahome.data_module.task_factory import TaskFactory
 from scripts.base.task_updater_base import TaskUpdaterBase
 
 # 定义目标任务名称常量

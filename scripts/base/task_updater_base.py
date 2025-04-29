@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Dict, Any, Optional
 import dotenv
 
-from data_module.task_factory import TaskFactory
+from alphahome.data_module.task_factory import TaskFactory
 
 class TaskUpdaterBase:
     def __init__(

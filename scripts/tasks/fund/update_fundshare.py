@@ -23,8 +23,8 @@ dotenv_path = project_root / '.env'
 dotenv.load_dotenv(dotenv_path=dotenv_path)
 
 # Imports
-from data_module.db_manager import DBManager
-from data_module.task_factory import TaskFactory
+from alphahome.data_module.db_manager import DBManager
+from alphahome.data_module.task_factory import TaskFactory
 from scripts.base.task_updater_base import TaskUpdaterBase
 
 TARGET_TASK_NAME = "tushare_fund_share"

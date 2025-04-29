@@ -1,4 +1,5 @@
 {
+    "_comment": "请将本文件复制到你的用户配置目录（如 C:/Users/<你的用户名>/AppData/Local/YourAppNameOrAuthor/alphaHomeApp/config.json），并根据实际情况填写数据库和API信息。",
     "database": {
         "url": "postgresql://<your_user>:<your_password>@<your_host>:<your_port>/<your_db>"
     },
@@ -20,4 +21,4 @@
             "retry_delay": 2
         }
     }
-} 
+}

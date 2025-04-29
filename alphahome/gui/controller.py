@@ -10,10 +10,8 @@ import urllib.parse # 需要导入 urllib.parse
 import appdirs # <-- 导入 appdirs
 import traceback
 
-# 假设 data_module 在父目录中
-# from ..data_module import TaskFactory, base_task  # Relative import fails when run with -m
 # 使用绝对导入，假设项目根目录在 sys.path 中
-from data_module import TaskFactory, base_task
+from ..data_module import TaskFactory, base_task
 
 # --- 配置 ---
 # 使用 appdirs 获取用户配置目录

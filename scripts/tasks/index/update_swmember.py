@@ -34,7 +34,7 @@ dotenv_path = project_root / '.env'
 dotenv.load_dotenv(dotenv_path=dotenv_path)
 
 from scripts.base.task_updater_base import TaskUpdaterBase
-from data_module.task_factory import TaskFactory
+from alphahome.data_module.task_factory import TaskFactory
 
 # 配置基本日志
 logging.basicConfig(

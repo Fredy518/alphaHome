@@ -40,9 +40,9 @@ logging.basicConfig(
 )
 
 # 导入必要的模块 (确保在添加 sys.path 之后)
-from data_module import DBManager, TaskFactory
+from alphahome.data_module import DBManager, TaskFactory
 from scripts.base.task_updater_base import TaskUpdaterBase # 导入基类
-# from data_module.tasks.fund.tushare_fund_basic import TushareFundBasicTask # TaskFactory 会处理加载
+# from alphahome.data_module.tasks.fund.tushare_fund_basic import TushareFundBasicTask # TaskFactory 会处理加载
 
 # 定义目标任务名称常量
 TARGET_TASK_NAME = "tushare_fund_basic"

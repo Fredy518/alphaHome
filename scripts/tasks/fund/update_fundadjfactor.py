@@ -15,16 +15,14 @@ from datetime import datetime
 from typing import Dict, Any
 import dotenv
 from pathlib import Path
+from alphahome.data_module.task_factory import TaskFactory
+from scripts.base.task_updater_base import TaskUpdaterBase
 
 # Setup paths and environment
 project_root = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.append(str(project_root))
 dotenv_path = project_root / '.env'
 dotenv.load_dotenv(dotenv_path=dotenv_path)
-
-# Imports
-from data_module.task_factory import TaskFactory
-from scripts.base.task_updater_base import TaskUpdaterBase
 
 TARGET_TASK_NAME = "tushare_fund_adjfactor"
 

@@ -24,6 +24,8 @@ from datetime import datetime, timedelta
 from typing import Dict, Any
 import dotenv
 from pathlib import Path
+from alphahome.data_module import DBManager, TaskFactory
+from scripts.base.task_updater_base import TaskUpdaterBase
 
 # 添加项目根目录到系统路径
 project_root = Path(__file__).resolve().parent.parent.parent.parent
@@ -32,9 +34,6 @@ sys.path.append(str(project_root))
 # 加载环境变量
 dotenv_path = project_root / '.env'
 dotenv.load_dotenv(dotenv_path=dotenv_path)
-
-from scripts.base.task_updater_base import TaskUpdaterBase
-from data_module.task_factory import TaskFactory
 
 # 配置基本日志
 logging.basicConfig(

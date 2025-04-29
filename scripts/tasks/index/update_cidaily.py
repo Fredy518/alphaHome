@@ -18,6 +18,8 @@ from typing import Dict, Any
 from datetime import datetime
 import dotenv
 from pathlib import Path
+from alphahome.data_module.task_factory import TaskFactory
+from scripts.base.task_updater_base import TaskUpdaterBase
 
 # 动态调整 sys.path 和加载 .env
 project_root = Path(__file__).resolve().parent.parent.parent.parent
