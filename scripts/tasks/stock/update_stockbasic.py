@@ -130,9 +130,8 @@ class StockBasicUpdater(TaskUpdaterBase):
 
 async def main():
     updater = StockBasicUpdater()
-    parser = argparse.ArgumentParser(description=f"更新 {updater.task_type} ({updater.task_name}) 数据")
-    # 添加 show_progress 参数
-    parser.add_argument('--show-progress', action=argparse.BooleanOptionalAction, default=True, help="显示进度条")
+    parser = updater.setup_parser()
+    # 解析命令行参数
     args = parser.parse_args()
 
     # 数据库和 API 配置 (从环境变量获取)

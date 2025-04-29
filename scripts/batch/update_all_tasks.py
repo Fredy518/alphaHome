@@ -157,18 +157,18 @@ async def update_all_tasks(args: argparse.Namespace) -> List[Dict[str, Any]]:
         logger.warning(f"预加载交易日历数据失败: {str(e)}")
     
     try:
-        # 获取'fetch'类型的任务
-        fetch_task_names = TaskFactory.get_task_names_by_type('fetch')
-        logger.info(f"发现 {len(fetch_task_names)} 个 'fetch' 类型的任务: {fetch_task_names}")
+        # 获取所有任务名称
+        all_task_names = await TaskFactory.get_all_task_names()
+        logger.info(f"发现 {len(all_task_names)} 个已注册任务: {all_task_names}")
         
-        if not fetch_task_names:
-            logger.warning("未找到任何 'fetch' 类型的任务可执行")
+        if not all_task_names:
+            logger.warning("未找到任何任务可执行")
             return []
             
         # 创建任务更新协程
         update_tasks = [
             update_task(task_name, args)
-            for task_name in fetch_task_names # 只执行 fetch 类型的任务
+            for task_name in all_task_names
         ]
         
         # 并行执行所有任务

@@ -144,7 +144,7 @@ class TushareStockReportRcTask(TushareTask):
             pd.DataFrame: 处理后的DataFrame
         """
         # 1. 调用父类的标准处理
-        df = super().process_data(df)
+        df = await super().process_data(df)
         
         # 2. 填充特定列的空值
         if 'org_name' in df.columns:

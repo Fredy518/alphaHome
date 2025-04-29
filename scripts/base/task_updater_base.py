@@ -76,6 +76,7 @@ class TaskUpdaterBase:
         parser.add_argument('--start-date', help='更新起始日期 (YYYYMMDD)')
         parser.add_argument('--end-date', help='更新结束日期 (YYYYMMDD)')
         parser.add_argument('--show-progress', action=argparse.BooleanOptionalAction, default=True)
+        parser.add_argument('--auto', action='store_true', help='自动模式，用于批处理脚本中')
         
         if self.support_report_period:
             parser.add_argument('--quarters', type=int, help='更新最近N个季度')

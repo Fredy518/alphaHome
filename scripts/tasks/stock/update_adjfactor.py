@@ -30,6 +30,7 @@ dotenv_path = project_root / '.env'
 dotenv.load_dotenv(dotenv_path=dotenv_path)
 
 from data_module.task_factory import TaskFactory
+from scripts.base.task_updater_base import TaskUpdaterBase
 
 # 配置日志
 logging.basicConfig(
@@ -39,6 +40,9 @@ logging.basicConfig(
         logging.StreamHandler(sys.stdout)
     ]
 )
+
+# 定义logger
+logger = logging.getLogger('update_adjfactor')
 
 # 定义目标任务名称常量
 TARGET_TASK_NAME = "tushare_stock_adjfactor"

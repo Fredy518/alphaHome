@@ -17,7 +17,7 @@
     - [环境配置](#环境配置)
   - [添加新功能](#添加新功能)
     - [添加新数据源](#添加新数据源)
-    - [添加新任务类型](#添加新任务类型)
+    - [添加新任务](#添加新任务)
     - [创建新工具](#创建新工具)
   - [测试指南](#测试指南)
     - [单元测试](#单元测试)
@@ -246,38 +246,31 @@ class NewAPIAdapter(DataSourceBase):
 4. 在源目录的`__init__.py`中注册新的适配器
 5. 创建单元测试
 
-### 添加新任务类型
+### 添加新任务
 
-1. 在适当的任务目录下创建新的任务类文件
-2. 创建一个继承自`TaskBase`的任务类
-3. 实现必要的方法，包括`validate_params`、`execute`和`handle_result`
+1. 在 `data_module/tasks/` 下合适的子目录（如 `stock/`, `fund/` 等）创建新的任务文件。
+2. 创建一个继承自 `data_module.tasks.base.Task` 或其特定子类（如 `TushareTask`）的任务类。
+3. 实现必要的方法，通常是 `fetch_data()`，以及可能的 `process_data()`, `validate_data()` 等。
+4. 定义任务的核心属性，如 `name`, `description`, `table_name`, `schema`, `primary_keys` 等。
+5. 使用 `@task_register()` 装饰器将任务类注册到 `TaskFactory`。
+    ```python
+    from ...base_task import Task
+    from ...task_decorator import task_register
 
-示例：
-```python
-# data_module/tasks/stock/new_task.py
-from data_module.tasks.base import TaskBase
+    @task_register()
+    class MyNewFetchTask(Task):
+        name = "my_new_fetch"
+        description = "获取我的新数据"
+        table_name = "my_new_data"
+        schema = { ... } # 定义表结构
+        primary_keys = ["date", "code"]
 
-class NewStockTask(TaskBase):
-    def validate_params(self, params):
-        # 验证参数
-        required_params = ['start_date', 'end_date', 'stock_codes']
-        for param in required_params:
-            if param not in params:
-                raise ValueError(f"Missing required parameter: {param}")
-        return True
-    
-    def execute(self, params):
-        # 执行任务逻辑
-        self.logger.info(f"Executing {self.__class__.__name__} with params: {params}")
-        # 具体实现...
-        
-    def handle_result(self, result):
-        # 处理结果
-        pass
-```
-
-4. 在任务目录的`__init__.py`中注册新的任务类
-5. 创建单元测试
+        async def fetch_data(self, **kwargs):
+            # 实现数据获取逻辑
+            pass
+    ```
+6. 在任务目录的 `__init__.py` 文件中导入新创建的任务类，确保它能被 `TaskFactory` 发现。
+7. 编写单元测试和集成测试。
 
 ### 创建新工具
 

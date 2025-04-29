@@ -294,6 +294,23 @@ class TushareTask(Task):
         try:
             self.logger.info(f"{batch_log_prefix}: 处理 {len(batch_data)} 行数据")
             processed_data = await self.process_data(batch_data)
+            
+            # 增强型错误检测：检查返回值是否是协程对象而不是DataFrame
+            import inspect
+            if inspect.iscoroutine(processed_data):
+                self.logger.warning(f"{batch_log_prefix}: process_data返回了协程对象而不是DataFrame，尝试await该协程")
+                try:
+                    # 尝试await协程以获取实际的DataFrame
+                    processed_data = await processed_data
+                except Exception as co_err:
+                    self.logger.error(f"{batch_log_prefix}: 尝试await协程时出错: {str(co_err)}")
+                    return 0  # 处理失败
+            
+            # 再次检查是否获得了有效的DataFrame
+            if not isinstance(processed_data, pd.DataFrame):
+                self.logger.error(f"{batch_log_prefix}: 处理数据后没有得到有效的DataFrame，而是: {type(processed_data)}")
+                return 0  # 处理失败
+                
         except Exception as e:
             self.logger.error(f"{batch_log_prefix}: 处理数据时发生错误: {str(e)}")
             return 0 # 处理数据失败
@@ -303,6 +320,16 @@ class TushareTask(Task):
         try:
             self.logger.info(f"{batch_log_prefix}: 验证数据")
             validated_data = await self.validate_data(processed_data) # 获取验证和过滤后的数据
+            
+            # 同样检查validate_data是否返回了协程
+            import inspect
+            if inspect.iscoroutine(validated_data):
+                self.logger.warning(f"{batch_log_prefix}: validate_data返回了协程对象而不是DataFrame，尝试await该协程")
+                try:
+                    validated_data = await validated_data
+                except Exception as co_err:
+                    self.logger.error(f"{batch_log_prefix}: 尝试await validate_data协程时出错: {str(co_err)}")
+                    return 0  # 验证失败
             
             # 检查返回的是否是DataFrame以及是否为空
             if not isinstance(validated_data, pd.DataFrame) or validated_data.empty:

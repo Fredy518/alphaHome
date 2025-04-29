@@ -619,63 +619,52 @@ async def example_incremental_update():
 
 ### TaskFactory概述
 
-`TaskFactory`是系统的核心组件，负责管理任务实例的创建和数据库连接。它实现了工厂模式，集中管理所有数据任务，简化了任务创建和配置过程。主要职责包括：
+`TaskFactory` 是系统任务管理的核心枢纽。它负责以下关键功能：
 
-1. **任务注册与管理**：集中注册和管理所有数据任务类型
-2. **数据库连接管理**：统一管理数据库连接，避免重复连接
-3. **任务配置管理**：从配置文件加载任务特定配置
-4. **任务实例创建**：按需创建并缓存任务实例，提高性能
+1.  **任务注册**：自动发现并注册所有通过 `@task_register()` 装饰器标记的 `Task` 子类。
+2.  **任务实例化**：根据任务名称创建具体的任务实例。
+3.  **数据库连接共享**：管理全局的 `DBManager` 实例，确保所有任务共享同一个数据库连接池。
+4.  **配置管理**：加载和提供任务所需的配置信息（未来可能实现）。
 
-`TaskFactory` 是作为系统的核心组件，所有的脚本和任务都通过它来访问数据库和获取任务实例。
+通过 `TaskFactory`，系统可以统一管理所有的任务，简化了任务的调用和执行流程。开发者只需要定义好任务类并使用装饰器注册，`TaskFactory` 就能自动将其纳入管理。
 
 ### 任务注册与获取
 
-系统采用两种任务注册方式：
-
-1. **装饰器注册**：使用 `@task_register` 装饰器自动注册任务类
+任务的注册通过 `@task_register()` 装饰器自动完成。开发者在定义 `Task` 子类时，只需要添加这个装饰器即可：
 
 ```python
+from data_module.base_task import Task
 from data_module.task_decorator import task_register
 
 @task_register()
 class MyTask(Task):
-    name = "my_task_name"
-    # 任务实现...
+    # ... 任务实现 ...
 ```
 
-2. **手动注册**：直接调用 `TaskFactory.register_task` 方法
+一旦任务被注册，可以通过 `TaskFactory` 来获取它们：
 
-```python
-from data_module.task_factory import TaskFactory
+1.  **获取所有已注册任务的名称列表**：
+    ```python
+    from data_module import TaskFactory
 
-# 手动注册任务
-TaskFactory.register_task("task_name", TaskClass)
-```
-
-获取任务实例的标准方式：
-
-```python
-import asyncio
-from data_module.task_factory import TaskFactory
-
-async def main():
-    # 初始化TaskFactory（建立数据库连接）
-    await TaskFactory.initialize()
-    
-    try:
-        # 获取任务实例
-        task = await TaskFactory.get_task("task_name")
-        
-        # 使用任务实例
-        result = await task.execute(start_date="20230101", end_date="20231231")
-        print(f"任务执行结果: {result}")
-    finally:
-        # 关闭TaskFactory（关闭数据库连接）
+    async def get_all_tasks():
+        await TaskFactory.initialize() # 确保已初始化
+        task_names = await TaskFactory.get_all_task_names()
+        print(f"所有已注册的任务: {task_names}")
         await TaskFactory.shutdown()
+    ```
+    这对于需要批量执行所有可用任务的场景（如 `scripts/batch/update_all_tasks.py`）非常有用。
 
-if __name__ == "__main__":
-    asyncio.run(main())
-```
+2.  **获取特定任务的实例**：
+    ```python
+    async def run_specific_task():
+        await TaskFactory.initialize()
+        task_instance = await TaskFactory.get_task("stock_daily_adj") # 获取任务实例
+        if task_instance:
+            # 执行任务
+            await task_instance.execute(start_date="2024-01-01", end_date="2024-01-31")
+        await TaskFactory.shutdown()
+    ```
 
 ### 数据库连接管理
 

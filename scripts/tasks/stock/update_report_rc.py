@@ -175,38 +175,42 @@ class ReportRcUpdater(TaskUpdaterBase):
 async def main():
     updater = ReportRcUpdater()
 
-    parser = argparse.ArgumentParser(description="更新券商盈利预测数据")
-    parser.add_argument("--start-date", help="开始日期 (报告日期, YYYYMMDD)")
-    parser.add_argument("--end-date", help="结束日期 (报告日期, YYYYMMDD)")
+    # 使用基类的参数解析器，获得更多通用参数如 --auto
+    parser = updater.setup_parser()
+    
+    # 添加此脚本特有的参数
     parser.add_argument("--ts-code", help="股票代码 (可选, 如 600000.SH)")
-    parser.add_argument("--full-update", action="store_true", help="全量更新")
 
     args = parser.parse_args()
 
     # 参数检查: 全量更新和日期范围更新互斥
     if args.full_update and (args.start_date or args.end_date):
         parser.error("全量更新模式 (--full-update) 不能与指定日期范围 (--start-date/--end-date) 同时使用。")
-    # 如果不是全量更新，则必须提供日期范围
-    if not args.full_update and not (args.start_date and args.end_date):
-        parser.error("必须提供 --start-date 和 --end-date 用于范围更新，或使用 --full-update 进行全量更新。")
+    # 如果不是全量更新，则必须提供日期范围(如果不是自动模式)
+    if not args.full_update and not (args.start_date and args.end_date) and not getattr(args, 'auto', False):
+        parser.error("必须提供 --start-date 和 --end-date 用于范围更新，或使用 --full-update 进行全量更新，或使用 --auto 进行自动模式。")
     # 日期配对检查 (仅在非全量更新时)
-    if not args.full_update:
+    if not args.full_update and not getattr(args, 'auto', False):
         if args.start_date and not args.end_date:
             parser.error("如果指定开始日期，必须同时指定结束日期")
         if args.end_date and not args.start_date:
             parser.error("如果指定结束日期，必须同时指定开始日期")
 
     try:
-        # 如果是全量更新，将日期设为None (或任务默认值)
-        start_date = None if args.full_update else args.start_date
-        end_date = None if args.full_update else args.end_date
+        # 如果是全量更新或自动模式，将日期设为None (由任务内部决定)
+        is_auto = getattr(args, 'auto', False)
+        start_date = None if args.full_update or is_auto else args.start_date
+        end_date = None if args.full_update or is_auto else args.end_date
+        
+        # 自动模式下，启用全量更新或尝试使用smart_incremental_update
+        full_update = args.full_update or (is_auto and not (args.start_date or args.end_date))
 
         # 执行更新
         success_count, failed_count, error_msgs = await updater.update_task(
             start_date=start_date,
             end_date=end_date,
             ts_code=args.ts_code, # Pass ts_code
-            full_update=args.full_update
+            full_update=full_update
         )
 
         # 汇总结果
@@ -217,7 +221,7 @@ async def main():
             start_date=start_date,
             end_date=end_date,
             ts_code=args.ts_code, # Pass ts_code
-            full_update=args.full_update
+            full_update=full_update
         )
 
     except Exception as e:

@@ -77,7 +77,7 @@ class DailyBasicUpdater(TaskUpdaterBase):
         
         try:
             task = await TaskFactory.get_task(TARGET_TASK_NAME)
-            result = await task.run(start_date=start_date, end_date=end_date, full_update=full_update)
+            result = await task.execute(start_date=start_date, end_date=end_date, full_update=full_update)
             
             if not isinstance(result, dict):
                 self.logger.error(f"任务返回结果格式错误: {result}")

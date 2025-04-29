@@ -29,7 +29,7 @@ class TushareFinaIndicatorTask(TushareTask):
     ]
     
     # 3.Tushare特有属性
-    api_name = "fina_indicator"
+    api_name = "fina_indicator_vip"
     fields = [
         "ts_code", "ann_date", "end_date", "eps", "dt_eps", "total_revenue_ps", 
         "revenue_ps", "capital_rese_ps", "surplus_rese_ps", "undist_profit_ps", 
@@ -97,6 +97,31 @@ class TushareFinaIndicatorTask(TushareTask):
 
     # 7.数据验证规则 (Optional, add specific checks if needed)
     validations = [] 
+
+    async def process_data(self, data):
+        """处理从Tushare获取的数据
+        
+        重写父类方法，额外处理ann_date为NULL的情况
+        """
+        # 首先调用父类的process_data方法进行基本处理
+        data = await super().process_data(data)
+        
+        # 处理ann_date为NULL的情况，使用end_date作为默认值
+        if 'ann_date' in data.columns and data['ann_date'].isna().any():
+            null_ann_dates = data['ann_date'].isna().sum()
+            self.logger.warning(f"发现 {null_ann_dates} 条记录的ann_date为NULL，将使用end_date作为默认值")
+            
+            # 使用end_date填充ann_date的NULL值
+            data.loc[data['ann_date'].isna(), 'ann_date'] = data.loc[data['ann_date'].isna(), 'end_date']
+            
+            # 再次检查是否还有NULL值
+            if data['ann_date'].isna().any():
+                remaining_nulls = data['ann_date'].isna().sum()
+                self.logger.error(f"填充后仍有 {remaining_nulls} 条记录的ann_date为NULL")
+            else:
+                self.logger.info("所有NULL的ann_date已成功填充")
+                
+        return data
 
     async def get_batch_list(self, **kwargs) -> List[Dict]:
         """生成批处理参数列表 (使用自然日批次工具)
