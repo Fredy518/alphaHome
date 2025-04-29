@@ -69,7 +69,7 @@ async def _process_requests():
     queue_handler.setFormatter(formatter)
     root_logger = logging.getLogger() # 同时捕获来自 data_module 的日志
     root_logger.addHandler(queue_handler)
-    root_logger.setLevel(logging.INFO) # 设置所需的日志级别
+    root_logger.setLevel(logging.INFO) # 恢复为 INFO 级别
 
     # 初始化 TaskFactory
     try:
@@ -156,10 +156,10 @@ async def _handle_get_tasks():
 
                  new_cache.append({
                      'name': name,
-                     # 'type': name.split('_')[0] if '_' in name else 'unknown', # Old type extraction
-                     'type': task_type, # 使用增强类型
+                     'type': task_type,
                      'description': getattr(task_instance, 'description', ''),
-                     'selected': selected
+                     'selected': selected,
+                     'table_name': getattr(task_instance, 'table_name', None) # 添加 table_name
                  })
              except Exception as e:
                   logging.error(f"获取任务 {name} 详情失败: {e}")
@@ -168,8 +168,71 @@ async def _handle_get_tasks():
         # 按类型然后按名称排序以供显示
         _task_list_cache = sorted(new_cache, key=lambda x: (x['type'], x['name']))
 
-        # 发送格式化数据给 Tkinter Treeview
-        response_queue.put(('TASK_LIST_UPDATE', _format_task_list_for_tkinter_treeview()))
+        # 获取 DBManager 实例
+        db_manager = TaskFactory.get_db_manager()
+        if not db_manager:
+            logging.warning("DBManager not available, cannot fetch update times.")
+            for task_detail in _task_list_cache:
+                 task_detail['latest_update_time'] = "N/A (DB Error)"
+            response_queue.put(('TASK_LIST_UPDATE', _task_list_cache))
+            return
+
+        # --- 新的并发查询方式 --- 
+        query_coroutines = []
+        tasks_to_query_info = [] # List of (index, table_name) tuples
+
+        # 1. 收集需要查询的任务和协程
+        for index, task_detail in enumerate(_task_list_cache):
+            table_name = task_detail.get('table_name')
+            if table_name:
+                # Request the raw datetime object for GUI display
+                coro = db_manager.get_latest_date(table_name, 'update_time', return_raw_object=True)
+                query_coroutines.append(coro)
+                tasks_to_query_info.append((index, table_name))
+            else:
+                # 对于没有 table_name 的任务，直接设置默认值
+                task_detail['latest_update_time'] = "N/A (No Table)"
+
+        # 2. 并发执行查询
+        if query_coroutines:
+            logging.info(f"Starting concurrent query for {len(query_coroutines)} table timestamps...")
+            results = await asyncio.gather(*query_coroutines, return_exceptions=True)
+            logging.info("Concurrent timestamp query finished.")
+
+            # 3. 处理查询结果
+            for i, result in enumerate(results):
+                task_index, table_name = tasks_to_query_info[i]
+                latest_timestamp_str = "N/A" # 重置默认值
+
+                if isinstance(result, Exception):
+                    logging.warning(f"Error querying latest timestamp for table {table_name}: {type(result).__name__} - {result}")
+                    latest_timestamp_str = "N/A (Query Error)"
+                else:
+                    # result 是查询结果 (时间戳) 或 None
+                    latest_timestamp = result 
+                    # --- 日志记录结束 --- 
+                        
+                    if latest_timestamp is not None:
+                        # 预期 latest_timestamp 是 datetime 对象或 None
+                        if isinstance(latest_timestamp, datetime):
+                            # 直接格式化为 YYYY-MM-DD HH:MM:SS
+                            latest_timestamp_str = latest_timestamp.strftime('%Y-%m-%d %H:%M:%S')
+                        else:
+                            # 其他类型，尝试转为字符串
+                            logging.warning(f"Expected datetime object for {table_name}, but got {type(latest_timestamp)}. Converting to string.")
+                            latest_timestamp_str = str(latest_timestamp)
+                    else:
+                        latest_timestamp_str = "No Data"
+
+                # 更新缓存中的对应任务
+                if 0 <= task_index < len(_task_list_cache):
+                    _task_list_cache[task_index]['latest_update_time'] = latest_timestamp_str
+                else:
+                    logging.error(f"Task index {task_index} out of bounds while processing timestamp results.")
+        # --- 并发查询结束 --- 
+
+        logging.info(f"Sending updated TASK_LIST with {len(_task_list_cache)} tasks to GUI.")
+        response_queue.put(('TASK_LIST_UPDATE', _task_list_cache))
         response_queue.put(('STATUS', '任务列表已刷新')) # 添加状态更新
     except Exception as e:
         logging.exception("获取任务列表失败")
@@ -178,22 +241,15 @@ async def _handle_get_tasks():
 def _format_task_list_for_tkinter_treeview() -> List[Dict[str, Any]]:
     """Format the cache for Tkinter Treeview (returns list of dicts)."""
     # 返回所需信息，GUI 端将格式化 'selected' 列
-    return [
-        {
-            'selected': task['selected'], # 直接传递布尔值
-            'type': task['type'],
-            'name': task['name'],
-            'description': task['description']
-         }
-        for task in _task_list_cache
-    ]
+    logging.warning("_format_task_list_for_tkinter_treeview is likely obsolete as full cache is sent.")
+    return _task_list_cache # 暂时返回完整缓存
 
 def _handle_toggle_select(row_index: int):
     """Toggle selection state for a task by index and send update."""
     if 0 <= row_index < len(_task_list_cache):
         _task_list_cache[row_index]['selected'] = not _task_list_cache[row_index]['selected']
-        # 将更新后的格式化列表发送回 GUI
-        response_queue.put(('TASK_LIST_UPDATE', _format_task_list_for_tkinter_treeview()))
+        # 将更新后的完整缓存列表发送回 GUI
+        response_queue.put(('TASK_LIST_UPDATE', _task_list_cache))
 
 def _handle_select_specific(task_names: List[str]):
     """Set selection state to True for specific tasks and send update."""
@@ -206,7 +262,7 @@ def _handle_select_specific(task_names: List[str]):
                 task['selected'] = True
                 changed = True
     if changed:
-        response_queue.put(('TASK_LIST_UPDATE', _format_task_list_for_tkinter_treeview()))
+        response_queue.put(('TASK_LIST_UPDATE', _task_list_cache))
     else:
         print("Controller: No state changed during SELECT_SPECIFIC.")
 
@@ -221,7 +277,7 @@ def _handle_deselect_specific(task_names: List[str]):
                 task['selected'] = False
                 changed = True
     if changed:
-        response_queue.put(('TASK_LIST_UPDATE', _format_task_list_for_tkinter_treeview()))
+        response_queue.put(('TASK_LIST_UPDATE', _task_list_cache))
     else:
         print("Controller: No state changed during DESELECT_SPECIFIC.")
 

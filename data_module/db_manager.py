@@ -1,6 +1,7 @@
 import asyncio
 import logging
 from typing import Dict, List, Any, Optional, Union
+from datetime import datetime
 
 import asyncpg
 import pandas as pd
@@ -265,34 +266,58 @@ class DBManager:
         
         return schema
     
-    async def get_latest_date(self, table_name: str, date_column: str) -> Optional[str]:
-        """获取表中最新日期
+    async def get_latest_date(self, table_name: str, date_column: str, return_raw_object: bool = False) -> Optional[Union[str, datetime]]:
+        """获取表中指定列的最大值（通常是日期或时间戳）
         
         Args:
             table_name: 表名
-            date_column: 日期列名
+            date_column: 列名 (例如日期或时间戳列)
+            return_raw_object: 如果为 True，返回原始 datetime 对象；否则返回 YYYYMMDD 格式字符串。
             
         Returns:
-            最新日期，如果表为空则返回None
+            该列的最大值 (datetime 或 YYYYMMDD str) 或 None
         """
         query = f"""
-        SELECT MAX({date_column}) FROM {table_name};
+        SELECT MAX(\"{date_column}\") FROM \"{table_name}\";
         """
-        result = await self.fetch_val(query)
-        
-        if result is not None:
-            # 格式化日期为YYYYMMDD格式
-            if isinstance(result, str):
-                # 如果已经是字符串，尝试标准化格式
-                if '-' in result:
-                    # 假设格式为YYYY-MM-DD
-                    from datetime import datetime
-                    result = datetime.strptime(result, '%Y-%m-%d').strftime('%Y%m%d')
+        try:
+            # fetch_val should return the raw value from the DB, 
+            # which asyncpg maps to python types (e.g., timestamp -> datetime)
+            result = await self.fetch_val(query)
+            
+            # Log the result type before returning
+            if result is not None:
+                self.logger.debug(f"get_latest_date for {table_name}.{date_column} returning type: {type(result)}")
             else:
-                # 如果是日期对象，转换为字符串
-                result = result.strftime('%Y%m%d')
-        
-        return result
+                 self.logger.debug(f"get_latest_date for {table_name}.{date_column} returning None")
+
+            # --- Conditional formatting for backward compatibility --- 
+            if result is not None and not return_raw_object:
+                # Default behavior: format to YYYYMMDD string
+                formatted_result = None
+                if isinstance(result, str):
+                    # Handle potential string input from DB (though less likely with asyncpg)
+                    if '-' in result:
+                        try: formatted_result = datetime.strptime(result, '%Y-%m-%d').strftime('%Y%m%d');
+                        except ValueError: self.logger.warning(f"Could not parse date string '{result}' as YYYY-MM-DD.")
+                    elif len(result) == 8 and result.isdigit():
+                        formatted_result = result # Assume it's already YYYYMMDD
+                    else:
+                         self.logger.warning(f"Received unexpected string format '{result}'.")
+                elif isinstance(result, datetime):
+                    # Convert datetime/date object to YYYYMMDD string
+                    formatted_result = result.strftime('%Y%m%d')
+                else:
+                     self.logger.warning(f"Received unexpected type '{type(result)}'.")
+                
+                return formatted_result # Return formatted string or None if formatting failed
+            else:
+                # return_raw_object is True OR result is None
+                return result # Return raw datetime object or None
+
+        except Exception as e:
+            self.logger.warning(f"查询表 {table_name} 列 {date_column} 的最大值时出错: {e}")
+            return None # Return None on error
 
     async def upsert(self, 
                     table_name: str, 
@@ -347,7 +372,6 @@ class DBManager:
             raise ValueError("data参数必须是DataFrame或字典列表")
         
         # 准备时间戳
-        from datetime import datetime
         current_time = datetime.now()
         
         # 添加时间戳列

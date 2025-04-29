@@ -1,6 +1,6 @@
 import tkinter as tk
 from tkinter import ttk, messagebox, font as tkFont
-from datetime import datetime
+from datetime import datetime, timedelta
 from . import controller
 from typing import Dict, Any, List
 import operator # For sorting
@@ -59,7 +59,7 @@ def create_task_list_tab(parent: ttk.Frame) -> Dict[str, tk.Widget]:
     tree_font = tkFont.Font(family="Microsoft YaHei UI", size=10) # 或 "Segoe UI"
 
     # 定义列
-    columns = ('selected', 'type', 'name', 'description')
+    columns = ('selected', 'type', 'name', 'description', 'update_time')
     tree = ttk.Treeview(tree_frame, columns=columns, show='headings') # show='headings' 隐藏第一列空白列
 
     # 应用字体到 Treeview (通过 style)
@@ -73,11 +73,13 @@ def create_task_list_tab(parent: ttk.Frame) -> Dict[str, tk.Widget]:
     tree.heading('type', text='类型', command=lambda: handle_sort_column(widgets, 'type'))
     tree.heading('name', text='名称', command=lambda: handle_sort_column(widgets, 'name'))
     tree.heading('description', text='描述', command=lambda: handle_sort_column(widgets, 'description'))
+    tree.heading('update_time', text='更新时间', command=lambda: handle_sort_column(widgets, 'update_time'))
 
     tree.column('selected', width=50, anchor=tk.CENTER, stretch=False)
     tree.column('type', width=100, stretch=False)
-    tree.column('name', width=250, stretch=True)
-    tree.column('description', width=350, stretch=True)
+    tree.column('name', width=200, stretch=False)
+    tree.column('description', width=300, stretch=True)
+    tree.column('update_time', width=150, anchor=tk.CENTER)
 
     # 添加滚动条
     vsb = ttk.Scrollbar(tree_frame, orient="vertical", command=tree.yview)
@@ -98,7 +100,7 @@ def create_task_list_tab(parent: ttk.Frame) -> Dict[str, tk.Widget]:
     widgets['task_tree'] = tree # 存储 Treeview 引用
 
     # 初始加载提示 (将在 process_controller_update 中被实际数据替换)
-    tree.insert('', tk.END, values=('', '', '正在加载...', ''), tags=('loading',))
+    tree.insert('', tk.END, values=('', '', '正在加载...', '', ''), tags=('loading',))
 
     # Add attributes to tree for sorting state
     tree._last_sort_col = _current_sort_col
@@ -638,15 +640,55 @@ def _update_task_tree_display(widgets: Dict[str, tk.Widget]):
         try:
             # 使用 operator.itemgetter 获取排序键
             # 注意：Treeview 列标识符需要与 _full_task_list_data 中的字典键匹配
-            # 我们的列是 ('selected', 'type', 'name', 'description')
-            # 我们的数据是 [{'selected': bool, 'type': str, 'name': str, 'description': str}, ...]
-            sort_key_getter = operator.itemgetter(_current_sort_col)
-            # 对 display_data 进行原地排序或创建排序后的新列表
-            display_data.sort(key=sort_key_getter, reverse=_current_sort_reverse)
+            # 列: selected, type, name, description, update_time
+            # 数据: {'selected': bool, 'type': str, 'name': str, 'description': str, 'latest_update_time': str}, ...
+            if _current_sort_col == 'selected':
+                # Sort by selected status ('✓' vs '') - assuming data has boolean 'selected'
+                display_data.sort(key=lambda task: not task.get('selected', False), reverse=_current_sort_reverse)
+            elif _current_sort_col == 'update_time':
+                # Special sorting for update time (handle 'N/A', 'No Data', etc.)
+                def sort_key(task):
+                    val = task.get('latest_update_time', 'N/A') # Get value from task dict
+                    if val in ["N/A", "N/A (DB Error)", "N/A (Query Error)", "N/A (No Table)"]:
+                        return datetime.min if not _current_sort_reverse else datetime.max
+                    elif val == "No Data":
+                        return datetime.min + timedelta(seconds=1) if not _current_sort_reverse else datetime.max - timedelta(seconds=1)
+                    try:
+                        # Attempt to parse the datetime string
+                        return datetime.strptime(val, '%Y-%m-%d %H:%M:%S')
+                    except ValueError:
+                        # Fallback for unparsable strings
+                        return datetime.min if not _current_sort_reverse else datetime.max
+                display_data.sort(key=sort_key, reverse=_current_sort_reverse)
+            else:
+                # Default string sort (case-insensitive) for type, name, description
+                def sort_key(task):
+                    # Get the value, default to empty string if key missing
+                    val = task.get(_current_sort_col, '')
+                    # Ensure value is string for lower()
+                    return str(val).lower()
+                try:
+                    display_data.sort(key=sort_key, reverse=_current_sort_reverse)
+                except KeyError:
+                    print(f"警告：排序键 '{_current_sort_col}' 在任务数据中不存在。")
+                except Exception as e:
+                    print(f"默认排序时出错: {e}")
         except KeyError:
             print(f"警告：排序键 '{_current_sort_col}' 在任务数据中不存在。")
         except Exception as e:
             print(f"排序时出错: {e}")
+
+    # --- Update Heading Indicators --- 
+    for c in tree["columns"]:
+        current_heading = tree.heading(c, "text")
+        # Remove existing sort indicators (▲▼)
+        current_heading = current_heading.replace(' ▲', '').replace(' ▼', '')
+        if c == _current_sort_col:
+            indicator = ' ▲' if not _current_sort_reverse else ' ▼'
+            tree.heading(c, text=current_heading + indicator)
+        else:
+            tree.heading(c, text=current_heading)
+    # --- End Heading Update --- 
 
     # 3. 更新 Treeview 显示
     # 清空现有内容
@@ -655,11 +697,13 @@ def _update_task_tree_display(widgets: Dict[str, tk.Widget]):
     # 插入过滤和排序后的数据
     for task_info in display_data:
         selected_char = '✓' if task_info.get('selected', False) else ''
+        # Prepare values tuple
         values = (
             selected_char,
             task_info.get('type', ''),
             task_info.get('name', ''),
-            task_info.get('description', '')
+            task_info.get('description', ''),
+            task_info.get('latest_update_time', 'N/A')
         )
         tree.insert('', tk.END, values=values, tags=('selected' if selected_char else 'normal',))
 
