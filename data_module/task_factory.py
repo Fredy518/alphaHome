@@ -101,6 +101,63 @@ class TaskFactory:
         logger.info(f"TaskFactory 已初始化: db_url={db_url}")
     
     @classmethod
+    async def reload_config(cls):
+        """重新加载配置并重新初始化数据库连接。"""
+        logger.info("开始重新加载 TaskFactory 配置...")
+        if not cls._initialized or not cls._db_manager:
+            logger.warning("TaskFactory 尚未初始化，无法重载。将执行首次初始化。")
+            await cls.initialize()
+            return
+
+        try:
+            # 1. 关闭现有数据库连接
+            logger.info("正在关闭现有数据库连接...")
+            await cls._db_manager.close() # 假设 db_manager 有 close 方法
+            logger.info("现有数据库连接已关闭。")
+
+            # 2. 加载新配置
+            logger.info("正在加载新配置...")
+            new_config = load_config()
+            new_db_url = new_config.get("database", {}).get("url")
+            new_token = new_config.get("api", {}).get("tushare_token")
+
+            if not new_db_url:
+                logger.error("新配置中缺少有效的数据库 URL，无法重新初始化。")
+                # 标记为未初始化状态？或者保持旧状态？ 标记为未初始化可能更安全
+                cls._initialized = False
+                cls._db_manager = None
+                raise ValueError("新配置中缺少数据库 URL")
+
+            logger.info(f"加载到新的数据库 URL: {new_db_url}")
+            # 注意：这里没有显式更新 Token，因为 Token 通常在任务实例化时传递
+            # 如果需要全局更新 Token，可以在这里存储 cls._tushare_token = new_token
+
+            # 3. 使用新 URL 重新初始化 DBManager
+            # 方案 A: 重新创建 DBManager 实例 (如果 DBManager 设计为不可变或重新连接复杂)
+            logger.info("正在使用新 URL 创建新的 DBManager 实例...")
+            cls._db_manager = DBManager(new_db_url)
+            await cls._db_manager.connect()
+
+            # 方案 B: 如果 DBManager 支持更新 URL 并重新连接 (需要 DBManager 支持)
+            # logger.info("正在更新 DBManager 的 URL 并重新连接...")
+            # await cls._db_manager.reconnect(new_db_url) # 假设有 reconnect 方法
+
+            # 4. 清空旧的任务实例缓存，它们可能持有旧的 db_manager 引用
+            # 或者如果任务设计得好，可以不用清空，取决于任务如何获取 db_manager
+            logger.info("正在清空旧的任务实例缓存...")
+            cls._task_instances.clear()
+
+            cls._initialized = True # 确保标记为已初始化
+            logger.info("TaskFactory 配置重新加载完成。")
+
+        except Exception as e:
+            logger.exception("重新加载 TaskFactory 配置时发生错误。TaskFactory 可能处于不稳定状态。")
+            cls._initialized = False # 标记为未初始化以表示错误状态
+            cls._db_manager = None # 丢弃可能无效的 db_manager
+            # 可以选择向上抛出异常，或者让调用者检查状态
+            raise  # 重新抛出异常，让 controller 处理
+    
+    @classmethod
     async def shutdown(cls):
         """关闭数据库连接"""
         # 关闭数据库连接

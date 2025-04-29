@@ -34,6 +34,7 @@
 2. **任务管理器**：定义和管理各类数据处理任务
 3. **数据处理工具**：提供数据验证、转换和分析功能
 4. **命令行接口**：为用户提供便捷的操作方式
+5. **图形界面层**：提供一个基于 Tkinter 的用户界面，用于任务管理和执行
 
 系统架构图：
 
@@ -66,6 +67,24 @@
                    │    数据库   │
                    └─────────────┘
 ```
+
+系统架构基于分层设计，主要包括：
+
+1.  **数据源层 (`data_module/sources`)**: 负责与外部数据提供商（如Tushare）的API进行交互。
+2.  **任务层 (`data_module/tasks`)**: 定义具体的数据获取和处理任务，继承自基类。
+3.  **工具层 (`data_module/tools`)**: 提供通用的数据处理、数据库交互（`DBManager`）、日志记录等工具。
+4.  **脚本层 (`scripts`)**: 包含用于执行任务、数据库初始化、质量检查等的命令行脚本。
+5.  **图形界面层 (`gui`)**: 提供一个基于 Tkinter 的用户界面，用于任务管理和执行。
+
+### GUI交互
+
+GUI 层通过一个 `Controller` (`gui/controller.py`) 与后端逻辑（主要是 `TaskFactory` 和任务执行）进行交互。通信主要通过 Python 的 `queue.Queue` 实现：
+
+- **请求队列 (`request_queue`)**: GUI 前端 (`event_handlers.py`) 将用户操作（如刷新列表、运行任务、保存设置）封装成消息发送到此队列。
+- **响应队列 (`response_queue`)**: `Controller` 在后台处理请求（例如查询任务列表、执行任务、加载/保存配置）后，将结果或状态更新封装成消息发送回此队列。
+- **主线程轮询**: GUI 主线程 (`main_window.py`) 定期检查响应队列，并根据收到的消息更新界面显示（如任务列表、运行状态、日志）。
+
+这种设计使得 GUI 界面保持响应，而耗时的操作（如数据获取）在后台线程中执行。
 
 ## 代码组织
 
@@ -175,12 +194,48 @@ class DataValidator:
         # 实现代码
 ```
 
+### DBManager
+
+(`data_module/tools/db_manager.py`)
+
+- 封装了与 PostgreSQL 数据库的交互。
+- 使用 `SQLAlchemy` Core API 构建和执行 SQL 语句。
+- 提供连接管理、事务处理、批量插入/更新等功能。
+- 从 `config.json` 读取数据库连接 URL。
+
+### 图形用户界面 (GUI)
+
+(`gui/` 目录)
+
+- **`main_window.py`**: 
+  - Tkinter 应用的入口点。
+  - 创建主窗口、Notebook (用于标签页)。
+  - 初始化 `Controller` 和两个通信队列 (`request_queue`, `response_queue`)。
+  - 设置主事件循环 (`root.mainloop()`) 和定期检查响应队列的定时器 (`root.after`)。
+  - 调用 `event_handlers.py` 中的函数来构建各个标签页的 UI 布局。
+  - 处理 DPI 感知（在 Windows 上使用 `ctypes`）。
+- **`event_handlers.py`**: 
+  - 包含创建各个标签页 UI 布局的函数 (使用 `tkinter.ttk` 部件)。
+  - 定义了 UI 事件的回调函数（如按钮点击、列表选择）。
+  - 这些回调函数通常会创建一个请求消息，并将其放入 `request_queue` 发送给 `Controller`。
+  - 包含处理从 `response_queue` 收到的消息并更新 UI 的逻辑（由 `main_window.py` 中的定时器调用）。
+- **`controller.py`**: 
+  - 运行在独立的后台线程中。
+  - 循环监听 `request_queue`。
+  - 根据收到的请求消息，执行相应的业务逻辑：
+    - 调用 `TaskFactory` 获取任务列表。
+    - 调用 `TaskFactory` 加载/保存配置 (主要是 Tushare Token)。
+    - 调用 `TaskFactory` 执行选定的任务（在另一个线程池中执行，以避免阻塞 Controller）。
+    - 将执行结果或状态更新放入 `response_queue` 发送回 GUI 前端。
+  - 使用 `asyncio`（如果需要）和 `concurrent.futures.ThreadPoolExecutor` 来管理任务执行。
+  - 负责将日志消息也放入 `response_queue` 以便在 GUI 中显示。
+
 ## 开发环境设置
 
 ### 前提条件
 
-- Python 3.8+
-- PostgreSQL 12+
+- Python 3.9 或更高版本
+- PostgreSQL 数据库服务
 - Git
 
 ### 环境配置
