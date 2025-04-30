@@ -324,10 +324,12 @@ class Task(ABC):
         if self.primary_keys:
             primary_key_clause = f"PRIMARY KEY ({', '.join(self.primary_keys)})"
             columns.append(primary_key_clause)
-        
+
+        # 构建列定义字符串，避免在f-string中使用反斜杠
+        columns_str = ',\n            '.join(columns)
         create_table_sql = f"""
         CREATE TABLE IF NOT EXISTS {self.table_name} (
-            {',\n            '.join(columns)}
+            {columns_str}
         );
         """
         

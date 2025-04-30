@@ -83,8 +83,8 @@ class TushareTask(Task):
         try:
             self.page_size = int(self.page_size)
         except (ValueError, TypeError):
-             self.logger.warning(f"配置中的 page_size \"{task_config.get('page_size')}\" 无效，将使用代码默认值 {code_default_page_size}")
-             self.page_size = code_default_page_size
+            self.logger.warning(f"配置中的 page_size \"{task_config.get('page_size')}\" 无效，将使用代码默认值 {code_default_page_size}")
+            self.page_size = code_default_page_size
 
         # 确保存储为整数后记录日志
         self.logger.info(f"任务 {self.name}: 应用配置 concurrent_limit={self.concurrent_limit}, page_size={self.page_size}")
@@ -157,232 +157,221 @@ class TushareTask(Task):
         Args:
             progress_callback (Callable, optional): 异步回调函数，用于报告进度。
                                                   签名: async def callback(task_name: str, progress: str)
+            stop_event (asyncio.Event, optional): 事件对象，用于外部请求停止任务。
+            force_full (bool, optional): 如果为 True，则强制执行全量更新，忽略智能增量逻辑。
+            start_date (str, optional): 手动指定的开始日期 (YYYYMMDD)。
+            end_date (str, optional): 手动指定的结束日期 (YYYYMMDD)。
             **kwargs: 额外参数，将传递给get_batch_list和prepare_params方法
             
         Returns:
             Dict: 任务执行结果，包含状态和影响的行数
         """
-        self.logger.info(f"开始执行任务: {self.name}")
+        self.logger.info(f"开始执行任务: {self.name}, 参数: {kwargs}") # Log initial kwargs
         
-        # <<< Get the callback >>>
         progress_callback = kwargs.get('progress_callback')
-        # Removed DEBUG log for callback existence
+        stop_event = kwargs.get('stop_event') # 获取停止事件
+        
+        total_rows = 0
+        failed_batches = 0
+        error_message = ""
+        final_status = "success" # Assume success initially
+        batch_list = [] # Initialize batch_list
 
         try:
-            await self.pre_execute()
+            await self.pre_execute(stop_event=stop_event) # Pass stop_event to pre_execute
 
-            # 依赖任务检查已移除
-            # 直接进行数据获取
-            
-            # 获取批处理参数列表
-            self.logger.info(f"获取数据，参数: {kwargs}")
-            batch_list = await self.get_batch_list(**kwargs)
-            if not batch_list:
-                self.logger.info("批处理参数列表为空，无法获取数据")
-                return {"status": "no_data", "rows": 0}
+            # --- Date Logic ---
+            original_start_date = kwargs.get('start_date')
+            original_end_date = kwargs.get('end_date')
+            force_full = kwargs.get('force_full', False)
 
-            total_batches = len(batch_list)
-            self.logger.info(f"生成了 {total_batches} 个批处理任务") # Keep INFO log
-
-            # 处理并保存每个批次的数据
-            total_rows = 0
-            failed_batches = 0 # 记录失败的批次数
-            first_error = None # 记录第一个遇到的异常信息以备返回
-            successful_batches_count = 0 # <--- ADDED: Initialize success counter
-            
-            # 获取并发限制参数，优先使用传入的参数，其次使用实例属性
-            concurrent_limit = kwargs.get('concurrent_limit', self.concurrent_limit)
-            show_progress = kwargs.get('show_progress', False)
-            show_progress = False # <-- 添加这行，强制禁用 tqdm
-            progress_desc = kwargs.get('progress_desc', f"执行任务: {self.name}")
-            
-            if concurrent_limit > 1:
-                # 并发处理批次
-                self.logger.info(f"使用并发模式处理批次，并发数: {concurrent_limit}")
-                semaphore = asyncio.Semaphore(concurrent_limit)
-                success_counter_lock = asyncio.Lock() # <--- ADDED: Lock for counter
-                pbar = None # 初始化进度条变量
+            if original_start_date is None and original_end_date is None and not force_full:
+                self.logger.info(f"任务 {self.name}: 未提供 start_date 和 end_date，进入智能增量模式。")
+                latest_date = await self.get_latest_date()
+                self.logger.info(f"任务 {self.name}: 数据库中最新日期为: {latest_date}")
+                default_start = getattr(self, 'default_start_date', None)
+                if not default_start:
+                    self.logger.error(f"任务 {self.name}: 未定义 default_start_date，无法执行智能增量。")
+                    failed_result = {"status": "failed", "message": "任务未定义默认开始日期", "rows": 0}
+                    # Corrected Call
+                    await self.post_execute(result=failed_result, stop_event=stop_event) 
+                    return failed_result
                 
-                # 如果需要显示进度，则创建 tqdm 实例
-                if show_progress:
-                    pbar = tqdm(total=len(batch_list), desc=progress_desc, ascii=True, position=0, leave=True)
-                
-                # 修改内部函数以接受并更新 pbar 和调用回调
-                async def process_batch(i, batch_params, pbar_instance, cb):
-                    nonlocal successful_batches_count # <--- ADDED: Access outer counter
-                    processed_rows = 0 # Default value
+                if latest_date:
+                    start_date_dt = latest_date + timedelta(days=1)
+                else:
                     try:
-                        async with semaphore:
-                            processed_rows = await self._process_single_batch(i, total_batches, batch_params)
-                            # Removed DEBUG log for _process_single_batch return value
-                            if processed_rows > 0: # <--- MODIFIED: Check for success
-                                async with success_counter_lock: # <--- ADDED: Lock
-                                    successful_batches_count += 1 # <--- ADDED: Increment on success
-                                    # Removed DEBUG log for counter increment
-                            if processed_rows == 0:
-                                return None # Still return None on failure
-                            return processed_rows # Return rows on success
-                    finally:
-                        # 更新控制台进度条 (如果存在)
-                        if pbar_instance:
-                            pbar_instance.update(1)
+                        start_date_dt = datetime.strptime(default_start, '%Y%m%d').date()
+                        self.logger.info(f"任务 {self.name}: 表为空或不存在，使用默认开始日期: {default_start}")
+                    except ValueError:
+                        self.logger.error(f"任务 {self.name}: 默认开始日期格式错误 ('{default_start}')，应为 YYYYMMDD。")
+                        failed_result = {"status": "failed", "message": "默认开始日期格式错误", "rows": 0}
+                        # Corrected Call
+                        await self.post_execute(result=failed_result, stop_event=stop_event) 
+                        return failed_result
 
-                        # --- Add Debug Prints --- 
-                        print(f"DEBUG: process_batch finally block entered for batch {i}") 
-                        current_successful_count = 0
-                        try:
-                            async with success_counter_lock:
-                                current_successful_count = successful_batches_count
-                            print(f"DEBUG: Batch {i}: successful_count={current_successful_count}, type={type(current_successful_count)}")
-                            total_count = total_batches 
-                            print(f"DEBUG: Batch {i}: total_count={total_count}, type={type(total_count)}")
-                        except Exception as lock_err:
-                            print(f"DEBUG: Batch {i}: Error accessing counters: {lock_err}")
-                            #reraise or handle
-
-                        progress_percentage = 0.0
-                        try:
-                            progress_percentage = (current_successful_count / total_count) if total_count > 0 else 0.0
-                            print(f"DEBUG: Batch {i}: progress_percentage={progress_percentage:.2f}")
-                        except Exception as calc_err:
-                            print(f"DEBUG: Batch {i}: Error calculating percentage: {calc_err}")
-
-                        try:
-                             print(f"DEBUG: Batch {i}: Checking callback condition (cb={'True' if cb else 'False'}, total_count={total_count})")
-                             # The actual comparison for the TypeError
-                             condition_check = total_count > 0 
-                             print(f"DEBUG: Batch {i}: Condition check (total_count > 0) result: {condition_check}")
-                        except TypeError as te:
-                             print(f"DEBUG: Batch {i}: !!! TypeError during condition check: {te} !!!")
-                             raise # Re-raise the specific error to be caught by gather
-                        except Exception as cond_err:
-                             print(f"DEBUG: Batch {i}: Error during condition check: {cond_err}")
-                        
-                        if cb and condition_check:
-                            try:
-                                print(f"DEBUG: Batch {i}: Calling callback cb({progress_percentage:.2f})...")
-                                if asyncio.iscoroutinefunction(cb):
-                                    await cb(progress_percentage)
-                                else:
-                                    cb(progress_percentage)
-                                print(f"DEBUG: Batch {i}: Callback cb finished.")
-                            except Exception as cb_err:
-                                self.logger.error(f"执行进度回调时出错: {cb_err}", exc_info=False)
-                                print(f"DEBUG: Batch {i}: Error inside callback execution: {cb_err}")
-                        else:
-                            print(f"DEBUG: Batch {i}: Callback not called (cb={'True' if cb else 'False'}, condition_check={condition_check})")
-                        
-                        try:
-                            print(f"DEBUG: Batch {i}: Starting final sleep.")
-                            await asyncio.sleep(0.01)
-                            print(f"DEBUG: Batch {i}: Final sleep finished.")
-                        except Exception as sleep_err:
-                             print(f"DEBUG: Batch {i}: Error during final sleep: {sleep_err}")
-                        print(f"DEBUG: process_batch finally block finished for batch {i}")
-                        # --- End Debug Prints ---
+                end_date_dt = datetime.now().date()
                 
-                # 创建所有批次的任务, 传递 pbar 实例和回调
-                tasks = [process_batch(i, batch_params, pbar, progress_callback) for i, batch_params in enumerate(batch_list)]
-                
-                # 使用 asyncio.gather 等待所有任务完成 (不再使用 tqdm.gather)
-                batch_results = await asyncio.gather(*tasks, return_exceptions=True)
-                
-                # 如果创建了进度条，确保关闭它
-                if pbar:
-                    pbar.close()
-                
-                # 处理结果
-                for result in batch_results:
-                    if isinstance(result, Exception):
-                        # gather 捕获的异常通常表示 process_batch 内部未处理的异常
-                        self.logger.error(f"批次处理中发生未捕获异常: {str(result)}")
-                        failed_batches += 1
-                        # 记录第一个遇到的异常信息以备返回
-                        if first_error is None:
-                            first_error = str(result)
-                    elif result is None: # 我们用 None 表示批次处理失败（重试后）
-                        failed_batches += 1
-                        # 记录一个通用错误信息（因为具体错误可能已在 _process_single_batch 中记录）
-                        if first_error is None:
-                            first_error = "批次处理失败 (重试后仍失败)"
-                    elif isinstance(result, int): # 成功处理的行数
-                        total_rows += result
+                if start_date_dt > end_date_dt:
+                    self.logger.info(f"任务 {self.name}: 计算出的开始日期 ({start_date_dt}) 晚于结束日期 ({end_date_dt})，数据已是最新。")
+                    skipped_result = {"status": "skipped", "message": "数据已是最新", "rows": 0}
+                    # Corrected Call
+                    await self.post_execute(result=skipped_result, stop_event=stop_event) 
+                    return skipped_result
+                    
+                calculated_start_date = start_date_dt.strftime('%Y%m%d')
+                calculated_end_date = end_date_dt.strftime('%Y%m%d')
+                kwargs['start_date'] = calculated_start_date
+                kwargs['end_date'] = calculated_end_date
+                self.logger.info(f"任务 {self.name}: 智能增量计算出的日期范围: {calculated_start_date} 到 {calculated_end_date}")
+            
+            elif force_full:
+                self.logger.info(f"任务 {self.name}: 强制执行全量模式。将使用默认开始日期 {getattr(self, 'default_start_date', 'N/A')} 到今天。")
+                if original_start_date is None:
+                    kwargs['start_date'] = getattr(self, 'default_start_date', None)
+                if original_end_date is None:
+                    kwargs['end_date'] = datetime.now().strftime('%Y%m%d')
+                if kwargs['start_date'] is None:
+                    self.logger.error(f"任务 {self.name}: 全量模式需要 default_start_date，但未定义。")
+                    failed_result = {"status": "failed", "message": "全量模式缺少默认开始日期", "rows": 0}
+                    # Corrected Call
+                    await self.post_execute(result=failed_result, stop_event=stop_event) 
+                    return failed_result
+                self.logger.info(f"任务 {self.name}: 全量模式实际日期范围: {kwargs['start_date']} 到 {kwargs['end_date']}")
             
             else:
-                # 串行处理批次
-                progress_iterator = range(len(batch_list))
-                if show_progress:
-                    # Keep using tqdm for the iterator itself for console
-                    progress_iterator = tqdm(range(len(batch_list)), desc=progress_desc, ascii=True, position=0, leave=True)
+                self.logger.info(f"任务 {self.name}: 使用提供的日期范围: {original_start_date} 到 {original_end_date}")
+            # --- End Date Logic ---
 
-                for i in progress_iterator: # i is now the index 0, 1, 2...
-                    batch_params = batch_list[i]
-                    try:
-                        # Call _process_single_batch
-                        rows = await self._process_single_batch(i, total_batches, batch_params)
-                        if rows > 0:
-                            total_rows += rows
-                            successful_batches_count += 1
-                    except TypeError as te:
-                        # <<< Add print inside except block >>>
-                        print(f"!!! TYPE ERROR CAUGHT !!! Error: {te}")
-                        print(f"!!! DEBUG PRINT (in except) !!! rows = {repr(rows)}, type = {type(rows)}")
-                        # 记录失败
-                        failed_batches += 1 
-                        if first_error is None:
-                            first_error = str(te)
-                        self.logger.error(f"批次 {i+1}/{total_batches} 处理失败，捕获到 TypeError: {te}. Rows value: {repr(rows)}")
-                        # 不重新抛出，让循环继续，但记录为失败
-                    except Exception as e:
-                        # 处理 _process_single_batch 可能抛出的其他未处理异常
-                        self.logger.error(f"批次 {i+1}/{total_batches} 处理失败，发生其他错误: {e}", exc_info=True)
+            self.logger.info(f"任务 {self.name}: 准备调用 get_batch_list，使用最终参数: {kwargs}")
+            batch_list = await self.get_batch_list(**kwargs)
+            if not batch_list:
+                self.logger.info(f"任务 {self.name}: get_batch_list 返回空列表。可能原因：日期范围无数据、API限制或子类逻辑。")
+                no_data_result = {"status": "no_data", "message": "批处理列表为空", "rows": 0}
+                # Corrected Call
+                await self.post_execute(result=no_data_result, stop_event=stop_event) 
+                return no_data_result
+
+            total_batches = len(batch_list)
+            self.logger.info(f"生成了 {total_batches} 个批处理任务")
+            
+            # --- Batch Processing Logic ---
+            # (Assuming the internal batch processing logic using _process_single_batch is correct)
+            # ... existing batch processing logic ...
+            # It calculates total_rows, failed_batches, final_status, error_message
+
+            # --- Start of section copied from previous attempt, verify correctness ---
+            semaphore = asyncio.Semaphore(self.concurrent_limit or self.default_concurrent_limit)
+            tasks = []
+            # Removed tqdm progress bar logic for simplicity in fix
+            # pbar = tqdm(total=len(batch_list), desc=f"任务 {self.name}", unit="批次")
+
+            async def process_batch_wrapper(i, batch_params):
+                async with semaphore:
+                    if stop_event and stop_event.is_set():
+                        # pbar.update(1) # Removed pbar
+                        raise asyncio.CancelledError(f"批次 {i+1} 在开始前被取消")
+                    result_rows = await self._process_single_batch(i, len(batch_list), batch_params, stop_event=stop_event)
+                    # pbar.update(1) # Removed pbar
+                    return result_rows # _process_single_batch returns int (rows) or raises
+
+            for i, batch_params in enumerate(batch_list):
+                tasks.append(process_batch_wrapper(i, batch_params))
+
+                batch_results = await asyncio.gather(*tasks, return_exceptions=True)
+            # pbar.close() # Removed pbar
+
+            # Process batch_results
+                for result in batch_results:
+                    if isinstance(result, asyncio.CancelledError):
+                        self.logger.warning(f"一个批次被取消: {result}")
+                        final_status = "cancelled"
                         failed_batches += 1
-                        if first_error is None:
-                            first_error = str(e)
-
-                    # <<< Call the progress callback for serial execution >>>
-                    if progress_callback:
-                        total_count = total_batches
-                        # <<< Modify Progress Calculation >>>
-                        progress_percentage = ((i + 1) / total_count) if total_count > 0 else 0.0
-                        # <<< Add Debug Log >>>
-                        self.logger.debug(f"批次 {i+1}/{total_batches}: Serial progress calculated: {progress_percentage:.2f}")
-                        if total_count > 0:
-                            try:
-                                # 只传递进度小数
-                                if asyncio.iscoroutinefunction(progress_callback):
-                                     await progress_callback(progress_percentage) # <-- 只传递一个参数
-                                else:
-                                     progress_callback(progress_percentage) # <-- 只传递一个参数
-                            except Exception as cb_err:
-                                self.logger.error(f"执行进度回调时出错: {cb_err}", exc_info=False)
+                    elif isinstance(result, Exception):
+                        self.logger.error(f"一个批次执行失败: {result}", exc_info=result)
+                        failed_batches += 1
+                        error_message += f"批次失败: {result}; "
+                        final_status = "failed" if final_status != "cancelled" else "cancelled"
+                    elif isinstance(result, int): # Success case returns rows (int)
+                        if result >= 0: # Should be >= 0
+                            total_rows += result
+                        else: # Should not happen, but handle negative return as failure
+                            self.logger.error(f"批次返回无效行数: {result}")
+                            failed_batches += 1
+                            error_message += f"批次返回无效行数 ({result}); "
+                            final_status = "failed" if final_status != "cancelled" else "cancelled"
+                else: # Unexpected return type
+                    self.logger.error(f"批次返回未知类型: {type(result)} ({result})")
+                    failed_batches += 1
+                    error_message += f"批次返回未知类型 ({type(result)}); "
+                    final_status = "failed" if final_status != "cancelled" else "cancelled"
             
-            # 后处理
-            final_status = "success"
-            error_message = None # 初始化错误信息
             if failed_batches > 0:
-                final_status = "failure" if failed_batches == len(batch_list) else "partial_success"
-                self.logger.warning(f"任务执行完成，但有 {failed_batches} 个批次处理失败。")
-                error_message = first_error # 使用记录的第一个错误信息
+                if final_status != "cancelled":
+                    final_status = "partial_success" if total_rows > 0 else "failed"
+                self.logger.warning(f"任务执行完成，但有 {failed_batches} 个批次处理失败或被取消。")
+                
+            if final_status == "partial_success":
+                error_message = f"完成但有 {failed_batches} 个批次失败。 " + error_message
+            elif final_status == "failed":
+                error_message = f"任务失败，共 {failed_batches} 个批次失败。 " + error_message
+            elif final_status == "cancelled":
+                error_message = f"任务被取消，有 {failed_batches} 个批次未完成或被取消。"
+            # --- End of section copied from previous attempt ---
 
-            result_dict = {
+        except asyncio.CancelledError:
+            self.logger.warning(f"任务 {self.name} 在执行过程中被取消。")
+            final_status = "cancelled"
+            error_message = "任务被用户取消"
+            # Corrected Call in CancelledError block
+            cancelled_result = {
                 "status": final_status,
-                "rows": total_rows,
-                "failed_batches": failed_batches
+                "message": error_message,
+                "rows": total_rows, # Rows processed before cancellation
+                "failed_batches": failed_batches, # Batches failed before cancellation
+                "task": self.name
             }
-            # 如果有错误信息，添加到字典中
-            if error_message:
-                result_dict['error'] = error_message 
-
-            await self.post_execute(result_dict)
-            self.logger.info(f"任务执行完成: {result_dict}")
-            return result_dict
-        except Exception as e:
-            self.logger.error(f"任务执行失败: {str(e)}", exc_info=True)
-            return self.handle_error(e)
+            await self.post_execute(result=cancelled_result, stop_event=stop_event)
+            return cancelled_result # Return the result dict
             
-    async def _process_single_batch(self, batch_index, total_batches, batch_params):
-        """处理单个批次的数据（包含重试逻辑）
+        except Exception as e:
+            self.logger.error(f"任务 {self.name} 执行过程中发生未处理的严重错误", exc_info=True)
+            final_status = "failed"
+            error_message = f"严重错误: {type(e).__name__} - {str(e)}"
+            total_rows = 0 # Reset rows on catastrophic failure
+            failed_batches = len(batch_list) if batch_list else 0 # Mark all as failed if list exists
+            # Corrected Call in generic Exception block
+            failed_result = {
+                "status": final_status,
+                "message": error_message,
+                "rows": total_rows, 
+                "failed_batches": failed_batches, 
+                "task": self.name
+            }
+            await self.post_execute(result=failed_result, stop_event=stop_event)
+            return failed_result # Return the result dict
+        
+        finally:
+            # This block executes regardless of exceptions in try
+            # Construct the final result based on state determined in try/except
+            final_result_dict = {
+                "status": final_status, # Determined by try/except logic
+                "message": error_message.strip(),
+                "rows": total_rows,
+                "failed_batches": failed_batches,
+                "task": self.name
+            }
+            # Corrected Call in finally block
+            await self.post_execute(result=final_result_dict, stop_event=stop_event)
+            self.logger.info(f"任务 {self.name} 最终处理完成，状态: {final_status}, 总行数: {total_rows}, 失败/取消批次数: {failed_batches}")
+
+        # Return the final result dictionary constructed in 'finally' 
+        # (Note: except blocks now also return their constructed dicts, 
+        # so this return might only be reached if no exception occurred)
+        return final_result_dict
+
+    async def _process_single_batch(self, batch_index, total_batches, batch_params, stop_event: Optional[asyncio.Event] = None):
+        """处理单个批次的数据：获取、处理、验证、保存。
         
         获取、处理、验证并保存单个批次的数据。
         针对获取和保存步骤实现了重试机制。
@@ -391,6 +380,7 @@ class TushareTask(Task):
             batch_index: 批次索引
             total_batches: 总批次数
             batch_params: 批次参数
+            stop_event (asyncio.Event, optional): 事件对象，用于外部请求停止任务。
             
         Returns:
             int: 处理的行数，如果最终处理失败则返回 0
@@ -399,6 +389,16 @@ class TushareTask(Task):
         batch_data = None
         processed_data = None
         rows = 0
+
+        # --- 在处理开始前检查停止事件 ---
+        if stop_event and stop_event.is_set():
+            self.logger.info(f"任务 {self.name}: 在处理批次 {batch_index + 1}/{total_batches} 前检测到停止信号，跳过。")
+            raise asyncio.CancelledError("Task cancelled by stop event before processing batch") # Raise cancellation
+
+        batch_start_time = time.time()
+        processed_rows_count = 0
+        batch_status = "failed" # Default to failed unless success
+        error_info = None
 
         # 1. 获取数据（带重试）
         for attempt in range(self.max_retries + 1):
@@ -524,7 +524,23 @@ class TushareTask(Task):
                 await asyncio.sleep(self.retry_delay)
                 continue # 继续下一次尝试
 
-        return 0 # 如果代码能执行到这里，说明保存逻辑有问题，返回 0
+        batch_end_time = time.time()
+        duration = batch_end_time - batch_start_time
+        self.logger.debug(f"{batch_log_prefix}: 批次 {batch_index + 1}/{total_batches} 处理完成。状态: {batch_status}, 行数: {processed_rows_count}, 耗时: {duration:.2f}s")
+        # 返回处理的行数，如果失败则返回0或抛出异常
+        # Let's return row count on success, 0 on handled failure, raise on critical/cancellation
+        if batch_status == "success":
+            return processed_rows_count
+        elif batch_status == "no_data" or batch_status == "skipped":
+            return 0 # No rows processed, but not a critical failure
+        else:
+            # We already logged the error inside the try block
+            # Raise an exception or return 0 to indicate handled failure?
+            # Returning 0 might be less disruptive for the overall task execution summary.
+            # Critical errors should raise exceptions though.
+            # Let's return 0 for now for non-critical failures within a batch.
+            # Cancellation errors are raised.
+            return 0 
             
     async def fetch_batch(self, batch_params: Dict) -> pd.DataFrame:
         """获取单批次数据

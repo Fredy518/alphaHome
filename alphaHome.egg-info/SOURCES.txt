@@ -7,6 +7,12 @@ alphaHome.egg-info/entry_points.txt
 alphaHome.egg-info/requires.txt
 alphaHome.egg-info/top_level.txt
 alphahome/__init__.py
+alphahome.egg-info/PKG-INFO
+alphahome.egg-info/SOURCES.txt
+alphahome.egg-info/dependency_links.txt
+alphahome.egg-info/entry_points.txt
+alphahome.egg-info/requires.txt
+alphahome.egg-info/top_level.txt
 alphahome/data_module/__init__.py
 alphahome/data_module/base_task.py
 alphahome/data_module/data_checker.py
@@ -25,8 +31,6 @@ alphahome/data_module/tasks/finance/tushare_fina_express.py
 alphahome/data_module/tasks/finance/tushare_fina_forecast.py
 alphahome/data_module/tasks/finance/tushare_fina_income.py
 alphahome/data_module/tasks/finance/tushare_fina_indicator.py
-alphahome/data_module/tasks/finance/tushare_stock_balancesheet.py
-alphahome/data_module/tasks/finance/tushare_stock_income.py
 alphahome/data_module/tasks/fund/__init__.py
 alphahome/data_module/tasks/fund/tushare_fund_adjfactor.py
 alphahome/data_module/tasks/fund/tushare_fund_basic.py

@@ -3,10 +3,10 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "alphaHome"
-version = "1.1" # 您可以根据需要修改版本号
+name = "alphahome"
+version = "1.2" # 您可以根据需要修改版本号
 authors = [
-  { name="Your Name", email="youremail@example.com" }, # 请替换为您的信息
+  { name="trademaster", email="frederick518@163.com" }, # 请替换为您的信息
 ]
 description = "AlphaHome 数据管理工具"
 readme = "README.md" # 假设您有 README.md 文件
@@ -40,4 +40,4 @@ include = ["alphahome", "alphahome.*"]
 
 # 定义 GUI 启动脚本
 [project.gui-scripts]
-alphahome = "gui.main_window:run_gui" # 当用户安装后，可以运行 alphahome 命令启动 GUI 
+alphahome = "alphahome.gui.main_window:run_gui" # 当用户安装后，可以运行 alphahome 命令启动 GUI 

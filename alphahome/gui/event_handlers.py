@@ -33,7 +33,7 @@ def create_task_list_tab(parent: ttk.Frame) -> Dict[str, tk.Widget]:
     top_frame = ttk.Frame(parent)
     top_frame.pack(side=tk.TOP, fill=tk.X, pady=(0, 5))
 
-    refresh_button = ttk.Button(top_frame, text="刷新列表", command=handle_refresh_tasks)
+    refresh_button = ttk.Button(top_frame, text="刷新列表", command=lambda w=widgets: handle_refresh_tasks(w))
     refresh_button.pack(side=tk.LEFT, padx=(0, 5))
     widgets['refresh_button'] = refresh_button
 
@@ -295,11 +295,24 @@ def create_task_log_tab(parent: ttk.Frame) -> Dict[str, tk.Widget]:
 
 def handle_refresh_tasks(main_ui_elements: Dict[str, tk.Widget]):
     """处理刷新列表按钮点击"""
+    # print("DEBUG: handle_refresh_tasks called") # Checklist Item 1: Remove debug print
     print("回调：刷新任务列表...")
-    controller.request_task_list()
-    # 更新状态栏
+    
+    refresh_button = main_ui_elements.get('refresh_button')
     statusbar = main_ui_elements.get('statusbar')
-    if statusbar: statusbar.config(text="正在刷新任务列表...")
+    
+    # Checklist Item 1: Disable button
+    if refresh_button:
+        refresh_button.config(state=tk.DISABLED)
+        
+    # Checklist Item 2: Improve status message (already done)
+    if statusbar: 
+        statusbar.config(text="正在刷新任务列表，请稍候...")
+        # Force UI update to make the intermediate status visible
+        # Use update_idletasks for safety, avoid blocking update()
+        statusbar.master.update_idletasks() 
+        
+    controller.request_task_list()
 
 def handle_select_all(main_ui_elements: Dict[str, tk.Widget]):
     """处理全选按钮点击 (仅选择当前可见的任务)"""
@@ -609,20 +622,39 @@ def handle_run_tasks(main_ui_elements: Dict[str, tk.Widget]):
     mode = exec_mode_combo.get()
     start_date = None
     end_date = None # 初始化 end_date
+    smart_increment_flag = False # Checklist Item 1: Default to False
 
-    if mode == "手动增量":
-        try:
-            start_date = manual_date_entry.get()
-            end_date = manual_end_date_entry.get() # 获取结束日期
-            # 简单验证日期格式 (YYYY-MM-DD)
-            datetime.strptime(start_date, '%Y-%m-%d')
-            datetime.strptime(end_date, '%Y-%m-%d') # 验证结束日期
-            # 替换 '-' 为 '' 以匹配 Tushare API 格式
-            start_date = start_date.replace('-', '')
-            end_date = end_date.replace('-', '') # 格式化结束日期
-        except ValueError:
-            messagebox.showerror("错误", "手动增量模式下，请输入有效的开始和结束日期 (YYYY-MM-DD)。")
-            return
+    if mode == "智能增量":
+        smart_increment_flag = True # Checklist Item 1: Set to True for smart increment
+        pass # start/end date remain None
+    elif mode == "手动增量":
+        # 检查日期控件是否启用
+        if manual_date_entry.cget('state') == 'normal' and manual_end_date_entry.cget('state') == 'normal':
+            if HAS_TKCALENDAR:
+                start_date = manual_date_entry.get_date().strftime('%Y%m%d')
+                end_date = manual_end_date_entry.get_date().strftime('%Y%m%d')
+            else:
+                start_date = manual_date_entry.get().replace('-', '') # 简单替换
+                end_date = manual_end_date_entry.get().replace('-', '') # 简单替换
+
+            # 简单的日期校验 (YYYYMMDD 格式)
+            try:
+                datetime.strptime(start_date, '%Y%m%d')
+                datetime.strptime(end_date, '%Y%m%d')
+                if start_date > end_date:
+                    raise ValueError("开始日期不能晚于结束日期")
+            except ValueError as e:
+                messagebox.showerror("日期错误", f"手动增量日期格式无效或范围错误: {e}\n请使用 YYYYMMDD 格式。")
+                return
+        else:
+             messagebox.showerror("错误", "手动增量模式需要启用并选择日期。")
+             return
+    elif mode == "全量导入":
+        # 全量模式，日期通常为 None
+        pass # start/end date remain None
+    else:
+        messagebox.showerror("错误", f"未知的执行模式: {mode}")
+        return
 
     # 3. 禁用运行按钮，启用停止按钮
     run_button.config(state='disabled')
@@ -630,7 +662,13 @@ def handle_run_tasks(main_ui_elements: Dict[str, tk.Widget]):
     statusbar.config(text=f"准备运行 {len(selected_task_names)} 个任务...")
 
     # 4. 请求控制器执行任务 (现在传递 end_date)
-    controller.request_task_execution(mode, start_date, end_date)
+    controller.request_task_execution(
+        mode=mode,
+        start_date=start_date,
+        end_date=end_date,
+        task_names=selected_task_names, # 传递选中的任务名称
+        smart_increment=smart_increment_flag
+    )
 
 def handle_stop_tasks(main_ui_elements: Dict[str, tk.Widget]):
     """处理停止任务按钮点击"""
@@ -785,6 +823,7 @@ def process_controller_update(root: tk.Tk, ui_elements: Dict[str, tk.Widget], up
     run_status_tree = ui_elements.get('run_tree') # Get run status tree
     run_button = ui_elements.get('run_button') # Get run button
     stop_button = ui_elements.get('stop_button') # Get stop button
+    refresh_button = ui_elements.get('refresh_button') # Checklist Item 3: Get refresh button
 
     try:
         if update_type == 'STATUS':
@@ -909,7 +948,7 @@ def process_controller_update(root: tk.Tk, ui_elements: Dict[str, tk.Widget], up
                  print(f"警告：无法更新进度，缺少控件或数据格式错误 (Expected tuple(name, progress)): {type(data)}")
                  
         elif update_type == 'TASKS_FINISHED':
-             # Update button states
+             # Update button states for task execution
              if run_button and isinstance(run_button, ttk.Button):
                  run_button.config(state=tk.NORMAL)
              else:
@@ -919,6 +958,15 @@ def process_controller_update(root: tk.Tk, ui_elements: Dict[str, tk.Widget], up
              else:
                   print("警告：无法禁用停止按钮，缺少或类型错误。")
              # Final status bar text is handled by the 'STATUS' message type
+             
+        # Checklist Item 3: Handle REFRESH_COMPLETE
+        elif update_type == 'REFRESH_COMPLETE':
+            if refresh_button and isinstance(refresh_button, ttk.Button):
+                refresh_button.config(state=tk.NORMAL)
+                print("DEBUG: Refresh button re-enabled.") # Optional debug
+            else:
+                print("警告：无法重新启用刷新按钮，缺少或类型错误。")
+            # Optionally check data['success'] for more specific feedback
 
         # --- END OF NEW/MODIFIED HANDLERS --- 
 
@@ -937,8 +985,8 @@ def _update_run_status_table(tree: ttk.Treeview, status_data: Dict[str, Dict[str
             try:
                 tree.set(task_name, 'status', status_dict.get('status', ''))
                 tree.set(task_name, 'progress', status_dict.get('progress', ''))
-                tree.set(task_name, 'start', status_dict.get('start', ''))
-                tree.set(task_name, 'end', status_dict.get('end', ''))
+                tree.set(task_name, 'start', status_dict.get('start_time', ''))
+                tree.set(task_name, 'end', status_dict.get('end_time', ''))
                 tree.set(task_name, 'details', status_dict.get('details', ''))
             except Exception as e:
                  print(f"警告：更新运行状态表行 '{task_name}' 时出错: {e}")

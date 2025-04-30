@@ -38,6 +38,7 @@ from . import event_handlers, controller
 ui_elements = {}
 
 def run_gui():
+    print("--- TEST: run_gui function called successfully! ---")
     """初始化并运行主 Tkinter GUI 窗口。"""
     global ui_elements
 

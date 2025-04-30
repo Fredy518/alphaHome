@@ -1,6 +1,7 @@
 import logging
 import os
 import json
+import shutil # <-- Import shutil for file moving
 from typing import List, Optional, Dict, Type, Any
 import appdirs # <-- 导入 appdirs
 
@@ -9,8 +10,8 @@ from .db_manager import DBManager
 from .tasks import *  # 导入所有任务类
 
 # --- 使用 appdirs 定义配置文件路径 (与 controller.py 保持一致) ---
-APP_NAME = "alphaHomeApp" # <--- 确保与 controller.py 中的值相同
-APP_AUTHOR = "YourAppNameOrAuthor" # <--- 确保与 controller.py 中的值相同
+APP_NAME = "alphahome" # <--- 确保与 controller.py 中的值相同
+APP_AUTHOR = "trademaster" # <--- 确保与 controller.py 中的值相同
 CONFIG_DIR = appdirs.user_config_dir(APP_NAME, APP_AUTHOR)
 CONFIG_FILE = os.path.join(CONFIG_DIR, 'config.json')
 
@@ -24,11 +25,38 @@ def load_config():
     if _config_loaded and _config_cache is not None:
         logger.debug("从缓存加载配置。")
         return _config_cache
-        
-    logger.info(f"尝试从用户配置路径加载设置: {CONFIG_FILE}") # 只有首次加载或重载时打印
+
+    # --- BEGIN: Configuration Migration Logic ---
+    try:
+        # Define old path components
+        OLD_APP_NAME = "alphaHomeApp"
+        OLD_APP_AUTHOR = "YourAppNameOrAuthor"
+        # Generate old config directory and file path
+        old_config_dir = appdirs.user_config_dir(OLD_APP_NAME, OLD_APP_AUTHOR)
+        old_config_file_path = os.path.join(old_config_dir, 'config.json')
+
+        # Check if old file exists and new file does NOT exist
+        if os.path.exists(old_config_file_path) and not os.path.exists(CONFIG_FILE):
+            logger.info(f"检测到旧配置文件: {old_config_file_path}")
+            logger.info(f"将尝试迁移到新路径: {CONFIG_FILE}")
+            try:
+                # Ensure the new directory exists
+                os.makedirs(CONFIG_DIR, exist_ok=True)
+                # Move the file
+                shutil.move(old_config_file_path, CONFIG_FILE)
+                logger.info("配置文件已成功迁移到新路径。")
+            except (IOError, OSError, shutil.Error) as move_err:
+                logger.warning(f"迁移旧配置文件失败: {move_err}")
+        # else: No migration needed or possible (old doesn't exist or new already exists)
+    except Exception as migration_err:
+        # Catch any unexpected error during migration path generation/check
+        logger.error(f"检查或迁移旧配置文件时发生意外错误: {migration_err}")
+    # --- END: Configuration Migration Logic ---
+
+    logger.info(f"尝试从用户配置路径加载设置: {CONFIG_FILE}") # This log remains
 
     config_data = {}
-    # 首先尝试读取配置文件
+    # 首先尝试读取配置文件 (now always reads from the new CONFIG_FILE path)
     if os.path.exists(CONFIG_FILE):
         try:
             with open(CONFIG_FILE, 'r', encoding='utf-8') as f:

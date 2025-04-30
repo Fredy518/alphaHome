@@ -15,8 +15,8 @@ from ..data_module import TaskFactory, base_task
 
 # --- 配置 ---
 # 使用 appdirs 获取用户配置目录
-APP_NAME = "alphaHomeApp" # <--- 您可以修改应用名称
-APP_AUTHOR = "YourAppNameOrAuthor" # <--- 建议修改为您的名称或组织名
+APP_NAME = "alphahome" # <--- 您可以修改应用名称
+APP_AUTHOR = "trademaster" # <--- 建议修改为您的名称或组织名
 CONFIG_DIR = appdirs.user_config_dir(APP_NAME, APP_AUTHOR)
 CONFIG_FILE_PATH = os.path.join(CONFIG_DIR, 'config.json') # 配置文件路径现在指向用户目录
 
@@ -111,10 +111,19 @@ async def _process_requests():
                 # 开始前重置停止标志
                 _stop_requested = False
                 # 在后台执行，不阻塞队列处理
-                # 从 data 中提取 start_date 和 end_date
+                # Checklist Item 3: Extract smart_increment from data
                 start_date = data.get('start_date')
                 end_date = data.get('end_date')
-                asyncio.create_task(_handle_execute_tasks(data['mode'], start_date, end_date))
+                smart_increment = data.get('smart_increment', False) # Default to False if missing
+                selected_task_names = data.get('task_names', []) # Get selected tasks
+                # Checklist Item 3: Pass smart_increment to _handle_execute_tasks
+                asyncio.create_task(_handle_execute_tasks(
+                    mode=data['mode'],
+                    start_date_str=start_date,
+                    end_date_str=end_date,
+                    task_names=selected_task_names, # Pass selected task names
+                    smart_increment=smart_increment
+                ))
             elif request_type == 'REQUEST_STOP':
                 if _current_stop_event:
                     _current_stop_event.set()
@@ -144,6 +153,7 @@ async def _process_requests():
 async def _handle_get_tasks():
     """Fetch task list from factory, update cache, and send formatted list to GUI."""
     global _task_list_cache
+    success = False # Track success for final message
     try:
         # 尝试获取任务名称，这可能会因为 TaskFactory 未初始化而失败
         task_names = TaskFactory.get_all_task_names() # 可能引发 RuntimeError
@@ -198,6 +208,8 @@ async def _handle_get_tasks():
             for task_detail in _task_list_cache:
                 task_detail['latest_update_time'] = "N/A (DB Error)"
             response_queue.put(('TASK_LIST_UPDATE', _task_list_cache))
+            response_queue.put(('STATUS', f'任务列表已刷新 (共 {len(_task_list_cache)} 个任务)'))
+            success = True # Mark as successful
             return
 
         # --- 新的并发查询方式 --- 
@@ -256,7 +268,9 @@ async def _handle_get_tasks():
 
         logging.info(f"Sending updated TASK_LIST with {len(_task_list_cache)} tasks to GUI.")
         response_queue.put(('TASK_LIST_UPDATE', _task_list_cache))
-        response_queue.put(('STATUS', '任务列表已刷新')) # 添加状态更新
+        response_queue.put(('STATUS', f'任务列表已刷新 (共 {len(_task_list_cache)} 个任务)'))
+        success = True # Mark as successful
+        
     except RuntimeError as e:
         # --- 专门处理 TaskFactory 未初始化的 RuntimeError ---
         if "TaskFactory 尚未初始化" in str(e):
@@ -266,16 +280,23 @@ async def _handle_get_tasks():
             # 清空缓存并更新 GUI 列表为空
             _task_list_cache = []
             response_queue.put(('TASK_LIST_UPDATE', _task_list_cache))
+            success = False
         else:
             # 其他类型的 RuntimeError，仍然作为错误处理
             logging.exception("获取任务列表时发生意外的 RuntimeError")
             response_queue.put(('ERROR', f"获取任务列表时发生运行时错误: {e}"))
+            success = False
             
     except Exception as e:
         # --- 处理其他所有异常 --- 
         logging.exception("获取任务列表失败")
         # 仍然作为错误发送给 GUI
         response_queue.put(('ERROR', f"获取任务列表失败: {e}"))
+        success = False
+        
+    finally:
+        # Checklist Item 2: Send REFRESH_COMPLETE message regardless of success/failure
+        response_queue.put(('REFRESH_COMPLETE', {'success': success}))
 
 def _format_task_list_for_tkinter_treeview() -> List[Dict[str, Any]]:
     """Format the cache for Tkinter Treeview (returns list of dicts)."""
@@ -323,221 +344,198 @@ def _handle_deselect_specific(task_names: List[str]):
     else:
         print("Controller: No state changed during DESELECT_SPECIFIC.")
 
-async def _handle_execute_tasks(mode: str, start_date_str: Optional[str], end_date_str: Optional[str]):
+# --- Helper function to update running task status ---
+def _update_task_status(
+    task_name: str, 
+    status: Optional[str] = None, 
+    progress: Optional[str] = None, 
+    start_time: Optional[datetime] = None, 
+    end_time: Optional[datetime] = None, 
+    details: Optional[str] = None
+):
+    """Updates the status of a single running task and notifies the GUI."""
+    global _running_task_status
+    
+    if task_name in _running_task_status:
+        update_payload = {} # Store updates to send
+        task_status = _running_task_status[task_name]
+        
+        if status is not None:
+            task_status['status'] = status
+            update_payload['status'] = status
+        if progress is not None:
+            task_status['progress'] = progress
+            update_payload['progress'] = progress
+        if start_time is not None:
+            start_time_str = start_time.strftime('%Y-%m-%d %H:%M:%S')
+            task_status['start_time'] = start_time_str # Store formatted string
+            update_payload['start_time'] = start_time_str
+        if end_time is not None:
+            end_time_str = end_time.strftime('%Y-%m-%d %H:%M:%S')
+            task_status['end_time'] = end_time_str # Store formatted string
+            update_payload['end_time'] = end_time_str
+        if details is not None:
+            task_status['details'] = details
+            update_payload['details'] = details
+            
+        # Send update for this specific task
+        if update_payload: # Only send if something actually changed
+             # Ensure required fields are present even if not updated in this call
+             # This ensures the GUI receives a complete-enough dict
+             full_update_for_gui = task_status.copy() 
+             response_queue.put(('TASK_RUN_UPDATE', {task_name: full_update_for_gui}))
+             logging.debug(f"Updated status for {task_name}: {update_payload}")
+    else:
+        logging.warning(f"Attempted to update status for unknown task: {task_name}")
+
+async def _handle_execute_tasks(mode: str, start_date_str: Optional[str], end_date_str: Optional[str], task_names: List[str], smart_increment: bool):
     """Handles the execution of selected tasks in the background."""
     global _running_task_status, _current_stop_event
 
-    selected_tasks = [item['name'] for item in _task_list_cache if item['selected']]
-    if not selected_tasks:
+    if not task_names:
         response_queue.put(('LOG_ENTRY', "没有选中的任务可执行。"))
         # Send TASKS_FINISHED even if no tasks selected, to update GUI state
-        response_queue.put(('TASKS_FINISHED', None)) 
-        # Also send empty completion status
-        response_queue.put(('TASK_EXECUTION_COMPLETE', {})) 
+        response_queue.put(('TASKS_FINISHED', {'completed': 0, 'failed': 0, 'canceled': 0, 'total': 0}))
         return
 
-    logging.info(f"开始执行 {len(selected_tasks)} 个任务，模式: {mode}, 开始: {start_date_str}, 结束: {end_date_str}")
-    response_queue.put(('LOG_ENTRY', f"开始执行 {len(selected_tasks)} 个任务 (模式: {mode})..."))
+    logging.info(f"开始执行 {len(task_names)} 个任务，模式: {mode}, 开始: {start_date_str}, 结束: {end_date_str}, 智能增量: {smart_increment}") # Log smart_increment
+    response_queue.put(('LOG_ENTRY', f"开始执行 {len(task_names)} 个任务 (模式: {mode})..."))
 
     # Create initial status list for RUN_TABLE_INIT
     initial_statuses = []
-    for name in selected_tasks:
+    for name in task_names:
         task_info = next((t for t in _task_list_cache if t['name'] == name), None)
         initial_statuses.append({
-             'name': name,
-             'type': task_info.get('type', 'N/A') if task_info else 'N/A',
-             'status': STATUS_MAP_CN['PENDING'],
-             'progress': '',
-             'start': '',
-             'end': '',
-             'details': ''
+            'name': name,
+            'type': task_info['type'] if task_info else '未知',
+            'status': STATUS_MAP_CN['PENDING'],
+            'progress': '0%',
+            'start_time': None,
+            'end_time': None,
+            'details': '等待执行'
         })
     _running_task_status = {item['name']: item for item in initial_statuses}
     response_queue.put(('RUN_TABLE_INIT', initial_statuses))
-    response_queue.put(('STATUS', f'正在准备执行 {len(selected_tasks)} 个任务...')) # Update initial status
+    response_queue.put(('STATUS', f'正在准备执行 {len(task_names)} 个任务...')) # Update initial status
 
     # Create stop event
     _current_stop_event = asyncio.Event()
 
-    total_tasks = len(selected_tasks)
+    total_tasks = len(task_names)
     completed_tasks = 0
     failed_tasks = 0
     canceled_tasks = 0 # Add counter for canceled tasks
 
     # --- 顺序执行选中任务 --- #
-    for task_name in selected_tasks:
+    for task_name in task_names:
         # <<< Record Start Time >>>
         start_time = datetime.now()
-        start_time_str = start_time.strftime('%Y-%m-%d %H:%M:%S')
 
-        # <<< Use Chinese RUNNING for initial update >>>
-        initial_status_update = {
-            'status': STATUS_MAP_CN['RUNNING'],
-            'progress': '0%',
-            'start': start_time_str,
-            'end': '',
-            'details': '开始执行...'
-        }
-        _running_task_status[task_name].update(initial_status_update)
-        # Send initial update (modified to send single task)
-        # response_queue.put(('TASK_RUN_UPDATE', _running_task_status.copy())) 
-        response_queue.put(('TASK_RUN_UPDATE', {task_name: initial_status_update}))
+        # 更新状态为 '运行中'
+        _update_task_status(task_name, status=STATUS_MAP_CN['RUNNING'], start_time=start_time, details="开始执行...")
 
+        # 检查停止标志（在开始执行前）
         if _current_stop_event.is_set():
-            # <<< Use Chinese CANCELED >>>
-            cancel_status = STATUS_MAP_CN['CANCELED']
-            cancel_details = '用户中断'
-            cancel_update_data = {
-                'status': cancel_status,
-                'progress':'',
-                'end': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                'details': cancel_details
-            }
-            _running_task_status[task_name].update(cancel_update_data)
-            # Send cancellation update (single task)
-            # response_queue.put(('TASK_RUN_UPDATE', _running_task_status.copy()))
-            response_queue.put(('TASK_RUN_UPDATE', {task_name: cancel_update_data}))
+            logging.warning(f"任务 {task_name} 在开始前被取消。")
+            _update_task_status(task_name, status=STATUS_MAP_CN['CANCELED'], details="执行前被取消")
             canceled_tasks += 1
-            continue 
-
-        logging.info(f"正在执行任务: {task_name}...")
-        
-        end_time = None # Initialize end_time
-        # Default to English FAILED internally, map later
-        internal_final_status = 'FAILED' 
-        final_progress_str = 'Error'
-        details = '执行时发生未知错误'
-        result = None # Initialize result
+            continue # 跳过此任务，执行下一个
 
         try:
-            task_instance = await TaskFactory.get_task(task_name)
+            task = await TaskFactory.get_task(task_name)
+            # Checklist Item 4: Pass smart_increment to _execute_single_task
+            result = await _execute_single_task(
+                task_name,
+                task,
+                mode,
+                start_date_str,
+                end_date_str,
+                _current_stop_event,
+                smart_increment # Pass the flag
+            )
 
-            # --- 准备参数 ---
-            run_kwargs = {}
-            if mode == "手动增量":
-                if start_date_str: run_kwargs['start_date'] = start_date_str
-                if end_date_str: run_kwargs['end_date'] = end_date_str
-            elif mode == "全量导入":
-                run_kwargs['force_full'] = True 
-            elif mode == "智能增量":
-                 # 智能增量模式下，不需要传递 start/end，让任务自己决定
-                 pass 
-
-            # <<< Modify Progress Callback Lambda >>>
-            run_kwargs['progress_callback'] = lambda p, tn=task_name: response_queue.put(('TASK_PROGRESS_UPDATE', (tn, p))) # Pass task_name too
-            run_kwargs['stop_event'] = _current_stop_event
-
-            logging.info(f"调用 {task_name}.execute() 使用参数: {run_kwargs}")
-            result = await task_instance.execute(**run_kwargs) # Execute the task
-
-            # <<< Record End Time (after execute finishes or raises) >>>
+            # <<< Record End Time >>>
             end_time = datetime.now()
 
-            if _current_stop_event.is_set():
-                internal_final_status = 'CANCELED'
-                final_progress_str = ''
-                details = '用户中断'
-                canceled_tasks += 1
+            # 根据执行结果更新状态
+            if result.get('status') == 'success':
+                _update_task_status(task_name, status=STATUS_MAP_CN['SUCCESS'], progress='100%', end_time=end_time, details=f"成功完成 ({result.get('rows', 0)} 行)")
+                completed_tasks += 1
+            elif result.get('status') == 'partial_success':
+                 _update_task_status(task_name, status=STATUS_MAP_CN['WARNING'], progress='100%', end_time=end_time, details=f"完成但验证失败 ({result.get('rows', 0)} 行)")
+                 completed_tasks += 1 # 仍然算作完成
+            elif result.get('status') == 'no_data' or result.get('status') == 'up_to_date':
+                 _update_task_status(task_name, status=STATUS_MAP_CN['SUCCESS'], progress='100%', end_time=end_time, details=f"无需更新 ({result.get('rows', 0)} 行)")
+                 completed_tasks += 1
+            elif result.get('status') == 'cancelled': # Check for specific cancelled status
+                 _update_task_status(task_name, status=STATUS_MAP_CN['CANCELED'], end_time=end_time, details="任务被取消")
+                 canceled_tasks += 1
             else:
-                # --- Determine Final Status Based on Result ---
-                if isinstance(result, dict):
-                    task_status = result.get('status', 'unknown')
-                    message = result.get('message', '') or result.get('error', '') or ''
-                    rows = result.get('rows', 0)
-                    
-                    if task_status == 'success':
-                        internal_final_status = 'SUCCESS'
-                        final_progress_str = '100%'
-                        details = f"成功 ({rows} 行). {message}".strip()
-                        completed_tasks += 1
-                        # <<< INSERT: Update cache and push timestamp on success >>>
-                        now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                        cache_updated = False
-                        for task_item in _task_list_cache:
-                            if task_item.get('name') == task_name:
-                                task_item['latest_update_time'] = now_str
-                                cache_updated = True
-                                break
-                        if cache_updated:
-                            # Push only the timestamp update
-                            response_queue.put(('TASK_TIMESTAMP_UPDATE', {'name': task_name, 'latest_update_time': now_str}))
-                            logging.debug(f"Task {task_name} succeeded. Pushing timestamp update: {now_str}")
-                        else:
-                            logging.warning(f"Task {task_name} succeeded, but could not find it in _task_list_cache to update timestamp.")
-                        # <<< END INSERT >>>
-                    elif task_status == 'skipped':
-                        internal_final_status = 'SKIPPED'
-                        final_progress_str = 'N/A'
-                        details = f"跳过. {message}".strip()
-                        completed_tasks += 1 # Count skipped as completed for progress
-                    elif task_status == 'no_data':
-                        internal_final_status = 'SUCCESS' # Treat no data found as success
-                        final_progress_str = '100%'
-                        details = "成功 (无新数据)."
-                        completed_tasks += 1
-                    elif task_status == 'partial_success':
-                        internal_final_status = 'WARNING' # Use WARNING for partial success
-                        final_progress_str = 'Warn'
-                        details = f"部分成功 (保存 {rows} 行, {result.get('failed_batches',0)} 批次失败). {message}".strip()
-                        failed_tasks += 1 # Treat partial as failure for summary count
-                    else: # failure, error, unknown, cancelled (from task itself)
-                        internal_final_status = 'FAILED'
-                        final_progress_str = 'Error'
-                        details = f"失败. {message}".strip()
-                        failed_tasks += 1
-                else:
-                    # Non-dict result is unexpected failure
-                    internal_final_status = 'FAILED' # Keep as FAILED
-                    details = f"执行失败: 返回了非预期结果 ({type(result).__name__})"
-                    failed_tasks += 1
-                    
+                error_msg = result.get('error', '未知错误')
+                _update_task_status(task_name, status=STATUS_MAP_CN['FAILED'], end_time=end_time, details=f"失败: {error_msg}")
+                failed_tasks += 1
         except asyncio.CancelledError:
-             # Catch cancellation explicitly if execute raises it
-             end_time = datetime.now() # Still record end time
-             internal_final_status = 'CANCELED'
-             final_progress_str = ''
-             details = '用户取消'
+             # <<< Record End Time on Cancellation >>>
+             end_time = datetime.now()
+             logging.warning(f"任务 {task_name} 执行被取消。")
+             _update_task_status(task_name, status=STATUS_MAP_CN['CANCELED'], end_time=end_time, details="任务被取消")
              canceled_tasks += 1
         except Exception as e:
-            end_time = datetime.now() # Record end time on exception
-            error_details = traceback.format_exc()
-            logging.exception(f"执行任务 {task_name} 时发生严重错误")
-            details = f"异常: {type(e).__name__}\\n{error_details}"
+            # <<< Record End Time on Exception >>>
+            end_time = datetime.now()
+            error_str = f"执行任务 {task_name} 时出错: {type(e).__name__} - {e}"
+            logging.exception(error_str)
+            _update_task_status(task_name, status=STATUS_MAP_CN['FAILED'], end_time=end_time, details=f"失败: {e}")
             failed_tasks += 1
-            # Keep final_status as 'FAILED' and progress as 'Error'
 
-        # <<< Map internal status to Chinese for final update >>>
-        final_status_cn = STATUS_MAP_CN.get(internal_final_status, internal_final_status) # Fallback to internal if no map
-        end_time_str = end_time.strftime('%Y-%m-%d %H:%M:%S') if end_time else ''
-        
-        final_update_data = {
-            'status': final_status_cn,
-            'progress': final_progress_str,
-            'end': end_time_str,
-            'details': details
+    # 所有任务完成后
+    _current_stop_event = None # 清除停止事件
+    final_status_msg = f"任务执行完毕: {completed_tasks} 成功, {failed_tasks} 失败, {canceled_tasks} 取消"
+    logging.info(final_status_msg)
+    response_queue.put(('LOG_ENTRY', final_status_msg))
+    response_queue.put(('TASKS_FINISHED', {'completed': completed_tasks, 'failed': failed_tasks, 'canceled': canceled_tasks, 'total': total_tasks}))
+
+
+async def _execute_single_task(
+    task_name: str,
+    task: base_task.Task,
+    mode: str,
+    start_date_str: Optional[str],
+    end_date_str: Optional[str],
+    stop_event: Optional[asyncio.Event],
+    smart_increment: bool # Accept the flag
+) -> Dict[str, Any]:
+    """Executes a single task and returns its result."""
+    try:
+        logging.info(f"开始执行单个任务: {task_name}, 模式: {mode}, 智能增量: {smart_increment}") # Log smart_increment
+        # Checklist Item 5: Conditional execution logic
+        if smart_increment:
+            logging.info(f"调用 {task_name}.smart_incremental_update")
+            # Checklist Item 6: Pass stop_event
+            result = await task.smart_incremental_update(stop_event=stop_event)
+        else:
+            kwargs = {'stop_event': stop_event} # Checklist Item 6: Pass stop_event
+            if start_date_str:
+                kwargs['start_date'] = start_date_str
+            if end_date_str:
+                kwargs['end_date'] = end_date_str
+            logging.info(f"调用 {task_name}.execute with kwargs: {kwargs}")
+            result = await task.execute(**kwargs)
+
+        logging.info(f"单个任务 {task_name} 执行结果: {result}")
+        return result
+    except asyncio.CancelledError:
+        # 重要: 重新抛出 CancelledError 以便 _handle_execute_tasks 可以捕获它
+        logging.warning(f"单个任务 {task_name} 被取消")
+        raise
+    except Exception as e:
+        error_str = f"执行单个任务 {task_name} 失败: {type(e).__name__} - {e}"
+        logging.exception(error_str)
+        return {
+            "status": "error",
+            "error": error_str,
+            "task": task_name
         }
-        _running_task_status[task_name].update(final_update_data)
-        # Send final update (modified to send single task)
-        # response_queue.put(('TASK_RUN_UPDATE', _running_task_status.copy())) 
-        response_queue.put(('TASK_RUN_UPDATE', {task_name: final_update_data}))
-
-    # --- All tasks processed or loop broken by cancellation ---
-    _current_stop_event = None # Clear stop event reference
-
-    # Determine final summary count based on potentially updated counters
-    final_success_count = completed_tasks
-    final_failure_count = failed_tasks + canceled_tasks # Count canceled as failed in summary
-
-    final_status_msg = f"任务执行完成。成功: {final_success_count}, 失败: {final_failure_count}"
-    if canceled_tasks > 0:
-        final_status_msg += f" (含 {canceled_tasks} 个取消)"
-        
-    response_queue.put(('LOG_ENTRY', final_status_msg)) # Log completion
-    response_queue.put(('STATUS', final_status_msg))  # Update GUI status bar
-    response_queue.put(('TASKS_FINISHED', None)) # Signal completion to GUI
-
-    logging.info(f"所有选定任务执行完毕。成功: {final_success_count}, 失败: {final_failure_count}")
-    response_queue.put(('TASK_EXECUTION_COMPLETE', _running_task_status.copy())) # Send final state
 
 # --- 设置处理 ---
 def _load_settings() -> Dict:
@@ -656,14 +654,19 @@ def save_settings(settings_from_gui: Dict):
     """Request saving settings (only Tushare token)."""
     request_queue.put(('SAVE_SETTINGS', settings_from_gui))
 
-def request_task_execution(mode: str, start_date: Optional[str], end_date: Optional[str]):
-    """Request task execution from the GUI thread."""
-    request_data = {
+def request_task_execution(mode: str, start_date: Optional[str], end_date: Optional[str], task_names: List[str], smart_increment: bool = False):
+    """Request the backend to execute selected tasks."""
+    if not _backend_thread or not _backend_thread.is_alive():
+        response_queue.put(('ERROR', '后台服务未运行，无法执行任务'))
+        return
+    # Checklist Item 2: Include smart_increment in the data payload
+    request_queue.put(('EXECUTE_TASKS', {
         'mode': mode,
         'start_date': start_date,
-        'end_date': end_date # 添加 end_date
-    }
-    request_queue.put(('EXECUTE_TASKS', request_data))
+        'end_date': end_date,
+        'task_names': task_names, # Pass selected task names
+        'smart_increment': smart_increment
+    }))
 
 def request_stop_execution():
     """Request stopping the current task execution from the GUI thread."""
