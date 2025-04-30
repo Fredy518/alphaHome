@@ -34,7 +34,7 @@ class TushareFinaForecastTask(TushareTask):
     ]
     
     # 3.Tushare特有属性
-    api_name = "forecast"
+    api_name = "forecast_vip"
     fields = [
         "ts_code", "ann_date", "end_date", "type", "p_change_min",
         "p_change_max", "net_profit_min", "net_profit_max", "last_parent_net",

@@ -11,4 +11,4 @@ default_concurrent_limit = 5
 default_page_size = 7000
 
 # 2.Tushare特有属性
-api_name = "balancesheet" # Tushare API 名称 
+api_name = "balancesheet_vip" # Tushare API 名称 

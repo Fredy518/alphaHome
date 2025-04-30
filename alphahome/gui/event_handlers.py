@@ -5,6 +5,7 @@ from . import controller
 from typing import Dict, Any, List
 import operator # For sorting
 import urllib.parse # For URL parsing/building
+import logging
 
 # 尝试导入 tkcalendar
 try:
@@ -158,9 +159,9 @@ def create_storage_settings_tab(parent: ttk.Frame) -> Dict[str, tk.Widget]:
 
     return widgets
 
-def create_task_execution_tab(parent: ttk.Frame) -> Dict[str, tk.Widget]:
+def create_task_execution_tab(parent: ttk.Frame, main_ui_elements: Dict[str, tk.Widget]) -> Dict[str, tk.Widget]:
     """创建"任务运行"标签页的 Tkinter 布局"""
-    widgets = {}
+    widgets = {} # 本地widgets字典，只包含此tab创建的控件
 
     # --- 运行控制框架 ---
     control_frame = ttk.LabelFrame(parent, text="运行控制", padding="10")
@@ -201,6 +202,7 @@ def create_task_execution_tab(parent: ttk.Frame) -> Dict[str, tk.Widget]:
         manual_end_date_entry = DateEntry(control_frame, width=12, background='darkblue',
                                           foreground='white', borderwidth=2, date_pattern='yyyy-mm-dd',
                                           state='disabled')
+        manual_end_date_entry.set_date(datetime.now())
         manual_end_date_entry.grid(row=1, column=3, padx=5, pady=(5,5), sticky=tk.W) # 移到 row=1, col=3, 增加 pady
     else:
         manual_end_date_var = tk.StringVar(value=today_str)
@@ -209,30 +211,21 @@ def create_task_execution_tab(parent: ttk.Frame) -> Dict[str, tk.Widget]:
     widgets['manual_end_date_entry'] = manual_end_date_entry
 
     # --- 第 2 行: 运行/停止按钮 (靠右) ---
-    # 创建一个单独的 Frame 来容纳按钮，并将其 grid 到 control_frame 的右侧
     button_container = ttk.Frame(control_frame)
-    # 将按钮容器放在第0行，第4列，并让它跨越3行以垂直居中（或根据需要调整）
-    # 并设置 sticky='e' 使其靠右
-    # 注意：column=4 是日期输入后的下一列
     button_container.grid(row=0, column=4, rowspan=3, padx=(20, 0), sticky='e') 
 
-    run_button = ttk.Button(button_container, text="运行选中任务", command=lambda: handle_run_tasks(widgets))
-    run_button.pack(side=tk.LEFT, padx=(0, 5)) # 在按钮容器内使用 pack
+    run_button = ttk.Button(button_container, text="运行选中任务", command=lambda: handle_run_tasks(main_ui_elements))
+    run_button.pack(side=tk.LEFT, padx=(0, 5))
     widgets['run_button'] = run_button
 
-    stop_button = ttk.Button(button_container, text="停止执行", state='disabled', command=lambda: handle_stop_tasks(widgets))
-    stop_button.pack(side=tk.LEFT, padx=(0, 0)) # 在按钮容器内使用 pack
+    stop_button = ttk.Button(button_container, text="停止执行", state='disabled', command=lambda: handle_stop_tasks(main_ui_elements))
+    stop_button.pack(side=tk.LEFT, padx=(0, 0))
     widgets['stop_button'] = stop_button
 
-    # 设置 control_frame 的列权重，让按钮容器所在的列 (column 4) 可扩展，将其推到最右边
     control_frame.grid_columnconfigure(4, weight=1)
 
-    # 初始隐藏日期控件 (需要在 grid 之后调用)
-    manual_date_label.grid_remove()
-    manual_date_entry.grid_remove()
-    manual_end_date_label.grid_remove()
-    manual_end_date_entry.grid_remove()
-
+    # 初始隐藏日期控件 (需要从本地 widgets 获取)
+    handle_exec_mode_change(widgets) # handle_exec_mode_change 仍然使用本地 widgets
 
     # --- 运行状态框架 ---
     run_frame = ttk.LabelFrame(parent, text="运行状态", padding="10")
@@ -300,16 +293,18 @@ def create_task_log_tab(parent: ttk.Frame) -> Dict[str, tk.Widget]:
 # --- Tkinter 事件回调函数 (骨架) ---
 # --- Tkinter 事件回调函数 ---
 
-def handle_refresh_tasks():
+def handle_refresh_tasks(main_ui_elements: Dict[str, tk.Widget]):
     """处理刷新列表按钮点击"""
-    print("回调：刷新任务列表...") # 控制台日志/调试
+    print("回调：刷新任务列表...")
     controller.request_task_list()
-    # 状态栏更新将由 process_controller_update 中的 STATUS 消息处理
+    # 更新状态栏
+    statusbar = main_ui_elements.get('statusbar')
+    if statusbar: statusbar.config(text="正在刷新任务列表...")
 
-def handle_select_all(widgets: Dict[str, tk.Widget]):
+def handle_select_all(main_ui_elements: Dict[str, tk.Widget]):
     """处理全选按钮点击 (仅选择当前可见的任务)"""
     print("回调：请求全选可见任务...")
-    tree = widgets.get('task_tree')
+    tree = main_ui_elements.get('task_tree')
     if tree and isinstance(tree, ttk.Treeview):
         visible_item_ids = tree.get_children('')
         visible_task_names = []
@@ -325,10 +320,10 @@ def handle_select_all(widgets: Dict[str, tk.Widget]):
     else:
         print("错误：无法在 widgets 中找到任务列表 Treeview ('task_tree')。")
 
-def handle_deselect_all(widgets: Dict[str, tk.Widget]):
+def handle_deselect_all(main_ui_elements: Dict[str, tk.Widget]):
     """处理取消全选按钮点击 (仅取消选择当前可见的任务)"""
     print("回调：请求取消全选可见任务...")
-    tree = widgets.get('task_tree')
+    tree = main_ui_elements.get('task_tree')
     if tree and isinstance(tree, ttk.Treeview):
         visible_item_ids = tree.get_children('')
         visible_task_names = []
@@ -379,7 +374,7 @@ def handle_task_tree_click(event, tree: ttk.Treeview):
             except Exception as e:
                 print(f"处理任务列表点击时发生意外错误: {e}")
 
-def handle_load_settings(widgets: Dict[str, tk.Widget]):
+def handle_load_settings(main_ui_elements: Dict[str, tk.Widget]):
     """加载配置并填充存储设置标签页的各个字段"""
     print("回调：加载设置...")
     try:
@@ -391,7 +386,7 @@ def handle_load_settings(widgets: Dict[str, tk.Widget]):
         db_keys = ['db_host', 'db_port', 'db_name', 'db_user', 'db_password']
         token_key = 'tushare_token'
         all_keys = db_keys + [token_key]
-        missing_keys = [k for k in all_keys if k not in widgets or not hasattr(widgets[k], 'get')]
+        missing_keys = [k for k in all_keys if k not in main_ui_elements or not hasattr(main_ui_elements[k], 'get')]
         
         if missing_keys:
             messagebox.showwarning("加载错误", f"存储设置界面的输入框控件未找到: {', '.join(missing_keys)}")
@@ -400,8 +395,8 @@ def handle_load_settings(widgets: Dict[str, tk.Widget]):
         # 清空所有输入框
         for key in all_keys:
             try:
-                widgets[key].config(state=tk.NORMAL) # Ensure enabled before deleting
-                widgets[key].delete(0, tk.END)
+                main_ui_elements[key].config(state=tk.NORMAL) # Ensure enabled before deleting
+                main_ui_elements[key].delete(0, tk.END)
             except tk.TclError as e:
                  print(f"警告：清空输入框 {key} 时出错: {e} (控件可能已被禁用或销毁?)")
 
@@ -419,7 +414,7 @@ def handle_load_settings(widgets: Dict[str, tk.Widget]):
             'db_password': ''
         }
 
-        statusbar = widgets.get('statusbar')
+        statusbar = main_ui_elements.get('statusbar')
         status_msg = ""
 
         if db_url:
@@ -444,10 +439,10 @@ def handle_load_settings(widgets: Dict[str, tk.Widget]):
 
         # 填充数据库字段
         for key in db_keys:
-            widgets[key].insert(0, db_values[key])
+            main_ui_elements[key].insert(0, db_values[key])
 
         # 填充 Token 字段
-        widgets[token_key].insert(0, tushare_token)
+        main_ui_elements[token_key].insert(0, tushare_token)
         if tushare_token:
              print("DEBUG: Tushare Token 已加载。")
              if status_msg: status_msg += " " # 添加空格分隔
@@ -468,10 +463,10 @@ def handle_load_settings(widgets: Dict[str, tk.Widget]):
     except Exception as e:
         print(f"加载设置时发生未预料的错误: {e}")
         messagebox.showerror("加载错误", f"加载设置时出错: {e}")
-        if widgets.get('statusbar'):
-            widgets['statusbar'].config(text=f"加载设置错误: {e}")
+        if main_ui_elements.get('statusbar'):
+            main_ui_elements['statusbar'].config(text=f"加载设置错误: {e}")
 
-def handle_save_settings(widgets: Dict[str, tk.Widget]):
+def handle_save_settings(main_ui_elements: Dict[str, tk.Widget]):
     """从界面提取 Token 和 DB 字段，构建 URL 并请求保存"""
     print("回调：请求保存设置...")
     try:
@@ -479,8 +474,8 @@ def handle_save_settings(widgets: Dict[str, tk.Widget]):
 
         # 1. 获取 Tushare Token
         token_key = 'tushare_token'
-        if token_key in widgets and hasattr(widgets[token_key], 'get'):
-            settings_to_send['tushare_token'] = widgets[token_key].get()
+        if token_key in main_ui_elements and hasattr(main_ui_elements[token_key], 'get'):
+            settings_to_send['tushare_token'] = main_ui_elements[token_key].get()
         else:
             print(f"警告：保存设置时缺少控件或 get 方法 '{token_key}'")
             messagebox.showerror("内部错误", f"无法找到 Tushare Token 输入控件。")
@@ -491,8 +486,8 @@ def handle_save_settings(widgets: Dict[str, tk.Widget]):
         db_keys = ['db_host', 'db_port', 'db_name', 'db_user', 'db_password']
         all_db_fields_present = True
         for key in db_keys:
-            if key in widgets and hasattr(widgets[key], 'get'):
-                db_values[key] = widgets[key].get()
+            if key in main_ui_elements and hasattr(main_ui_elements[key], 'get'):
+                db_values[key] = main_ui_elements[key].get()
             else:
                 print(f"警告：保存设置时缺少控件或 get 方法 '{key}'")
                 messagebox.showerror("内部错误", f"无法找到数据库输入控件 '{key}'。")
@@ -572,18 +567,28 @@ def handle_exec_mode_change(widgets: Dict[str, tk.Widget]):
     else:
         print("错误: 未找到手动日期控件。")
 
-def handle_run_tasks(widgets: Dict[str, tk.Widget]):
+def handle_run_tasks(main_ui_elements: Dict[str, tk.Widget]):
     """处理"运行选中任务"按钮点击事件。"""
-    task_tree = widgets.get('task_tree')
-    exec_mode_combo = widgets.get('exec_mode_combo')
-    manual_date_entry = widgets.get('manual_date_entry')
-    manual_end_date_entry = widgets.get('manual_end_date_entry') # 获取结束日期控件
-    run_button = widgets.get('run_button')
-    stop_button = widgets.get('stop_button')
-    statusbar = widgets.get('statusbar')
+    task_tree = main_ui_elements.get('task_tree')
+    exec_mode_combo = main_ui_elements.get('exec_mode_combo')
+    manual_date_entry = main_ui_elements.get('manual_date_entry')
+    manual_end_date_entry = main_ui_elements.get('manual_end_date_entry') # 获取结束日期控件
+    run_button = main_ui_elements.get('run_button')
+    stop_button = main_ui_elements.get('stop_button')
+    statusbar = main_ui_elements.get('statusbar')
 
     if not all([task_tree, exec_mode_combo, manual_date_entry, manual_end_date_entry, run_button, stop_button, statusbar]):
         messagebox.showerror("错误", "界面元素不完整，无法运行任务。")
+        # 增加调试信息
+        missing = []
+        if not task_tree: missing.append('task_tree')
+        if not exec_mode_combo: missing.append('exec_mode_combo')
+        if not manual_date_entry: missing.append('manual_date_entry')
+        if not manual_end_date_entry: missing.append('manual_end_date_entry')
+        if not run_button: missing.append('run_button')
+        if not stop_button: missing.append('stop_button')
+        if not statusbar: missing.append('statusbar')
+        print(f"DEBUG: handle_run_tasks 中缺失的控件: {missing} (字典 main_ui_elements 中存在 keys: {list(main_ui_elements.keys())})") # 打印具体缺失和现有keys
         return
 
     # 1. 获取选中的任务
@@ -627,19 +632,19 @@ def handle_run_tasks(widgets: Dict[str, tk.Widget]):
     # 4. 请求控制器执行任务 (现在传递 end_date)
     controller.request_task_execution(mode, start_date, end_date)
 
-def handle_stop_tasks(widgets: Dict[str, tk.Widget]):
+def handle_stop_tasks(main_ui_elements: Dict[str, tk.Widget]):
     """处理停止任务按钮点击"""
     print("回调：请求停止任务...")
     try:
-        if 'stop_button' in widgets:
-            widgets['stop_button'].config(state=tk.DISABLED) # 立即禁用防止重复点击
+        if 'stop_button' in main_ui_elements:
+            main_ui_elements['stop_button'].config(state=tk.DISABLED) # 立即禁用防止重复点击
         controller.request_stop_execution()
         print("停止请求已发送。")
         # 状态栏和按钮状态将由 RUN_COMPLETED 或其他后续消息处理
     except Exception as e:
         print(f"停止任务时发生错误: {e}")
         # 如果出错，可以考虑手动启用停止按钮？或者让用户等待
-        # if 'stop_button' in widgets: widgets['stop_button'].config(state=tk.NORMAL)
+        # if 'stop_button' in main_ui_elements: main_ui_elements['stop_button'].config(state=tk.NORMAL)
 
 def handle_type_filter_change(widgets: Dict[str, tk.Widget]):
     """处理类型过滤下拉框选择变化"""
@@ -772,141 +777,172 @@ def _update_task_tree_display(widgets: Dict[str, tk.Widget]):
 run_task_item_map: Dict[str, str] = {}
 
 def process_controller_update(root: tk.Tk, ui_elements: Dict[str, tk.Widget], update_type: str, data: Any):
-    """根据控制器队列中的消息更新 Tkinter GUI"""
-    global run_task_item_map, _full_task_list_data # 引入 _full_task_list_data
+    """根据从控制器接收到的更新类型处理UI更新。"""
+    # print(f"DEBUG: process_controller_update - Type: {update_type}, Data: {data}") # Optional: Add for detailed debugging
+    statusbar = ui_elements.get('statusbar')
+    task_tree = ui_elements.get('task_tree')
+    log_text = ui_elements.get('log_text')
+    run_status_tree = ui_elements.get('run_tree') # Get run status tree
+    run_button = ui_elements.get('run_button') # Get run button
+    stop_button = ui_elements.get('stop_button') # Get stop button
 
     try:
-        if update_type == 'TASK_LIST_UPDATE':
-            # data 应该是 controller 返回的列表: [{'selected': Bool, 'type':.., 'name':.., 'desc':..}, ...]
-            print(f"DEBUG: 收到 TASK_LIST_UPDATE，共 {len(data)} 条数据。")
-            _full_task_list_data = data # 更新完整的任务列表缓存
-
-            # 更新类型过滤下拉框选项
-            filter_combo = ui_elements.get('type_filter_combo')
-            if filter_combo and isinstance(filter_combo, ttk.Combobox):
-                current_filter = filter_combo.get() # 保存当前选择
-                # 从完整列表中提取所有唯一的类型
-                all_types = sorted(list(set(task.get('type', 'unknown') for task in _full_task_list_data)))
-                filter_options = [_ALL_TYPES_OPTION] + all_types
-                filter_combo['values'] = filter_options
-                # 尝试恢复之前的选择，如果还存在的话
-                if current_filter in filter_options:
-                    filter_combo.set(current_filter)
-                else:
-                    filter_combo.set(_ALL_TYPES_OPTION) # 否则重置为 All
-                print(f"DEBUG: 类型过滤器选项已更新: {filter_options}")
-            else:
-                print("警告：无法更新类型过滤器，缺少控件。")
-
-            # 调用公共更新函数来应用当前过滤和排序
-            _update_task_tree_display(ui_elements)
-
-            if 'statusbar' in ui_elements:
-                ui_elements['statusbar'].config(text="任务列表已更新")
-
-        elif update_type == 'LOG_ENTRY':
-            log_text = ui_elements.get('log_text')
-            if log_text and isinstance(log_text, tk.Text):
-                log_text.config(state=tk.NORMAL)
-                log_text.insert(tk.END, str(data) + '\n')
-                log_text.config(state=tk.DISABLED)
-                log_text.see(tk.END) # 滚动到底部
-            else:
-                print(f"警告：无法记录日志，缺少或类型错误的 log_text 控件。")
-
-        elif update_type == 'STATUS':
-            statusbar = ui_elements.get('statusbar')
-            if statusbar and isinstance(statusbar, ttk.Label):
+        if update_type == 'STATUS':
+            if statusbar:
                 statusbar.config(text=str(data))
             else:
                 print(f"警告：无法更新状态栏，缺少或类型错误的 statusbar 控件。")
-
+                
         elif update_type == 'ERROR':
-            error_msg = str(data)
-            messagebox.showerror("后台错误", error_msg)
-            statusbar = ui_elements.get('statusbar')
-            if statusbar and isinstance(statusbar, ttk.Label):
-                statusbar.config(text=f"错误: {error_msg[:100]}") # 状态栏显示部分错误
+            messagebox.showerror("后台错误", str(data))
+            if statusbar:
+                 statusbar.config(text=f"错误: {str(data)[:100]}") # 显示部分错误信息
 
-        elif update_type == 'RUN_TABLE_INIT':
-            # data 应该是初始化任务状态的列表: [{'type':.., 'name':.., 'status':.., ...}, ...]
-            run_tree = ui_elements.get('run_tree')
-            if run_tree and isinstance(run_tree, ttk.Treeview):
-                run_tree.delete(*run_tree.get_children()) # 清空旧数据
-                run_task_item_map.clear() # 清空旧的映射
-                for task_status in data:
-                    task_name = task_status.get('name')
-                    if not task_name: continue # 跳过没有名称的任务
-
-                    values = (
-                        task_status.get('type', ''),
-                        task_name,
-                        task_status.get('status', ''),
-                        task_status.get('progress', ''),
-                        task_status.get('start', ''),
-                        task_status.get('end', '')
-                    )
-                    # 插入新行并获取其 ID
-                    item_id = run_tree.insert('', tk.END, values=values)
-                    run_task_item_map[task_name] = item_id # 存储名称到 ID 的映射
-                    print(f"初始化运行任务: {task_name} -> ID: {item_id}") # 调试信息
+        elif update_type == 'LOG_ENTRY':
+            if log_text and isinstance(log_text, tk.Text):
+                log_text.config(state=tk.NORMAL)
+                log_text.insert(tk.END, str(data) + '\n')
+                log_text.see(tk.END) # 滚动到底部
+                log_text.config(state=tk.DISABLED)
             else:
-                print("警告：无法初始化运行表格，缺少或类型错误的 run_tree 控件。")
+                print(f"日志：{data}") # 如果日志控件无效，打印到控制台
 
-        elif update_type == 'RUN_STATUS_UPDATE':
-            # data 是单个任务的状态字典: {'name':.., 'status':.., ...}
-            run_tree = ui_elements.get('run_tree')
-            task_name = data.get('name')
-            if run_tree and isinstance(run_tree, ttk.Treeview) and task_name:
-                item_id = run_task_item_map.get(task_name)
-                if item_id and run_tree.exists(item_id): # 检查 item ID 是否有效且存在
-                    values = (
-                        data.get('type', ''),
-                        task_name,
-                        data.get('status', ''),
-                        data.get('progress', ''),
-                        data.get('start', ''),
-                        data.get('end', '')
-                    )
-                    run_tree.item(item_id, values=values) # 更新行数据
-                    print(f"更新运行状态: {task_name} (ID: {item_id})") # 调试信息
+        elif update_type == 'TASK_LIST_UPDATE':
+            if task_tree and isinstance(task_tree, ttk.Treeview):
+                global _full_task_list_data # Access the global cache
+                _full_task_list_data = data # Store the full data
+                
+                # 更新类型过滤器选项
+                type_filter_combo = ui_elements.get('type_filter_combo')
+                if type_filter_combo:
+                    all_types = sorted(list(set(item.get('type', 'unknown') for item in data))) if data else []
+                    current_filter = type_filter_combo.get()
+                    type_filter_combo['values'] = [_ALL_TYPES_OPTION] + all_types
+                    # Try to preserve selection, default to ALL if previous selection disappears
+                    if current_filter not in type_filter_combo['values']:
+                         type_filter_combo.set(_ALL_TYPES_OPTION)
+                         
+                # Update the displayed tree based on current filter/sort
+                _update_task_tree_display(ui_elements) # Call helper to apply filter/sort
+                
+                if statusbar:
+                    statusbar.config(text=f"任务列表已更新 ({len(data)} 个任务)")
+            else:
+                print("警告：无法更新任务列表，缺少或类型错误的 task_tree 控件。")
+                
+        elif update_type == 'TASK_TIMESTAMP_UPDATE':
+            if isinstance(data, dict) and 'name' in data and 'latest_update_time' in data:
+                task_name = data['name']
+                new_time = data['latest_update_time']
+                cache_updated = False
+                # Update the global cache directly
+                for task_item in _full_task_list_data:
+                    if task_item.get('name') == task_name:
+                        task_item['latest_update_time'] = new_time
+                        cache_updated = True
+                        logging.debug(f"Received timestamp update for {task_name}: {new_time}") # Use logging
+                        break
+                if cache_updated:
+                    # Refresh the treeview display using the updated global cache
+                    _update_task_tree_display(ui_elements)
                 else:
-                    print(f"警告：收到任务 \"{task_name}\" 的状态更新，但在运行表格映射中未找到其 ID \'{item_id}\' 或项目已不存在。 run_task_item_map: {run_task_item_map}")
-                    # 可以考虑将新任务添加到表格末尾，如果它之前不存在
-                    # item_id = run_tree.insert('', tk.END, values=values)
-                    # run_task_item_map[task_name] = item_id
-            elif not run_tree or not isinstance(run_tree, ttk.Treeview):
-                 print("警告：无法更新运行状态，缺少或类型错误的 run_tree 控件。")
-            elif not task_name:
-                 print("警告：收到无名称任务的状态更新。")
+                     logging.warning(f"收到任务 {task_name} 的时间戳更新，但在缓存中未找到该任务。") # Use logging
+            else:
+                logging.warning(f"收到无效的 TASK_TIMESTAMP_UPDATE 数据: {data}") # Use logging
+                
+        elif update_type == 'TASK_EXECUTION_COMPLETE':
+            # Legacy or potentially used for final state update?
+            # Let's rely on TASKS_FINISHED for button state and STATUS for bar text
+            # Maybe update the run table one last time?
+            if run_status_tree and isinstance(data, dict):
+                 _update_run_status_table(run_status_tree, data)
+            if statusbar:
+                # Final status message is handled by the 'STATUS' type sent just before this
+                pass # statusbar.config(text="任务执行完成")
+        
+        # --- !!! NEW/MODIFIED HANDLERS !!! --- 
+        
+        elif update_type == 'RUN_TABLE_INIT':
+            if run_status_tree and isinstance(data, list):
+                # Clear existing items
+                run_status_tree.delete(*run_status_tree.get_children())
+                # Insert new items
+                for item_data in data:
+                    if isinstance(item_data, dict):
+                        # Define the order of columns for the values tuple
+                        # Must match the order in create_task_execution_tab
+                        # Columns: ('type', 'name', 'status', 'progress', 'start', 'end', 'details')
+                        values_tuple = (
+                            item_data.get('type', 'N/A'),
+                            item_data.get('name', 'Unknown'),
+                            item_data.get('status', 'PENDING'),
+                            item_data.get('progress', ''),
+                            item_data.get('start', ''),
+                            item_data.get('end', ''),
+                            item_data.get('details', '')
+                        )
+                        # Use 'name' as the item ID (iid)
+                        run_status_tree.insert('', tk.END, iid=item_data.get('name'), values=values_tuple)
+            else:
+                 print(f"警告：无法初始化运行状态表，缺少控件或数据格式错误 (Expected list): {type(data)}")
+                 
+        elif update_type == 'TASK_RUN_UPDATE':
+             if run_status_tree and isinstance(data, dict): # Data is the full status dict {name: status_dict}
+                 _update_run_status_table(run_status_tree, data)
+             else:
+                 print(f"警告：无法更新运行状态表，缺少控件或数据格式错误 (Expected dict): {type(data)}")
+                 
+        elif update_type == 'TASK_PROGRESS_UPDATE':
+             if run_status_tree and isinstance(data, tuple) and len(data) == 2:
+                 task_name, progress_float = data
+                 if run_status_tree.exists(task_name):
+                     try:
+                         # Format progress and update only the progress cell
+                         progress_str = f"{progress_float:.0%}"
+                         run_status_tree.set(task_name, 'progress', progress_str)
+                     except ValueError:
+                          print(f"警告：无法格式化进度值: {progress_float}")
+                     except Exception as e:
+                          print(f"警告：更新任务 '{task_name}' 进度时出错: {e}")
+                 # else: Task might have finished/disappeared before progress update arrived
+             else:
+                 print(f"警告：无法更新进度，缺少控件或数据格式错误 (Expected tuple(name, progress)): {type(data)}")
+                 
+        elif update_type == 'TASKS_FINISHED':
+             # Update button states
+             if run_button and isinstance(run_button, ttk.Button):
+                 run_button.config(state=tk.NORMAL)
+             else:
+                  print("警告：无法启用运行按钮，缺少或类型错误。")
+             if stop_button and isinstance(stop_button, ttk.Button):
+                  stop_button.config(state=tk.DISABLED)
+             else:
+                  print("警告：无法禁用停止按钮，缺少或类型错误。")
+             # Final status bar text is handled by the 'STATUS' message type
 
-        elif update_type == 'RUN_COMPLETED':
-            # data 是完成摘要字符串
-            statusbar = ui_elements.get('statusbar')
-            if statusbar and isinstance(statusbar, ttk.Label):
-                statusbar.config(text=str(data))
+        # --- END OF NEW/MODIFIED HANDLERS --- 
 
-            # 恢复运行/停止按钮状态
-            run_button = ui_elements.get('run_button')
-            stop_button = ui_elements.get('stop_button')
-            if run_button and isinstance(run_button, ttk.Button):
-                run_button.config(state=tk.NORMAL)
-            if stop_button and isinstance(stop_button, ttk.Button):
-                stop_button.config(state=tk.DISABLED)
-            print("任务批次运行完成。")
-
-        else:
-            print(f"未处理的控制器更新类型: {update_type}")
-
-    except tk.TclError as e:
-        # 通常发生在尝试操作已被销毁的控件时
-        print(f"处理控制器更新 '{update_type}' 时发生 TclError (控件可能已销毁): {e}")
-    except KeyError as e:
-        print(f"处理控制器更新 '{update_type}' 时缺少界面元素 key: {e}")
     except Exception as e:
-        print(f"处理控制器更新 '{update_type}' 时发生未捕获的异常: {e}")
-        import traceback
-        traceback.print_exc() # 打印详细堆栈信息
-        statusbar = ui_elements.get('statusbar')
-        if statusbar and isinstance(statusbar, ttk.Label):
-             statusbar.config(text=f"更新处理错误: {e}")
+        # Log the exception from the update processing itself
+        logging.exception(f"处理控制器更新 '{update_type}' 时发生内部错误")
+        # Optionally show a generic error in status bar
+        if statusbar:
+            statusbar.config(text=f"处理UI更新时发生错误: {type(e).__name__}")
+
+# --- Helper function to update run status table --- 
+def _update_run_status_table(tree: ttk.Treeview, status_data: Dict[str, Dict[str, Any]]):
+    """Helper to update the run status treeview based on status dict."""
+    for task_name, status_dict in status_data.items():
+        if tree.exists(task_name):
+            try:
+                tree.set(task_name, 'status', status_dict.get('status', ''))
+                tree.set(task_name, 'progress', status_dict.get('progress', ''))
+                tree.set(task_name, 'start', status_dict.get('start', ''))
+                tree.set(task_name, 'end', status_dict.get('end', ''))
+                tree.set(task_name, 'details', status_dict.get('details', ''))
+            except Exception as e:
+                 print(f"警告：更新运行状态表行 '{task_name}' 时出错: {e}")
+        # else: Task might not be in the table if RUN_TABLE_INIT hasn't been processed yet
+
+# --- 其他事件处理函数 (保持不变或根据需要修改) ---
+# ... (handle_refresh_tasks, handle_select_all, etc.) ...

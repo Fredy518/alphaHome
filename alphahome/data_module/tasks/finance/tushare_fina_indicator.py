@@ -33,7 +33,7 @@ class TushareFinaIndicatorTask(TushareTask):
     ]
     
     # 3.Tushare特有属性
-    api_name = "fina_indicator"
+    api_name = "fina_indicator_vip"
     fields = [
         "ts_code", "ann_date", "end_date", "eps", "dt_eps", "total_revenue_ps", 
         "revenue_ps", "capital_rese_ps", "surplus_rese_ps", "undist_profit_ps", 

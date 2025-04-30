@@ -14,7 +14,7 @@ class TushareStockReportRcTask(TushareTask):
     
     # 1.核心属性
     name = "tushare_stock_report_rc"
-    description = "获取上市公司业绩报告期次数据"
+    description = "获取卖方盈利预测数据"
     table_name = "tushare_stock_report_rc"
     primary_keys = ["ts_code", "report_date", "org_name", "author_name", "quarter"]
     date_column = "report_date" # 使用报告日期作为主要日期

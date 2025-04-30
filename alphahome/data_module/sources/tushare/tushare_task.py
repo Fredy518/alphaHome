@@ -193,6 +193,7 @@ class TushareTask(Task):
             # 获取并发限制参数，优先使用传入的参数，其次使用实例属性
             concurrent_limit = kwargs.get('concurrent_limit', self.concurrent_limit)
             show_progress = kwargs.get('show_progress', False)
+            show_progress = False # <-- 添加这行，强制禁用 tqdm
             progress_desc = kwargs.get('progress_desc', f"执行任务: {self.name}")
             
             if concurrent_limit > 1:
@@ -226,31 +227,59 @@ class TushareTask(Task):
                         if pbar_instance:
                             pbar_instance.update(1)
 
-                        # --- 调用 GUI 进度回调 (移出 if pbar_instance) ---
-                        # 读取成功计数
+                        # --- Add Debug Prints --- 
+                        print(f"DEBUG: process_batch finally block entered for batch {i}") 
                         current_successful_count = 0
-                        async with success_counter_lock:
-                            current_successful_count = successful_batches_count
-                        total_count = total_batches
+                        try:
+                            async with success_counter_lock:
+                                current_successful_count = successful_batches_count
+                            print(f"DEBUG: Batch {i}: successful_count={current_successful_count}, type={type(current_successful_count)}")
+                            total_count = total_batches 
+                            print(f"DEBUG: Batch {i}: total_count={total_count}, type={type(total_count)}")
+                        except Exception as lock_err:
+                            print(f"DEBUG: Batch {i}: Error accessing counters: {lock_err}")
+                            #reraise or handle
 
-                        # 计算百分比
-                        percentage = int((current_successful_count / total_count) * 100) if total_count > 0 else 0
-                        # Removed DEBUG log before calling callback
+                        progress_percentage = 0.0
+                        try:
+                            progress_percentage = (current_successful_count / total_count) if total_count > 0 else 0.0
+                            print(f"DEBUG: Batch {i}: progress_percentage={progress_percentage:.2f}")
+                        except Exception as calc_err:
+                            print(f"DEBUG: Batch {i}: Error calculating percentage: {calc_err}")
 
-                        # 调用回调 (如果存在且总数大于0)
-                        if cb and total_count > 0:
+                        try:
+                             print(f"DEBUG: Batch {i}: Checking callback condition (cb={'True' if cb else 'False'}, total_count={total_count})")
+                             # The actual comparison for the TypeError
+                             condition_check = total_count > 0 
+                             print(f"DEBUG: Batch {i}: Condition check (total_count > 0) result: {condition_check}")
+                        except TypeError as te:
+                             print(f"DEBUG: Batch {i}: !!! TypeError during condition check: {te} !!!")
+                             raise # Re-raise the specific error to be caught by gather
+                        except Exception as cond_err:
+                             print(f"DEBUG: Batch {i}: Error during condition check: {cond_err}")
+                        
+                        if cb and condition_check:
                             try:
-                                # Removed DEBUG log before calling cb
+                                print(f"DEBUG: Batch {i}: Calling callback cb({progress_percentage:.2f})...")
                                 if asyncio.iscoroutinefunction(cb):
-                                    await cb(self.name, f"{percentage}%")
+                                    await cb(progress_percentage)
                                 else:
-                                    cb(self.name, f"{percentage}%")
-                                # Removed DEBUG log after calling cb
+                                    cb(progress_percentage)
+                                print(f"DEBUG: Batch {i}: Callback cb finished.")
                             except Exception as cb_err:
                                 self.logger.error(f"执行进度回调时出错: {cb_err}", exc_info=False)
-
-                        # 添加一个微小的延迟 (保持控制台流畅性，对GUI回调无直接影响)
-                        await asyncio.sleep(0.01)
+                                print(f"DEBUG: Batch {i}: Error inside callback execution: {cb_err}")
+                        else:
+                            print(f"DEBUG: Batch {i}: Callback not called (cb={'True' if cb else 'False'}, condition_check={condition_check})")
+                        
+                        try:
+                            print(f"DEBUG: Batch {i}: Starting final sleep.")
+                            await asyncio.sleep(0.01)
+                            print(f"DEBUG: Batch {i}: Final sleep finished.")
+                        except Exception as sleep_err:
+                             print(f"DEBUG: Batch {i}: Error during final sleep: {sleep_err}")
+                        print(f"DEBUG: process_batch finally block finished for batch {i}")
+                        # --- End Debug Prints ---
                 
                 # 创建所有批次的任务, 传递 pbar 实例和回调
                 tasks = [process_batch(i, batch_params, pbar, progress_callback) for i, batch_params in enumerate(batch_list)]
@@ -288,29 +317,43 @@ class TushareTask(Task):
 
                 for i in progress_iterator: # i is now the index 0, 1, 2...
                     batch_params = batch_list[i]
-                    rows = await self._process_single_batch(i, total_batches, batch_params)
-                    # Removed DEBUG log for _process_single_batch return value
-                    if rows > 0:
-                        total_rows += rows
-                        successful_batches_count += 1 # <--- ADDED: Increment on success
-                        # Removed DEBUG log for counter increment
-                    else: # rows == 0 表示失败
+                    try:
+                        # Call _process_single_batch
+                        rows = await self._process_single_batch(i, total_batches, batch_params)
+                        if rows > 0:
+                            total_rows += rows
+                            successful_batches_count += 1
+                    except TypeError as te:
+                        # <<< Add print inside except block >>>
+                        print(f"!!! TYPE ERROR CAUGHT !!! Error: {te}")
+                        print(f"!!! DEBUG PRINT (in except) !!! rows = {repr(rows)}, type = {type(rows)}")
+                        # 记录失败
+                        failed_batches += 1 
+                        if first_error is None:
+                            first_error = str(te)
+                        self.logger.error(f"批次 {i+1}/{total_batches} 处理失败，捕获到 TypeError: {te}. Rows value: {repr(rows)}")
+                        # 不重新抛出，让循环继续，但记录为失败
+                    except Exception as e:
+                        # 处理 _process_single_batch 可能抛出的其他未处理异常
+                        self.logger.error(f"批次 {i+1}/{total_batches} 处理失败，发生其他错误: {e}", exc_info=True)
                         failed_batches += 1
+                        if first_error is None:
+                            first_error = str(e)
 
                     # <<< Call the progress callback for serial execution >>>
                     if progress_callback:
-                        total_count = total_batches # <--- MODIFIED: Use stored total_batches
-                        percentage = int((successful_batches_count / total_count) * 100) if total_count > 0 else 0
-                        # Removed DEBUG log before calling callback
+                        total_count = total_batches
+                        # <<< Modify Progress Calculation >>>
+                        progress_percentage = ((i + 1) / total_count) if total_count > 0 else 0.0
+                        # <<< Add Debug Log >>>
+                        self.logger.debug(f"批次 {i+1}/{total_batches}: Serial progress calculated: {progress_percentage:.2f}")
                         if total_count > 0:
                             try:
-                                # Removed DEBUG log before calling callback
-                                # Ensure callback is awaited if it's a coroutine
+                                # 只传递进度小数
                                 if asyncio.iscoroutinefunction(progress_callback):
-                                     await progress_callback(self.name, f"{percentage}%")
+                                     await progress_callback(progress_percentage) # <-- 只传递一个参数
                                 else:
-                                     progress_callback(self.name, f"{percentage}%") # Allow non-async callback
-                                # Removed DEBUG log after calling callback
+                                     progress_callback(progress_percentage) # <-- 只传递一个参数
                             except Exception as cb_err:
                                 self.logger.error(f"执行进度回调时出错: {cb_err}", exc_info=False)
             
@@ -429,7 +472,16 @@ class TushareTask(Task):
                 # 如果不是DataFrame或为空，则认为验证失败或无数据
                 self.logger.error(f"{batch_log_prefix}: 数据验证失败或所有数据均被过滤")
                 return 0 # 验证失败或没有数据可保存
-                
+            
+            if isinstance(validated_data, pd.DataFrame) and not validated_data.empty and hasattr(self, 'primary_keys') and self.primary_keys:
+                original_count = len(validated_data)
+                # 使用 inplace=True 直接修改 DataFrame
+                validated_data.drop_duplicates(subset=self.primary_keys, keep='last', inplace=True)
+                deduped_count = len(validated_data)
+                if deduped_count < original_count:
+                    # 使用 DEBUG 级别，避免过多干扰 INFO 日志
+                    self.logger.debug(f"{batch_log_prefix}: 基于主键 {self.primary_keys} 去重，移除了 {original_count - deduped_count} 行重复数据。")
+                    
         except Exception as e:
             self.logger.error(f"{batch_log_prefix}: 验证数据时发生错误: {str(e)}")
             return 0 # 验证过程中出错
@@ -447,10 +499,22 @@ class TushareTask(Task):
                     self.logger.info(f"{batch_log_prefix}: 没有有效数据需要保存。")
                     return 0 # 没有数据保存，返回0行
 
-                result = await self.save_data(validated_data) # 使用 validated_data
-                rows = result.get('rows', 0)
-                self.logger.info(f"{batch_log_prefix}: 已保存 {rows} 行数据")
-                return rows # 保存成功，返回行数
+                result_dict = await self.save_data(validated_data) # save_data returns a dict
+                if isinstance(result_dict, dict) and result_dict.get("status") == "success":
+                    rows = result_dict.get('rows', 0) # 从字典中正确提取行数
+                    if not isinstance(rows, int): # 添加额外的类型检查
+                        self.logger.error(f"{batch_log_prefix}: save_data 返回的 'rows' 不是整数: {repr(rows)}")
+                        rows = 0 # 视为失败
+                        return 0 # 明确返回失败
+                    else:
+                        self.logger.info(f"{batch_log_prefix}: 已保存 {rows} 行数据")
+                        return rows # 保存成功，返回整数行数
+                else:
+                    # save_data 返回了错误状态或非预期格式
+                    error_info = repr(result_dict) if isinstance(result_dict, dict) else f"非字典类型 ({type(result_dict).__name__})"
+                    self.logger.error(f"{batch_log_prefix}: 保存数据失败或 save_data 返回非成功状态。Result: {error_info}")
+                    # 不需要 break，因为 return 0 会结束循环
+                    return 0 # 保存失败
             except Exception as e:
                 self.logger.warning(f"{batch_log_prefix}: 保存数据时发生错误 (尝试 {attempt+1}/{self.max_retries+1}): {str(e)}")
                 if attempt >= self.max_retries:

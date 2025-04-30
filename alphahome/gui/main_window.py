@@ -81,14 +81,10 @@ def run_gui():
     ui_elements['statusbar'] = statusbar # 存储引用
 
     # --- 填充标签页内容 (调用 event_handlers) ---
-    # 注意：现在 event_handlers 中的布局函数需要修改以接受父 Frame
-    # 并且需要返回创建的关键控件，以便存储在 ui_elements 中
     try:
-        # event_handlers.create_... 函数需要修改为接受 parent 参数
-        # 并可能返回创建的控件字典，合并到 ui_elements
         ui_elements.update(event_handlers.create_task_list_tab(tab1_frame))
         ui_elements.update(event_handlers.create_storage_settings_tab(tab2_frame))
-        ui_elements.update(event_handlers.create_task_execution_tab(tab3_frame))
+        ui_elements.update(event_handlers.create_task_execution_tab(tab3_frame, ui_elements))
         ui_elements.update(event_handlers.create_task_log_tab(tab4_frame))
     except Exception as e:
         logging.exception("创建界面布局时出错")
