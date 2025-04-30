@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "alphaHome"
-version = "1.0.0" # 您可以根据需要修改版本号
+version = "1.1" # 您可以根据需要修改版本号
 authors = [
   { name="Your Name", email="youremail@example.com" }, # 请替换为您的信息
 ]

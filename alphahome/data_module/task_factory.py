@@ -36,25 +36,28 @@ def load_config():
         except Exception as e:
             logger.warning(f"读取配置文件 {CONFIG_FILE} 失败: {e}，使用环境变量或默认值")
     else:
-         logger.warning(f"配置文件 {CONFIG_FILE} 未找到，将尝试环境变量。")
+        logger.warning(f"配置文件 {CONFIG_FILE} 未找到，将尝试环境变量。")
     
     # 合并/处理环境变量 (只在首次加载或配置文件不存在/错误时检查)
     db_url = config_data.get("database", {}).get("url")
     tushare_token = config_data.get("api", {}).get("tushare_token")
 
-    if not db_url:
+    if not db_url: # 如果配置文件中没有 db_url
+        logger.info("配置文件中未找到数据库 URL，尝试从环境变量 DATABASE_URL 加载。")
         db_url_from_env = os.environ.get('DATABASE_URL')
-        if db_url_from_env:
-            logger.info("从环境变量 DATABASE_URL 加载数据库 URL。")
-            db_url = db_url_from_env
-        else:
+        if db_url_from_env: # 检查是否成功从环境变量获取
+            logger.info("成功从环境变量 DATABASE_URL 加载数据库 URL。")
+            db_url = db_url_from_env # 使用环境变量的值
+        else: # 如果环境变量也没有
             logger.warning("配置文件和环境变量均未设置有效的数据库 URL。")
+    # else: # 如果配置文件中有 db_url，则无需额外操作
+    #     pass # 或者可以加一行日志 logger.debug("已从配置文件加载数据库 URL。")
     
     if not tushare_token:
         tushare_token_from_env = os.environ.get('TUSHARE_TOKEN')
         if tushare_token_from_env:
-             logger.info("从环境变量 TUSHARE_TOKEN 加载 Tushare Token。")
-             tushare_token = tushare_token_from_env
+            logger.info("从环境变量 TUSHARE_TOKEN 加载 Tushare Token。")
+            tushare_token = tushare_token_from_env
         # Token 可以为空，不强制要求
         
     # 确保返回的结构完整

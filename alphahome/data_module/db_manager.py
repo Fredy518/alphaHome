@@ -121,7 +121,7 @@ class DBManager:
                 self.logger.error(f"SQL查询失败: {str(e)}\nSQL: {query}\n参数: {args}")
                 raise
     
-    async def executemany(self, query: str, args_list):
+    async def executemany(self, query: str, args_list, stop_event: Optional[asyncio.Event] = None): # Add stop_event
         """批量执行SQL语句
         
         Args:
@@ -144,11 +144,19 @@ class DBManager:
                     # 批量执行
                     count = 0
                     for args in args_list:
+                        # Check stop event before executing each statement in the batch
+                        if stop_event and stop_event.is_set():
+                            # Removed DEBUG log for cancellation point
+                            # Option 1: Raise CancelledError to propagate cancellation
+                            raise asyncio.CancelledError("批量执行被用户取消")
+                            # Option 2: Return partial count (less explicit about cancellation)
+                            # return count
+                        
                         # 使用fetchrow代替execute，因为PreparedStatement没有execute方法
                         await stmt.fetchrow(*args)
                         count += 1
                     
-                    return count
+                    return count # Return full count if loop completes
             except Exception as e:
                 self.logger.error(f"批量SQL执行失败: {str(e)}\nSQL: {query}")
                 raise
@@ -319,14 +327,15 @@ class DBManager:
             self.logger.warning(f"查询表 {table_name} 列 {date_column} 的最大值时出错: {e}")
             return None # Return None on error
 
-    async def upsert(self, 
-                    table_name: str, 
-                    data: Union[pd.DataFrame, List[Dict[str, Any]]], 
-                    conflict_columns: List[str], 
+    async def upsert(self,
+                    table_name: str,
+                    data: Union[pd.DataFrame, List[Dict[str, Any]]],
+                    conflict_columns: List[str],
                     update_columns: Optional[List[str]] = None,
-                    timestamp_column: Optional[str] = None) -> int:
+                    timestamp_column: Optional[str] = None,
+                    stop_event: Optional[asyncio.Event] = None) -> int: # Add stop_event
         """通用UPSERT操作：插入数据，如有冲突则更新
-        
+
         PostgreSQL的UPSERT实现：当插入的记录与已有记录在指定的列上发生冲突时，
         可以选择更新部分列或者忽略此次插入。
         
@@ -461,9 +470,12 @@ class DBManager:
             values = filtered_values # Use the filtered list for execution
 
         try:
-            # 执行UPSERT
-            affected_rows = await self.executemany(upsert_sql, values)
+            # 执行UPSERT, pass stop_event to executemany
+            affected_rows = await self.executemany(upsert_sql, values, stop_event=stop_event)
             return affected_rows
+        except asyncio.CancelledError: # Propagate cancellation if executemany raises it
+             self.logger.warning(f"UPSERT 操作 ({table_name}) 被取消。")
+             raise # Re-raise CancelledError
         except Exception as e:
             # Log the problematic SQL and values for easier debugging
             self.logger.error(f"UPSERT操作失败: {str(e)}\n表: {table_name}\nSQL: {upsert_sql}\n第一行数据示例: {values[0] if values else '无数据'}")

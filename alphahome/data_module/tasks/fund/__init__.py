@@ -3,11 +3,13 @@ from .tushare_fund_daily import *
 from .tushare_fund_share import *
 from .tushare_fund_nav import *
 from .tushare_fund_adjfactor import *
+from .tushare_fund_portfolio import *
 
 __all__ = [
     "TushareFundBasicTask",
     "TushareFundDailyTask",
     "TushareFundShareTask",
     "TushareFundNavTask",
-    "TushareFundAdjFactorTask"
+    "TushareFundAdjFactorTask",
+    "TushareFundPortfolioTask",
 ]

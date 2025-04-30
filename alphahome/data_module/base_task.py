@@ -382,31 +382,25 @@ class Task(ABC):
         timestamp_column = 'update_time' if self.auto_add_update_time else None
         
         # DBManager.upsert 需要支持 stop_event 才能在此处中断
-        # 假设 db_manager.upsert 不直接支持，我们可以在调用前检查
+        # 检查停止事件
         if stop_event and stop_event.is_set():
              raise asyncio.CancelledError("任务在调用 upsert 前被取消")
 
-        # 检查 DBManager.upsert 是否接受 stop_event 参数
-        sig = inspect.signature(self.db.upsert)
-        if 'stop_event' in sig.parameters:
-             affected_rows = await self.db.upsert(
-                 table_name=self.table_name,
-                 data=data,
-                 conflict_columns=self.primary_keys,
-                 update_columns=None,  # 自动更新所有非冲突列
-                 timestamp_column=timestamp_column,
-                 stop_event=stop_event # <<< Pass if accepted >>>
-             )
-        else:
-             self.logger.debug("DBManager.upsert 不支持 stop_event 参数，无法在保存过程中取消。")
-             affected_rows = await self.db.upsert(
-                 table_name=self.table_name,
-                 data=data,
-                 conflict_columns=self.primary_keys,
-                 update_columns=None,
-                 timestamp_column=timestamp_column
-             )
-        
+        # 直接调用 upsert 并传递 stop_event (DBManager.upsert 已更新)
+        affected_rows = await self.db.upsert(
+            table_name=self.table_name,
+            data=data,
+            conflict_columns=self.primary_keys,
+            update_columns=None,  # 自动更新所有非冲突列
+            timestamp_column=timestamp_column,
+            stop_event=stop_event # Pass stop_event
+        )
+
+        # 再次检查停止事件 (如果 upsert 内部没有完全处理)
+        if stop_event and stop_event.is_set():
+             # 虽然 upsert 现在应该能处理，但保留此检查作为保险
+             raise asyncio.CancelledError("任务在 upsert 调用后被取消")
+
         return affected_rows
 
     async def smart_incremental_update(self, stop_event: Optional[asyncio.Event] = None, lookback_days=None, end_date=None, use_trade_days=False, safety_days=1, **kwargs): # <<< Add stop_event >>>

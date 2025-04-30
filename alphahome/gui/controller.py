@@ -73,7 +73,7 @@ async def _process_requests():
     queue_handler.setFormatter(formatter)
     root_logger = logging.getLogger() # 同时捕获来自 data_module 的日志
     root_logger.addHandler(queue_handler)
-    root_logger.setLevel(logging.INFO) # 恢复为 INFO 级别
+    root_logger.setLevel(logging.INFO) # Restore to INFO level after debugging
 
     # 初始化 TaskFactory
     try:
@@ -331,7 +331,12 @@ async def _handle_execute_tasks(mode: str, start_date_str: Optional[str]):
             # Only update if the status is still '运行中' to avoid overwriting final status
             if _running_task_status[task_name]['status'] == '运行中':
                  _running_task_status[task_name]['progress'] = progress_str
-                 response_queue.put(('RUN_STATUS_UPDATE', _running_task_status[task_name]))
+                 try:
+                     # Use put_nowait to avoid blocking the backend thread if the GUI queue is full
+                     response_queue.put_nowait(('RUN_STATUS_UPDATE', _running_task_status[task_name]))
+                 except queue.Full:
+                     # Log a warning if the queue is full, indicating the GUI might be lagging
+                     logging.warning(f"GUI response queue is full. Skipping progress update for {task_name}.")
         else:
             # Log if task is not found, might indicate a race condition or error
             logging.warning(f"Received progress update for unknown or completed task: {task_name}")
@@ -363,8 +368,9 @@ async def _handle_execute_tasks(mode: str, start_date_str: Optional[str]):
                 'start_date': start_date_str,
                 'end_date': datetime.now().strftime('%Y%m%d'),
                 'progress_callback': _update_gui_progress,
-                'concurrent_limit': task_settings.get('concurrent_limit', 1), # 从设置或默认值获取并发限制
-                'batch_size': task_settings.get('batch_size'),
+                # 从 task 实例获取配置，而不是未定义的 task_settings
+                'concurrent_limit': task.concurrent_limit, # 假设 task 实例有此属性 (基于 task 定义)
+                'batch_size': task.page_size, # 使用 task 定义中的 page_size (原 batch_size 可能是笔误)
                 'stop_event': stop_event
             }
             execute_method = None

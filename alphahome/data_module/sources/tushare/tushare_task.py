@@ -166,10 +166,11 @@ class TushareTask(Task):
         
         # <<< Get the callback >>>
         progress_callback = kwargs.get('progress_callback')
+        # Removed DEBUG log for callback existence
 
         try:
             await self.pre_execute()
-            
+
             # 依赖任务检查已移除
             # 直接进行数据获取
             
@@ -179,13 +180,15 @@ class TushareTask(Task):
             if not batch_list:
                 self.logger.info("批处理参数列表为空，无法获取数据")
                 return {"status": "no_data", "rows": 0}
-                
-            self.logger.info(f"生成了 {len(batch_list)} 个批处理任务")
-            
+
+            total_batches = len(batch_list)
+            self.logger.info(f"生成了 {total_batches} 个批处理任务") # Keep INFO log
+
             # 处理并保存每个批次的数据
             total_rows = 0
             failed_batches = 0 # 记录失败的批次数
             first_error = None # 记录第一个遇到的异常信息以备返回
+            successful_batches_count = 0 # <--- ADDED: Initialize success counter
             
             # 获取并发限制参数，优先使用传入的参数，其次使用实例属性
             concurrent_limit = kwargs.get('concurrent_limit', self.concurrent_limit)
@@ -196,6 +199,7 @@ class TushareTask(Task):
                 # 并发处理批次
                 self.logger.info(f"使用并发模式处理批次，并发数: {concurrent_limit}")
                 semaphore = asyncio.Semaphore(concurrent_limit)
+                success_counter_lock = asyncio.Lock() # <--- ADDED: Lock for counter
                 pbar = None # 初始化进度条变量
                 
                 # 如果需要显示进度，则创建 tqdm 实例
@@ -204,32 +208,49 @@ class TushareTask(Task):
                 
                 # 修改内部函数以接受并更新 pbar 和调用回调
                 async def process_batch(i, batch_params, pbar_instance, cb):
+                    nonlocal successful_batches_count # <--- ADDED: Access outer counter
                     processed_rows = 0 # Default value
                     try:
                         async with semaphore:
-                            processed_rows = await self._process_single_batch(i, len(batch_list), batch_params)
+                            processed_rows = await self._process_single_batch(i, total_batches, batch_params)
+                            # Removed DEBUG log for _process_single_batch return value
+                            if processed_rows > 0: # <--- MODIFIED: Check for success
+                                async with success_counter_lock: # <--- ADDED: Lock
+                                    successful_batches_count += 1 # <--- ADDED: Increment on success
+                                    # Removed DEBUG log for counter increment
                             if processed_rows == 0:
-                                return None
-                            return processed_rows
+                                return None # Still return None on failure
+                            return processed_rows # Return rows on success
                     finally:
-                        # 无论成功或失败，都更新进度条和调用回调
+                        # 更新控制台进度条 (如果存在)
                         if pbar_instance:
                             pbar_instance.update(1)
-                            # <<< Call the progress callback >>>
-                            if cb and pbar_instance.total > 0:
-                                completed_count = pbar_instance.n
-                                total_count = pbar_instance.total
-                                percentage = int((completed_count / total_count) * 100)
-                                try:
-                                    # Ensure callback is awaited if it's a coroutine
-                                    if asyncio.iscoroutinefunction(cb):
-                                        await cb(self.name, f"{percentage}%")
-                                    else:
-                                         cb(self.name, f"{percentage}%") # Allow non-async callback too
-                                except Exception as cb_err:
-                                     self.logger.error(f"执行进度回调时出错: {cb_err}", exc_info=False) # Avoid too much noise
-                            # 添加一个微小的延迟，尝试让tqdm有机会渲染 (Keep this for console smoothness)
-                            await asyncio.sleep(0.01)
+
+                        # --- 调用 GUI 进度回调 (移出 if pbar_instance) ---
+                        # 读取成功计数
+                        current_successful_count = 0
+                        async with success_counter_lock:
+                            current_successful_count = successful_batches_count
+                        total_count = total_batches
+
+                        # 计算百分比
+                        percentage = int((current_successful_count / total_count) * 100) if total_count > 0 else 0
+                        # Removed DEBUG log before calling callback
+
+                        # 调用回调 (如果存在且总数大于0)
+                        if cb and total_count > 0:
+                            try:
+                                # Removed DEBUG log before calling cb
+                                if asyncio.iscoroutinefunction(cb):
+                                    await cb(self.name, f"{percentage}%")
+                                else:
+                                    cb(self.name, f"{percentage}%")
+                                # Removed DEBUG log after calling cb
+                            except Exception as cb_err:
+                                self.logger.error(f"执行进度回调时出错: {cb_err}", exc_info=False)
+
+                        # 添加一个微小的延迟 (保持控制台流畅性，对GUI回调无直接影响)
+                        await asyncio.sleep(0.01)
                 
                 # 创建所有批次的任务, 传递 pbar 实例和回调
                 tasks = [process_batch(i, batch_params, pbar, progress_callback) for i, batch_params in enumerate(batch_list)]
@@ -267,24 +288,29 @@ class TushareTask(Task):
 
                 for i in progress_iterator: # i is now the index 0, 1, 2...
                     batch_params = batch_list[i]
-                    rows = await self._process_single_batch(i, len(batch_list), batch_params)
+                    rows = await self._process_single_batch(i, total_batches, batch_params)
+                    # Removed DEBUG log for _process_single_batch return value
                     if rows > 0:
                         total_rows += rows
+                        successful_batches_count += 1 # <--- ADDED: Increment on success
+                        # Removed DEBUG log for counter increment
                     else: # rows == 0 表示失败
                         failed_batches += 1
-                    
+
                     # <<< Call the progress callback for serial execution >>>
                     if progress_callback:
-                        completed_count = i + 1 # Current iteration index + 1
-                        total_count = len(batch_list)
+                        total_count = total_batches # <--- MODIFIED: Use stored total_batches
+                        percentage = int((successful_batches_count / total_count) * 100) if total_count > 0 else 0
+                        # Removed DEBUG log before calling callback
                         if total_count > 0:
-                            percentage = int((completed_count / total_count) * 100)
                             try:
+                                # Removed DEBUG log before calling callback
                                 # Ensure callback is awaited if it's a coroutine
                                 if asyncio.iscoroutinefunction(progress_callback):
                                      await progress_callback(self.name, f"{percentage}%")
                                 else:
                                      progress_callback(self.name, f"{percentage}%") # Allow non-async callback
+                                # Removed DEBUG log after calling callback
                             except Exception as cb_err:
                                 self.logger.error(f"执行进度回调时出错: {cb_err}", exc_info=False)
             

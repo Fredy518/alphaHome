@@ -17,9 +17,6 @@ from ...task_decorator import task_register
 # 导入批处理工具
 from ...tools.batch_utils import generate_trade_day_batches
 
-# logger 由 Task 基类提供
-# logger = logging.getLogger(__name__)
-
 @task_register()
 class TushareFundShareTask(TushareTask):
     """获取基金规模数据 (含ETF)"""
@@ -63,7 +60,7 @@ class TushareFundShareTask(TushareTask):
 
     # 7. 分批配置 (根据接口特性和数据量调整)
     batch_trade_days_single_code = 360 # 单基金查询时，每个批次的交易日数量 (约1.5年)
-    batch_trade_days_all_codes = 5    # 全市场查询时，每个批次的交易日数量 (约1.5月)
+    batch_trade_days_all_codes = 5    # 全市场查询时，每个批次的交易日数量 (1周)
 
     # 8. 初始化 (如果需要特殊逻辑)
     # def __init__(self, db_connection, api_token=None, api=None):
