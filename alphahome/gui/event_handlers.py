@@ -26,6 +26,7 @@ _ALL_TYPES_OPTION = "所有类型"
 def create_task_list_tab(parent: ttk.Frame) -> Dict[str, tk.Widget]:
     """创建"任务列表"标签页的 Tkinter 布局 (含过滤和排序)"""
     widgets = {} # 存储此标签页创建的控件
+    hsb = None # 防御性初始化
 
     # --- 顶部按钮框架 ---
     top_frame = ttk.Frame(parent)
@@ -165,48 +166,73 @@ def create_task_execution_tab(parent: ttk.Frame) -> Dict[str, tk.Widget]:
     control_frame = ttk.LabelFrame(parent, text="运行控制", padding="10")
     control_frame.pack(side=tk.TOP, fill=tk.X, pady=5)
 
-    # 执行模式
+    # --- 第 0 行: 执行模式 ---
     ttk.Label(control_frame, text="执行模式:").grid(row=0, column=0, padx=(0, 5), pady=5, sticky=tk.W)
     modes = ["智能增量", "手动增量", "全量导入"]
-    exec_mode_combo = ttk.Combobox(control_frame, values=modes, state="readonly")
+    exec_mode_combo = ttk.Combobox(control_frame, values=modes, state="readonly", width=12) # 调整宽度
     exec_mode_combo.set(modes[0]) # 默认选中第一个
     exec_mode_combo.grid(row=0, column=1, padx=5, pady=5, sticky=tk.W)
     # 绑定模式切换事件，使用 lambda 传递 widgets
     exec_mode_combo.bind("<<ComboboxSelected>>", lambda event: handle_exec_mode_change(widgets))
     widgets['exec_mode_combo'] = exec_mode_combo
 
-    # 手动增量日期
-    manual_date_label = ttk.Label(control_frame, text="开始日期:")
-    # 先放置但不显示 (grid_remove)
-    manual_date_label.grid(row=0, column=2, padx=(15, 5), pady=5, sticky=tk.W)
-    manual_date_label.grid_remove()
+    # --- 第 1 行: 手动增量日期 (初始隐藏) ---
+    manual_date_label = ttk.Label(control_frame, text="开始:") # 修改标签文本
+    manual_date_label.grid(row=1, column=0, padx=(0, 5), pady=(5,5), sticky=tk.W) # 移到 row=1, col=0, 增加 pady
     widgets['manual_date_label'] = manual_date_label
 
     if HAS_TKCALENDAR:
         manual_date_entry = DateEntry(control_frame, width=12, background='darkblue',
                                       foreground='white', borderwidth=2, date_pattern='yyyy-mm-dd',
                                       state='disabled')
-        manual_date_entry.grid(row=0, column=3, padx=5, pady=5, sticky=tk.W)
-        manual_date_entry.grid_remove() # 先隐藏
+        manual_date_entry.grid(row=1, column=1, padx=5, pady=(5,5), sticky=tk.W) # 移到 row=1, col=1, 增加 pady
     else:
-        # 如果没有 tkcalendar，使用普通输入框
         manual_date_var = tk.StringVar(value=datetime.now().strftime('%Y-%m-%d'))
         manual_date_entry = ttk.Entry(control_frame, width=12, state='disabled', textvariable=manual_date_var)
-        manual_date_entry.grid(row=0, column=3, padx=5, pady=5, sticky=tk.W)
-        manual_date_entry.grid_remove() # 先隐藏
+        manual_date_entry.grid(row=1, column=1, padx=5, pady=(5,5), sticky=tk.W) # 移到 row=1, col=1, 增加 pady
     widgets['manual_date_entry'] = manual_date_entry
 
-    # 运行和停止按钮（放在右侧）
-    run_button = ttk.Button(control_frame, text="运行选中任务", command=lambda: handle_run_tasks(widgets))
-    run_button.grid(row=0, column=5, padx=(10, 5), pady=5, sticky=tk.E)
+    manual_end_date_label = ttk.Label(control_frame, text="结束:") # 修改标签文本
+    manual_end_date_label.grid(row=1, column=2, padx=(15, 5), pady=(5,5), sticky=tk.W) # 移到 row=1, col=2, 增加 pady
+    widgets['manual_end_date_label'] = manual_end_date_label
+
+    today_str = datetime.now().strftime('%Y-%m-%d')
+    if HAS_TKCALENDAR:
+        manual_end_date_entry = DateEntry(control_frame, width=12, background='darkblue',
+                                          foreground='white', borderwidth=2, date_pattern='yyyy-mm-dd',
+                                          state='disabled')
+        manual_end_date_entry.grid(row=1, column=3, padx=5, pady=(5,5), sticky=tk.W) # 移到 row=1, col=3, 增加 pady
+    else:
+        manual_end_date_var = tk.StringVar(value=today_str)
+        manual_end_date_entry = ttk.Entry(control_frame, width=12, state='disabled', textvariable=manual_end_date_var)
+        manual_end_date_entry.grid(row=1, column=3, padx=5, pady=(5,5), sticky=tk.W) # 移到 row=1, col=3, 增加 pady
+    widgets['manual_end_date_entry'] = manual_end_date_entry
+
+    # --- 第 2 行: 运行/停止按钮 (靠右) ---
+    # 创建一个单独的 Frame 来容纳按钮，并将其 grid 到 control_frame 的右侧
+    button_container = ttk.Frame(control_frame)
+    # 将按钮容器放在第0行，第4列，并让它跨越3行以垂直居中（或根据需要调整）
+    # 并设置 sticky='e' 使其靠右
+    # 注意：column=4 是日期输入后的下一列
+    button_container.grid(row=0, column=4, rowspan=3, padx=(20, 0), sticky='e') 
+
+    run_button = ttk.Button(button_container, text="运行选中任务", command=lambda: handle_run_tasks(widgets))
+    run_button.pack(side=tk.LEFT, padx=(0, 5)) # 在按钮容器内使用 pack
     widgets['run_button'] = run_button
 
-    stop_button = ttk.Button(control_frame, text="停止执行", state='disabled', command=lambda: handle_stop_tasks(widgets))
-    stop_button.grid(row=0, column=6, padx=5, pady=5, sticky=tk.E)
+    stop_button = ttk.Button(button_container, text="停止执行", state='disabled', command=lambda: handle_stop_tasks(widgets))
+    stop_button.pack(side=tk.LEFT, padx=(0, 0)) # 在按钮容器内使用 pack
     widgets['stop_button'] = stop_button
 
-    # 设置列权重，让中间空间可伸缩，按钮靠右
+    # 设置 control_frame 的列权重，让按钮容器所在的列 (column 4) 可扩展，将其推到最右边
     control_frame.grid_columnconfigure(4, weight=1)
+
+    # 初始隐藏日期控件 (需要在 grid 之后调用)
+    manual_date_label.grid_remove()
+    manual_date_entry.grid_remove()
+    manual_end_date_label.grid_remove()
+    manual_end_date_entry.grid_remove()
+
 
     # --- 运行状态框架 ---
     run_frame = ttk.LabelFrame(parent, text="运行状态", padding="10")
@@ -456,9 +482,9 @@ def handle_save_settings(widgets: Dict[str, tk.Widget]):
         if token_key in widgets and hasattr(widgets[token_key], 'get'):
             settings_to_send['tushare_token'] = widgets[token_key].get()
         else:
-             print(f"警告：保存设置时缺少控件或 get 方法 '{token_key}'")
-             messagebox.showerror("内部错误", f"无法找到 Tushare Token 输入控件。")
-             return
+            print(f"警告：保存设置时缺少控件或 get 方法 '{token_key}'")
+            messagebox.showerror("内部错误", f"无法找到 Tushare Token 输入控件。")
+            return
 
         # 2. 获取数据库字段值
         db_values = {}
@@ -479,8 +505,8 @@ def handle_save_settings(widgets: Dict[str, tk.Widget]):
         if any(db_values.values()): # Only construct URL if at least one field is non-empty
             # Simple validation: require host and dbname at minimum?
             if not db_values['db_host'] or not db_values['db_name']:
-                 messagebox.showerror("输入错误", "数据库主机和数据库名是必填项。")
-                 return
+                messagebox.showerror("输入错误", "数据库主机和数据库名是必填项。")
+                return
             
             user = db_values['db_user']
             password = db_values['db_password']
@@ -498,7 +524,7 @@ def handle_save_settings(widgets: Dict[str, tk.Widget]):
             new_db_url = f"postgresql://{user_pass}{host_part}/{urllib.parse.quote(dbname)}"
             print(f"DEBUG: Constructed DB URL: {new_db_url}")
         else:
-             print("DEBUG: All DB fields empty, setting URL to empty string.")
+            print("DEBUG: All DB fields empty, setting URL to empty string.")
 
 
         settings_to_send['database_url'] = new_db_url
@@ -508,97 +534,98 @@ def handle_save_settings(widgets: Dict[str, tk.Widget]):
         print("保存请求已发送至后台，请查看日志和状态栏确认结果。") # 更新提示
 
     except tk.TclError as e:
-         messagebox.showerror("界面错误", f"获取设置输入框内容时出错: {e}")
+        messagebox.showerror("界面错误", f"获取设置输入框内容时出错: {e}")
     except Exception as e:
         messagebox.showerror("保存错误", f"保存设置时发生意外错误: {e}")
 
 def handle_exec_mode_change(widgets: Dict[str, tk.Widget]):
-    """处理执行模式 Combobox 变化，控制日期输入控件的可见性和状态"""
-    try:
-        mode = widgets['exec_mode_combo'].get()
-        is_manual = (mode == "手动增量")
-        print(f"回调：执行模式更改为 '{mode}', is_manual={is_manual}")
+    """处理执行模式下拉框选择变化的事件。"""
+    selected_mode = widgets['exec_mode_combo'].get()
 
-        date_label = widgets.get('manual_date_label')
-        date_entry = widgets.get('manual_date_entry')
+    manual_date_label = widgets.get('manual_date_label')
+    manual_date_entry = widgets.get('manual_date_entry')
+    manual_end_date_label = widgets.get('manual_end_date_label') # 获取结束日期标签
+    manual_end_date_entry = widgets.get('manual_end_date_entry') # 获取结束日期输入
 
-        if date_label and date_entry:
-            if is_manual:
-                date_label.grid() # 显示标签
-                date_entry.grid() # 显示输入框
-                # 正确处理 DateEntry 和 ttk.Entry 的状态设置
-                if HAS_TKCALENDAR and isinstance(date_entry, DateEntry):
-                    date_entry.config(state='normal')
-                elif isinstance(date_entry, ttk.Entry):
-                    date_entry.config(state=tk.NORMAL)
-            else:
-                date_label.grid_remove() # 隐藏标签
-                date_entry.grid_remove() # 隐藏输入框
-                if HAS_TKCALENDAR and isinstance(date_entry, DateEntry):
-                    date_entry.config(state='disabled')
-                elif isinstance(date_entry, ttk.Entry):
-                    date_entry.config(state=tk.DISABLED)
+    if manual_date_label and manual_date_entry and manual_end_date_label and manual_end_date_entry:
+        if selected_mode == "手动增量":
+            # 显示开始和结束日期控件
+            manual_date_label.grid()
+            manual_date_entry.config(state='normal')
+            manual_date_entry.grid()
+            manual_end_date_label.grid() # 显示结束日期标签
+            manual_end_date_entry.config(state='normal') # 启用结束日期输入
+            manual_end_date_entry.grid() # 显示结束日期输入
+            # 如果使用的是普通 Entry，可能需要显式调用 grid()
+            if not HAS_TKCALENDAR:
+                manual_date_entry.grid()
+                manual_end_date_entry.grid()
+
         else:
-            print("警告：切换执行模式时缺少日期标签或输入控件。")
-
-    except tk.TclError as e:
-         print(f"警告：更新日期控件状态时出错: {e}")
-    except Exception as e:
-        print(f"处理模式更改时发生意外错误: {e}")
+            # 隐藏开始和结束日期控件
+            manual_date_label.grid_remove()
+            manual_date_entry.config(state='disabled')
+            manual_date_entry.grid_remove()
+            manual_end_date_label.grid_remove() # 隐藏结束日期标签
+            manual_end_date_entry.config(state='disabled') # 禁用结束日期输入
+            manual_end_date_entry.grid_remove() # 隐藏结束日期输入
+    else:
+        print("错误: 未找到手动日期控件。")
 
 def handle_run_tasks(widgets: Dict[str, tk.Widget]):
-    """处理运行任务按钮点击"""
-    print("回调：请求运行任务...")
-    try:
-        mode = widgets['exec_mode_combo'].get()
-        start_date_str = None
+    """处理"运行选中任务"按钮点击事件。"""
+    task_tree = widgets.get('task_tree')
+    exec_mode_combo = widgets.get('exec_mode_combo')
+    manual_date_entry = widgets.get('manual_date_entry')
+    manual_end_date_entry = widgets.get('manual_end_date_entry') # 获取结束日期控件
+    run_button = widgets.get('run_button')
+    stop_button = widgets.get('stop_button')
+    statusbar = widgets.get('statusbar')
 
-        if mode == "手动增量":
-            date_entry = widgets['manual_date_entry']
-            # 从 DateEntry 或 ttk.Entry 获取日期字符串
-            if HAS_TKCALENDAR and isinstance(date_entry, DateEntry):
-                start_date_str = date_entry.get_date().strftime('%Y-%m-%d')
-            elif isinstance(date_entry, (tk.Entry, ttk.Entry)):
-                start_date_str = date_entry.get()
-            else:
-                messagebox.showerror("内部错误", "无法识别的日期输入控件类型。")
-                return
+    if not all([task_tree, exec_mode_combo, manual_date_entry, manual_end_date_entry, run_button, stop_button, statusbar]):
+        messagebox.showerror("错误", "界面元素不完整，无法运行任务。")
+        return
 
-            # 统一验证 YYYY-MM-DD 格式
-            try:
-                datetime.strptime(start_date_str, '%Y-%m-%d')
-            except ValueError:
-                messagebox.showerror("日期错误", f"手动增量模式需要有效的开始日期 (YYYY-MM-DD 格式)。 输入值为: '{start_date_str}'")
-                return
+    # 1. 获取选中的任务
+    selected_task_names = []
+    for item_id in task_tree.get_children():
+        values = task_tree.item(item_id, 'values')
+        # 假设 'selected' 列是第一列 (索引 0)
+        if values and values[0] == '✓': # 或者您用来表示选中的标记
+            # 假设 'name' 列是第三列 (索引 2)
+            if len(values) > 2:
+                selected_task_names.append(values[2])
 
-        # 禁用运行按钮，启用停止按钮
-        if 'run_button' in widgets: widgets['run_button'].config(state=tk.DISABLED)
-        if 'stop_button' in widgets: widgets['stop_button'].config(state=tk.NORMAL)
+    if not selected_task_names:
+        messagebox.showwarning("提示", "请至少选择一个任务。")
+        return
 
-        # 清空运行状态表格和日志区域
-        if 'run_tree' in widgets:
-            run_tree = widgets['run_tree']
-            run_tree.delete(*run_tree.get_children())
-        if 'log_text' in widgets:
-            log_text = widgets['log_text']
-            log_text.config(state=tk.NORMAL)
-            log_text.delete('1.0', tk.END)
-            log_text.config(state=tk.DISABLED)
+    # 2. 获取执行模式和日期
+    mode = exec_mode_combo.get()
+    start_date = None
+    end_date = None # 初始化 end_date
 
-        # 发送执行请求到控制器
-        controller.request_task_execution(mode, start_date_str) # 发送 YYYY-MM-DD 格式
-        print(f"任务执行请求已发送: mode={mode}, start_date={start_date_str}")
+    if mode == "手动增量":
+        try:
+            start_date = manual_date_entry.get()
+            end_date = manual_end_date_entry.get() # 获取结束日期
+            # 简单验证日期格式 (YYYY-MM-DD)
+            datetime.strptime(start_date, '%Y-%m-%d')
+            datetime.strptime(end_date, '%Y-%m-%d') # 验证结束日期
+            # 替换 '-' 为 '' 以匹配 Tushare API 格式
+            start_date = start_date.replace('-', '')
+            end_date = end_date.replace('-', '') # 格式化结束日期
+        except ValueError:
+            messagebox.showerror("错误", "手动增量模式下，请输入有效的开始和结束日期 (YYYY-MM-DD)。")
+            return
 
-    except KeyError as e:
-         messagebox.showerror("错误", f"运行任务时缺少必要的界面元素: {e}")
-         # 尝试恢复按钮状态
-         if 'run_button' in widgets: widgets['run_button'].config(state=tk.NORMAL)
-         if 'stop_button' in widgets: widgets['stop_button'].config(state=tk.DISABLED)
-    except Exception as e:
-        messagebox.showerror("运行错误", f"运行任务时发生意外错误: {e}")
-        # 尝试恢复按钮状态
-        if 'run_button' in widgets: widgets['run_button'].config(state=tk.NORMAL)
-        if 'stop_button' in widgets: widgets['stop_button'].config(state=tk.DISABLED)
+    # 3. 禁用运行按钮，启用停止按钮
+    run_button.config(state='disabled')
+    stop_button.config(state='normal')
+    statusbar.config(text=f"准备运行 {len(selected_task_names)} 个任务...")
+
+    # 4. 请求控制器执行任务 (现在传递 end_date)
+    controller.request_task_execution(mode, start_date, end_date)
 
 def handle_stop_tasks(widgets: Dict[str, tk.Widget]):
     """处理停止任务按钮点击"""
@@ -785,14 +812,14 @@ def process_controller_update(root: tk.Tk, ui_elements: Dict[str, tk.Widget], up
                 log_text.config(state=tk.DISABLED)
                 log_text.see(tk.END) # 滚动到底部
             else:
-                 print(f"警告：无法记录日志，缺少或类型错误的 log_text 控件。")
+                print(f"警告：无法记录日志，缺少或类型错误的 log_text 控件。")
 
         elif update_type == 'STATUS':
             statusbar = ui_elements.get('statusbar')
             if statusbar and isinstance(statusbar, ttk.Label):
                 statusbar.config(text=str(data))
             else:
-                 print(f"警告：无法更新状态栏，缺少或类型错误的 statusbar 控件。")
+                print(f"警告：无法更新状态栏，缺少或类型错误的 statusbar 控件。")
 
         elif update_type == 'ERROR':
             error_msg = str(data)

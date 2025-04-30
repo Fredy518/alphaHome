@@ -43,7 +43,7 @@ def run_gui():
 
     # 创建主窗口
     root = tk.Tk()
-    root.title("AlphaHome 数据管理工具 v1.0 (Tkinter版)")
+    root.title("AlphaHome 数据管理工具(Tkinter版)")
     root.geometry("1000x800") # 设置初始大小
 
     # --- 初始化控制器 ---
