@@ -23,4 +23,8 @@ data_module/config.json
 # Ignore IDE/Editor specific files
 .idea/
 .vscode/
-*.swp 
+*.swp
+
+# Additional rules
+logs/
+dist/ 
