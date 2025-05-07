@@ -15,7 +15,7 @@ from datetime import datetime
 from typing import Dict, Any
 import dotenv
 from pathlib import Path
-from alphahome.data_module import DBManager, TaskFactory
+from alphahome.fetchers import DBManager, TaskFactory
 from scripts.base.task_updater_base import TaskUpdaterBase
 # from alphahome.data_module.tasks.stock.tushare_stock_basic import TushareStockBasicTask # TaskFactory 会处理加载
 

@@ -21,8 +21,9 @@ from typing import List, Dict, Any, Optional, Union
 import json
 import dotenv
 
-# 将项目根目录添加到 Python 路径
-project_root = Path(__file__).resolve().parent.parent
+# 动态添加项目根目录到 sys.path，以便导入 alphahome 包
+current_dir = Path(__file__).resolve().parent
+project_root = current_dir.parent
 sys.path.append(str(project_root))
 
 # 加载环境变量
@@ -47,7 +48,8 @@ logging.basicConfig(
 logger = logging.getLogger('db_quality_check')
 
 # 导入数据模块
-from data_module import DataQualityChecker, TaskFactory, DBManager
+from alphahome.fetchers import DataQualityChecker, TaskFactory, DBManager
+from alphahome.utils.log_utils import setup_logging
 
 
 class DBQualityChecker:

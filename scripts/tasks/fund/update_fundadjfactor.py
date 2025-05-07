@@ -15,7 +15,7 @@ from datetime import datetime
 from typing import Dict, Any
 import dotenv
 from pathlib import Path
-from alphahome.data_module.task_factory import TaskFactory
+from alphahome.fetchers.task_factory import TaskFactory
 from scripts.base.task_updater_base import TaskUpdaterBase
 
 # Setup paths and environment

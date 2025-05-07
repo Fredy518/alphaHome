@@ -18,7 +18,7 @@ from typing import Dict, Any
 from datetime import datetime
 import dotenv
 from pathlib import Path
-from alphahome.data_module.task_factory import TaskFactory
+from alphahome.fetchers.task_factory import TaskFactory
 from scripts.base.task_updater_base import TaskUpdaterBase
 
 # 动态调整 sys.path 和加载 .env
@@ -29,7 +29,7 @@ dotenv.load_dotenv(dotenv_path=dotenv_path)
 
 # 现在可以正常导入项目模块
 from scripts.base.task_updater_base import TaskUpdaterBase
-from data_module.task_factory import TaskFactory
+from alphahome.fetchers.task_factory import TaskFactory
 
 # 配置模块级 logger
 logger = logging.getLogger(__name__)

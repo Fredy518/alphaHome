@@ -21,7 +21,7 @@ from datetime import datetime, timedelta
 import dotenv
 from pathlib import Path
 import pandas as pd
-from alphahome.data_module.task_factory import TaskFactory
+from alphahome.fetchers.task_factory import TaskFactory
 from scripts.base.task_updater_base import TaskUpdaterBase
 
 # 添加项目根目录到系统路径

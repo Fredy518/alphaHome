@@ -95,8 +95,8 @@ pip install dist/alphahome-1.0.0-py3-none-any.whl
 
 要添加一个新的数据获取任务（例如，获取指数数据）：
 
-1.  在 `data_module/tasks/` 下创建一个新的 Python 文件（例如 `data_module/tasks/index/tushare_index_daily.py`）。
-2.  在该文件中创建一个新的类，继承自 `data_module.task.TushareTask` (或其他合适的数据源基类)。
+1.  在 `fetchers/tasks/` 下创建一个新的 Python 文件（例如 `fetchers/tasks/index/tushare_index_daily.py`）。
+2.  在该文件中创建一个新的类，继承自 `fetchers.task.TushareTask` (或其他合适的数据源基类)。
 3.  在类中定义必要的属性：
     *   `name`: 任务的唯一标识符 (例如 `"tushare_index_daily"`)。
     *   `description`: 任务描述。
@@ -116,7 +116,7 @@ pip install dist/alphahome-1.0.0-py3-none-any.whl
     *   `prepare_params`: 准备每次 API 调用所需的具体参数。
     *   `(可选)` `process_data`: 添加自定义的数据处理逻辑。
     *   `(可选)` `validate_data`: 添加自定义的数据验证逻辑。
-5.  (重要) 在 `data_module/tasks/__init__.py` 文件中导入你新创建的任务类，以便 `TaskFactory` 能够发现它。
+5.  (重要) 在 `fetchers/tasks/__init__.py` 文件中导入你新创建的任务类，以便 `TaskFactory` 能够发现它。
 6.  现在你可以通过 `TaskFactory.get_task("your_new_task_name")` 来获取和使用你的新任务了。
 
 ## 项目结构
@@ -127,8 +127,8 @@ alphaHome/
 ├── .gitignore              # Git 忽略文件配置
 ├── config.py               # 应用配置 (如并发限制)
 ├── requirements.txt        # Python 依赖库
-├── data_module/            # 数据模块核心
-│   ├── __init__.py         # data_module 包初始化
+├── fetchers/               # 数据模块核心
+│   ├── __init__.py         # fetchers 包初始化
 │   ├── base_task.py        # 基础任务类 Task
 │   ├── config.json         # (用途待定) 配置文件?
 │   ├── db_manager.py       # 数据库交互 (连接, 表管理, CRUD)
@@ -334,7 +334,7 @@ python scripts/check_db_quality.py -v
 
 ## 示例任务说明
 
-本节介绍 `data_module/tasks/examples` 目录下的示例任务，用于演示如何创建和注册自定义任务。
+本节介绍 `fetchers/tasks/examples` 目录下的示例任务，用于演示如何创建和注册自定义任务。
 
 ### 示例任务说明
 

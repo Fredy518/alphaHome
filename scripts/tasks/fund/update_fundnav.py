@@ -15,6 +15,9 @@ from datetime import datetime
 from typing import Dict, Any
 import dotenv
 from pathlib import Path
+import pandas as pd
+from alphahome.fetchers.task_factory import TaskFactory
+from scripts.base.task_updater_base import TaskUpdaterBase
 
 # 将项目根目录添加到 Python 路径
 project_root = Path(__file__).resolve().parent.parent.parent.parent
@@ -39,10 +42,6 @@ logging.basicConfig(
         logging.StreamHandler(sys.stdout)
     ]
 )
-
-# 导入必要的模块
-from alphahome.data_module.task_factory import TaskFactory
-from scripts.base.task_updater_base import TaskUpdaterBase
 
 # 定义目标任务名称常量
 TARGET_TASK_NAME = "tushare_fund_nav"

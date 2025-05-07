@@ -104,7 +104,7 @@
 
 2. 配置任务设置：
    
-   根据需要修改`data_module/config.json`文件，设置数据库连接 (`database.url`)、API Token (`api.tushare_token`) 以及可选的任务特定参数 (`tasks`)。
+   根据需要修改`fetchers/config.json`文件，设置数据库连接 (`database.url`)、API Token (`api.tushare_token`) 以及可选的任务特定参数 (`tasks`)。
 
 ## 图形用户界面 (GUI)
 
@@ -148,7 +148,7 @@ GUI 窗口将会启动，包含以下几个标签页：
 
 - **数据库设置**: 
     - **注意**: 数据库连接信息（主机、端口、用户名、密码、数据库名）**不能**通过此界面直接修改。
-    - 如需修改数据库连接，请直接编辑项目根目录下的 `data_module/config.json` 文件，修改 `database` 部分下的 `url` 字段。
+    - 如需修改数据库连接，请直接编辑项目根目录下的 `fetchers/config.json` 文件，修改 `database` 部分下的 `url` 字段。
     - 界面上显示的数据库字段信息是从当前的 `database.url` 解析出来的，仅供参考，且处于**禁用**状态。
 - **Tushare 设置**: 
     - 您可以在 "Tushare Token" 输入框中查看、输入或修改您的 Tushare API Token。
@@ -258,7 +258,7 @@ python scripts/tasks/finance/fetch_financial_report.py --period 20231231
 `DBManager`使用asyncpg库创建和管理连接池，支持异步数据库操作。这是一个典型的连接管理流程：
 
 ```python
-from data_module import DBManager
+from fetchers import DBManager
 
 async def example_db_operations():
     # 创建数据库管理器
@@ -279,7 +279,7 @@ async def example_db_operations():
 在实际应用中，通常不需要直接创建`DBManager`实例，而是通过`TaskFactory`来获取它：
 
 ```python
-from data_module import TaskFactory
+from fetchers import TaskFactory
 
 async def example_task_factory():
     # 初始化TaskFactory（会自动创建DBManager）
@@ -510,7 +510,7 @@ async def task_execution_example():
 创建自定义任务需要继承`Task`基类，并至少实现`fetch_data`方法。以下是一个完整的自定义任务示例：
 
 ```python
-from data_module import Task, task_register
+from fetchers import Task, task_register
 import pandas as pd
 
 @task_register()  # 自动注册任务
@@ -714,8 +714,8 @@ async def example_incremental_update():
 任务的注册通过 `@task_register()` 装饰器自动完成。开发者在定义 `Task` 子类时，只需要添加这个装饰器即可：
 
 ```python
-from data_module.base_task import Task
-from data_module.task_decorator import task_register
+from fetchers.base_task import Task
+from fetchers.task_decorator import task_register
 
 @task_register()
 class MyTask(Task):
@@ -726,7 +726,7 @@ class MyTask(Task):
 
 1.  **获取所有已注册任务的名称列表**：
     ```python
-    from data_module import TaskFactory
+    from fetchers import TaskFactory
 
     async def get_all_tasks():
         await TaskFactory.initialize() # 确保已初始化
@@ -775,7 +775,7 @@ await TaskFactory.shutdown()
 
 `TaskFactory` 负责从配置文件加载任务特定的配置参数，并在创建任务实例时应用这些配置。
 
-配置文件结构 (`data_module/config.json`)：
+配置文件结构 (`fetchers/config.json`)：
 
 ```json
 {
@@ -802,7 +802,7 @@ await TaskFactory.shutdown()
 获取任务配置的方法：
 
 ```python
-from data_module.task_factory import get_task_config
+from fetchers.task_factory import get_task_config
 
 # 获取特定任务的完整配置
 fund_nav_config = get_task_config("tushare_fund_nav")
@@ -816,7 +816,7 @@ concurrent_limit = get_task_config("tushare_fund_nav", "concurrent_limit", 2)
 `TaskFactory` 提供了一个方便的方法来获取特定类型的已注册任务的名称列表。
 
 ```python
-from data_module.task_factory import TaskFactory
+from fetchers import TaskFactory
 
 async def example_get_tasks_by_type():
     await TaskFactory.initialize()

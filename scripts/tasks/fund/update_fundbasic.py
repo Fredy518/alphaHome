@@ -15,6 +15,8 @@ from datetime import datetime
 from typing import Dict, Any
 import dotenv
 from pathlib import Path
+import pandas as pd
+from alphahome.fetchers import DBManager, TaskFactory
 
 # 将项目根目录添加到 Python 路径
 project_root = Path(__file__).resolve().parent.parent.parent.parent
@@ -40,8 +42,7 @@ logging.basicConfig(
 )
 
 # 导入必要的模块 (确保在添加 sys.path 之后)
-from alphahome.data_module import DBManager, TaskFactory
-from scripts.base.task_updater_base import TaskUpdaterBase # 导入基类
+from scripts.base.task_updater_base import TaskUpdaterBase
 # from alphahome.data_module.tasks.fund.tushare_fund_basic import TushareFundBasicTask # TaskFactory 会处理加载
 
 # 定义目标任务名称常量

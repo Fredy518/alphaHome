@@ -70,9 +70,9 @@
 
 系统架构基于分层设计，主要包括：
 
-1.  **数据源层 (`data_module/sources`)**: 负责与外部数据提供商（如Tushare）的API进行交互。
-2.  **任务层 (`data_module/tasks`)**: 定义具体的数据获取和处理任务，继承自基类。
-3.  **工具层 (`data_module/tools`)**: 提供通用的数据处理、数据库交互（`DBManager`）、日志记录等工具。
+1.  **数据源层 (`fetchers/sources`)**: 负责与外部数据提供商（如Tushare）的API进行交互。
+2.  **任务层 (`fetchers/tasks`)**: 定义具体的数据获取和处理任务，继承自基类。
+3.  **工具层 (`fetchers/tools`)**: 提供通用的数据处理、数据库交互（`DBManager`）、日志记录等工具。
 4.  **脚本层 (`scripts`)**: 包含用于执行任务、数据库初始化、质量检查等的命令行脚本。
 5.  **图形界面层 (`gui`)**: 提供一个基于 Tkinter 的用户界面，用于任务管理和执行。
 
@@ -92,7 +92,7 @@ GUI 层通过一个 `Controller` (`gui/controller.py`) 与后端逻辑（主要�
 
 ```
 autoDatabase/
-├── data_module/           # 数据处理核心模块
+├── fetchers/           # 数据处理核心模块
 │   ├── sources/           # 数据源适配器
 │   │   ├── __init__.py
 │   │   ├── base.py        # 基础适配器类
@@ -125,7 +125,7 @@ autoDatabase/
 
 ### 数据源适配器
 
-数据源适配器负责处理特定数据提供商的API调用、数据格式转换和错误处理。所有适配器都继承自`data_module.sources.base.DataSourceBase`基类。
+数据源适配器负责处理特定数据提供商的API调用、数据格式转换和错误处理。所有适配器都继承自`fetchers.sources.base.DataSourceBase`基类。
 
 ```python
 # 适配器基类接口示例
@@ -149,7 +149,7 @@ class DataSourceBase:
 
 ### 任务管理器
 
-任务管理器定义了数据处理任务的结构和行为。所有任务类都继承自`data_module.tasks.base.TaskBase`基类。
+任务管理器定义了数据处理任务的结构和行为。所有任务类都继承自`fetchers.tasks.base.TaskBase`基类。
 
 ```python
 # 任务基类接口示例
@@ -196,7 +196,7 @@ class DataValidator:
 
 ### DBManager
 
-(`data_module/tools/db_manager.py`)
+(`fetchers/tools/db_manager.py`)
 
 - 封装了与 PostgreSQL 数据库的交互。
 - 使用 `SQLAlchemy` Core API 构建和执行 SQL 语句。
@@ -274,14 +274,14 @@ class DataValidator:
 
 ### 添加新数据源
 
-1. 在`data_module/sources/`目录下创建新的目录或模块
+1. 在`fetchers/sources/`目录下创建新的目录或模块
 2. 创建一个继承自`DataSourceBase`的适配器类
 3. 实现必要的方法，包括`fetch_data`和`check_availability`
 
 示例：
 ```python
-# data_module/sources/newapi/adapter.py
-from data_module.sources.base import DataSourceBase
+# fetchers/sources/newapi/adapter.py
+from fetchers.sources.base import DataSourceBase
 
 class NewAPIAdapter(DataSourceBase):
     def initialize(self):
@@ -303,8 +303,8 @@ class NewAPIAdapter(DataSourceBase):
 
 ### 添加新任务
 
-1. 在 `data_module/tasks/` 下合适的子目录（如 `stock/`, `fund/` 等）创建新的任务文件。
-2. 创建一个继承自 `data_module.tasks.base.Task` 或其特定子类（如 `TushareTask`）的任务类。
+1. 在 `fetchers/tasks/` 下合适的子目录（如 `stock/`, `fund/` 等）创建新的任务文件。
+2. 创建一个继承自 `fetchers.tasks.base.Task` 或其特定子类（如 `TushareTask`）的任务类。
 3. 实现必要的方法，通常是 `fetch_data()`，以及可能的 `process_data()`, `validate_data()` 等。
 4. 定义任务的核心属性，如 `name`, `description`, `table_name`, `schema`, `primary_keys` 等。
 5. 使用 `@task_register()` 装饰器将任务类注册到 `TaskFactory`。
@@ -329,12 +329,12 @@ class NewAPIAdapter(DataSourceBase):
 
 ### 创建新工具
 
-1. 在`data_module/tools/`目录下创建新的工具模块
+1. 在`fetchers/tools/`目录下创建新的工具模块
 2. 实现工具功能
 
 示例：
 ```python
-# data_module/tools/analyzer.py
+# fetchers/tools/analyzer.py
 import pandas as pd
 import numpy as np
 
@@ -361,10 +361,10 @@ class DataAnalyzer:
 所有新功能都应编写单元测试。测试文件应放在`tests/`目录下，并遵循与源代码相同的目录结构。
 
 ```python
-# tests/data_module/sources/test_newapi.py
+# tests/fetchers/sources/test_newapi.py
 import unittest
 from unittest.mock import patch, MagicMock
-from data_module.sources.newapi.adapter import NewAPIAdapter
+from fetchers.sources.newapi.adapter import NewAPIAdapter
 
 class TestNewAPIAdapter(unittest.TestCase):
     def setUp(self):
@@ -401,7 +401,7 @@ pytest
 运行特定测试：
 
 ```bash
-pytest tests/data_module/sources/test_newapi.py
+pytest tests/fetchers/sources/test_newapi.py
 ```
 
 ## 代码风格
@@ -410,10 +410,10 @@ pytest tests/data_module/sources/test_newapi.py
 
 ```bash
 # 检查代码风格
-flake8 data_module scripts
+flake8 fetchers scripts
 
 # 格式化代码
-black data_module scripts
+black fetchers scripts
 ```
 
 ## 提交指南

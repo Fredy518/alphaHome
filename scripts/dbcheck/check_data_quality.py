@@ -1,8 +1,9 @@
 import asyncio
 import logging
-from alphahome.data_module.data_checker import DataQualityChecker
-from alphahome.data_module.task_factory import TaskFactory
+from alphahome.fetchers.data_checker import DataQualityChecker
+from alphahome.fetchers.task_factory import TaskFactory
 from datetime import datetime
+from alphahome.utils.log_utils import setup_logging
 
 async def main():
     # 初始化数据库连接

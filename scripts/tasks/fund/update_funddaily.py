@@ -15,6 +15,7 @@ from datetime import datetime
 from typing import Dict, Any
 import dotenv
 from pathlib import Path
+import pandas as pd
 
 # Setup paths and environment
 project_root = Path(__file__).resolve().parent.parent.parent.parent
@@ -23,8 +24,8 @@ dotenv_path = project_root / '.env'
 dotenv.load_dotenv(dotenv_path=dotenv_path)
 
 # Imports
-from alphahome.data_module.db_manager import DBManager
-from alphahome.data_module.task_factory import TaskFactory
+from alphahome.fetchers.db_manager import DBManager
+from alphahome.fetchers.task_factory import TaskFactory
 from scripts.base.task_updater_base import TaskUpdaterBase
 
 TARGET_TASK_NAME = "tushare_fund_daily"

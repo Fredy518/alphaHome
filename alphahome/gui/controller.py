@@ -11,7 +11,7 @@ import appdirs # <-- 导入 appdirs
 import traceback
 
 # 使用绝对导入，假设项目根目录在 sys.path 中
-from ..data_module import TaskFactory, base_task
+from ..fetchers import TaskFactory, base_task
 
 # --- 配置 ---
 # 使用 appdirs 获取用户配置目录
