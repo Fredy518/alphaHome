@@ -3,21 +3,29 @@ import pandas as pd
 import datetime
 from typing import Optional, Union, List, Tuple
 from functools import lru_cache
+import logging
+from datetime import timedelta
+import calendar as std_calendar # 新增导入 Python 标准库 calendar
 
 # 导入项目中已有的Tushare API
 from ..sources.tushare.tushare_api import TushareAPI
+# from ..sources.tushare.tushare_shared import TushareToken # 删除此错误导入
 
-# 缓存交易日历数据
+logger = logging.getLogger(__name__)
+
+# 全局缓存交易日历数据，键为 (start_date, end_date, exchange)
 _TRADE_CAL_CACHE = {}
 
-# 移除LRU缓存装饰器，因为我们要改成异步函数
+# 移除LRU缓存装饰器，因为我们要改成异步函数，并且内部有自定义缓存
+# @lru_cache(maxsize=4)
 async def get_trade_cal(start_date: str = None, end_date: str = None, exchange: str = 'SSE') -> pd.DataFrame:
     """获取交易日历数据
     
     Args:
         start_date (str, optional): 开始日期，格式：YYYYMMDD，默认为从2000年开始
         end_date (str, optional): 结束日期，格式：YYYYMMDD，默认为当前日期往后一年
-        exchange (str, optional): 交易所代码，默认为 'SSE' (上海证券交易所)
+        exchange (str, optional): 交易所代码，默认为 'SSE' (上海证券交易所). 
+                                 支持 'HK' 或 'HKEX' 获取港股日历。
         
     Returns:
         pd.DataFrame: 包含交易日历信息的DataFrame，字段包括：
@@ -30,53 +38,139 @@ async def get_trade_cal(start_date: str = None, end_date: str = None, exchange: 
     if not start_date:
         start_date = '20000101'
     if not end_date:
-        # 默认获取到当前日期往后一年的交易日历
-        today = datetime.datetime.now()
-        next_year = today.replace(year=today.year + 1)
-        end_date = next_year.strftime('%Y%m%d')
-    
-    # 生成缓存键
-    cache_key = f"{exchange}_{start_date}_{end_date}"
-    
-    # 检查缓存
+        end_date_dt = datetime.datetime.now() + timedelta(days=365)
+        end_date = end_date_dt.strftime('%Y%m%d')
+
+    cache_key = (start_date, end_date, exchange.upper())
     if cache_key in _TRADE_CAL_CACHE:
-        return _TRADE_CAL_CACHE[cache_key].copy()
+        logger.debug(f"交易日历缓存命中: {cache_key}")
+        return _TRADE_CAL_CACHE[cache_key].copy() # 返回副本以防外部修改缓存内容
+
+    logger.debug(f"交易日历缓存未命中，尝试从API获取: {cache_key}")
+
+    # 初始化TushareAPI实例 (如果尚未初始化或需要特定于此调用的实例)
+    try:
+        current_api_instance = TushareAPI(token=None, logger=logger) # TushareAPI 将尝试从环境变量获取token
+        if not current_api_instance.token: # 检查token是否已在TushareAPI内部成功加载
+            logger.error("TushareAPI未能获取token (环境变量 TUSHARE_TOKEN 可能未设置)，无法查询交易日历。")
+            return pd.DataFrame()
+
+    except Exception as e:
+        logger.error(f"初始化TushareAPI时发生错误: {e}")
+        return pd.DataFrame()
+
+    is_hk_exchange = exchange.upper() in ('HK', 'HKEX')
+    api_name_to_call = "hk_tradecal" if is_hk_exchange else "trade_cal"
+    params = {'start_date': start_date, 'end_date': end_date}
     
-    # 从Tushare获取数据
-    token = os.environ.get('TUSHARE_TOKEN')
+    final_df = pd.DataFrame()
+
+    if api_name_to_call == "hk_tradecal":
+        logger.info(f"Fetching Hong Kong trade calendar (hk_tradecal) for range: {start_date} - {end_date}")
+        try:
+            s_date_obj = datetime.datetime.strptime(start_date, '%Y%m%d').date()
+            e_date_obj = datetime.datetime.strptime(end_date, '%Y%m%d').date()
+        except ValueError as e:
+            logger.error(f"日期格式错误 for hk_tradecal: {start_date}, {end_date}. Error: {e}")
+            return pd.DataFrame()
+
+        chunk_years = 2  # 修改：将分块大小从5年减小到2年
+        all_chunk_dfs = []
+        loop_s_date = s_date_obj
+
+        while loop_s_date <= e_date_obj:
+            year_to_add = chunk_years - 1 
+            
+            # 修改：改进日期块结束点的计算逻辑
+            target_year = loop_s_date.year + year_to_add
+            target_month = loop_s_date.month
+            target_day = loop_s_date.day
+
+            if target_month == 2 and target_day == 29:
+                # 检查目标年份是否是闰年
+                is_leap = (target_year % 4 == 0 and target_year % 100 != 0) or (target_year % 400 == 0)
+                if not is_leap:
+                    target_day = 28 # 如果目标年不是闰年，则设为2月28日
+            
+            try:
+                chunk_e_date_calc = datetime.date(target_year, target_month, target_day)
+            except ValueError:
+                # 后备方案：取目标年、目标月的最后一天
+                month_range = std_calendar.monthrange(target_year, target_month)
+                chunk_e_date_calc = datetime.date(target_year, target_month, month_range[1])
+            
+            current_chunk_e_date = min(chunk_e_date_calc, e_date_obj)
+            
+            chunk_start_str = loop_s_date.strftime('%Y%m%d')
+            chunk_end_str = current_chunk_e_date.strftime('%Y%m%d')
+
+            logger.info(f"Fetching hk_tradecal chunk: {chunk_start_str} - {chunk_end_str}")
+            try:
+                chunk_params = {
+                    'start_date': chunk_start_str,
+                    'end_date': chunk_end_str,
+                    'is_open': ''  # Tushare文档说明 is_open='' 表示不筛选
+                }
+                df_chunk = await current_api_instance.query(
+                    api_name="hk_tradecal",
+                    params=chunk_params, # API特定参数通过 params 字典传递
+                    fields='',           # 明确传递 fields, 为空则查询所有默认字段
+                    page_size=2500       # 控制 TushareAPI.query 内部的分页判断逻辑
+                )
+                if df_chunk is not None and not df_chunk.empty:
+                    all_chunk_dfs.append(df_chunk)
+                elif df_chunk is None:
+                    logger.warning(f"hk_tradecal chunk {chunk_start_str}-{chunk_end_str} returned None (error during fetch)")
+
+            except Exception as e:
+                logger.error(f"Error fetching hk_tradecal chunk {chunk_start_str}-{chunk_end_str}: {e}")
+                # Decide if we should stop or continue with other chunks
+                # For now, log and continue, result might be partial
+            
+            # Move to the start of the next chunk
+            if current_chunk_e_date >= e_date_obj: # Reached overall end date
+                break
+            loop_s_date = current_chunk_e_date + timedelta(days=1)
+        
+        if all_chunk_dfs:
+            final_df = pd.concat(all_chunk_dfs, ignore_index=True)
+            # Ensure correct data types before dropping duplicates, especially for dates if mixed from chunks
+            if 'cal_date' in final_df.columns:
+                final_df['cal_date'] = pd.to_datetime(final_df['cal_date']).dt.strftime('%Y%m%d')
+                final_df.drop_duplicates(subset=['cal_date'], keep='first', inplace=True)
+                final_df.sort_values(by='cal_date', inplace=True)
+            else:
+                logger.warning("hk_tradecal result missing 'cal_date' column after concat.")
+                final_df = pd.DataFrame() # Invalid result
+        else:
+            logger.warning(f"hk_tradecal fetch for {start_date}-{end_date} resulted in no data after chunking.")
+            final_df = pd.DataFrame()
+
+    else: # For other exchanges (e.g., SSE using 'trade_cal')
+        logger.info(f"Fetching standard trade calendar ({api_name_to_call}) for {exchange}: {start_date} - {end_date}")
+        try:
+            df_api = await current_api_instance.query(
+                api_name=api_name_to_call, 
+                fields='',  # Let TushareAPI handle default/all fields for trade_cal
+                **params
+            )
+            if df_api is not None:
+                final_df = df_api
+            else:
+                logger.warning(f"{api_name_to_call} for {exchange} returned None.")
+                final_df = pd.DataFrame()
+        except Exception as e:
+            logger.error(f"Error fetching {api_name_to_call} for {exchange}: {e}")
+            final_df = pd.DataFrame()
+
+    # Add exchange column if not present (Tushare might not include it for single exchange queries)
+    if not final_df.empty and 'exchange' not in final_df.columns:
+        final_df['exchange'] = exchange.upper()
     
-    if not token:
-        raise ValueError("未设置TUSHARE_TOKEN环境变量，无法获取交易日历数据")
-    
-    # 使用项目中的TushareAPI
-    api = TushareAPI(token=token)
-    
-    # 准备查询参数
-    params = {
-        'exchange': exchange,
-        'start_date': start_date,
-        'end_date': end_date
-    }
-    
-    # 直接使用await调用异步API，不再创建新的事件循环
-    df = await api.query('trade_cal', params=params)
-    
-    # !! 重要：确保返回的数据按日期升序排列 !!
-    if not df.empty:
-        df = df.sort_values(by='cal_date', ascending=True).reset_index(drop=True)
-    
-    # 处理上一个交易日信息
-    df_open = df[df['is_open'] == 1].copy()
-    df_open['pretrade_date'] = df_open['cal_date'].shift(1)
-    
-    # 合并回原始数据
-    df = pd.merge(df, df_open[['cal_date', 'pretrade_date']], 
-                 on='cal_date', how='left')
-    
-    # 存入缓存
-    _TRADE_CAL_CACHE[cache_key] = df.copy()
-    
-    return df
+    # Cache the final result (even if empty, to avoid re-fetching on errors for a while)
+    _TRADE_CAL_CACHE[cache_key] = final_df.copy()
+    logger.info(f"Fetched and cached {len(final_df)} records for {api_name_to_call} ({exchange}) range {start_date}-{end_date}")
+    return final_df.copy() # Return a copy
 
 async def is_trade_day(date: Union[str, datetime.datetime, datetime.date], exchange: str = 'SSE') -> bool:
     """判断指定日期是否为交易日
