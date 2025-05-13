@@ -30,7 +30,7 @@ class TushareIndexBasicTask(TushareTask):
     table_name = "tushare_index_basic"
     primary_keys = ["ts_code"]
     date_column = None # 全量任务
-    default_start_date = None # 全量任务
+    default_start_date = "19900101" # 全量任务，设置一个早期默认起始日期
 
     # --- 代码级默认配置 (会被 config.json 覆盖) --- #
     default_concurrent_limit = 1

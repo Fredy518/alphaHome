@@ -6,10 +6,13 @@ import numpy as np  # 导入 numpy
 from typing import Dict, List, Any, Optional, Callable
 from ...base_task import Task
 from .tushare_api import TushareAPI
+from .tushare_data_transformer import TushareDataTransformer
+from .tushare_batch_processor import TushareBatchProcessor
 from tqdm.asyncio import tqdm
 from datetime import datetime, timedelta
 import time
 import logging # 确保导入 logging
+import math # 引入 math 用于 ceil 计算
 
 class TushareTask(Task):
     """基于 Tushare API 的数据任务基类
@@ -56,6 +59,10 @@ class TushareTask(Task):
         self.max_retries = self.default_max_retries
         self.retry_delay = self.default_retry_delay
         self.task_specific_config = {} # 存储原始任务配置
+        
+        # 初始化 Helper Classes
+        self.data_transformer = TushareDataTransformer(self)
+        self.batch_processor = TushareBatchProcessor(self, self.data_transformer)
         
     def set_config(self, task_config: Dict):
         """应用来自配置文件的设置，覆盖代码默认值"""
@@ -141,694 +148,365 @@ class TushareTask(Task):
                 return None
         except Exception as e:
             # 特别处理表不存在的情况
-            if "does not exist" in str(e).lower() or "relation" in str(e).lower() and "does not exist" in str(e).lower():
-                self.logger.info(f"表 '{self.table_name}' 不存在，无法获取最新日期。")
+            # Specific check for asyncpg.exceptions.UndefinedTableError
+            if isinstance(e, getattr(__import__('asyncpg.exceptions', fromlist=['UndefinedTableError']), 'UndefinedTableError', None)) or \
+               ("does not exist" in str(e).lower() or ("relation" in str(e).lower() and "does not exist" in str(e).lower())):
+                self.logger.info(f"表 '{self.table_name}' 不存在 (在 get_latest_date 中检测到)。")
                 return None
             else:
                 self.logger.error(f"查询最新日期时出错: {e}", exc_info=True)
                 return None
         
-    async def execute(self, **kwargs):
-        """执行任务的完整生命周期
-        
-        重写Task基类的execute方法，实现分批获取、处理和保存数据的流程。
-        这种方式更适合处理大数据集，因为它避免了将所有数据一次性加载到内存中。
+    async def _ensure_table_exists(self):
+        """确保当前任务的表在数据库中存在，如果不存在则尝试创建。"""
+        if not hasattr(self, 'db') or not self.db:
+            self.logger.error("数据库管理器未初始化 (self.db is missing)，无法确保表存在。")
+            return
+        if not self.table_name:
+            self.logger.error("任务未定义 table_name，无法确保表存在。")
+            return
+        if not hasattr(self, 'schema') or not self.schema:
+            self.logger.warning(f"任务 {self.name} 未定义 schema，无法自动创建表 {self.table_name}。")
+            return
+
+        try:
+            # 尝试执行一个简单的查询来检查表是否存在，例如查询表的行数
+            # 这比直接查询元数据更通用，但如果表非常大，可能会慢。
+            # 或者，某些数据库驱动程序有特定的检查表存在的方法。
+            # 对于asyncpg，通常是捕获UndefinedTableError。
+            # 我们先尝试一个快速查询，如果失败则认为表可能不存在。
+            await self.db.execute(f"SELECT 1 FROM {self.table_name} LIMIT 1")
+            self.logger.debug(f"表 '{self.table_name}' 已存在。")
+        except getattr(__import__('asyncpg.exceptions', fromlist=['UndefinedTableError']), 'UndefinedTableError', Exception) as e_undefined:
+            # 捕获特定的 UndefinedTableError
+            self.logger.info(f"表 '{self.table_name}' 不存在，正在尝试创建... ({e_undefined})")
+            try:
+                # 使用 db_manager 中的 create_table_from_schema 方法
+                # 假设 db_manager (self.db) 有 create_table_from_schema 方法
+                await self.db.create_table_from_schema(
+                    table_name=self.table_name,
+                    schema_def=self.schema,
+                    primary_keys=getattr(self, 'primary_keys', []),
+                    date_column=getattr(self, 'date_column', None),
+                    indexes=getattr(self, 'indexes', [])
+                )
+                self.logger.info(f"表 '{self.table_name}' 创建成功。")
+            except Exception as create_e:
+                self.logger.error(f"创建表 '{self.table_name}' 失败: {create_e}", exc_info=True)
+        except Exception as e:
+            # 其他可能的错误，例如连接问题
+            self.logger.error(f"检查表 '{self.table_name}' 是否存在时发生非预期的错误: {e}", exc_info=True)
+
+    async def _determine_execution_dates(self, **kwargs) -> tuple[Optional[str], Optional[str], bool, str]:
+        """根据输入参数和数据库状态确定最终的执行日期范围。
         
         Args:
-            progress_callback (Callable, optional): 异步回调函数，用于报告进度。
-                                                  签名: async def callback(task_name: str, progress: str)
-            stop_event (asyncio.Event, optional): 事件对象，用于外部请求停止任务。
-            force_full (bool, optional): 如果为 True，则强制执行全量更新，忽略智能增量逻辑。
-            start_date (str, optional): 手动指定的开始日期 (YYYYMMDD)。
-            end_date (str, optional): 手动指定的结束日期 (YYYYMMDD)。
-            **kwargs: 额外参数，将传递给get_batch_list和prepare_params方法
+            **kwargs: 包含 'start_date', 'end_date', 'force_full' 的可选参数。
             
         Returns:
-            Dict: 任务执行结果，包含状态和影响的行数
+            tuple: (final_start_date, final_end_date, should_skip, skip_message)
+                   - final_start_date: YYYYMMDD 格式或 None
+                   - final_end_date: YYYYMMDD 格式或 None
+                   - should_skip: 是否应跳过执行
+                   - skip_message: 跳过原因
         """
-        self.logger.info(f"开始执行任务: {self.name}, 参数: {kwargs}") # Log initial kwargs
-        
-        progress_callback = kwargs.get('progress_callback')
-        stop_event = kwargs.get('stop_event') # 获取停止事件
-        
+        original_start_date = kwargs.get('start_date')
+        original_end_date = kwargs.get('end_date')
+        force_full = kwargs.get('force_full', False)
+
+        final_start_date = None
+        final_end_date = None
+        should_skip = False
+        skip_message = ""
+
+        if original_start_date is None and original_end_date is None and not force_full:
+            # 智能增量模式
+            self.logger.info(f"任务 {self.name}: 未提供 start_date 和 end_date，进入智能增量模式。")
+            latest_date = await self.get_latest_date()
+            self.logger.info(f"任务 {self.name}: 数据库中最新日期为: {latest_date}")
+            default_start = getattr(self, 'default_start_date', None)
+            if not default_start:
+                self.logger.error(f"任务 {self.name}: 未定义 default_start_date，无法执行智能增量。")
+                should_skip = True
+                skip_message = "任务未定义默认开始日期"
+                return final_start_date, final_end_date, should_skip, skip_message
+            
+            if latest_date:
+                start_date_dt = latest_date + timedelta(days=1)
+            else:
+                try:
+                    start_date_dt = datetime.strptime(default_start, '%Y%m%d').date()
+                    self.logger.info(f"任务 {self.name}: 表为空或不存在，使用默认开始日期: {default_start}")
+                except ValueError:
+                    self.logger.error(f"任务 {self.name}: 默认开始日期格式错误 ('{default_start}')，应为 YYYYMMDD。")
+                    should_skip = True
+                    skip_message = "默认开始日期格式错误"
+                    return final_start_date, final_end_date, should_skip, skip_message
+
+            end_date_dt = datetime.now().date()
+            
+            if start_date_dt > end_date_dt:
+                self.logger.info(f"任务 {self.name}: 计算出的开始日期 ({start_date_dt}) 晚于结束日期 ({end_date_dt})，数据已是最新。")
+                should_skip = True
+                skip_message = "数据已是最新"
+                return final_start_date, final_end_date, should_skip, skip_message
+
+            final_start_date = start_date_dt.strftime('%Y%m%d')
+            final_end_date = end_date_dt.strftime('%Y%m%d')
+            self.logger.info(f"任务 {self.name}: 智能增量计算出的日期范围: {final_start_date} 到 {final_end_date}")
+            
+        elif force_full:
+            # 强制全量模式
+            self.logger.info(f"任务 {self.name}: 强制执行全量模式。将使用默认开始日期 {getattr(self, 'default_start_date', 'N/A')} 到今天。")
+            final_start_date = original_start_date if original_start_date is not None else getattr(self, 'default_start_date', None)
+            final_end_date = original_end_date if original_end_date is not None else datetime.now().strftime('%Y%m%d')
+            
+            if final_start_date is None:
+                self.logger.error(f"任务 {self.name}: 全量模式需要 default_start_date 或手动提供 start_date，但两者均未提供。")
+                should_skip = True
+                skip_message = "全量模式缺少开始日期"
+                return final_start_date, final_end_date, should_skip, skip_message
+            # 可选：添加对日期格式的验证
+            self.logger.info(f"任务 {self.name}: 全量模式实际日期范围: {final_start_date} 到 {final_end_date}")
+            
+        else:
+            # 手动指定日期模式
+            # 可选：添加对手动提供的日期格式和有效性的验证
+            if not original_start_date or not original_end_date:
+                self.logger.error(f"任务 {self.name}: 手动模式需要提供 start_date 和 end_date。")
+                should_skip = True
+                skip_message = "手动模式缺少 start_date 或 end_date"
+                return final_start_date, final_end_date, should_skip, skip_message
+                
+            final_start_date = original_start_date
+            final_end_date = original_end_date
+            self.logger.info(f"任务 {self.name}: 使用提供的日期范围: {final_start_date} 到 {final_end_date}")
+
+        return final_start_date, final_end_date, should_skip, skip_message
+
+    async def execute(self, **kwargs):
+        """执行任务的完整生命周期 (已重构日期逻辑, 批处理聚合, 最终结果构造)"""
+        self.logger.info(f"开始执行任务: {self.name}, 原始参数: {kwargs}")
+
+        progress_callback = kwargs.get('progress_callback') # Not used in current TushareTask execute
+        stop_event = kwargs.get('stop_event')
+
+        # Initialize execution state variables
         total_rows = 0
         failed_batches = 0
         error_message = ""
-        final_status = "success" # Assume success initially
+        final_status = "success" # Default to success, will be updated by aggregation or errors
         batch_list = [] # Initialize batch_list
 
         try:
-            await self.pre_execute(stop_event=stop_event) # Pass stop_event to pre_execute
+            await self.pre_execute(stop_event=stop_event)
+            await self._ensure_table_exists()
 
-            # --- Date Logic ---
-            original_start_date = kwargs.get('start_date')
-            original_end_date = kwargs.get('end_date')
-            force_full = kwargs.get('force_full', False)
+            final_start_date, final_end_date, should_skip, skip_message = await self._determine_execution_dates(**kwargs)
 
-            if original_start_date is None and original_end_date is None and not force_full:
-                self.logger.info(f"任务 {self.name}: 未提供 start_date 和 end_date，进入智能增量模式。")
-                latest_date = await self.get_latest_date()
-                self.logger.info(f"任务 {self.name}: 数据库中最新日期为: {latest_date}")
-                default_start = getattr(self, 'default_start_date', None)
-                if not default_start:
-                    self.logger.error(f"任务 {self.name}: 未定义 default_start_date，无法执行智能增量。")
-                    failed_result = {"status": "failed", "message": "任务未定义默认开始日期", "rows": 0}
-                    # Corrected Call
-                    await self.post_execute(result=failed_result, stop_event=stop_event) 
-                    return failed_result
-                
-                if latest_date:
-                    start_date_dt = latest_date + timedelta(days=1)
-                else:
-                    try:
-                        start_date_dt = datetime.strptime(default_start, '%Y%m%d').date()
-                        self.logger.info(f"任务 {self.name}: 表为空或不存在，使用默认开始日期: {default_start}")
-                    except ValueError:
-                        self.logger.error(f"任务 {self.name}: 默认开始日期格式错误 ('{default_start}')，应为 YYYYMMDD。")
-                        failed_result = {"status": "failed", "message": "默认开始日期格式错误", "rows": 0}
-                        # Corrected Call
-                        await self.post_execute(result=failed_result, stop_event=stop_event) 
-                        return failed_result
+            if should_skip:
+                self.logger.warning(f"任务 {self.name}: 跳过执行，原因: {skip_message}")
+                skip_status = "failed" if "错误" in skip_message or "未定义" in skip_message or "缺少" in skip_message else "skipped"
+                # Use _build_final_result for skipped result
+                final_result_dict = self._build_final_result(skip_status, skip_message, 0, 0)
+                await self.post_execute(result=final_result_dict, stop_event=stop_event)
+                return final_result_dict
 
-                end_date_dt = datetime.now().date()
-                
-                if start_date_dt > end_date_dt:
-                    self.logger.info(f"任务 {self.name}: 计算出的开始日期 ({start_date_dt}) 晚于结束日期 ({end_date_dt})，数据已是最新。")
-                    skipped_result = {"status": "skipped", "message": "数据已是最新", "rows": 0}
-                    # Corrected Call
-                    await self.post_execute(result=skipped_result, stop_event=stop_event) 
-                    return skipped_result
-                    
-                calculated_start_date = start_date_dt.strftime('%Y%m%d')
-                calculated_end_date = end_date_dt.strftime('%Y%m%d')
-                kwargs['start_date'] = calculated_start_date
-                kwargs['end_date'] = calculated_end_date
-                self.logger.info(f"任务 {self.name}: 智能增量计算出的日期范围: {calculated_start_date} 到 {calculated_end_date}")
-            
-            elif force_full:
-                self.logger.info(f"任务 {self.name}: 强制执行全量模式。将使用默认开始日期 {getattr(self, 'default_start_date', 'N/A')} 到今天。")
-                if original_start_date is None:
-                    kwargs['start_date'] = getattr(self, 'default_start_date', None)
-                if original_end_date is None:
-                    kwargs['end_date'] = datetime.now().strftime('%Y%m%d')
-                if kwargs['start_date'] is None:
-                    self.logger.error(f"任务 {self.name}: 全量模式需要 default_start_date，但未定义。")
-                    failed_result = {"status": "failed", "message": "全量模式缺少默认开始日期", "rows": 0}
-                    # Corrected Call
-                    await self.post_execute(result=failed_result, stop_event=stop_event) 
-                    return failed_result
-                self.logger.info(f"任务 {self.name}: 全量模式实际日期范围: {kwargs['start_date']} 到 {kwargs['end_date']}")
-            
-            else:
-                self.logger.info(f"任务 {self.name}: 使用提供的日期范围: {original_start_date} 到 {original_end_date}")
-            # --- End Date Logic ---
+            kwargs_for_batch_list = kwargs.copy()
+            kwargs_for_batch_list['start_date'] = final_start_date
+            kwargs_for_batch_list['end_date'] = final_end_date
 
-            self.logger.info(f"任务 {self.name}: 准备调用 get_batch_list，使用最终参数: {kwargs}")
-            batch_list = await self.get_batch_list(**kwargs)
+            self.logger.info(f"任务 {self.name}: 准备调用 get_batch_list，使用最终参数: {kwargs_for_batch_list}")
+            batch_list = await self.get_batch_list(**kwargs_for_batch_list)
+
             if not batch_list:
-                self.logger.info(f"任务 {self.name}: get_batch_list 返回空列表。可能原因：日期范围无数据、API限制或子类逻辑。")
-                no_data_result = {"status": "no_data", "message": "批处理列表为空", "rows": 0}
-                # Corrected Call
-                await self.post_execute(result=no_data_result, stop_event=stop_event) 
-                return no_data_result
+                self.logger.info(f"任务 {self.name}: get_batch_list 返回空列表。无需处理。")
+                # Use _build_final_result for no_data result
+                final_result_dict = self._build_final_result("no_data", "批处理列表为空", 0, 0)
+                await self.post_execute(result=final_result_dict, stop_event=stop_event)
+                return final_result_dict
 
             total_batches = len(batch_list)
             self.logger.info(f"生成了 {total_batches} 个批处理任务")
             
-            # --- Batch Processing Logic ---
-            # (Assuming the internal batch processing logic using _process_single_batch is correct)
-            # ... existing batch processing logic ...
-            # It calculates total_rows, failed_batches, final_status, error_message
-
-            # --- Start of section copied from previous attempt, verify correctness ---
             semaphore = asyncio.Semaphore(self.concurrent_limit or self.default_concurrent_limit)
-            tasks = []
-            # Removed tqdm progress bar logic for simplicity in fix
-            # pbar = tqdm(total=len(batch_list), desc=f"任务 {self.name}", unit="批次")
+            tasks_to_run = []
 
-            async def process_batch_wrapper(i, batch_params):
+            async def process_batch_wrapper(i, batch_params_item):
                 async with semaphore:
                     if stop_event and stop_event.is_set():
-                        # pbar.update(1) # Removed pbar
-                        raise asyncio.CancelledError(f"批次 {i+1} 在开始前被取消")
-                    result_rows = await self._process_single_batch(i, len(batch_list), batch_params, stop_event=stop_event)
-                    # pbar.update(1) # Removed pbar
-                    return result_rows # _process_single_batch returns int (rows) or raises
+                        raise asyncio.CancelledError(f"批次 {i+1} (任务 {self.name}) 在开始前被取消")
+                    return await self.batch_processor.process_single_batch(i, total_batches, batch_params_item, stop_event=stop_event)
 
-            for i, batch_params in enumerate(batch_list):
-                tasks.append(process_batch_wrapper(i, batch_params))
+            for i, batch_params_item in enumerate(batch_list):
+                tasks_to_run.append(process_batch_wrapper(i, batch_params_item))
 
-                batch_results = await asyncio.gather(*tasks, return_exceptions=True)
-            # pbar.close() # Removed pbar
-
-            # Process batch_results
-                for result in batch_results:
-                    if isinstance(result, asyncio.CancelledError):
-                        self.logger.warning(f"一个批次被取消: {result}")
-                        final_status = "cancelled"
-                        failed_batches += 1
-                    elif isinstance(result, Exception):
-                        self.logger.error(f"一个批次执行失败: {result}", exc_info=result)
-                        failed_batches += 1
-                        error_message += f"批次失败: {result}; "
-                        final_status = "failed" if final_status != "cancelled" else "cancelled"
-                    elif isinstance(result, int): # Success case returns rows (int)
-                        if result >= 0: # Should be >= 0
-                            total_rows += result
-                        else: # Should not happen, but handle negative return as failure
-                            self.logger.error(f"批次返回无效行数: {result}")
-                            failed_batches += 1
-                            error_message += f"批次返回无效行数 ({result}); "
-                            final_status = "failed" if final_status != "cancelled" else "cancelled"
-                else: # Unexpected return type
-                    self.logger.error(f"批次返回未知类型: {type(result)} ({result})")
-                    failed_batches += 1
-                    error_message += f"批次返回未知类型 ({type(result)}); "
-                    final_status = "failed" if final_status != "cancelled" else "cancelled"
+            batch_execution_results = []
+            if tasks_to_run:
+                batch_execution_results = await asyncio.gather(*tasks_to_run, return_exceptions=True)
             
-            if failed_batches > 0:
-                if final_status != "cancelled":
-                    final_status = "partial_success" if total_rows > 0 else "failed"
-                self.logger.warning(f"任务执行完成，但有 {failed_batches} 个批次处理失败或被取消。")
-                
-            if final_status == "partial_success":
-                error_message = f"完成但有 {failed_batches} 个批次失败。 " + error_message
-            elif final_status == "failed":
-                error_message = f"任务失败，共 {failed_batches} 个批次失败。 " + error_message
-            elif final_status == "cancelled":
-                error_message = f"任务被取消，有 {failed_batches} 个批次未完成或被取消。"
-            # --- End of section copied from previous attempt ---
+            # Aggregate results. total_rows and failed_batches are re-assigned here.
+            # final_status and error_message are also determined here.
+            total_rows, failed_batches, final_status, error_message = self._aggregate_batch_results(
+                batch_execution_results,
+                initial_total_rows=0, # Start fresh for this execution run
+                initial_failed_batches=0 # Start fresh for this execution run
+            )
 
         except asyncio.CancelledError:
-            self.logger.warning(f"任务 {self.name} 在执行过程中被取消。")
+            self.logger.warning(f"任务 {self.name} 在执行主流程中被取消。")
             final_status = "cancelled"
             error_message = "任务被用户取消"
-            # Corrected Call in CancelledError block
-            cancelled_result = {
-                "status": final_status,
-                "message": error_message,
-                "rows": total_rows, # Rows processed before cancellation
-                "failed_batches": failed_batches, # Batches failed before cancellation
-                "task": self.name
-            }
-            await self.post_execute(result=cancelled_result, stop_event=stop_event)
-            return cancelled_result # Return the result dict
-            
+            # total_rows and failed_batches reflect progress up to cancellation if aggregation occurred.
+            # If cancellation was before aggregation, they remain at their initial values (likely 0).
         except Exception as e:
             self.logger.error(f"任务 {self.name} 执行过程中发生未处理的严重错误", exc_info=True)
             final_status = "failed"
             error_message = f"严重错误: {type(e).__name__} - {str(e)}"
-            total_rows = 0 # Reset rows on catastrophic failure
-            failed_batches = len(batch_list) if batch_list else 0 # Mark all as failed if list exists
-            # Corrected Call in generic Exception block
-            failed_result = {
-                "status": final_status,
-                "message": error_message,
-                "rows": total_rows, 
-                "failed_batches": failed_batches, 
-                "task": self.name
-            }
-            await self.post_execute(result=failed_result, stop_event=stop_event)
-            return failed_result # Return the result dict
+            total_rows = 0 # Reset on catastrophic failure before aggregation
+            failed_batches = len(batch_list) if batch_list else 0 # Mark all as failed if batch_list was generated
         
         finally:
-            # This block executes regardless of exceptions in try
-            # Construct the final result based on state determined in try/except
-            final_result_dict = {
-                "status": final_status, # Determined by try/except logic
-                "message": error_message.strip(),
-                "rows": total_rows,
-                "failed_batches": failed_batches,
-                "task": self.name
-            }
-            # Corrected Call in finally block
+            # Use _build_final_result in the finally block
+            final_result_dict = self._build_final_result(final_status, error_message, total_rows, failed_batches)
             await self.post_execute(result=final_result_dict, stop_event=stop_event)
             self.logger.info(f"任务 {self.name} 最终处理完成，状态: {final_status}, 总行数: {total_rows}, 失败/取消批次数: {failed_batches}")
 
-        # Return the final result dictionary constructed in 'finally' 
-        # (Note: except blocks now also return their constructed dicts, 
-        # so this return might only be reached if no exception occurred)
         return final_result_dict
 
-    async def _process_single_batch(self, batch_index, total_batches, batch_params, stop_event: Optional[asyncio.Event] = None):
-        """处理单个批次的数据：获取、处理、验证、保存。
-        
-        获取、处理、验证并保存单个批次的数据。
-        针对获取和保存步骤实现了重试机制。
-        
-        Args:
-            batch_index: 批次索引
-            total_batches: 总批次数
-            batch_params: 批次参数
-            stop_event (asyncio.Event, optional): 事件对象，用于外部请求停止任务。
-            
-        Returns:
-            int: 处理的行数，如果最终处理失败则返回 0
-        """
-        batch_log_prefix = f"批次 {batch_index+1}/{total_batches}"
-        batch_data = None
-        processed_data = None
-        rows = 0
+    def _build_final_result(self, status: str, message: str, rows: int, failed_batches: int) -> Dict:
+        """构建标准的任务执行结果字典。"""
+        return {
+            "status": status,
+            "message": message.strip(),
+            "rows": rows,
+            "failed_batches": failed_batches,
+            "task": self.name # Assuming self.name is available
+        }
 
-        # --- 在处理开始前检查停止事件 ---
-        if stop_event and stop_event.is_set():
-            self.logger.info(f"任务 {self.name}: 在处理批次 {batch_index + 1}/{total_batches} 前检测到停止信号，跳过。")
-            raise asyncio.CancelledError("Task cancelled by stop event before processing batch") # Raise cancellation
-
-        batch_start_time = time.time()
-        processed_rows_count = 0
-        batch_status = "failed" # Default to failed unless success
-        error_info = None
-
-        # 1. 获取数据（带重试）
-        for attempt in range(self.max_retries + 1):
-            try:
-                if attempt > 0: # 如果是重试
-                    self.logger.info(f"{batch_log_prefix}: 重试获取数据 (尝试 {attempt+1}/{self.max_retries+1})")
-                else:
-                    self.logger.info(f"{batch_log_prefix}: 开始获取数据")
-
-                batch_data = await self.fetch_batch(batch_params)
-                # 如果成功获取数据（即使是空的），则跳出重试循环
-                self.logger.info(f"{batch_log_prefix}: 获取数据成功")
-                break
-            except Exception as e:
-                self.logger.warning(f"{batch_log_prefix}: 获取数据时发生错误 (尝试 {attempt+1}/{self.max_retries+1}): {str(e)}")
-                if attempt >= self.max_retries:
-                    self.logger.error(f"{batch_log_prefix}: 获取数据失败，已达最大重试次数。")
-                    return 0 # 获取数据最终失败
-                # 等待后重试
-                await asyncio.sleep(self.retry_delay)
-                continue # 继续下一次尝试
-
-        # 如果获取的数据为空，直接返回
-        if batch_data is None or batch_data.empty:
-            self.logger.info(f"{batch_log_prefix}: 没有获取到数据或获取最终失败")
-            return 0
-
-        # 2. 处理数据 (通常不重试逻辑错误)
-        try:
-            self.logger.info(f"{batch_log_prefix}: 处理 {len(batch_data)} 行数据")
-            processed_data = await self.process_data(batch_data)
-            
-            # 增强型错误检测：检查返回值是否是协程对象而不是DataFrame
-            import inspect
-            if inspect.iscoroutine(processed_data):
-                self.logger.warning(f"{batch_log_prefix}: process_data返回了协程对象而不是DataFrame，尝试await该协程")
-                try:
-                    # 尝试await协程以获取实际的DataFrame
-                    processed_data = await processed_data
-                except Exception as co_err:
-                    self.logger.error(f"{batch_log_prefix}: 尝试await协程时出错: {str(co_err)}")
-                    return 0  # 处理失败
-            
-            # 再次检查是否获得了有效的DataFrame
-            if not isinstance(processed_data, pd.DataFrame):
-                self.logger.error(f"{batch_log_prefix}: 处理数据后没有得到有效的DataFrame，而是: {type(processed_data)}")
-                return 0  # 处理失败
-                
-        except Exception as e:
-            self.logger.error(f"{batch_log_prefix}: 处理数据时发生错误: {str(e)}")
-            return 0 # 处理数据失败
-
-        # 3. 验证数据 (通常不重试逻辑错误)
-        validated_data = None # 初始化变量
-        try:
-            self.logger.info(f"{batch_log_prefix}: 验证数据")
-            validated_data = await self.validate_data(processed_data) # 获取验证和过滤后的数据
-            
-            # 同样检查validate_data是否返回了协程
-            import inspect
-            if inspect.iscoroutine(validated_data):
-                self.logger.warning(f"{batch_log_prefix}: validate_data返回了协程对象而不是DataFrame，尝试await该协程")
-                try:
-                    validated_data = await validated_data
-                except Exception as co_err:
-                    self.logger.error(f"{batch_log_prefix}: 尝试await validate_data协程时出错: {str(co_err)}")
-                    return 0  # 验证失败
-            
-            # 检查返回的是否是DataFrame以及是否为空
-            if not isinstance(validated_data, pd.DataFrame) or validated_data.empty:
-                # 如果不是DataFrame或为空，则认为验证失败或无数据
-                self.logger.error(f"{batch_log_prefix}: 数据验证失败或所有数据均被过滤")
-                return 0 # 验证失败或没有数据可保存
-            
-            if isinstance(validated_data, pd.DataFrame) and not validated_data.empty and hasattr(self, 'primary_keys') and self.primary_keys:
-                original_count = len(validated_data)
-                # 使用 inplace=True 直接修改 DataFrame
-                validated_data.drop_duplicates(subset=self.primary_keys, keep='last', inplace=True)
-                deduped_count = len(validated_data)
-                if deduped_count < original_count:
-                    # 使用 DEBUG 级别，避免过多干扰 INFO 日志
-                    self.logger.debug(f"{batch_log_prefix}: 基于主键 {self.primary_keys} 去重，移除了 {original_count - deduped_count} 行重复数据。")
-                    
-        except Exception as e:
-            self.logger.error(f"{batch_log_prefix}: 验证数据时发生错误: {str(e)}")
-            return 0 # 验证过程中出错
-
-        # 4. 保存数据（带重试） - 使用验证后的数据 validated_data
-        for attempt in range(self.max_retries + 1):
-            try:
-                if attempt > 0:
-                    self.logger.info(f"{batch_log_prefix}: 重试保存数据 (尝试 {attempt+1}/{self.max_retries+1})")
-                else:
-                    self.logger.info(f"{batch_log_prefix}: 保存数据到表 {self.table_name}")
-
-                # 确保 validated_data 是 DataFrame 且不为空
-                if not isinstance(validated_data, pd.DataFrame) or validated_data.empty:
-                    self.logger.info(f"{batch_log_prefix}: 没有有效数据需要保存。")
-                    return 0 # 没有数据保存，返回0行
-
-                result_dict = await self.save_data(validated_data) # save_data returns a dict
-                if isinstance(result_dict, dict) and result_dict.get("status") == "success":
-                    rows = result_dict.get('rows', 0) # 从字典中正确提取行数
-                    if not isinstance(rows, int): # 添加额外的类型检查
-                        self.logger.error(f"{batch_log_prefix}: save_data 返回的 'rows' 不是整数: {repr(rows)}")
-                        rows = 0 # 视为失败
-                        return 0 # 明确返回失败
-                    else:
-                        self.logger.info(f"{batch_log_prefix}: 已保存 {rows} 行数据")
-                        return rows # 保存成功，返回整数行数
-                else:
-                    # save_data 返回了错误状态或非预期格式
-                    error_info = repr(result_dict) if isinstance(result_dict, dict) else f"非字典类型 ({type(result_dict).__name__})"
-                    self.logger.error(f"{batch_log_prefix}: 保存数据失败或 save_data 返回非成功状态。Result: {error_info}")
-                    # 不需要 break，因为 return 0 会结束循环
-                    return 0 # 保存失败
-            except Exception as e:
-                self.logger.warning(f"{batch_log_prefix}: 保存数据时发生错误 (尝试 {attempt+1}/{self.max_retries+1}): {str(e)}")
-                if attempt >= self.max_retries:
-                    self.logger.error(f"{batch_log_prefix}: 保存数据失败，已达最大重试次数。")
-                    return 0 # 保存数据最终失败
-                # 等待后重试
-                await asyncio.sleep(self.retry_delay)
-                continue # 继续下一次尝试
-
-        batch_end_time = time.time()
-        duration = batch_end_time - batch_start_time
-        self.logger.debug(f"{batch_log_prefix}: 批次 {batch_index + 1}/{total_batches} 处理完成。状态: {batch_status}, 行数: {processed_rows_count}, 耗时: {duration:.2f}s")
-        # 返回处理的行数，如果失败则返回0或抛出异常
-        # Let's return row count on success, 0 on handled failure, raise on critical/cancellation
-        if batch_status == "success":
-            return processed_rows_count
-        elif batch_status == "no_data" or batch_status == "skipped":
-            return 0 # No rows processed, but not a critical failure
-        else:
-            # We already logged the error inside the try block
-            # Raise an exception or return 0 to indicate handled failure?
-            # Returning 0 might be less disruptive for the overall task execution summary.
-            # Critical errors should raise exceptions though.
-            # Let's return 0 for now for non-critical failures within a batch.
-            # Cancellation errors are raised.
-            return 0 
-            
-    async def fetch_batch(self, batch_params: Dict) -> pd.DataFrame:
-        """获取单批次数据
-        
-        该方法负责获取单个批次的数据，通常通过Tushare API调用实现。
+    def _aggregate_batch_results(
+        self,
+        batch_execution_results: List[Any],
+        initial_total_rows: int,
+        initial_failed_batches: int
+    ) -> tuple[int, int, str, str]:
+        """聚合来自并发批处理执行的结果。
         
         Args:
-            batch_params (Dict): 批次参数
+            batch_execution_results: asyncio.gather 返回的结果列表。
+            initial_total_rows: 聚合前的总行数。
+            initial_failed_batches: 聚合前的失败批次数。
             
         Returns:
-            pd.DataFrame: 批次数据
+            tuple: (final_total_rows, final_failed_batches, final_status, final_error_message)
         """
-        # 准备API调用参数
+        current_total_rows = initial_total_rows
+        current_failed_batches = initial_failed_batches
+        aggregated_error_message = ""
+        # Initial status assumes success if all batches go through.
+        # If any batch is cancelled or fails, this will be updated.
+        current_final_status = "success" 
+        
+        num_cancelled_internally = 0
+
+        for idx, result in enumerate(batch_execution_results):
+            batch_num_for_log = idx + 1 # For logging purposes
+            if isinstance(result, asyncio.CancelledError):
+                # This typically means the cancellation was raised from within _process_single_batch or its sub-methods
+                # or process_batch_wrapper itself before _process_single_batch was called.
+                # or process_batch_wrapper itself before _process_single_batch was called.
+                self.logger.warning(f"批次 {batch_num_for_log} (任务 {self.name}) 被内部取消: {result}")
+                current_failed_batches += 1
+                aggregated_error_message += f"批次 {batch_num_for_log} 取消: {result}; "
+                current_final_status = "cancelled" # If one is cancelled, the whole task might be considered cancelled.
+                num_cancelled_internally +=1
+            elif isinstance(result, Exception):
+                self.logger.error(f"批次 {batch_num_for_log} (任务 {self.name}) 执行失败: {result}", exc_info=result)
+                current_failed_batches += 1
+                aggregated_error_message += f"批次 {batch_num_for_log} 失败: {result}; "
+                if current_final_status != "cancelled": # Don't override cancelled status
+                    current_final_status = "failed"
+            elif isinstance(result, int):
+                if result > 0:
+                    current_total_rows += result
+                elif result == 0: # _process_single_batch returns 0 for failure or 0 rows processed successfully
+                    # The logger inside _process_single_batch would have indicated the specific cause.
+                    # We count it as a "failed batch" for aggregation if it intended to process data but didn't.
+                    # If it was an empty fetch that correctly returned 0, it's not a "failed batch" in the same sense,
+                    # but for simplicity in aggregation, we might still log it or count it.
+                    # Let's assume _process_single_batch returning 0 means it effectively failed or had no impact.
+                    self.logger.warning(f"批次 {batch_num_for_log} (任务 {self.name}) 返回 0 (可能内部失败或无数据处理)，计为失败批次。")
+                    current_failed_batches += 1
+                    aggregated_error_message += f"批次 {batch_num_for_log} 返回0; "
+                    if current_final_status != "cancelled":
+                        current_final_status = "failed"
+                # else: negative result from _process_single_batch - should not happen, but good to log if it does.
+                # Already logged within _process_single_batch if it were to return negative.
+            else: # Unexpected result type
+                self.logger.error(f"批次 {batch_num_for_log} (任务 {self.name}) 返回未知类型: {type(result)} ({result})")
+                current_failed_batches += 1
+                aggregated_error_message += f"批次 {batch_num_for_log} 返回未知类型 ({type(result)}); "
+                if current_final_status != "cancelled":
+                    current_final_status = "failed"
+        
+        # Final status adjustment based on aggregated results
+        if current_final_status == "cancelled":
+            # If any internal batch was cancelled, the overall status is cancelled.
+            self.logger.warning(f"任务 {self.name}: {num_cancelled_internally} 个批次被内部取消。整体任务状态设为 \'cancelled\'。")
+            aggregated_error_message = f"任务因 {num_cancelled_internally} 个批次内部取消而被标记为取消。 " + aggregated_error_message
+        elif current_failed_batches > 0:
+            current_final_status = "partial_success" if current_total_rows > 0 else "failed"
+            self.logger.warning(f"任务 {self.name} 执行完成，但有 {current_failed_batches} 个批次处理失败或被取消。")
+            if current_final_status == "partial_success":
+                aggregated_error_message = f"完成但有 {current_failed_batches} 个批次失败/取消。 " + aggregated_error_message
+            else: # failed
+                aggregated_error_message = f"任务失败，共 {current_failed_batches} 个批次失败/取消。 " + aggregated_error_message
+        # If no failures and not cancelled, current_final_status remains "success" (initial value)
+
+        return current_total_rows, current_failed_batches, current_final_status, aggregated_error_message.strip()
+
+            
+    async def fetch_batch(self, batch_params: Dict) -> Optional[pd.DataFrame]:
+        """获取单个批次的数据，处理API调用。
+        
+        Args:
+            batch_params: 由get_batch_list方法生成的单个批次参数字典
+            
+        Returns:
+            Optional[pd.DataFrame]: 获取到的数据，如果失败或无数据则为None或空DataFrame。
+        """
         api_params = self.prepare_params(batch_params)
-        
+        self.logger.debug(f"任务 {self.name}: 调用API {self.api_name} 使用参数: {api_params}")
+
         try:
-            # 调用Tushare API
-            df = await self.api.query(
-                self.api_name, 
-                params=api_params, 
-                fields=self.fields,
-                page_size=self.page_size # Use configured page size
-            )
-            return df
+            # 确保 api 实例存在
+            if not hasattr(self, 'api') or not self.api:
+                self.logger.error(f"任务 {self.name}: TushareAPI 实例 (self.api) 未初始化。")
+                return None
+            
+            # 确保 api_name 已定义
+            if not self.api_name:
+                self.logger.error(f"任务 {self.name}: api_name 未在子类中定义。")
+                return None
+
+            data = await self.api.query(api_name=self.api_name, params=api_params, fields=self.fields)
+            
+            if data is None:
+                self.logger.warning(f"任务 {self.name} API调用 {self.api_name} (参数: {api_params}) 返回 None")
+                return None # 或者 pd.DataFrame() 根据后续处理逻辑
+            
+            if not isinstance(data, pd.DataFrame):
+                self.logger.error(f"任务 {self.name} API调用 {self.api_name} (参数: {api_params}) 返回非DataFrame类型: {type(data)}")
+                return None # 或者根据错误处理策略转换/记录
+
+            if data.empty:
+                self.logger.info(f"任务 {self.name} API调用 {self.api_name} (参数: {api_params}) 返回空DataFrame")
+            else:
+                self.logger.info(f"任务 {self.name} API调用 {self.api_name} (参数: {api_params}) 成功获取 {len(data)} 行数据")
+            return data
         except Exception as e:
-            self.logger.error(f"获取批次数据失败: {str(e)}，参数: {api_params}")
-            return pd.DataFrame() # 返回空DataFrame
-        
-    def _apply_column_mapping(self, data):
-        """应用列名映射
-        
-        将原始列名映射为目标列名，只处理数据中存在的列。
-        
-        Args:
-            data (DataFrame): 原始数据
-            
-        Returns:
-            DataFrame: 应用列名映射后的数据
-        """
-        if not hasattr(self, 'column_mapping') or not self.column_mapping:
-            return data
-            
-        # 检查映射前的列是否存在
-        missing_original_cols = [orig_col for orig_col in self.column_mapping.keys() 
-                                if orig_col not in data.columns]
-        if missing_original_cols:
-            self.logger.warning(f"列名映射失败：原始数据中缺少以下列: {missing_original_cols}")
-        
-        # 执行重命名，只重命名数据中存在的列
-        rename_map = {k: v for k, v in self.column_mapping.items() if k in data.columns}
-        if rename_map:
-            data.rename(columns=rename_map, inplace=True)
-            self.logger.info(f"已应用列名映射: {rename_map}")
-            
-        return data
-
-    def _process_date_column(self, data):
-        """处理日期列
-        
-        将日期列转换为标准的日期时间格式，并移除无效日期的行。
-        
-        Args:
-            data (DataFrame): 原始数据
-            
-        Returns:
-            DataFrame: 处理日期后的数据，如果日期列不存在则返回原始数据
-        """
-        if not self.date_column or self.date_column not in data.columns:
-            if self.date_column:
-                self.logger.warning(f"指定的日期列 '{self.date_column}' 不在数据中，无法进行日期格式转换。")
-            return data
-            
-        try:
-            # 如果是字符串格式（如'20210101'），转换为日期对象
-            data[self.date_column] = pd.to_datetime(data[self.date_column], format='%Y%m%d', errors='coerce')
-            # 删除转换失败的行 (NaT)
-            original_count = len(data)
-            data.dropna(subset=[self.date_column], inplace=True)
-            if len(data) < original_count:
-                self.logger.warning(f"移除了 {original_count - len(data)} 行，因为日期列 '{self.date_column}' 格式无效。")
-        except Exception as e:
-            self.logger.warning(f"日期列 {self.date_column} 格式转换时发生错误: {str(e)}")
-            
-        return data
-
-    def _sort_data(self, data):
-        """对数据进行排序
-        
-        根据日期列和主键列对数据进行排序。
-        
-        Args:
-            data (DataFrame): 原始数据
-            
-        Returns:
-            DataFrame: 排序后的数据
-        """
-        # 构建排序键列表
-        sort_keys = []
-        if self.date_column and self.date_column in data.columns:
-            sort_keys.append(self.date_column)
-
-        if self.primary_keys:
-            other_keys = [pk for pk in self.primary_keys if pk != self.date_column and pk in data.columns]
-            sort_keys.extend(other_keys)
-            
-        # 如果没有有效的排序键，则返回原始数据
-        if not sort_keys:
-            return data
-            
-        # 检查所有排序键是否都在数据中
-        missing_keys = [key for key in sort_keys if key not in data.columns]
-        if missing_keys:
-            self.logger.warning(f"排序失败：数据中缺少以下排序键: {missing_keys}")
-            # 从排序键列表中移除缺失的键
-            sort_keys = [key for key in sort_keys if key not in missing_keys]
-            if not sort_keys:
-                return data
-                
-        try:
-            # 执行排序
-            data = data.sort_values(by=sort_keys)
-            self.logger.info(f"数据已按以下键排序: {sort_keys}")
-        except Exception as e:
-            self.logger.warning(f"排序时发生错误: {str(e)}")
-            
-        return data
-
-    def _apply_transformations(self, data):
-        """应用数据转换
-        
-        根据转换规则对指定列应用转换函数。
-        增加了对None/NaN值的安全处理。
-        
-        Args:
-            data (DataFrame): 原始数据
-            
-        Returns:
-            DataFrame: 应用转换后的数据
-        """
-        if not hasattr(self, 'transformations') or not self.transformations:
-            return data
-            
-        for column, transform_func in self.transformations.items():
-            if column in data.columns:
-                try:
-                    # 确保处理前列中没有Python原生的None，统一使用np.nan
-                    # （虽然理论上在process_data开始时已经处理，但这里再确认一次更保险）
-                    if data[column].dtype == 'object':
-                        data[column] = data[column].fillna(np.nan)
-                    
-                    # 定义一个安全的转换函数，处理np.nan值
-                    def safe_transform(x):
-                        if pd.isna(x):
-                            return np.nan  # 保持np.nan
-                        try:
-                            return transform_func(x) # 应用原始转换
-                        except Exception as e:
-                            # 记录详细错误，但只记录一次或采样记录，避免日志爆炸
-                            # 这里暂时只记录警告，具体策略可以后续优化
-                            # self.logger.warning(f"转换值 '{x}' (类型: {type(x)}) 到列 '{column}' 时失败: {str(e)}")
-                            return np.nan # 转换失败时返回np.nan
-
-                    # 应用安全转换
-                    original_dtype = data[column].dtype
-                    data[column] = data[column].apply(safe_transform)
-                    
-                    # 尝试恢复原始数据类型（如果转换后类型改变且非object）
-                    # 例如，如果原来是float，转换后可能变成object（因为混入了nan），尝试转回float
-                    try:
-                        if data[column].dtype == 'object' and original_dtype != 'object':
-                            data[column] = pd.to_numeric(data[column], errors='coerce')
-                    except Exception as type_e:
-                        self.logger.debug(f"尝试恢复列 '{column}' 类型失败: {str(type_e)}")
-                        
-                except Exception as e:
-                    self.logger.error(f"处理列 '{column}' 的转换时发生意外错误: {str(e)}", exc_info=True)
-                    # 如果整个列的处理失败，可以选择将该列填充为NaN，而不是中断
-                    # data[column] = np.nan 
-                    # 暂时保持原样，让错误暴露
-                    
-        return data
-        
-    async def process_data(self, data):
-        """处理从Tushare获取的数据
-        
-        包括列名映射、日期处理、数据排序和数据转换。
-        """
-        if data is None or data.empty:
-            self.logger.warning("没有数据需要处理")
-            return pd.DataFrame()
-            
-        # 1. 应用列名映射
-        data = self._apply_column_mapping(data)
-        
-        # 2. 处理主要的 date_column (如果定义)
-        data = self._process_date_column(data) 
-        
-        # 3. 应用通用数据类型转换 (from transformations dict)
-        data = self._apply_transformations(data)
-
-        # 4. 显式处理 schema 中定义的其他 DATE/TIMESTAMP 列
-        if hasattr(self, 'schema') and self.schema:
-            date_columns_to_process = []
-            # 识别需要处理的日期列
-            for col_name, col_def in self.schema.items():
-                col_type = col_def.get('type', '').upper() if isinstance(col_def, dict) else str(col_def).upper()
-                if ('DATE' in col_type or 'TIMESTAMP' in col_type) and col_name in data.columns and col_name != self.date_column:
-                    # 仅处理尚未是日期时间类型的列
-                    if data[col_name].dtype == 'object' or pd.api.types.is_string_dtype(data[col_name]):
-                        date_columns_to_process.append(col_name)
-            
-            # 批量处理识别出的日期列
-            if date_columns_to_process:
-                self.logger.info(f"转换以下列为日期时间格式 (YYYYMMDD): {', '.join(date_columns_to_process)}")
-                original_count = len(data)
-                for col_name in date_columns_to_process:
-                    # 尝试使用 YYYYMMDD 格式转换
-                    converted_col = pd.to_datetime(data[col_name], format='%Y%m%d', errors='coerce')
-                    
-                    # 检查失败率，如果过高则尝试通用解析
-                    # if converted_col.isna().sum() > len(data) * 0.5: # 可选：添加失败率高的回退逻辑
-                    #    self.logger.warning(f"列 '{col_name}': YYYYMMDD 转换失败率高，尝试通用解析...")
-                    #    converted_col_alt = pd.to_datetime(data[col_name], errors='coerce')
-                    #    if converted_col_alt.isna().sum() < converted_col.isna().sum():
-                    #        converted_col = converted_col_alt
-                        
-                    data[col_name] = converted_col
-                
-                # 一次性移除所有日期转换失败的行
-                # data.dropna(subset=date_columns_to_process, inplace=True) # <-- 注释掉这一行
-                if len(data) < original_count:
-                    # 这个警告现在可能需要调整，因为它可能不再准确反映因为dropna而移除的行
-                    # 或者在转换失败时(产生NaT)记录更具体的警告信息
-                    self.logger.warning(f"处理日期列: 移除了 {original_count - len(data)} 行 (注意：移除逻辑已修改)。") # 调整警告信息
-
-        # 5. 对数据进行排序 (应该在所有转换后进行)
-        data = self._sort_data(data)
-        
-        # 6. 不再调用 super().process_data() 因为 TushareTask 应该处理其特定需求
-        # return super().process_data(data) 
-        return data
-        
-    async def validate_data(self, data):
-        """验证从Tushare获取的数据
-        
-        除了基类的数据验证外，还添加了Tushare特有的数据验证。
-        不符合验证规则的数据会被过滤掉，而不是整批拒绝。
-        
-        Args:
-            data (pd.DataFrame): 待验证的数据
-            
-        Returns:
-            pd.DataFrame: 验证后的数据（已过滤掉不符合规则的数据）
-        """
-        if data is None or data.empty:
-            self.logger.warning("没有数据需要验证")
-            return data
-            
-        # 记录原始数据行数
-        original_count = len(data)
-        valid_mask = pd.Series(True, index=data.index)
-        
-        # 应用自定义验证规则
-        if hasattr(self, 'validations') and self.validations:
-            for validation_func in self.validations:
-                try:
-                    # 获取每行数据的验证结果
-                    validation_result = validation_func(data[valid_mask])
-                    if isinstance(validation_result, pd.Series):
-                        # 如果验证函数返回Series，直接使用
-                        valid_mask &= validation_result
-                    else:
-                        # 如果验证函数返回单个布尔值，应用到所有行
-                        if not validation_result:
-                            self.logger.warning(f"整批数据未通过验证: {validation_func.__name__ if hasattr(validation_func, '__name__') else '未命名验证'}")
-                            valid_mask &= False
-                except Exception as e:
-                    self.logger.warning(f"执行验证时发生错误: {str(e)}")
-                    # 发生错误时，将对应的数据标记为无效
-                    valid_mask &= False
-        # 应用验证结果
-        filtered_data = data[valid_mask].copy()
-        filtered_count = len(filtered_data)
-        
-        if filtered_count < original_count:
-            self.logger.warning(f"数据验证: 过滤掉 {original_count - filtered_count} 行不符合规则的数据")
-            
-        return filtered_data
+            self.logger.error(f"任务 {self.name} API调用 {self.api_name} (参数: {api_params}) 失败: {e}", exc_info=True)
+            return None # 或 pd.DataFrame() 以避免None导致后续错误
         
     @abc.abstractmethod
     async def get_batch_list(self, **kwargs) -> List[Dict]:
@@ -919,3 +597,4 @@ class TushareTask(Task):
         self.logger.info(f"成功获取数据，共 {len(combined_data)} 行")
         
         return combined_data
+

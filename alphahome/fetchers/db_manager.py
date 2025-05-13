@@ -228,18 +228,17 @@ class DBManager:
         CREATE TEMPORARY TABLE "{temp_table}" (LIKE "{table_name}" INCLUDING DEFAULTS) ON COMMIT DROP;
         """
         
-        # 准备数据: asyncpg's copy_records_to_table handles type conversion
-        # Important: Ensure DataFrame dtypes align reasonably with DB types.
-        # Convert NaN to None before passing to copy_records_to_table
-        data_records = [
-            tuple(None if pd.isna(val) else val for val in row) 
-            for row in df.itertuples(index=False, name=None)
-        ]
+        # --- Prepare records using a generator to reduce memory footprint ---
+        async def _df_to_records_generator(df_internal: pd.DataFrame):
+            # This generator yields tuples for copy_records_to_table.
+            # The df.empty check at the beginning of copy_from_dataframe handles initially empty DataFrames.
+            for row_tuple in df_internal.itertuples(index=False, name=None):
+                yield tuple(None if pd.isna(val) else val for val in row_tuple)
 
-        if not data_records:
-            self.logger.info(f"copy_from_dataframe: No data records to copy for table '{table_name}' after processing DataFrame.")
-            return 0
-            
+        records_iterable = _df_to_records_generator(df)
+        # Note: The original 'if not data_records:' check is removed as it's not directly applicable to a generator
+        # without consuming it. The df.empty check at the start of the parent function is the main guard.
+
         async with self.pool.acquire() as conn:
             async with conn.transaction():
                 try:
@@ -252,7 +251,7 @@ class DBManager:
                     # Since temp table is LIKE target_table, df_columns should match target table columns
                     copy_count = await conn.copy_records_to_table(
                         temp_table, 
-                        records=data_records,
+                        records=records_iterable, # Use the generator iterable
                         columns=df_columns,
                         timeout=300 # Increase timeout for large copies
                     )
@@ -572,6 +571,105 @@ class DBManager:
             self.logger.error(f"UPSERT操作失败 (使用COPY策略): {str(e)}\n表: {table_name}")
             # Avoid logging potentially large dataframes here
             raise
+
+    async def create_table_from_schema(self,
+                                       table_name: str,
+                                       schema_def: Dict[str, Union[str, Dict[str, str]]],
+                                       primary_keys: Optional[List[str]] = None,
+                                       date_column: Optional[str] = None,
+                                       indexes: Optional[List[Union[str, Dict[str, Any]]]] = None,
+                                       auto_add_update_time: bool = True): # Added auto_add_update_time
+        """根据任务定义的 schema 创建数据库表和索引。"""
+        if self.pool is None:
+            await self.connect()
+
+        if not schema_def:
+            raise ValueError(f"无法创建表 '{table_name}'，未提供 schema_def。")
+
+        async with self.pool.acquire() as conn:
+            async with conn.transaction(): # Use transaction for DDL
+                try:
+                    # --- 1. 构建 CREATE TABLE 语句 --- 
+                    columns = []
+                    for col_name, col_def in schema_def.items():
+                        if isinstance(col_def, dict):
+                            col_type = col_def.get('type', 'TEXT')
+                            constraints_val = col_def.get('constraints')
+                            constraints_str = str(constraints_val).strip() if constraints_val is not None else ""
+                            columns.append(f'\"{col_name}\" {col_type} {constraints_str}'.strip())
+                        else:
+                            columns.append(f'\"{col_name}\" {col_def}')
+                    
+                    # 添加 update_time 列（如果需要且不存在）
+                    if auto_add_update_time and 'update_time' not in schema_def:
+                        # Ensure default precision for TIMESTAMP WITHOUT TIME ZONE
+                        columns.append('\"update_time\" TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP')
+
+                    # 添加主键约束
+                    if primary_keys and isinstance(primary_keys, list) and len(primary_keys) > 0:
+                        pk_cols_str = ', '.join([f'\"{pk}\"' for pk in primary_keys])
+                        columns.append(f"PRIMARY KEY ({pk_cols_str})")
+                        
+                    columns_str = ',\n            '.join(columns)
+                    create_table_sql = f"""
+                    CREATE TABLE IF NOT EXISTS \"{table_name}\" (
+                        {columns_str}
+                    );
+                    """
+                    
+                    self.logger.info(f"准备执行建表语句 for '{table_name}':\n{create_table_sql}")
+                    await conn.execute(create_table_sql)
+                    self.logger.info(f"表 '{table_name}' 创建成功或已存在。")
+
+                    # --- 2. 构建并执行 CREATE INDEX 语句 --- 
+                    # 为 date_column 创建索引 (如果需要)
+                    if date_column and date_column not in (primary_keys or []):
+                        index_name_date = f"idx_{table_name}_{date_column}"
+                        create_index_sql_date = f'CREATE INDEX IF NOT EXISTS \"{index_name_date}\" ON \"{table_name}\" (\"{date_column}\");'
+                        self.logger.info(f"准备为 '{table_name}.{date_column}' 创建索引: {index_name_date}")
+                        await conn.execute(create_index_sql_date)
+                        self.logger.info(f"索引 '{index_name_date}' 创建成功或已存在。")
+
+                    # 创建 schema 中定义的其他索引
+                    if indexes and isinstance(indexes, list):
+                        for index_def in indexes:
+                            index_name = None
+                            index_columns = None
+                            unique = False
+                            
+                            if isinstance(index_def, dict):
+                                index_columns = index_def.get('columns')
+                                if not index_columns:
+                                    self.logger.warning(f"跳过无效的索引定义 (缺少 columns): {index_def}")
+                                    continue
+                                index_name = index_def.get('name', f"idx_{table_name}_{str(index_columns).replace(',', '_').replace(' ', '')}")
+                                unique = index_def.get('unique', False)
+                            elif isinstance(index_def, str):
+                                index_columns = index_def
+                                index_name = f"idx_{table_name}_{index_columns}"
+                            else:
+                                self.logger.warning(f"跳过未知格式的索引定义: {index_def}")
+                                continue
+                                
+                            # Ensure columns are quoted if they are single string
+                            if isinstance(index_columns, str):
+                                index_cols_str = f'\"{index_columns}\"'
+                            elif isinstance(index_columns, list): # Handle list of columns
+                                index_cols_str = ', '.join([f'\"{col}\"' for col in index_columns])
+                            else:
+                                 self.logger.warning(f"跳过无效的索引列定义 (类型 {type(index_columns)}): {index_columns}")
+                                 continue
+                                 
+                            unique_str = "UNIQUE " if unique else ""
+                            create_index_sql = f'CREATE {unique_str}INDEX IF NOT EXISTS \"{index_name}\" ON \"{table_name}\" ({index_cols_str});'
+                            self.logger.info(f"准备创建索引 '{index_name}' on '{table_name}({index_cols_str})': {unique_str}")
+                            await conn.execute(create_index_sql)
+                            self.logger.info(f"索引 '{index_name}' 创建成功或已存在。")
+                            
+                except Exception as e:
+                    self.logger.error(f"创建表或索引 '{table_name}' 时失败: {e}", exc_info=True)
+                    # Reraise after logging to signal failure
+                    raise # Propagate exception to caller (_ensure_table_exists)
 
     # ===============================================
     # == Deprecated/Alternative Upsert Implementation (using executemany) ==

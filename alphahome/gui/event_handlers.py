@@ -379,8 +379,8 @@ def handle_task_tree_click(event, tree: ttk.Treeview):
                     print(f"回调：切换任务 '{task_name}' (索引 {task_index}) 的选择状态")
                     controller.toggle_task_selection(task_index)
                 else:
-                     print(f"错误：无法在 controller 缓存中找到任务 '{task_name}'")
-                     # 可以考虑给用户一个提示，或者只是记录日志
+                    print(f"错误：无法在 controller 缓存中找到任务 '{task_name}'")
+                    # 可以考虑给用户一个提示，或者只是记录日志
 
             except IndexError:
                 print("错误：处理 Treeview 点击时无法获取任务名称 (列索引可能不正确)。")
@@ -411,7 +411,7 @@ def handle_load_settings(main_ui_elements: Dict[str, tk.Widget]):
                 main_ui_elements[key].config(state=tk.NORMAL) # Ensure enabled before deleting
                 main_ui_elements[key].delete(0, tk.END)
             except tk.TclError as e:
-                 print(f"警告：清空输入框 {key} 时出错: {e} (控件可能已被禁用或销毁?)")
+                print(f"警告：清空输入框 {key} 时出错: {e} (控件可能已被禁用或销毁?)")
 
         # 解析并填充
         db_config = settings.get('database', {})
@@ -447,8 +447,8 @@ def handle_load_settings(main_ui_elements: Dict[str, tk.Widget]):
                 status_msg = "数据库 URL 解析失败，请重新输入。"
                 # 保留 db_values 为空字符串，因为解析失败
         else:
-             print("DEBUG: 未找到 DB URL 配置。")
-             # 如果 URL 为空，db_values 保持为空字符串
+            print("DEBUG: 未找到 DB URL 配置。")
+            # 如果 URL 为空，db_values 保持为空字符串
 
         # 填充数据库字段
         for key in db_keys:
@@ -457,17 +457,17 @@ def handle_load_settings(main_ui_elements: Dict[str, tk.Widget]):
         # 填充 Token 字段
         main_ui_elements[token_key].insert(0, tushare_token)
         if tushare_token:
-             print("DEBUG: Tushare Token 已加载。")
-             if status_msg: status_msg += " " # 添加空格分隔
-             status_msg += "Tushare Token 已加载。"
+            print("DEBUG: Tushare Token 已加载。")
+            if status_msg: status_msg += " " # 添加空格分隔
+            status_msg += "Tushare Token 已加载。"
         else:
-             print("DEBUG: 未找到 Tushare Token 配置。")
+            print("DEBUG: 未找到 Tushare Token 配置。")
 
         # 设置状态栏消息
         if not db_url and not tushare_token:
             status_msg = "未找到配置文件或配置为空，请输入配置信息。"
         elif not status_msg: # 如果 URL 和 Token 都为空，但前面没有设置消息
-             status_msg = "设置已加载 (空)。"
+            status_msg = "设置已加载 (空)。"
 
         if statusbar:
             statusbar.config(text=status_msg)
@@ -628,8 +628,15 @@ def handle_run_tasks(main_ui_elements: Dict[str, tk.Widget]):
         smart_increment_flag = True # Checklist Item 1: Set to True for smart increment
         pass # start/end date remain None
     elif mode == "手动增量":
+        # Convert Tcl_Obj to string for reliable comparison
+        start_state_str = str(manual_date_entry.cget('state'))
+        end_state_str = str(manual_end_date_entry.cget('state'))
+
+        # Optional: Keep simple logging for final verification if needed
+        # logging.info(f"Manual date entry state: {start_state_str}, End date entry state: {end_state_str}")
+
         # 检查日期控件是否启用
-        if manual_date_entry.cget('state') == 'normal' and manual_end_date_entry.cget('state') == 'normal':
+        if start_state_str == 'normal' and end_state_str == 'normal':
             if HAS_TKCALENDAR:
                 start_date = manual_date_entry.get_date().strftime('%Y%m%d')
                 end_date = manual_end_date_entry.get_date().strftime('%Y%m%d')
@@ -647,8 +654,10 @@ def handle_run_tasks(main_ui_elements: Dict[str, tk.Widget]):
                 messagebox.showerror("日期错误", f"手动增量日期格式无效或范围错误: {e}\n请使用 YYYYMMDD 格式。")
                 return
         else:
-             messagebox.showerror("错误", "手动增量模式需要启用并选择日期。")
-             return
+            # This else block should now only be reached if states are genuinely not 'normal' (e.g., 'disabled')
+            messagebox.showerror("错误", "手动增量模式需要启用并选择日期。")
+            # logging.warning(f"Date entry states not 'normal'. Start: {start_state_str}, End: {end_state_str}") # Optional warning
+            return
     elif mode == "全量导入":
         # 全量模式，日期通常为 None
         pass # start/end date remain None
@@ -719,7 +728,7 @@ def _update_task_tree_display(widgets: Dict[str, tk.Widget]):
     filter_combo = widgets.get('type_filter_combo')
 
     if not tree or not isinstance(tree, ttk.Treeview) or \
-       not filter_combo or not isinstance(filter_combo, ttk.Combobox):
+        not filter_combo or not isinstance(filter_combo, ttk.Combobox):
         print("错误：更新 Treeview 时缺少必要的控件。")
         return
 
@@ -923,42 +932,42 @@ def process_controller_update(root: tk.Tk, ui_elements: Dict[str, tk.Widget], up
                         # Use 'name' as the item ID (iid)
                         run_status_tree.insert('', tk.END, iid=item_data.get('name'), values=values_tuple)
             else:
-                 print(f"警告：无法初始化运行状态表，缺少控件或数据格式错误 (Expected list): {type(data)}")
-                 
+                print(f"警告：无法初始化运行状态表，缺少控件或数据格式错误 (Expected list): {type(data)}")
+                
         elif update_type == 'TASK_RUN_UPDATE':
-             if run_status_tree and isinstance(data, dict): # Data is the full status dict {name: status_dict}
-                 _update_run_status_table(run_status_tree, data)
-             else:
-                 print(f"警告：无法更新运行状态表，缺少控件或数据格式错误 (Expected dict): {type(data)}")
-                 
+            if run_status_tree and isinstance(data, dict): # Data is the full status dict {name: status_dict}
+                _update_run_status_table(run_status_tree, data)
+            else:
+                print(f"警告：无法更新运行状态表，缺少控件或数据格式错误 (Expected dict): {type(data)}")
+                
         elif update_type == 'TASK_PROGRESS_UPDATE':
-             if run_status_tree and isinstance(data, tuple) and len(data) == 2:
-                 task_name, progress_float = data
-                 if run_status_tree.exists(task_name):
-                     try:
-                         # Format progress and update only the progress cell
-                         progress_str = f"{progress_float:.0%}"
-                         run_status_tree.set(task_name, 'progress', progress_str)
-                     except ValueError:
-                          print(f"警告：无法格式化进度值: {progress_float}")
-                     except Exception as e:
-                          print(f"警告：更新任务 '{task_name}' 进度时出错: {e}")
-                 # else: Task might have finished/disappeared before progress update arrived
-             else:
-                 print(f"警告：无法更新进度，缺少控件或数据格式错误 (Expected tuple(name, progress)): {type(data)}")
-                 
+            if run_status_tree and isinstance(data, tuple) and len(data) == 2:
+                task_name, progress_float = data
+                if run_status_tree.exists(task_name):
+                    try:
+                        # Format progress and update only the progress cell
+                        progress_str = f"{progress_float:.0%}"
+                        run_status_tree.set(task_name, 'progress', progress_str)
+                    except ValueError:
+                        print(f"警告：无法格式化进度值: {progress_float}")
+                    except Exception as e:
+                        print(f"警告：更新任务 '{task_name}' 进度时出错: {e}")
+                # else: Task might have finished/disappeared before progress update arrived
+            else:
+                print(f"警告：无法更新进度，缺少控件或数据格式错误 (Expected tuple(name, progress)): {type(data)}")
+                
         elif update_type == 'TASKS_FINISHED':
-             # Update button states for task execution
-             if run_button and isinstance(run_button, ttk.Button):
-                 run_button.config(state=tk.NORMAL)
-             else:
-                  print("警告：无法启用运行按钮，缺少或类型错误。")
-             if stop_button and isinstance(stop_button, ttk.Button):
-                  stop_button.config(state=tk.DISABLED)
-             else:
-                  print("警告：无法禁用停止按钮，缺少或类型错误。")
-             # Final status bar text is handled by the 'STATUS' message type
-             
+            # Update button states for task execution
+            if run_button and isinstance(run_button, ttk.Button):
+                run_button.config(state=tk.NORMAL)
+            else:
+                print("警告：无法启用运行按钮，缺少或类型错误。")
+            if stop_button and isinstance(stop_button, ttk.Button):
+                stop_button.config(state=tk.DISABLED)
+            else:
+                print("警告：无法禁用停止按钮，缺少或类型错误。")
+            # Final status bar text is handled by the 'STATUS' message type
+            
         # Checklist Item 3: Handle REFRESH_COMPLETE
         elif update_type == 'REFRESH_COMPLETE':
             if refresh_button and isinstance(refresh_button, ttk.Button):
@@ -989,7 +998,7 @@ def _update_run_status_table(tree: ttk.Treeview, status_data: Dict[str, Dict[str
                 tree.set(task_name, 'end', status_dict.get('end_time', ''))
                 tree.set(task_name, 'details', status_dict.get('details', ''))
             except Exception as e:
-                 print(f"警告：更新运行状态表行 '{task_name}' 时出错: {e}")
+                print(f"警告：更新运行状态表行 '{task_name}' 时出错: {e}")
         # else: Task might not be in the table if RUN_TABLE_INIT hasn't been processed yet
 
 # --- 其他事件处理函数 (保持不变或根据需要修改) ---

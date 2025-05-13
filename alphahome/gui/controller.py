@@ -406,9 +406,9 @@ async def _handle_execute_tasks(mode: str, start_date_str: Optional[str], end_da
     for name in task_names:
         task_info = next((t for t in _task_list_cache if t['name'] == name), None)
         initial_statuses.append({
-            'name': name,
+             'name': name,
             'type': task_info['type'] if task_info else '未知',
-            'status': STATUS_MAP_CN['PENDING'],
+             'status': STATUS_MAP_CN['PENDING'],
             'progress': '0%',
             'start_time': None,
             'end_time': None,
@@ -462,24 +462,24 @@ async def _handle_execute_tasks(mode: str, start_date_str: Optional[str], end_da
                 _update_task_status(task_name, status=STATUS_MAP_CN['SUCCESS'], progress='100%', end_time=end_time, details=f"成功完成 ({result.get('rows', 0)} 行)")
                 completed_tasks += 1
             elif result.get('status') == 'partial_success':
-                 _update_task_status(task_name, status=STATUS_MAP_CN['WARNING'], progress='100%', end_time=end_time, details=f"完成但验证失败 ({result.get('rows', 0)} 行)")
-                 completed_tasks += 1 # 仍然算作完成
+                _update_task_status(task_name, status=STATUS_MAP_CN['WARNING'], progress='100%', end_time=end_time, details=f"完成但验证失败 ({result.get('rows', 0)} 行)")
+                completed_tasks += 1 # 仍然算作完成
             elif result.get('status') == 'no_data' or result.get('status') == 'up_to_date':
-                 _update_task_status(task_name, status=STATUS_MAP_CN['SUCCESS'], progress='100%', end_time=end_time, details=f"无需更新 ({result.get('rows', 0)} 行)")
-                 completed_tasks += 1
+                _update_task_status(task_name, status=STATUS_MAP_CN['SUCCESS'], progress='100%', end_time=end_time, details=f"无需更新 ({result.get('rows', 0)} 行)")
+                completed_tasks += 1
             elif result.get('status') == 'cancelled': # Check for specific cancelled status
-                 _update_task_status(task_name, status=STATUS_MAP_CN['CANCELED'], end_time=end_time, details="任务被取消")
-                 canceled_tasks += 1
+                _update_task_status(task_name, status=STATUS_MAP_CN['CANCELED'], end_time=end_time, details="任务被取消")
+                canceled_tasks += 1
             else:
                 error_msg = result.get('error', '未知错误')
                 _update_task_status(task_name, status=STATUS_MAP_CN['FAILED'], end_time=end_time, details=f"失败: {error_msg}")
                 failed_tasks += 1
         except asyncio.CancelledError:
-             # <<< Record End Time on Cancellation >>>
-             end_time = datetime.now()
-             logging.warning(f"任务 {task_name} 执行被取消。")
-             _update_task_status(task_name, status=STATUS_MAP_CN['CANCELED'], end_time=end_time, details="任务被取消")
-             canceled_tasks += 1
+            # <<< Record End Time on Cancellation >>>
+            end_time = datetime.now()
+            logging.warning(f"任务 {task_name} 执行被取消。")
+            _update_task_status(task_name, status=STATUS_MAP_CN['CANCELED'], end_time=end_time, details="任务被取消")
+            canceled_tasks += 1
         except Exception as e:
             # <<< Record End Time on Exception >>>
             end_time = datetime.now()
@@ -514,13 +514,23 @@ async def _execute_single_task(
             # Checklist Item 6: Pass stop_event
             result = await task.smart_incremental_update(stop_event=stop_event)
         else:
-            kwargs = {'stop_event': stop_event} # Checklist Item 6: Pass stop_event
-            if start_date_str:
-                kwargs['start_date'] = start_date_str
-            if end_date_str:
-                kwargs['end_date'] = end_date_str
-            logging.info(f"调用 {task_name}.execute with kwargs: {kwargs}")
-            result = await task.execute(**kwargs)
+            execute_kwargs = {
+                'stop_event': stop_event,
+                'start_date': start_date_str,
+                'end_date': end_date_str,
+                # 'smart_increment': smart_increment, # TushareTask.execute uses force_full instead
+            }
+
+            # Set force_full=True if mode is '全量导入'
+            if mode == "全量导入":
+                execute_kwargs['force_full'] = True
+            # For '智能增量', TushareTask.execute handles it if start/end date are None and force_full is False.
+            # smart_increment flag from GUI is mainly to distinguish from '手动增量' if dates were also None.
+            # If TushareTask's execute specifically needs a 'smart_increment' bool, it can be added.
+            # However, its current logic relies on start_date, end_date, and force_full.
+
+            logging.info(f"调用 {task_name}.execute with kwargs: {execute_kwargs}")
+            result = await task.execute(**execute_kwargs)
 
         logging.info(f"单个任务 {task_name} 执行结果: {result}")
         return result
