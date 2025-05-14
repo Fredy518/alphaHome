@@ -30,7 +30,8 @@ class TushareFinaForecastTask(TushareTask):
     indexes = [
         {"name": "idx_fina_forecast_code", "columns": "ts_code"},
         {"name": "idx_fina_forecast_end_date", "columns": "end_date"},
-        {"name": "idx_fina_forecast_ann_date", "columns": "ann_date"}
+        {"name": "idx_fina_forecast_ann_date", "columns": "ann_date"},
+        {"name": "idx_fina_forecast_update_time", "columns": "update_time"}
     ]
     
     # 3.Tushare特有属性

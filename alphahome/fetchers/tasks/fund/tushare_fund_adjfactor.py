@@ -56,7 +56,9 @@ class TushareFundAdjFactorTask(TushareTask):
     }
 
     # 6. 自定义索引 (主键已包含)
-    indexes = []
+    indexes = [
+        {"name": "idx_tushare_fund_adjfactor_update_time", "columns": "update_time"} # 新增 update_time 索引
+    ]
 
     # 7. 分批配置
     batch_trade_days_single_code = 720 # 假设单基金复权因子查询量不大，可以一次多查点

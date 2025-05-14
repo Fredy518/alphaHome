@@ -87,7 +87,9 @@ class TushareIndexSwDailyTask(TushareTask):
     }
 
     # 6. 自定义索引 (主键已包含，无需额外添加，基类会自动处理 date_column 索引)
-    indexes = []
+    indexes = [
+        {"name": "idx_tushare_index_swdaily_update_time", "columns": "update_time"} # 新增 update_time 索引
+    ]
 
     # 7. 分批配置 (可根据接口和数据量调整)
     # 单个指数查询时，批次可以大一些

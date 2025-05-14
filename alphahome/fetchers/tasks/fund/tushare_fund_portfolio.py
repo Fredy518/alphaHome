@@ -73,7 +73,8 @@ class TushareFundPortfolioTask(TushareTask):
         {"name": "idx_fund_portfolio_ts_code", "columns": "ts_code"},
         {"name": "idx_fund_portfolio_ann_date", "columns": "ann_date"},
         {"name": "idx_fund_portfolio_end_date", "columns": "end_date"},
-        {"name": "idx_fund_portfolio_symbol", "columns": "symbol"}
+        {"name": "idx_fund_portfolio_symbol", "columns": "symbol"},
+        {"name": "idx_fund_portfolio_update_time", "columns": "update_time"} # 新增 update_time 索引
     ]
 
     # 7. 分批配置 (按自然日，约3个月一批)

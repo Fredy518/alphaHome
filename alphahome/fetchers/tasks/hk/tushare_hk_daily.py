@@ -29,7 +29,7 @@ class TushareHKDailyTask(TushareTask):
     
     # --- 代码级默认配置 (会被 config.json 覆盖) --- #
     default_concurrent_limit = 5 # 默认并发限制
-    default_page_size = 6000 # Tushare hk_daily 每页最大数量 (或按实际接口调整)
+    default_page_size = 5000 # Tushare hk_daily 每页最大数量 (或按实际接口调整)
 
     # 2. TushareTask 特有属性
     api_name = "hk_daily"
@@ -89,12 +89,13 @@ class TushareHKDailyTask(TushareTask):
     # 6. 自定义索引
     indexes = [
         {"name": "idx_hk_daily_code_date", "columns": ["ts_code", "trade_date"], "unique": True}, # Primary key often indexed by default
-        {"name": "idx_hk_daily_trade_date", "columns": "trade_date"}
+        {"name": "idx_hk_daily_trade_date", "columns": "trade_date"},
+        {"name": "idx_hk_daily_update_time", "columns": "update_time"}  # 新增 update_time 索引
     ]
     
     # 7. 分批配置 (根据港股接口特性和数据量调整)
     batch_trade_days_single_code = 240 * 2 # 单代码查询时，每个批次的交易日数量 (约2年)
-    batch_trade_days_all_codes = 3    # 全市场查询时，每个批次的交易日数量 (3天)
+    batch_trade_days_all_codes = 5    # 全市场查询时，每个批次的交易日数量 (5天)
 
     # validations (继承基类或自定义) 
     # async def validate_data(self, df: pd.DataFrame, **kwargs: Any) -> pd.DataFrame:

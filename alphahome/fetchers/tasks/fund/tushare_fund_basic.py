@@ -95,6 +95,7 @@ class TushareFundBasicTask(TushareTask):
         {"name": "idx_fund_basic_market", "columns": "market"},
         {"name": "idx_fund_basic_status", "columns": "status"},
         {"name": "idx_fund_basic_list_date", "columns": "list_date"},
+        {"name": "idx_fund_basic_update_time", "columns": "update_time"} # 新增 update_time 索引
     ]
 
     def __init__(self, db_connection, api_token=None, api=None):

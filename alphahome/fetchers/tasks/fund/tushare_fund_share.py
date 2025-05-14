@@ -56,7 +56,9 @@ class TushareFundShareTask(TushareTask):
     }
 
     # 6. 自定义索引 (主键已包含，无需额外添加)
-    indexes = []
+    indexes = [
+        {"name": "idx_tushare_fund_share_update_time", "columns": "update_time"} # 新增 update_time 索引
+    ]
 
     # 7. 分批配置 (根据接口特性和数据量调整)
     batch_trade_days_single_code = 360 # 单基金查询时，每个批次的交易日数量 (约1.5年)

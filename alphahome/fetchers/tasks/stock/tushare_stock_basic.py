@@ -78,7 +78,8 @@ class TushareStockBasicTask(TushareTask):
     indexes = [
         {"name": "idx_stock_basic_name", "columns": "name"},
         {"name": "idx_stock_basic_industry", "columns": "industry"},
-        {"name": "idx_stock_basic_market", "columns": "market"}
+        {"name": "idx_stock_basic_market", "columns": "market"},
+        {"name": "idx_stock_basic_update_time", "columns": "update_time"}
     ]
 
     def __init__(self, db_connection, api_token=None, api=None):

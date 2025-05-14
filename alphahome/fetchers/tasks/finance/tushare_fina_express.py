@@ -30,7 +30,8 @@ class TushareFinaExpressTask(TushareTask):
     indexes = [
         {"name": "idx_fina_express_code", "columns": "ts_code"},
         {"name": "idx_fina_express_end_date", "columns": "end_date"},
-        {"name": "idx_fina_express_ann_date", "columns": "ann_date"}
+        {"name": "idx_fina_express_ann_date", "columns": "ann_date"},
+        {"name": "idx_fina_express_update_time", "columns": "update_time"}
     ]
     
     # 3.Tushare特有属性

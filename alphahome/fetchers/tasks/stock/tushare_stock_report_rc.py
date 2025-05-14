@@ -29,7 +29,8 @@ class TushareStockReportRcTask(TushareTask):
         {"name": "idx_reportrc_code", "columns": "ts_code"},
         {"name": "idx_reportrc_report_date", "columns": "report_date"},
         {"name": "idx_reportrc_org", "columns": "org_name"},
-        {"name": "idx_reportrc_quarter", "columns": "quarter"}
+        {"name": "idx_reportrc_quarter", "columns": "quarter"},
+        {"name": "idx_reportrc_update_time", "columns": "update_time"}
     ]
 
     # 3.Tushare特有属性

@@ -79,6 +79,7 @@ class TushareFundNavTask(TushareTask):
     indexes = [
         # 可以考虑在 ann_date 上添加索引，如果经常按公告日期查询
         {"name": "idx_fund_nav_ann_date", "columns": "ann_date"},
+        {"name": "idx_fund_nav_update_time", "columns": "update_time"} # 新增 update_time 索引
     ]
 
     # 7. 分批配置

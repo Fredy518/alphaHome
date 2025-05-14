@@ -99,7 +99,8 @@ class TushareStockFactorProTask(TushareTask):
     indexes = [
         {"name": "idx_stkfactor_code_date", "columns": ["ts_code", "trade_date"], "unique": True},
         {"name": "idx_stkfactor_date", "columns": "trade_date"},
-        {"name": "idx_stkfactor_code", "columns": "ts_code"} # 添加纯代码索引，方便查询
+        {"name": "idx_stkfactor_code", "columns": "ts_code"},
+        {"name": "idx_stkfactor_update_time", "columns": "update_time"}
     ]
 
     # 5. 表结构定义 (所有数值型字段使用 NUMERIC)

@@ -64,7 +64,8 @@ class TushareIndexCiMemberTask(TushareTask):
     indexes = [
         # 主键 ("ts_code", "l3_code", "in_date") 已自动创建索引
         {"name": "idx_index_cimember_l1", "columns": "l1_code"},
-        {"name": "idx_index_cimember_l3", "columns": "l3_code"}
+        {"name": "idx_index_cimember_l3", "columns": "l3_code"},
+        {"name": "idx_index_cimember_update_time", "columns": "update_time"} # 新增 update_time 索引
     ]
 
     def __init__(self, db_connection, api_token=None):

@@ -63,7 +63,8 @@ class TushareIndexFactorProTask(TushareTask):
     # 4. 自定义索引
     indexes = [
         {"name": "idx_factorpro_code_date", "columns": ["ts_code", "trade_date"], "unique": True},
-        {"name": "idx_factorpro_date", "columns": "trade_date"}
+        {"name": "idx_factorpro_date", "columns": "trade_date"},
+        {"name": "idx_factorpro_update_time", "columns": "update_time"}
     ]
 
     # 5. 表结构定义 (所有因子字段使用 NUMERIC)

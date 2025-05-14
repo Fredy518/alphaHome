@@ -83,7 +83,8 @@ class TushareIndexBasicTask(TushareTask):
         {"name": "idx_index_basic_market", "columns": "market"},
         {"name": "idx_index_basic_publisher", "columns": "publisher"},
         {"name": "idx_index_basic_category", "columns": "category"},
-        {"name": "idx_index_basic_list_date", "columns": "list_date"}
+        {"name": "idx_index_basic_list_date", "columns": "list_date"},
+        {"name": "idx_index_basic_update_time", "columns": "update_time"} # 新增 update_time 索引
     ]
 
     def __init__(self, db_connection, api_token=None):

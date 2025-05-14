@@ -65,6 +65,7 @@ class TushareIndexSwmemberTask(TushareTask): # <-- 类名改回
         {"name": "idx_index_swmember_l1", "columns": "l1_code"}, # <-- 改回
         {"name": "idx_index_swmember_l2", "columns": "l2_code"}, # <-- 改回
         {"name": "idx_index_swmember_l3", "columns": "l3_code"}, # <-- 新增
+        {"name": "idx_index_swmember_update_time", "columns": "update_time"} # 新增 update_time 索引
     ]
 
     def __init__(self, db_connection, api_token=None):

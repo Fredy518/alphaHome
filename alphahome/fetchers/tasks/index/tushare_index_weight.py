@@ -54,7 +54,9 @@ class TushareIndexWeightTask(TushareTask):
     }
     
     # 6. 自定义索引 (如果除了主键和 date_column 外还需要其他索引)
-    indexes = []
+    indexes = [
+        {"name": "idx_tushare_index_weight_update_time", "columns": "update_time"} # 新增 update_time 索引
+    ]
 
     # 构造函数：基类的 __init__ 方法期望处理 task_id, task_name, cfg, db_manager, api, logger 参数。
     # 上面定义的类属性将被基类使用。

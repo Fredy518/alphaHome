@@ -29,7 +29,8 @@ class TushareFinaIndicatorTask(TushareTask):
     indexes = [
         {"name": "idx_fina_indicator_code", "columns": "ts_code"},
         {"name": "idx_fina_indicator_end_date", "columns": "end_date"},
-        {"name": "idx_fina_indicator_ann_date", "columns": "ann_date"}
+        {"name": "idx_fina_indicator_ann_date", "columns": "ann_date"},
+        {"name": "idx_fina_indicator_update_time", "columns": "update_time"}
     ]
     
     # 3.Tushare特有属性

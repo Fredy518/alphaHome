@@ -79,7 +79,9 @@ class TushareIndexCiDailyTask(TushareTask):
     }
 
     # 6. 自定义索引 (主键已包含，无需额外添加)
-    indexes = []
+    indexes = [
+        {"name": "idx_tushare_index_cidaily_update_time", "columns": "update_time"} # 新增 update_time 索引
+    ]
 
     # 7. 分批配置 (与 sw_daily 保持一致)
     batch_trade_days_single_code = 360 

@@ -83,7 +83,9 @@ class TushareFundDailyTask(TushareTask):
     }
 
     # 6. 自定义索引 (主键已包含)
-    indexes = []
+    indexes = [
+        {"name": "idx_tushare_fund_daily_update_time", "columns": "update_time"} # 新增 update_time 索引
+    ]
     
     # 7. 速率控制设置 - 添加这些属性
     # 降低并发数，避免过多并发请求导致触发API限制

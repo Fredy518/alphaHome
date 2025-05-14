@@ -31,7 +31,8 @@ class TushareFinaCashflowTask(TushareTask):
         {"name": "idx_fina_cashflow_code", "columns": "ts_code"},
         {"name": "idx_fina_cashflow_end_date", "columns": "end_date"},
         {"name": "idx_fina_cashflow_ann_date", "columns": "f_ann_date"},
-        {"name": "idx_fina_cashflow_report_type", "columns": "report_type"}
+        {"name": "idx_fina_cashflow_report_type", "columns": "report_type"},
+        {"name": "idx_fina_cashflow_update_time", "columns": "update_time"}
     ]
     
     # 3.Tushare特有属性

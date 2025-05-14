@@ -28,7 +28,8 @@ class TushareFinaIncomeTask(TushareTask):
         {"name": "idx_fina_income_code", "columns": "ts_code"},
         {"name": "idx_fina_income_end_date", "columns": "end_date"},
         {"name": "idx_fina_income_ann_date", "columns": "f_ann_date"},
-        {"name": "idx_fina_income_report_type", "columns": "report_type"}
+        {"name": "idx_fina_income_report_type", "columns": "report_type"},
+        {"name": "idx_fina_income_update_time", "columns": "update_time"}
     ]
     
     # 3.Tushare特有属性

@@ -73,7 +73,8 @@ class TushareHKBasicTask(TushareTask):
     indexes = [
         {"name": "idx_hk_basic_name", "columns": "name"},
         {"name": "idx_hk_basic_market", "columns": "market"},
-        {"name": "idx_hk_basic_list_status", "columns": "list_status"}
+        {"name": "idx_hk_basic_list_status", "columns": "list_status"},
+        {"name": "idx_hk_basic_update_time", "columns": "update_time"}
         # 移除了 security_type 相关的索引
         # {"name": "idx_hk_basic_security_type", "columns": "security_type"}
     ]

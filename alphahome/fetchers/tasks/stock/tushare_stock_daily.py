@@ -29,7 +29,8 @@ class TushareStockDailyTask(TushareTask):
     # 2.自定义索引
     indexes = [
         {"name": "idx_stock_daily_code", "columns": "ts_code"},
-        {"name": "idx_stock_daily_date", "columns": "trade_date"}
+        {"name": "idx_stock_daily_date", "columns": "trade_date"},
+        {"name": "idx_stock_daily_update_time", "columns": "update_time"}
     ]
 
     # 3.Tushare特有属性

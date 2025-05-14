@@ -27,7 +27,8 @@ class TushareFinaBalancesheetTask(TushareTask):
         {"name": "idx_fina_balancesheet_code", "columns": "ts_code"},
         {"name": "idx_fina_balancesheet_end_date", "columns": "end_date"},
         {"name": "idx_fina_balancesheet_ann_date", "columns": "f_ann_date"},
-        {"name": "idx_fina_balancesheet_report_type", "columns": "report_type"}
+        {"name": "idx_fina_balancesheet_report_type", "columns": "report_type"},
+        {"name": "idx_fina_balancesheet_update_time", "columns": "update_time"}
     ]
     
     # 3.Tushare特有属性
