@@ -12,20 +12,37 @@ AlphaHome 是一个基于 Python 异步框架构建的、灵活且可扩展的�
 *   **声明式任务定义**: 通过类属性清晰地定义任务元数据（如 API 名称、表名、主键、字段等）。
 *   **自动化数据处理**: 内置数据类型转换、列名映射和基本验证。
 *   **灵活的更新模式**: 支持全量更新、增量更新（按天数、按日期范围、自动检测）。
-*   **配置驱动**: 通过 `.env` 文件管理数据库连接和 API 密钥。
+*   **配置驱动**: 通过配置文件管理数据库连接、API 密钥及任务参数。
 *   **易于扩展**: 可以方便地添加新的数据源和数据任务。
-*   **数据库集成**: 自动处理数据库表创建和数据插入/更新（基于 `upsert`）。
+*   **数据库集成**: 自动处理数据库表创建（包括列注释）和数据插入/更新（基于 `upsert`）。
 *   **速率限制管理**: 支持按 Tushare API 接口设置不同的调用频率限制。
 *   **命令行工具**: 提供方便的命令行脚本来执行数据更新任务。
-*   **智能批处理**: 支持按交易日历智能分批获取数据，可针对单一股票和全市场设置不同批次大小。
+*   **智能批处理**: 支持按交易日历智能分批获取数据，可根据API要求按固定交易日数分批或按单个交易日分批。
 *   **交易日历集成**: 内置交易日历工具，自动识别交易日并优化数据获取流程。
 
 ## 环境配置
 
 ### 配置文件说明
-- 项目根目录下提供了 `config.example.json`，作为配置模板文件。
-- **请将该文件复制到你的用户配置目录，并重命名为 `config.json`，然后根据实际情况填写内容。**
-- 用户配置目录路径通常为：`C:/Users/<你的用户名>/AppData/Local/trademaster/alphahome/config.json`，也可参考日志中的路径提示。
+项目中主要涉及以下几类配置文件：
+
+1.  **`.env` 文件 (项目根目录)**:
+    *   用于存储敏感信息和基本环境配置。
+    *   **必需创建此文件**，可以从复制并修改 `.env.example` (如果提供了该模板文件) 开始。
+    *   主要配置项:
+        *   `TUSHARE_API_TOKEN`: 你的 Tushare Pro API Token (必需)。
+        *   `DB_CONNECTION_STRING`: PostgreSQL 数据库连接字符串 (必需)。
+    *   此文件中的配置主要供后端脚本和默认情况使用。
+
+2.  **`config.json` (用户配置目录)**:
+    *   用于存储用户特定的配置，可以覆盖任务的默认参数以及 `.env` 中的某些设置（特别是通过GUI修改时）。
+    *   项目根目录下提供了 `config.example.json`，请**将其复制到你的用户配置目录，并重命名为 `config.json`**，然后根据实际情况填写内容。
+    *   用户配置目录路径通常为：`C:/Users/<你的用户名>/AppData/Local/trademaster/alphahome/config.json` (Windows) 或类似的路径 (macOS/Linux)。请参考程序首次运行时日志中关于加载此文件路径的提示。
+    *   GUI界面的"存储设置"（如数据库连接和API Token）会保存到此文件中。
+    *   还可以配置任务级别的参数，例如特定任务的 `concurrent_limit`, `page_size` 等。
+
+3.  **任务代码内默认配置**:
+    *   各个任务类内部可以定义 `default_concurrent_limit`, `default_page_size` 等属性作为代码级别的默认值。
+    *   这些默认值优先级最低，会被用户 `config.json` 中的配置覆盖。
 
 ### 1. 克隆项目
 
@@ -41,16 +58,16 @@ cd alphaHome
 ```bash
 python -m venv venv
 # Windows
-venv\Scripts\activate
+venv\\Scripts\\activate
 # macOS/Linux
 source venv/bin/activate
 
 pip install -r requirements.txt
 ```
 
-### 3. 配置环境变量
+### 3. 配置 `.env` 文件
 
-在项目根目录下创建一个 `.env` 文件，并填入以下内容：
+在项目根目录下创建（或复制并重命名 `.env.example`）一个 `.env` 文件，并填入以下内容：
 
 ```dotenv
 # .env 文件示例
@@ -64,14 +81,13 @@ TUSHARE_API_TOKEN=your_actual_tushare_api_token
 # 例如: postgresql+asyncpg://user:password@localhost:5432/finance_db
 DB_CONNECTION_STRING=your_database_connection_string
 
-# 并发限制 (可选, 默认值在 config.py 中定义)
+# 全局默认并发限制 (可选, 各任务类中可能有自己的默认值)
 # 控制同时向 Tushare API 发送请求的数量
-CONCURRENT_LIMIT=5
+# CONCURRENT_LIMIT=5 # 通常在任务类或 config.json 中具体配置
 
-# Tushare API 速率限制 (可选, 默认值在 TushareAPI 类中定义)
-# 可以为特定的 Tushare 接口设置每分钟的请求次数限制
-# TUSHARE_API_RATE_LIMIT_DAILY=500
-TUSHARE_API_RATE_LIMIT_DEFAULT=50
+# Tushare API 默认速率限制 (可选, TushareAPI 类中已有默认值)
+# 可以为特定的 Tushare 接口在 config.json 中设置每分钟的请求次数限制
+# TUSHARE_API_RATE_LIMIT_DEFAULT=50 # 通常在TushareAPI类中定义
 ```
 
 **重要**:
@@ -79,7 +95,10 @@ TUSHARE_API_RATE_LIMIT_DEFAULT=50
 *   将 `your_actual_tushare_api_token` 替换为你的 Tushare Pro 账户的有效 Token。
 *   将 `your_database_connection_string` 替换为你的 PostgreSQL 数据库的实际连接信息。
 
-### 4. (可选) 从 Wheel 文件安装
+### 4. (可选) 配置用户 `config.json`
+参照项目根目录下的 `config.example.json`，在你的用户配置目录下创建并编辑 `config.json`。这允许你微调任务参数或通过GUI保存连接设置。
+
+### 5. (可选) 从 Wheel 文件安装
 
 如果你获得了项目的 `.whl` 分发包（例如 `dist/alphahome-1.0.0-py3-none-any.whl`），你可以直接使用 pip 安装：
 
@@ -87,7 +106,7 @@ TUSHARE_API_RATE_LIMIT_DEFAULT=50
 # 确保你已经安装了所有非 Python 依赖（例如 PostgreSQL）
 pip install dist/alphahome-1.0.0-py3-none-any.whl
 
-# 安装后，你可能仍然需要创建和配置 .env 文件（见上文）
+# 安装后，你仍然需要创建和配置 .env 文件以及用户 config.json 文件（见上文）
 # 并根据你的安装方式运行 GUI 或脚本
 ```
 
@@ -96,7 +115,7 @@ pip install dist/alphahome-1.0.0-py3-none-any.whl
 要添加一个新的数据获取任务（例如，获取指数数据）：
 
 1.  在 `fetchers/tasks/` 下创建一个新的 Python 文件（例如 `fetchers/tasks/index/tushare_index_daily.py`）。
-2.  在该文件中创建一个新的类，继承自 `fetchers.task.TushareTask` (或其他合适的数据源基类)。
+2.  在该文件中创建一个新的类，继承自 `fetchers.sources.tushare.tushare_task.TushareTask` (或其他合适的数据源基类)。
 3.  在类中定义必要的属性：
     *   `name`: 任务的唯一标识符 (例如 `"tushare_index_daily"`)。
     *   `description`: 任务描述。
@@ -105,34 +124,35 @@ pip install dist/alphahome-1.0.0-py3-none-any.whl
     *   `date_column`: 用于增量更新的日期列名。
     *   `api_name`: 对应的 Tushare API 接口名称 (例如 `"index_daily"`)。
     *   `fields`: 需要从 API 获取的字段列表。
+    *   `schema`: 定义数据库表结构。**重要**: 每个列定义（一个字典）可以包含一个 `comment` 键，其值将作为该列在数据库中的注释。例如: `{"type": "VARCHAR(10)", "constraints": "NOT NULL", "comment": "股票代码"}`。
     *   `(可选)` `column_mapping`: API 字段名到数据库列名的映射。
     *   `(可选)` `transformations`: 列的数据类型转换规则。
     *   `(可选)` `validations`: 数据验证规则。
     *   `(可选)` `indexes`: 需要在数据库表中创建的自定义索引。
-    *   `(可选)` `batch_trade_days_single_code`: 单代码查询时的批次大小（交易日数量）。
-    *   `(可选)` `batch_trade_days_all_codes`: 全市场查询时的批次大小（交易日数量）。
+    *   `(可选)` `batch_trade_days_single_code` / `batch_trade_days_all_codes`: 当使用 `generate_trade_day_batches` 时，分别定义单代码查询和全市场查询的批次大小（交易日数量）。如果任务的API特性更适合按单个交易日批处理（例如使用 `generate_single_date_batches`），则这些属性可能不需要。
 4.  根据需要实现或重写方法：
-    *   `get_batch_list`: 定义如何根据输入参数（如日期范围、代码列表）生成 API 调用批次。可使用系统提供的 `generate_trade_day_batches` 工具函数简化实现。
+    *   `get_batch_list`: 定义如何根据输入参数（如日期范围、代码列表）生成 API 调用批次。
+        *   可使用系统提供的 `generate_trade_day_batches` 工具函数，按固定交易日数分批。
+        *   或者，如果API要求（尤其在全市场查询时）按单个交易日获取数据，可以使用 `generate_single_date_batches` 工具函数。它会为指定日期范围内的每个交易日生成一个批次，并将日期参数名设置为指定的 `date_field` (例如 `'trade_date'`)。
     *   `prepare_params`: 准备每次 API 调用所需的具体参数。
     *   `(可选)` `process_data`: 添加自定义的数据处理逻辑。
     *   `(可选)` `validate_data`: 添加自定义的数据验证逻辑。
-5.  (重要) 在 `fetchers/tasks/__init__.py` 文件中导入你新创建的任务类，以便 `TaskFactory` 能够发现它。
+5.  (重要) 在相应子目录的 `__init__.py` (例如 `fetchers/tasks/stock/__init__.py`) 和更高一级的 `fetchers/tasks/__init__.py` 文件中导入并导出你新创建的任务类，以便 `TaskFactory` 能够发现它。
 6.  现在你可以通过 `TaskFactory.get_task("your_new_task_name")` 来获取和使用你的新任务了。
 
 ## 项目结构
 
 ```
 alphaHome/
-├── .env                    # 环境变量配置文件 (需手动创建)
+├── .env                    # 环境变量配置文件 (需手动创建, .env.example 为模板)
 ├── .gitignore              # Git 忽略文件配置
-├── config.py               # 应用配置 (如并发限制)
+├── config.example.json     # 用户配置文件的模板
 ├── requirements.txt        # Python 依赖库
 ├── fetchers/               # 数据模块核心
 │   ├── __init__.py         # fetchers 包初始化
 │   ├── base_task.py        # 基础任务类 Task
-│   ├── config.json         # (用途待定) 配置文件?
-│   ├── db_manager.py       # 数据库交互 (连接, 表管理, CRUD)
-│   ├── task_decorator.py   # (用途待定) 任务装饰器?
+│   ├── db_manager.py       # 数据库交互 (连接, 表管理包括列注释, CRUD)
+│   ├── task_decorator.py   # 任务注册装饰器
 │   ├── task_factory.py     # 任务工厂，用于创建和管理任务实例
 │   ├── sources/            # 数据源 API 封装
 │   │   ├── __init__.py
@@ -141,78 +161,112 @@ alphaHome/
 │   │       ├── tushare_api.py  # Tushare API 客户端 (速率限制)
 │   │       └── tushare_task.py # Tushare 任务基类 TushareTask
 │   ├── tasks/              # 具体的业务数据任务实现
-│   │   ├── __init__.py     # !! 需要在此导入所有任务类 !!
-│   │   ├── examples/       # (待确认用途) 任务示例?
-│   │   ├── index/          # (待确认用途) 指数相关任务?
+│   │   ├── __init__.py     # !! 需要在此导入并导出所有任务模块 !!
+│   │   ├── finance/
+│   │   ├── fund/
+│   │   ├── hk/
+│   │   ├── index/
 │   │   └── stock/          # 股票相关任务
-│   │       ├── __init__.py
+│   │       ├── __init__.py # !! 需要在此导入并导出目录内所有任务类 !!
 │   │       ├── tushare_stock_daily.py
-│   │       └── tushare_stock_dailybasic.py
+│   │       ├── tushare_stock_chips.py # 新增：每日筹码任务示例
+│   │       └── ...
 │   └── tools/              # 通用工具
 │       ├── __init__.py
 │       ├── calendar.py     # 交易日历工具 (异步)
-│       └── batch_utils.py  # 批处理工具 (包含交易日批次生成函数)
+│       └── batch_utils.py  # 批处理工具 (包含多种交易日批次生成函数)
 ├── docs/                   # 文档目录
-│   └── user_guide.md       # 用户指南
-├── stock_data.log          # 全局日志文件?
-├── industry_crowd_factor.py # (用途待定) 行业拥挤度因子计算?
+│   └── ...
+├── logs/                   # 日志输出目录 (自动创建)
+├── scripts/                # 命令行脚本目录
+│   └── ...
+├── gui/                    # GUI界面相关代码
+│   └── ...
 └── README.md               # 本文档
 
-# 注： .git, __pycache__ 等目录已省略
+# 注： .git, __pycache__, venv 等目录已省略
+# 用户 config.json 存储在用户特定的应用数据目录中。
 ```
 
 ## 批处理功能说明
 
-系统提供了智能批处理功能，可以根据交易日历自动将数据获取任务分成多个批次进行处理：
+系统提供了智能批处理功能，可以根据交易日历自动将数据获取任务分成多个批次进行处理。主要通过 `alphahome/fetchers/tools/batch_utils.py` 中的工具函数实现。
 
-### 批处理参数配置
+### 1. 按固定交易日数分批 (`generate_trade_day_batches`)
 
-在任务类中，可以通过以下属性配置批处理：
+当API允许一次查询一定日期范围的数据时，可以使用此函数。
+
+#### 批处理参数配置 (任务类中)
 
 ```python
-# 批处理配置示例
+# 批处理配置示例 (当使用 generate_trade_day_batches 时)
 batch_trade_days_single_code = 240  # 单代码查询时，每个批次的交易日数量 (约1年)
 batch_trade_days_all_codes = 15    # 全市场查询时，每个批次的交易日数量 (约3周)
 ```
 
-### 批处理工具函数
-
-系统提供了 `generate_trade_day_batches` 工具函数，可以简化批处理实现：
+#### 使用方法
 
 ```python
 from ...tools.batch_utils import generate_trade_day_batches
 
 async def get_batch_list(self, **kwargs) -> List[Dict]:
-    """生成批处理参数列表
-
-    Args:
-        **kwargs: 查询参数，包括start_date、end_date、ts_code等
-
-    Returns:
-        List[Dict]: 批处理参数列表
-    """
-    # 获取查询参数
-    start_date = kwargs.get('start_date', '19910101')
+    start_date = kwargs.get('start_date', self.default_start_date)
     end_date = kwargs.get('end_date', datetime.now().strftime('%Y%m%d'))
-    ts_code = kwargs.get('ts_code')  # 可选的股票代码
-    exchange = kwargs.get('exchange', 'SSE')  # 可选的交易所参数
+    ts_code = kwargs.get('ts_code')
+    exchange = kwargs.get('exchange', 'SSE')
     
-    # 使用批次生成工具
+    current_batch_size = self.batch_trade_days_single_code if ts_code else self.batch_trade_days_all_codes
+    
     batch_list = await generate_trade_day_batches(
         start_date=start_date,
         end_date=end_date,
-        batch_size=self.batch_trade_days_single_code if ts_code else self.batch_trade_days_all_codes,
-        ts_code=ts_code,
+        batch_size=current_batch_size,
+        ts_code=ts_code, # 如果提供，会加入到每个批次参数中
         exchange=exchange,
         logger=self.logger
     )
+    # 返回的批次通常包含 'start_date', 'end_date', 和可选的 'ts_code'
     return batch_list
 ```
-
 该工具函数会：
-1. 根据交易日历自动识别指定日期范围内的实际交易日
-2. 根据是否提供了股票代码，选择合适的批次大小
-3. 将交易日分批并生成适合API调用的参数列表
+1.  根据交易日历自动识别指定日期范围内的实际交易日。
+2.  根据提供的 `batch_size` 将交易日分批。
+3.  如果提供了 `ts_code`，则将其包含在每个生成的批次参数字典中。
+
+### 2. 按单个交易日分批 (`generate_single_date_batches`)
+
+当API（尤其在全市场查询时）要求按单个交易日获取数据，或者业务逻辑需要逐日处理时，可以使用此函数。
+
+#### 使用方法
+
+```python
+from ...tools.batch_utils import generate_single_date_batches
+
+async def get_batch_list(self, **kwargs) -> List[Dict]:
+    start_date = kwargs.get('start_date', self.default_start_date)
+    end_date = kwargs.get('end_date', datetime.now().strftime('%Y%m%d'))
+    ts_code = kwargs.get('ts_code') # 可选
+    exchange = kwargs.get('exchange', 'SSE')
+    
+    # API cyq_perf 查询全市场时要求参数为 trade_date
+    # date_field 指定了API调用时日期参数的键名
+    batch_list = await generate_single_date_batches(
+        start_date=start_date,
+        end_date=end_date,
+        date_field='trade_date', # API参数中的日期字段名
+        ts_code=ts_code,         # 可选的股票代码
+        exchange=exchange,
+        logger=self.logger
+    )
+    # 返回的批次列表形如: [{'trade_date': 'YYYYMMDD', 'ts_code': 'xxxx'(可选)}, ...]
+    # 每个字典代表一个API调用批次。
+    return batch_list
+```
+该工具函数会：
+1.  获取指定日期范围内的所有交易日。
+2.  为每个交易日生成一个批次字典。
+3.  批次字典中包含一个由 `date_field` 参数指定的键（值为该交易日），以及可选的 `ts_code`。
+    例如，`TushareStockChipsTask` 获取每日筹码数据时，全市场查询 (`ts_code` 为 `None`) 就使用此方法，API参数为 `trade_date`。
 
 ## 脚本使用说明
 
@@ -409,7 +463,7 @@ GUI 界面通常包含以下几个主要部分：
     *   实时显示来自后端任务和系统的日志信息，包括进度、警告和错误。
 
 5.  **菜单栏**: 
-    *   **文件 -> 存储设置**: 打开设置窗口，用于配置 PostgreSQL 数据库连接 URL 和 Tushare API Token。
+    *   **文件 -> 存储设置**: 打开设置窗口，用于配置 PostgreSQL 数据库连接 URL 和 Tushare API Token。**这些设置将保存到用户目录的 `config.json` 文件中。**
     *   **文件 -> 退出**: 关闭应用程序。
     *   **操作**: 提供快速选择/取消选择所有任务或按类型选择任务的功能。
 
