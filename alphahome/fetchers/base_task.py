@@ -38,8 +38,8 @@ class Task(ABC):
         try:
             # <<< Check stop event before starting >>>
             if stop_event and stop_event.is_set():
-                 self.logger.warning(f"任务 {self.name} 在开始前被取消。")
-                 raise asyncio.CancelledError("任务在开始前被取消")
+                self.logger.warning(f"任务 {self.name} 在开始前被取消。")
+                raise asyncio.CancelledError("任务在开始前被取消")
 
             await self.pre_execute(stop_event=stop_event) # <<< Pass stop_event >>>
             
@@ -96,8 +96,8 @@ class Task(ABC):
             self.logger.info(f"任务执行完成: {result}")
             return result
         except asyncio.CancelledError: # <<< Catch CancelledError specifically >>>
-             self.logger.warning(f"任务 {self.name} 被取消。")
-             return self.handle_error(asyncio.CancelledError("任务被用户取消")) # <<< Handle cancellation >>>
+            self.logger.warning(f"任务 {self.name} 被取消。")
+            return self.handle_error(asyncio.CancelledError("任务被用户取消")) # <<< Handle cancellation >>>
         except Exception as e:
             # Enhanced logging: include exception type
             self.logger.error(f"任务执行失败: 类型={type(e).__name__}, 错误={str(e)}", exc_info=True)
@@ -386,7 +386,7 @@ class Task(ABC):
         # DBManager.upsert 需要支持 stop_event 才能在此处中断
         # 检查停止事件
         if stop_event and stop_event.is_set():
-             raise asyncio.CancelledError("任务在调用 upsert 前被取消")
+            raise asyncio.CancelledError("任务在调用 upsert 前被取消")
 
         # 直接调用 upsert 并传递 stop_event (DBManager.upsert 已更新)
         affected_rows = await self.db.upsert(
@@ -400,8 +400,8 @@ class Task(ABC):
 
         # 再次检查停止事件 (如果 upsert 内部没有完全处理)
         if stop_event and stop_event.is_set():
-             # 虽然 upsert 现在应该能处理，但保留此检查作为保险
-             raise asyncio.CancelledError("任务在 upsert 调用后被取消")
+            # 虽然 upsert 现在应该能处理，但保留此检查作为保险
+            raise asyncio.CancelledError("任务在 upsert 调用后被取消")
 
         return affected_rows
 
@@ -429,8 +429,8 @@ class Task(ABC):
         
         # <<< Check stop event at the beginning >>>
         if stop_event and stop_event.is_set():
-             self.logger.warning(f"智能增量更新 {self.name} 在开始前被取消。")
-             raise asyncio.CancelledError("智能增量更新在开始前被取消")
+            self.logger.warning(f"智能增量更新 {self.name} 在开始前被取消。")
+            raise asyncio.CancelledError("智能增量更新在开始前被取消")
 
         # 确定结束日期
         if end_date is None:
@@ -506,8 +506,9 @@ class Task(ABC):
             self.logger.info(f"最终执行更新范围: {start_date} 到 {end_date}")
             kwargs['start_date'] = start_date
             kwargs['end_date'] = end_date
+            # 增加 smart_incremental=True 标志，明确表明这是智能增量更新调用
             # <<< Pass stop_event to execute >>>
-            result = await self.execute(stop_event=stop_event, **kwargs) 
+            result = await self.execute(stop_event=stop_event, smart_incremental=True, **kwargs) 
             
             if result.get("status") == "no_data":
                 self.logger.info("没有新数据需要更新")

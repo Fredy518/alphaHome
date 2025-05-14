@@ -11,6 +11,7 @@
 - 业绩快报 (express)
 - 业绩预告 (forecast)
 - 财务指标 (indicator)
+- 财报披露计划 (disclosure)
 """
 
 from .tushare_fina_balancesheet import TushareFinaBalancesheetTask
@@ -19,6 +20,7 @@ from .tushare_fina_income import TushareFinaIncomeTask
 from .tushare_fina_express import TushareFinaExpressTask
 from .tushare_fina_forecast import TushareFinaForecastTask
 from .tushare_fina_indicator import TushareFinaIndicatorTask
+from .tushare_fina_disclosure import TushareFinaDisclosureTask
 
 __all__ = [
     'TushareFinaBalancesheetTask',
@@ -27,4 +29,5 @@ __all__ = [
     'TushareFinaExpressTask',
     'TushareFinaForecastTask',
     'TushareFinaIndicatorTask',
+    'TushareFinaDisclosureTask'
 ] 

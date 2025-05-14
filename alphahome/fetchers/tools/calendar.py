@@ -151,8 +151,8 @@ async def get_trade_cal(start_date: str = None, end_date: str = None, exchange: 
         try:
             df_api = await current_api_instance.query(
                 api_name=api_name_to_call, 
-                fields='',  # Let TushareAPI handle default/all fields for trade_cal
-                **params
+                params=params, # 将 **params 修改为 params=params
+                fields=''  # Let TushareAPI handle default/all fields for trade_cal
             )
             if df_api is not None:
                 final_df = df_api

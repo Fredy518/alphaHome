@@ -621,6 +621,18 @@ class DBManager:
                     await conn.execute(create_table_sql)
                     self.logger.info(f"表 '{table_name}' 创建成功或已存在。")
 
+                    # --- 1.1 添加列注释 ---
+                    for col_name, col_def in schema_def.items():
+                        if isinstance(col_def, dict) and 'comment' in col_def:
+                            comment_text = col_def['comment']
+                            if comment_text is not None:
+                                # 转义 comment_text 中的单引号，防止SQL注入或语法错误
+                                escaped_comment_text = str(comment_text).replace("'", "''")
+                                comment_sql = f'COMMENT ON COLUMN "{table_name}"."{col_name}" IS \'{escaped_comment_text}\';'
+                                self.logger.info(f"准备为列 '{table_name}.{col_name}' 添加注释: {comment_sql}")
+                                await conn.execute(comment_sql)
+                                self.logger.debug(f"为列 '{table_name}.{col_name}' 添加注释成功。")
+
                     # --- 2. 构建并执行 CREATE INDEX 语句 --- 
                     # 为 date_column 创建索引 (如果需要)
                     if date_column and date_column not in (primary_keys or []):
