@@ -13,6 +13,7 @@ from datetime import datetime, timedelta
 import time
 import logging # 确保导入 logging
 import math # 引入 math 用于 ceil 计算
+import aiohttp
 
 class TushareTask(Task):
     """基于 Tushare API 的数据任务基类
@@ -20,6 +21,25 @@ class TushareTask(Task):
     核心设计：
     1. 基类只提供最基础的数据获取功能
     2. 具体的参数映射和批处理策略由子类决定
+    
+    重要说明：
+    如果子类需要自定义数据处理逻辑，可以重写 process_data 方法。
+    在重写时，确保:
+    1. 方法签名为 `def process_data(self, data)` - 注意这是同步方法
+    2. 必须调用 `super().process_data(data)` 确保基础处理逻辑执行
+    3. 返回最终处理的 DataFrame
+    
+    例如:
+    ```python
+    def process_data(self, data):
+        # 首先调用父类的处理方法
+        data = super().process_data(data)
+        
+        # 自定义处理逻辑
+        # ...
+        
+        return data
+    ```
     """
     
     # 默认配置
@@ -467,47 +487,74 @@ class TushareTask(Task):
 
             
     async def fetch_batch(self, batch_params: Dict) -> Optional[pd.DataFrame]:
-        """获取单个批次的数据，处理API调用。
-        
-        Args:
-            batch_params: 由get_batch_list方法生成的单个批次参数字典
-            
-        Returns:
-            Optional[pd.DataFrame]: 获取到的数据，如果失败或无数据则为None或空DataFrame。
         """
-        api_params = self.prepare_params(batch_params)
-        self.logger.debug(f"任务 {self.name}: 调用API {self.api_name} 使用参数: {api_params}")
+        获取单个批次的数据，包含重试逻辑。
 
-        try:
-            # 确保 api 实例存在
-            if not hasattr(self, 'api') or not self.api:
-                self.logger.error(f"任务 {self.name}: TushareAPI 实例 (self.api) 未初始化。")
-                return None
-            
-            # 确保 api_name 已定义
-            if not self.api_name:
-                self.logger.error(f"任务 {self.name}: api_name 未在子类中定义。")
-                return None
+        Args:
+            batch_params (Dict): API调用所需的参数
 
-            data = await self.api.query(api_name=self.api_name, params=api_params, fields=self.fields)
-            
-            if data is None:
-                self.logger.warning(f"任务 {self.name} API调用 {self.api_name} (参数: {api_params}) 返回 None")
-                return None # 或者 pd.DataFrame() 根据后续处理逻辑
-            
-            if not isinstance(data, pd.DataFrame):
-                self.logger.error(f"任务 {self.name} API调用 {self.api_name} (参数: {api_params}) 返回非DataFrame类型: {type(data)}")
-                return None # 或者根据错误处理策略转换/记录
+        Returns:
+            Optional[pd.DataFrame]: 获取到的数据，如果失败则返回 None
+        """
+        attempt = 0
+        while attempt < self.max_retries:
+            try:
+                # 准备最终API参数
+                api_params = self.prepare_params(batch_params.copy()) # 使用副本以防 prepare_params 修改原始批次参数
+                
+                self.logger.debug(f"任务 {self.name} API调用 {self.api_name} (尝试 {attempt + 1}/{self.max_retries}), 参数: {api_params}")
 
-            if data.empty:
-                self.logger.info(f"任务 {self.name} API调用 {self.api_name} (参数: {api_params}) 返回空DataFrame")
+                # 调用 TushareAPI 的 query 方法
+                df = await self.api.query(
+                    api_name=self.api_name,
+                    fields=self.fields,
+                    params=api_params # 使用处理后的参数
+                )
+                
+                if df is None: # 如果API调用返回None (通常是请求失败且未抛出异常，或内部处理决定返回None)
+                    self.logger.warning(f"任务 {self.name} API调用 {self.api_name} (参数: {api_params}) 返回 None，尝试次数 {attempt + 1}/{self.max_retries}")
+                    # 可以在这里选择是否立即重试或允许循环继续
+                elif df.empty:
+                    self.logger.info(f"任务 {self.name} API调用 {self.api_name} (参数: {api_params}) 返回空DataFrame，尝试次数 {attempt + 1}/{self.max_retries}")
+                    # Tushare API 返回空 DataFrame 通常表示在该参数下没有数据，不一定是错误
+                    # 对于某些任务，空DataFrame是有效响应，例如查询某日期无数据。
+                    # 对于其他任务，可能需要更严格的处理。
+                    # 此处仅记录日志，不视为需要重试的硬性错误，除非子类逻辑覆盖。
+                
+                return df # 成功获取数据（可能为空）
+
+            except ValueError as ve: # 通常是API返回的业务错误，如token无效、参数错误等
+                self.logger.error(f"任务 {self.name} (参数: {api_params}) API业务错误: {ve} (尝试 {attempt + 1}/{self.max_retries})")
+                # 根据错误类型判断是否重试。例如，token错误不应重试。
+                # "Tushare API 返回错误" 通常是这种类型
+                if "token" in str(ve).lower() or "权限" in str(ve): # 假设这些错误不应重试
+                    self.logger.warning(f"检测到Token或权限相关错误，不再重试: {ve}")
+                    break # 跳出重试循环
+                # 其他 ValueError 可能值得重试
+                
+            except aiohttp.ClientError as ce: # 网络连接相关的客户端错误
+                self.logger.error(f"任务 {self.name} (参数: {api_params}) 网络/客户端错误: {ce} (尝试 {attempt + 1}/{self.max_retries})")
+                # 网络问题通常值得重试
+            
+            except asyncio.TimeoutError: # 请求超时
+                self.logger.error(f"任务 {self.name} (参数: {api_params}) 请求超时 (尝试 {attempt + 1}/{self.max_retries})")
+                # 超时通常值得重试
+
+            except Exception as e: # 其他未知错误
+                self.logger.error(f"任务 {self.name} (参数: {api_params}) 未知错误: {e} (尝试 {attempt + 1}/{self.max_retries})", exc_info=True)
+                # 未知错误也尝试重试
+            
+            # 如果执行到这里，说明发生了可重试的错误
+            attempt += 1
+            if attempt < self.max_retries:
+                self.logger.info(f"任务 {self.name} (参数: {api_params}): {self.retry_delay}秒后进行第 {attempt + 1} 次重试...")
+                await asyncio.sleep(self.retry_delay)
             else:
-                self.logger.info(f"任务 {self.name} API调用 {self.api_name} (参数: {api_params}) 成功获取 {len(data)} 行数据")
-            return data
-        except Exception as e:
-            self.logger.error(f"任务 {self.name} API调用 {self.api_name} (参数: {api_params}) 失败: {e}", exc_info=True)
-            return None # 或 pd.DataFrame() 以避免None导致后续错误
-        
+                self.logger.error(f"任务 {self.name} (参数: {api_params}): 所有 {self.max_retries} 次重试均失败。")
+                break # 跳出循环
+
+        return None # 所有重试失败或因不可重试错误退出
+
     @abc.abstractmethod
     async def get_batch_list(self, **kwargs) -> List[Dict]:
         """生成批处理参数列表
@@ -597,4 +644,3 @@ class TushareTask(Task):
         self.logger.info(f"成功获取数据，共 {len(combined_data)} 行")
         
         return combined_data
-

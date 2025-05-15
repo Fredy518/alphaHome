@@ -467,6 +467,10 @@ async def _handle_execute_tasks(mode: str, start_date_str: Optional[str], end_da
             elif result.get('status') == 'no_data' or result.get('status') == 'up_to_date':
                 _update_task_status(task_name, status=STATUS_MAP_CN['SUCCESS'], progress='100%', end_time=end_time, details=f"无需更新 ({result.get('rows', 0)} 行)")
                 completed_tasks += 1
+            elif result.get('status') == 'skipped':
+                # 添加对 skipped 状态的处理，视为成功但显示为"已跳过"
+                _update_task_status(task_name, status=STATUS_MAP_CN['SKIPPED'], progress='100%', end_time=end_time, details=f"已跳过: {result.get('message', '无详细原因')}")
+                completed_tasks += 1 # 跳过也算作完成
             elif result.get('status') == 'cancelled': # Check for specific cancelled status
                 _update_task_status(task_name, status=STATUS_MAP_CN['CANCELED'], end_time=end_time, details="任务被取消")
                 canceled_tasks += 1

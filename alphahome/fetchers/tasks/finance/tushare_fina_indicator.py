@@ -17,7 +17,7 @@ class TushareFinaIndicatorTask(TushareTask):
     name = "tushare_fina_indicator"
     description = "获取上市公司财务指标数据"
     table_name = "tushare_fina_indicator"
-    primary_keys = ["ts_code", "end_date"]
+    primary_keys = ["ts_code", "end_date", "ann_date"]
     date_column = "end_date"
     default_start_date = "19900101"
 
@@ -103,28 +103,66 @@ class TushareFinaIndicatorTask(TushareTask):
     # 7.数据验证规则 (Optional, add specific checks if needed)
     validations = [] 
 
-    async def process_data(self, data):
+    def process_data(self, data):
         """处理从Tushare获取的数据
         
-        重写父类方法，额外处理ann_date为NULL的情况
+        重写父类方法，额外处理ann_date为NULL或空字符串的情况，并确保主键唯一性
         """
         # 首先调用父类的process_data方法进行基本处理
-        data = await super().process_data(data)
+        data = super().process_data(data)
         
-        # 处理ann_date为NULL的情况，使用end_date作为默认值
-        if 'ann_date' in data.columns and data['ann_date'].isna().any():
-            null_ann_dates = data['ann_date'].isna().sum()
-            self.logger.warning(f"发现 {null_ann_dates} 条记录的ann_date为NULL，将使用end_date作为默认值")
-            
-            # 使用end_date填充ann_date的NULL值
-            data.loc[data['ann_date'].isna(), 'ann_date'] = data.loc[data['ann_date'].isna(), 'end_date']
-            
-            # 再次检查是否还有NULL值
-            if data['ann_date'].isna().any():
-                remaining_nulls = data['ann_date'].isna().sum()
-                self.logger.error(f"填充后仍有 {remaining_nulls} 条记录的ann_date为NULL")
-            else:
-                self.logger.info("所有NULL的ann_date已成功填充")
+        # 处理ann_date为NULL或空字符串的情况
+        if 'ann_date' in data.columns and 'end_date' in data.columns:
+            # Identify rows where ann_date is NaN or an empty string
+            is_na = data['ann_date'].isna()
+            is_empty_str = (data['ann_date'] == '') 
+
+            condition_to_fill = is_na | is_empty_str
+
+            if condition_to_fill.any():
+                num_to_fill = condition_to_fill.sum()
+                self.logger.warning(f"发现 {num_to_fill} 条记录的ann_date为isna()或为空字符串，将使用相应的end_date进行填充。")
+                
+                # Fill ann_date using end_date for the identified rows
+                data.loc[condition_to_fill, 'ann_date'] = data.loc[condition_to_fill, 'end_date']
+                
+                # After attempting to fill, check if any of those specific rows still have problematic ann_date
+                # This could happen if end_date was also NaN or empty for those rows
+                # Check only the rows we attempted to fill for remaining issues
+                # Ensure to access .loc[condition_to_fill, 'ann_date'] again to get the *updated* values
+                updated_ann_dates_for_filled_rows = data.loc[condition_to_fill, 'ann_date']
+                problem_still_exists_in_filled_rows = updated_ann_dates_for_filled_rows.isna() | \
+                                                      (updated_ann_dates_for_filled_rows == '')
+                
+                if problem_still_exists_in_filled_rows.any():
+                    num_still_problematic = problem_still_exists_in_filled_rows.sum()
+                    self.logger.error(f"尝试从end_date填充后，原先 {num_to_fill} 条记录中仍有 {num_still_problematic} 条的ann_date为isna()或为空字符串。请检查这些记录的end_date值。")
+                    
+                    # 由于 ann_date 是 NOT NULL 约束，我们必须确保没有空值
+                    # 移除无法修复的记录
+                    problem_rows_indices = condition_to_fill[problem_still_exists_in_filled_rows].index
+                    self.logger.warning(f"由于 ann_date 是 NOT NULL 约束，正在移除 {len(problem_rows_indices)} 条无法修复的记录。")
+                    data = data.drop(problem_rows_indices)
+                else:
+                    self.logger.info(f"对 {num_to_fill} 条记录的ann_date为空或空字符串的情况，已成功尝试使用end_date填充。")
+        
+        # 检查主键列是否存在任何空值
+        for key in self.primary_keys:
+            if key in data.columns:
+                null_mask = data[key].isna()
+                if null_mask.any():
+                    null_count = null_mask.sum()
+                    self.logger.warning(f"发现 {null_count} 条记录的主键列 '{key}' 包含空值，这些记录将被移除。")
+                    data = data[~null_mask]
+        
+        # 检查主键重复情况
+        if len(self.primary_keys) > 0 and len(data) > 0:
+            # 检查数据中是否有基于主键的重复记录
+            duplicated = data.duplicated(subset=self.primary_keys, keep='first')
+            if duplicated.any():
+                num_duplicates = duplicated.sum()
+                self.logger.warning(f"发现 {num_duplicates} 条基于主键 {self.primary_keys} 的重复记录，将保留第一条出现的记录。")
+                data = data.drop_duplicates(subset=self.primary_keys, keep='first')
                 
         return data
 
@@ -161,3 +199,158 @@ class TushareFinaIndicatorTask(TushareTask):
         except Exception as e:
             self.logger.error(f"任务 {self.name}: 生成自然日批次时出错: {e}", exc_info=True)
             return [] 
+
+    async def pre_execute(self, stop_event=None, **kwargs):
+        """执行前准备工作，确保表结构正确
+        
+        重写父类方法，确保表的主键包含 ann_date
+        """
+        # 调用父类的 pre_execute
+        await super().pre_execute(stop_event=stop_event, **kwargs)
+        
+        # 检查表是否存在
+        try:
+            # 检查表是否存在
+            table_exists = False
+            try:
+                await self.db.execute(f"SELECT 1 FROM {self.table_name} LIMIT 1")
+                table_exists = True
+            except Exception as e:
+                if "does not exist" in str(e).lower():
+                    self.logger.info(f"表 '{self.table_name}' 不存在，将在执行任务时创建。")
+                else:
+                    self.logger.error(f"检查表 '{self.table_name}' 是否存在时发生错误: {e}")
+                return  # 表不存在，后续操作不需要执行
+            
+            # 表存在，检查并处理现有数据
+            if table_exists:
+                # 1. 检查 ann_date 为 NULL 的记录 - 修改SQL查询，避免在DATE类型上使用空字符串比较
+                null_check_query = f"SELECT COUNT(*) FROM {self.table_name} WHERE ann_date IS NULL"
+                null_count_result = await self.db.fetch_one(null_check_query)
+                null_count = null_count_result[0] if null_count_result else 0
+                
+                if null_count > 0:
+                    self.logger.warning(f"表 '{self.table_name}' 中存在 {null_count} 条 ann_date 为 NULL 的记录，尝试使用 end_date 填充")
+                    # 使用 end_date 填充 NULL 的 ann_date
+                    update_null_query = f"UPDATE {self.table_name} SET ann_date = end_date WHERE ann_date IS NULL"
+                    await self.db.execute(update_null_query)
+                    self.logger.info(f"已将 {null_count} 条记录的 ann_date 用 end_date 填充")
+                
+                # 2. 检查并处理潜在的主键冲突
+                # 主要出现在将 ann_date 加入主键后，可能导致之前相同的 ts_code + end_date 组合现在变成了重复主键
+                if "ann_date" in self.primary_keys:
+                    # 检查重复记录
+                    duplicate_check_query = f"""
+                    SELECT ts_code, end_date, COUNT(*) as count
+                    FROM {self.table_name}
+                    GROUP BY ts_code, end_date
+                    HAVING COUNT(*) > 1
+                    """
+                    duplicate_result = await self.db.fetch(duplicate_check_query)
+                    
+                    if duplicate_result and len(duplicate_result) > 0:
+                        duplicate_count = sum(row[2] for row in duplicate_result) - len(duplicate_result)
+                        self.logger.warning(f"表 '{self.table_name}' 中存在 {len(duplicate_result)} 组重复的 ts_code+end_date 组合，总计 {duplicate_count} 条冲突记录")
+                        
+                        # 解决方案：保留每组中最新的记录，删除其余记录
+                        # 这里我们使用 update_time 作为决定保留哪条记录的依据
+                        for row in duplicate_result:
+                            ts_code = row[0]
+                            end_date = row[1]
+                            
+                            # 删除除最新记录外的所有重复记录
+                            delete_duplicates_query = f"""
+                            DELETE FROM {self.table_name}
+                            WHERE ts_code = '{ts_code}' AND end_date = '{end_date}'
+                            AND ctid NOT IN (
+                                SELECT ctid
+                                FROM {self.table_name}
+                                WHERE ts_code = '{ts_code}' AND end_date = '{end_date}'
+                                ORDER BY update_time DESC NULLS LAST
+                                LIMIT 1
+                            )
+                            """
+                            result = await self.db.execute(delete_duplicates_query)
+                            self.logger.info(f"已从表 '{self.table_name}' 中删除 ts_code='{ts_code}', end_date='{end_date}' 的冗余记录")
+                
+                # 3. 检查当前表的主键
+                try:
+                    pk_query = f"""
+                    SELECT a.attname
+                    FROM   pg_index i
+                    JOIN   pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
+                    WHERE  i.indrelid = '{self.table_name}'::regclass
+                    AND    i.indisprimary
+                    """
+                    primary_keys = await self.db.fetch(pk_query)
+                    current_pks = [row[0] for row in primary_keys]
+                    
+                    # 4. 检查是否需要更新主键
+                    if set(current_pks) != set(self.primary_keys):
+                        self.logger.info(f"检测到表 '{self.table_name}' 的主键需要更新: 当前={current_pks}, 目标={self.primary_keys}")
+                        
+                        # 更新主键约束前，确保没有冲突的主键值
+                        # 再次检查是否存在潜在冲突的记录
+                        pk_conflict_check_query = f"""
+                        SELECT COUNT(*) 
+                        FROM (
+                            SELECT {', '.join(self.primary_keys)}, COUNT(*) 
+                            FROM {self.table_name} 
+                            GROUP BY {', '.join(self.primary_keys)} 
+                            HAVING COUNT(*) > 1
+                        ) t
+                        """
+                        
+                        conflict_result = await self.db.fetch_one(pk_conflict_check_query)
+                        if conflict_result and conflict_result[0] > 0:
+                            self.logger.warning(f"在更新主键约束前检测到 {conflict_result[0]} 组冲突的主键值，将保留每组中最新的记录。")
+                            
+                            # 创建临时表用于删除重复记录
+                            temp_table = f"temp_{self.table_name}_{int(datetime.now().timestamp())}"
+                            
+                            # 1. 创建临时表，只保留每个主键组合的最新记录
+                            create_temp_table_query = f"""
+                            CREATE TEMP TABLE {temp_table} AS
+                            SELECT DISTINCT ON ({', '.join(self.primary_keys)}) *
+                            FROM {self.table_name}
+                            ORDER BY {', '.join(self.primary_keys)}, update_time DESC NULLS LAST
+                            """
+                            await self.db.execute(create_temp_table_query)
+                            
+                            # 2. 截断原表
+                            truncate_query = f"TRUNCATE TABLE {self.table_name}"
+                            await self.db.execute(truncate_query)
+                            
+                            # 3. 从临时表恢复数据到原表
+                            restore_query = f"INSERT INTO {self.table_name} SELECT * FROM {temp_table}"
+                            await self.db.execute(restore_query)
+                            
+                            # 4. 删除临时表
+                            drop_temp_query = f"DROP TABLE {temp_table}"
+                            await self.db.execute(drop_temp_query)
+                            
+                            self.logger.info(f"已成功处理冲突的主键值，现在可以安全地更新主键约束。")
+                        
+                        # 更新主键约束
+                        # 删除现有主键约束
+                        drop_pk_query = f"""
+                        ALTER TABLE {self.table_name} DROP CONSTRAINT IF EXISTS {self.table_name}_pkey;
+                        """
+                        await self.db.execute(drop_pk_query)
+                        
+                        # 添加新的主键约束
+                        add_pk_query = f"""
+                        ALTER TABLE {self.table_name} ADD PRIMARY KEY ({', '.join(self.primary_keys)});
+                        """
+                        await self.db.execute(add_pk_query)
+                        
+                        self.logger.info(f"表 '{self.table_name}' 的主键已更新为 {self.primary_keys}")
+                    else:
+                        self.logger.debug(f"表 '{self.table_name}' 的主键已经匹配: {current_pks}")
+                
+                except Exception as e:
+                    self.logger.error(f"检查或更新表主键时发生错误: {str(e)}", exc_info=True)
+                
+        except Exception as e:
+            self.logger.error(f"检查和更新表 '{self.table_name}' 的主键时发生错误: {e}", exc_info=True)
+            # 不抛出异常，继续执行任务 

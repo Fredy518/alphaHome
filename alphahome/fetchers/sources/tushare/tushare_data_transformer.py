@@ -8,7 +8,20 @@ if TYPE_CHECKING:
     from .tushare_task import TushareTask # type: ignore
 
 class TushareDataTransformer:
-    """负责 Tushare 数据的转换、处理和验证逻辑。"""
+    """负责 Tushare 数据的转换、处理和验证逻辑。
+    
+    该类提供了基础的数据处理功能，包括列名映射、日期处理、数据排序和数据转换等。
+    它同时支持 Task 子类（如 TushareFinaIndicatorTask）重写的 process_data 方法，
+    确保子类可以添加特定的数据处理逻辑，而不会被基础处理流程忽略。
+    
+    处理流程：
+    1. 执行基础的数据转换操作
+    2. 检测并调用 Task 子类可能重写的 process_data 方法
+    3. 返回最终处理的数据
+    
+    注意：子类重写的 process_data 方法可以是同步方法或异步方法，
+    系统会自动检测方法类型并适当调用。推荐使用同步方法，符合基类实现。
+    """
 
     def __init__(self, task_instance: 'TushareTask'):
         """初始化 Transformer。
@@ -214,6 +227,43 @@ class TushareDataTransformer:
 
         # 5. 对数据进行排序 (应该在所有转换后进行)
         data = self._sort_data(data)
+        
+        # 6. 调用子类可能重写的 process_data 方法进行额外处理
+        try:
+            # 检查self.task是否有自定义的process_data方法（与基类实现不同）
+            task_class = self.task.__class__
+            base_task_class = task_class.__bases__[0]  # 通常是TushareTask
+            
+            # 检查task_class是否重写了process_data方法
+            # 这里使用inspect模块检查方法来源
+            import inspect
+            
+            # 获取方法并检查其所属类
+            task_process_data = getattr(self.task, 'process_data', None)
+            if task_process_data and task_process_data.__qualname__.split('.')[0] != base_task_class.__name__:
+                self.logger.info(f"检测到 {task_class.__name__} 重写了 process_data 方法，调用它进行额外处理")
+                
+                # 检查方法是同步的还是异步的
+                is_async_method = inspect.iscoroutinefunction(task_process_data)
+                
+                if is_async_method:
+                    # 如果是异步方法，使用 await 调用
+                    processed_data = await task_process_data(data)
+                else:
+                    # 如果是同步方法，直接调用
+                    processed_data = task_process_data(data)
+                
+                # 安全检查：确保返回的是DataFrame
+                if processed_data is None or not isinstance(processed_data, pd.DataFrame):
+                    self.logger.warning(f"{task_class.__name__}.process_data 返回了非DataFrame结果 ({type(processed_data)})")
+                    # 保持原数据不变
+                else:
+                    # 使用子类处理后的数据
+                    data = processed_data
+                    self.logger.info(f"子类处理后数据行数: {len(data)}")
+        except Exception as e:
+            self.logger.error(f"调用子类的 process_data 方法时发生错误: {str(e)}", exc_info=True)
+            # 保持原数据不变，不中断处理流程
         
         return data
         

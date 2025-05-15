@@ -96,7 +96,7 @@ class TushareIndexWeightTask(TushareTask):
         """
         today_str = pd.Timestamp.now().strftime('%Y%m%d')
         # 使用类属性获取 default_start_date
-        current_default_start = self.cfg.get("tasks", {}).get(self.task_id, {}).get("default_start_date", self.default_start_date)
+        current_default_start = self.task_specific_config.get("default_start_date", self.default_start_date)
 
 
         if latest_db_date_str:
@@ -201,11 +201,15 @@ class TushareIndexWeightTask(TushareTask):
         self.logger.info(f"任务 {self.name}: 基于 {len(index_codes)} 个指数代码和 {interval_years}年/批 的拆分规则，总共创建了 {len(batches)} 个批处理。")
         return batches
 
-    async def smart_incremental_update(self) -> Dict[str, Any]:
+    async def smart_incremental_update(self, **kwargs: Any) -> Dict[str, Any]:
         """
         重写 smart_incremental_update 方法，为月度的 'index_weight' API 调整日期。
         从数据库中记录的最新日期的后一天开始获取数据，直到当前日期，
         并将此范围调整为完整的月份。
+        
+        特殊处理：
+        - 如果当前日期小于月末，且调整后的开始日期和结束日期在同一个月内，则跳过更新
+          这是为了避免在月中重复请求未完成月份的数据
         """
         self.logger.info(f"任务 {self.name} 正在启动智能增量更新 (月度调整)。") 
 
@@ -230,22 +234,48 @@ class TushareIndexWeightTask(TushareTask):
                 "rows": 0, "failed_batches":0 # 确保返回 rows 和 failed_batches
             }
         
-        # 对于 index_weight，它本身是月度数据。基类的 execute 会传入 start_date, end_date。
-        # get_batch_list 现在会按 N 年拆分这个范围。
-        # _adjust_dates_for_monthly_api 的逻辑（调整到月份头尾）在这里可能不是必需的，
-        # 因为 get_batch_list 生成的批次已经是 N 年的范围，TushareAPI.query 会处理这个范围。
-        # 不过，如果Tushare的index_weight对start/end有严格的月度对齐要求，则可能仍需调整。
-        # 暂时，我们让 get_batch_list 使用 execute 传来的原始 start/end。
-        # 如果是智能增量，这个 start/end 已经是 DB最新+1天 到 今天。
-
-        self.logger.info(
-            f"任务 {self.name}: 智能增量更新将使用日期范围: "
-            f"{effective_start_date_str} 到 {effective_end_date_str}"
+        # 重新启用: 调整日期为月初和月末
+        adj_start_date_str, adj_end_date_str = self._adjust_dates_for_monthly_api(
+            effective_start_date_str, effective_end_date_str
         )
         
-        # 调用基类的 execute 方法，它会使用 get_batch_list (已按N年拆分) 
-        return await super().execute(start_date=effective_start_date_str, end_date=effective_end_date_str)
-        # `mode` 参数在基类 execute 中可能不直接使用，但传递它无害
+        if not adj_start_date_str or not adj_end_date_str:
+            self.logger.warning(f"任务 {self.name}: 调整月度日期失败，将使用原始日期。")
+            adj_start_date_str, adj_end_date_str = effective_start_date_str, effective_end_date_str
+            
+        # 新增: 检查今天是否小于月末，且调整后的日期是否在同一个月内
+        today = pd.Timestamp.now()
+        month_end = (today.replace(day=1) + pd.DateOffset(months=1)) - pd.DateOffset(days=1)
+        
+        if today.day < month_end.day:  # 今天小于月末
+            adj_start_dt = pd.to_datetime(adj_start_date_str, format='%Y%m%d')
+            adj_end_dt = pd.to_datetime(adj_end_date_str, format='%Y%m%d')
+            
+            # 检查调整后的开始日期和结束日期是否在同一个月
+            same_month = (adj_start_dt.year == adj_end_dt.year) and (adj_start_dt.month == adj_end_dt.month)
+            
+            # 检查结束日期是否是当前月
+            is_current_month = (adj_end_dt.year == today.year) and (adj_end_dt.month == today.month)
+            
+            if same_month and is_current_month:
+                self.logger.info(
+                    f"任务 {self.name}: 当前日期 {today.strftime('%Y%m%d')} 小于月末 {month_end.strftime('%Y%m%d')}，"
+                    f"且调整后的日期范围 ({adj_start_date_str} - {adj_end_date_str}) 在当前同一月份内。"
+                    f"将跳过更新，等待月末数据完整后再更新。"
+                )
+                return {
+                    "task_id": self.name, "status": "skipped", "api": self.api_name,
+                    "message": f"当前为月中 ({today.strftime('%Y%m%d')})，跳过同月份范围 ({adj_start_date_str} - {adj_end_date_str}) 的更新。",
+                    "rows": 0, "failed_batches": 0
+                }
+
+        self.logger.info(
+            f"任务 {self.name}: 智能增量更新将使用调整后的日期范围: "
+            f"{adj_start_date_str} 到 {adj_end_date_str}"
+        )
+        
+        # 使用调整后的日期调用基类的 execute 方法
+        return await super().execute(start_date=adj_start_date_str, end_date=adj_end_date_str, **kwargs)
 
     # 基类 TushareTask (或 BaseTask) 中继承的 `execute` 方法期望执行以下操作：
     # 1. 调用 `await self.get_batch_list(**kwargs)` (传递其自身的kwargs，如 start_date, end_date, mode)。

@@ -27,7 +27,7 @@ class TushareHKBasicTask(TushareTask):
     table_name = "tushare_hk_basic"
     primary_keys = ["ts_code"]
     date_column = None # 该任务不以日期为主，全量更新
-    default_start_date = None # 全量任务不需要起始日期
+    default_start_date = "19700101" # 全量任务，此日期仅为满足基类全量模式的日期要求，实际API调用不使用此日期
 
     # --- 代码级默认配置 (会被 config.json 覆盖) --- #
     default_concurrent_limit = 1

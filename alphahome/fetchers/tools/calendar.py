@@ -154,14 +154,25 @@ async def get_trade_cal(start_date: str = None, end_date: str = None, exchange: 
                 params=params, # 将 **params 修改为 params=params
                 fields=''  # Let TushareAPI handle default/all fields for trade_cal
             )
-            if df_api is not None:
+            if df_api is not None and not df_api.empty: # 增加了 not df_api.empty 的判断
                 final_df = df_api
-            else:
-                logger.warning(f"{api_name_to_call} for {exchange} returned None.")
-                final_df = pd.DataFrame()
+                # 新增: 对非港股交易日历进行排序
+                if 'cal_date' in final_df.columns:
+                    logger.debug(f"Sorting non-HK trade calendar for {exchange} by cal_date.")
+                    final_df['cal_date'] = pd.to_datetime(final_df['cal_date'])
+                    final_df.sort_values(by='cal_date', inplace=True)
+                    final_df['cal_date'] = final_df['cal_date'].dt.strftime('%Y%m%d')
+                else:
+                    logger.warning(f"{api_name_to_call} for {exchange} result missing 'cal_date' column.")
+                    # final_df 保持原样 (可能是空df，或不含cal_date的df)
+            elif df_api is not None and df_api.empty: # API调用成功但返回空DataFrame
+                logger.info(f"{api_name_to_call} for {exchange} returned an empty DataFrame for range {start_date}-{end_date}.")
+                final_df = df_api # 保持为空 df
+            else: # df_api is None (API调用层面发生错误，例如网络问题或Tushare内部错误)
+                logger.warning(f"{api_name_to_call} for {exchange} returned None for range {start_date}-{end_date}.")
+                final_df = pd.DataFrame() # 明确设为空 DataFrame
         except Exception as e:
             logger.error(f"Error fetching {api_name_to_call} for {exchange}: {e}")
-            final_df = pd.DataFrame()
 
     # Add exchange column if not present (Tushare might not include it for single exchange queries)
     if not final_df.empty and 'exchange' not in final_df.columns:
