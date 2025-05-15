@@ -66,19 +66,35 @@ class TushareIndexWeightTask(TushareTask):
 
     def _adjust_dates_for_monthly_api(self, start_date_str: Optional[str], end_date_str: Optional[str]) -> tuple[Optional[str], Optional[str]]:
         """
-        将开始日期和结束日期分别调整为开始月份的第一天和结束月份的最后一天。
-        Tushare的 index_weight API 要求按月查询。
+        将输入的日期范围调整为月初和月末，适用于月度API (如index_weight)。
+        
+        例如:
+        - 输入: start='20220115', end='20220520'
+        - 输出: start='20220101', end='20220531'
+        
+        参数:
+            start_date_str: 起始日期 (YYYYMMDD 格式)
+            end_date_str: 结束日期 (YYYYMMDD 格式)
+            
+        返回:
+            tuple: (调整后的起始日期, 调整后的结束日期)，如果解析失败则返回 (None, None)
         """
-        if not start_date_str or not end_date_str:
-            self.logger.warning("无法调整日期：start_date 或 end_date 为 None。")
-            return None, None
-
         try:
+            if not start_date_str or not end_date_str:
+                self.logger.warning(f"调整日期: 无效的输入日期范围 ({start_date_str} - {end_date_str})。")
+                return None, None
+                
+            # 将字符串日期转换为 Timestamp 对象
             start_dt = pd.to_datetime(start_date_str, format='%Y%m%d')
             end_dt = pd.to_datetime(end_date_str, format='%Y%m%d')
-
+            
+            # 将起始日期调整为月初 (当月第一天)
             adj_start_dt = start_dt.replace(day=1)
-            adj_end_dt = (end_dt.replace(day=1) + pd.DateOffset(months=1)) - pd.DateOffset(days=1)
+            
+            # 将结束日期调整为月末
+            # 先移动到下个月的第一天，然后减去一天
+            next_month = end_dt.replace(day=1) + pd.DateOffset(months=1)
+            adj_end_dt = next_month - pd.DateOffset(days=1)
             
             if adj_start_dt > adj_end_dt:
                  self.logger.warning(f"原始日期 {start_date_str}-{end_date_str} 调整后开始日期 {adj_start_dt.strftime('%Y%m%d')} 晚于结束日期 {adj_end_dt.strftime('%Y%m%d')}。仅使用开始日期的月份。")
@@ -94,10 +110,20 @@ class TushareIndexWeightTask(TushareTask):
         计算增量更新的原始开始和结束日期。
         返回 (有效开始日期字符串, 有效结束日期字符串)
         """
-        today_str = pd.Timestamp.now().strftime('%Y%m%d')
+        # 根据当前时间判断使用哪一天作为结束日期
+        current_time = pd.Timestamp.now()
+        if current_time.hour >= 18:
+            # 晚于18:00，使用当天日期作为end_date
+            today_str = current_time.strftime('%Y%m%d')
+            self.logger.info(f"当前时间晚于18:00，使用当前日期作为结束日期: {today_str}")
+        else:
+            # 早于18:00，使用昨天日期作为end_date
+            yesterday = current_time - pd.Timedelta(days=1)
+            today_str = yesterday.strftime('%Y%m%d')
+            self.logger.info(f"当前时间早于18:00，使用昨天日期作为结束日期: {today_str}")
+            
         # 使用类属性获取 default_start_date
         current_default_start = self.task_specific_config.get("default_start_date", self.default_start_date)
-
 
         if latest_db_date_str:
             try:

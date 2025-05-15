@@ -278,8 +278,23 @@ class BaseDerivativeTask(ABC):
             self.logger.info(f"任务 {self.name}: 确定初次运行的起始日期为 {start_date_dt.strftime('%Y%m%d')}。")
 
         effective_start_date_str = start_date_dt.strftime('%Y%m%d')
-        # 结束日期默认为当前日期，除非在kwargs中明确指定
-        end_date_str = kwargs.pop('end_date', datetime.now().strftime('%Y%m%d')) 
+        
+        # 结束日期默认为根据当前时间判断，除非在kwargs中明确指定
+        if 'end_date' in kwargs:
+            end_date_str = kwargs.pop('end_date')
+            self.logger.info(f"使用指定的结束日期: {end_date_str}")
+        else:
+            # 根据当前时间判断使用哪一天作为结束日期
+            current_time = datetime.now()
+            if current_time.hour >= 18:
+                # 晚于18:00，使用当天日期作为end_date
+                end_date_str = current_time.strftime('%Y%m%d')
+                self.logger.info(f"当前时间晚于18:00，使用当前日期作为结束日期: {end_date_str}")
+            else:
+                # 早于18:00，使用昨天日期作为end_date
+                yesterday = current_time - timedelta(days=1)
+                end_date_str = yesterday.strftime('%Y%m%d')
+                self.logger.info(f"当前时间早于18:00，使用昨天日期作为结束日期: {end_date_str}")
         
         try: # 校验结束日期
             end_date_dt = datetime.strptime(end_date_str, '%Y%m%d')
@@ -289,6 +304,10 @@ class BaseDerivativeTask(ABC):
         except ValueError:
             self.logger.error(f"任务 {self.name}: 无效的结束日期格式: {end_date_str}。")
             return {"task_name": self.name, "status": "error", "error_message": f"无效的结束日期: {end_date_str}"}
+        except TypeError:
+            # 处理end_date_str为None的情况
+            self.logger.error(f"任务 {self.name}: 结束日期不能为None。")
+            return {"task_name": self.name, "status": "error", "error_message": "结束日期不能为None"}
 
         # 准备传递给 execute 方法的参数
         kwargs_for_execute = {'start_date': effective_start_date_str, 'end_date': end_date_str, **kwargs}

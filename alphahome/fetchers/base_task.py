@@ -434,8 +434,17 @@ class Task(ABC):
 
         # 确定结束日期
         if end_date is None:
-            end_date = datetime.now().strftime('%Y%m%d')
-            self.logger.info(f"未指定结束日期，使用当前日期: {end_date}")
+            current_time = datetime.now()
+            # 判断当前时间是否晚于18:00
+            if current_time.hour >= 18:
+                # 晚于18:00，使用当天日期作为end_date
+                end_date = current_time.strftime('%Y%m%d')
+                self.logger.info(f"未指定结束日期，当前时间晚于18:00，使用当前日期: {end_date}")
+            else:
+                # 早于18:00，使用昨天日期作为end_date
+                yesterday = current_time - timedelta(days=1)
+                end_date = yesterday.strftime('%Y%m%d')
+                self.logger.info(f"未指定结束日期，当前时间早于18:00，使用昨天日期: {end_date}")
             
         # 获取数据库中最新的数据日期
         latest_date = await self._get_latest_date() # Assume _get_latest_date is fast or add stop_event if needed
@@ -492,9 +501,12 @@ class Task(ABC):
                 start_date = start_dt.strftime('%Y%m%d')
                 
                 # 检查是否需要更新
-                if datetime.strptime(end_date, '%Y%m%d') <= latest_dt and safety_days == 0:
-                    self.logger.info(f"数据库中已有最新数据（{latest_date}），无需更新")
-                    return {"status": "up_to_date", "rows": 0}
+                # 确保 end_date 不为 None
+                if end_date and safety_days == 0:
+                    end_dt = datetime.strptime(end_date, '%Y%m%d')
+                    if end_dt <= latest_dt:
+                        self.logger.info(f"数据库中已有最新数据（{latest_date}），无需更新")
+                        return {"status": "up_to_date", "rows": 0}
             else:
                 # 数据库中没有数据，则从30天前开始获取
                 start_dt = datetime.strptime(end_date, '%Y%m%d') - timedelta(days=30)
