@@ -2,10 +2,11 @@
 # 这是 alphahome 项目的主包初始化文件。
 # 它定义了项目的顶层命名空间以及通过 from alphahome import * 时导入的内容。
 
-from . import gui, fetchers, derivatives
+from . import gui, fetchers, indicators, factors
 
 __all__ = [
     "gui",
     "fetchers",
-    "derivatives",
+    "indicators",
+    "factors",
 ]
