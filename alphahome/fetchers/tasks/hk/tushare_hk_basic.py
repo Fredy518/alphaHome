@@ -123,7 +123,7 @@ class TushareHKBasicTask(TushareTask):
                 self.logger.warning(f"任务 {self.name}: DataFrame 中未找到日期列 '{col_name}'，跳过预处理。")
 
         # 调用基类方法完成其他处理 (应用 transformations, 排序等)
-        df = await super().process_data(df, **kwargs)
+        df = super().process_data(df, **kwargs)
         return df
 
     async def validate_data(self, df: pd.DataFrame, **kwargs: Any) -> pd.DataFrame:

@@ -127,7 +127,7 @@ class TushareIndexBasicTask(TushareTask):
             self.logger.warning(f"任务 {self.name}: DataFrame 中未找到 'list_date' 列，跳过预处理。")
 
         # 调用基类方法完成其他处理 (如 base_date 转换, transformations 应用, 排序等)
-        df = await super().process_data(df, **kwargs)
+        df = super().process_data(df, **kwargs)
         return df
 
     async def validate_data(self, df: pd.DataFrame, **kwargs: Any) -> pd.DataFrame:

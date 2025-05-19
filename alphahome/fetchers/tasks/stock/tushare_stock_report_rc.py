@@ -138,18 +138,16 @@ class TushareStockReportRcTask(TushareTask):
             return [] 
 
     async def process_data(self, df: pd.DataFrame) -> pd.DataFrame:
-        """数据处理方法
-        
-        首先调用父类的处理方法，然后填充 org_name 和 author_name 中的空值。
-        
-        Args:
-            df: 从API获取的原始DataFrame
-            
-        Returns:
-            pd.DataFrame: 处理后的DataFrame
         """
-        # 1. 调用父类的标准处理
-        df = await super().process_data(df)
+        异步处理从API获取的原始数据。
+        此方法可以被子类覆盖以实现特定的数据转换逻辑。
+        """
+        # 假设父类的 process_data 是同步的
+        df = super().process_data(df)
+
+        # 如果df为空或者不是DataFrame，则直接返回
+        if not isinstance(df, pd.DataFrame) or df.empty:
+            return df
         
         # 2. 填充特定列的空值
         if 'org_name' in df.columns:

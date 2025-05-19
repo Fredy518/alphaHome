@@ -19,7 +19,7 @@ class TushareFinaForecastTask(TushareTask):
     description = "获取上市公司业绩预告数据"
     table_name = "tushare_fina_forecast"
     primary_keys = ["ts_code", "end_date", "ann_date"]
-    date_column = "end_date"
+    date_column = "ann_date" # 应该使用ann_date
     default_start_date = "19900101"
 
     # --- 代码级默认配置 (会被 config.json 覆盖) --- #

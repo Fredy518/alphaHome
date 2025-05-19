@@ -215,18 +215,17 @@ class TushareFinaDisclosureTask(TushareTask):
             return []
 
     async def process_data(self, df: pd.DataFrame) -> pd.DataFrame:
-        """数据处理方法
-        
-        对获取的数据进行处理，包括填充空值。
-        
-        Args:
-            df: 从API获取的原始DataFrame
-            
-        Returns:
-            pd.DataFrame: 处理后的DataFrame
         """
-        # 调用父类的处理方法
-        df = await super().process_data(df)
+        异步处理从API获取的原始数据。
+        此方法可以被子类覆盖以实现特定的数据转换逻辑。
+        """
+        # 首先调用父类的通用处理逻辑 (如果它存在且做了有用的事)
+        # 假设父类的 process_data 是同步的
+        df = super().process_data(df)
+
+        # 如果df为空或者不是DataFrame，则直接返回
+        if not isinstance(df, pd.DataFrame) or df.empty:
+            return df
         
         # 确保没有空的字符串在日期列（处理成NULL更合适）
         for date_col in ['ann_date', 'pre_date', 'actual_date', 'modify_date']:

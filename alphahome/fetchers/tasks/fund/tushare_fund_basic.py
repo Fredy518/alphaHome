@@ -115,12 +115,16 @@ class TushareFundBasicTask(TushareTask):
 
     async def process_data(self, df: pd.DataFrame, **kwargs: Any) -> pd.DataFrame:
         """
-        覆盖基类的数据处理方法，特别处理多个日期列。
-        1. 使用 errors='coerce' 转换日期列，允许无效格式。
-        2. list_date (date_column) 的 NaT 填充为 '1970-01-01'。
-        3. 其他日期列的 NaT 保持 NaT (将被保存为 NULL)。
-        4. 调用基类的 process_data 完成剩余处理 (包括 transformations)。
+        异步处理从API获取的原始数据。
+        此方法可以被子类覆盖以实现特定的数据转换逻辑。
         """
+        # 假设父类的 process_data 是同步的
+        df = super().process_data(df, **kwargs)
+
+        # 如果df为空或者不是DataFrame，则直接返回
+        if not isinstance(df, pd.DataFrame) or df.empty:
+            return df
+
         date_cols_to_process = [
             'found_date', 'due_date', 'list_date', 'issue_date', 'delist_date',
             'purc_startdate', 'redm_startdate'
@@ -151,7 +155,7 @@ class TushareFundBasicTask(TushareTask):
                 self.logger.warning(f"任务 {self.name}: DataFrame 中未找到日期列 '{col_name}'，跳过预处理。")
 
         # 调用基类方法完成其他处理 (应用 transformations, 排序等)
-        df = await super().process_data(df, **kwargs)
+        df = super().process_data(df, **kwargs)
         return df
 
     async def validate_data(self, df: pd.DataFrame, **kwargs: Any) -> pd.DataFrame:
