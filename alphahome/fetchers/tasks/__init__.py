@@ -4,3 +4,4 @@ from .finance import *  # 导入所有财务任务类
 from .index import *  # 导入所有指数任务类
 from .fund import *  # 导入所有基金任务类
 from .hk import *  # 导入所有港股任务类
+from .others import *  # 导入所有其他任务类
