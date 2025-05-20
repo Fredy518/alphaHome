@@ -122,9 +122,13 @@ class TushareAPI:
         has_more = True
         consecutive_empty_pages = 0 # 新增：连续空页计数器
         max_consecutive_empty_before_stop = 3 # 新增：连续多少次空页后停止的阈值
+        request_count = 0 # 用于日志记录分页次数
 
         # 分页循环
         while has_more:
+            request_count += 1
+            self.logger.debug(f"TushareAPI.query ({api_name}): 开始第 {request_count} 次分页请求. Offset: {offset}, EffectivePageSize: {effective_page_size}, Params: {params}") # 新增日志
+
             # 1. 等待速率限制槽位 (针对本次分页的HTTP请求)
             await self._wait_for_rate_limit_slot(api_name)
 
@@ -172,6 +176,8 @@ class TushareAPI:
                             columns = data.get('fields', [])
                             items = data.get('items', [])
                             
+                            self.logger.debug(f"TushareAPI.query ({api_name}): 第 {request_count} 次分页请求返回 {len(items)} 条记录.") # 新增日志
+
                             if not items: # 如果本次分页未获取到任何条目
                                 consecutive_empty_pages += 1
                                 self.logger.debug(f"({api_name}) 本次分页获取 0 条记录. Offset: {offset}. 已连续空页: {consecutive_empty_pages}")
@@ -194,9 +200,10 @@ class TushareAPI:
                             # 判断是否还有更多数据的标准逻辑 (基于Tushare分页行为)
                             if len(items) < effective_page_size:
                                 has_more = False # 这是最后一页了
+                                self.logger.debug(f"TushareAPI.query ({api_name}): 第 {request_count} 次分页判断为最后一页 (items: {len(items)} < effective_page_size: {effective_page_size}).") # 新增日志
                             else:
                                 offset += len(items) #  Tushare的offset是基于条目数，不是页数
-                                self.logger.debug(f"已获取 {offset} 条记录，准备获取下一页 ({api_name})")
+                                self.logger.debug(f"TushareAPI.query ({api_name}): 第 {request_count} 次分页后，仍有数据。新 offset: {offset}. (items: {len(items)} == effective_page_size: {effective_page_size})") # 新增日志
                 
                 finally: # 确保信号量被释放
                     if self.logger: # 避免在非debug模式下过于频繁的日志

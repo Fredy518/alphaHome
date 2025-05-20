@@ -275,21 +275,28 @@ class DBManager:
                             
                         # Build SET clause
                         if actual_update_columns:
-                            set_clauses = [f'"{col}" = EXCLUDED."{col}"' for col in actual_update_columns]
+                            set_clauses = [f'\"{col}\" = EXCLUDED.\"{col}\"' for col in actual_update_columns]
                             # Handle timestamp update
                             if timestamp_column and timestamp_column in df_columns: 
                                 # Ensure timestamp column is updated if specified, even if not in update_columns list explicitly
                                 # But only if it's not a conflict column itself
                                 if timestamp_column not in conflict_columns:
-                                    # Avoid duplicate SET if already included
-                                    if f'"{timestamp_column}" = EXCLUDED."{timestamp_column}"' not in set_clauses:
-                                        # Prefer NOW() for consistency in bulk upsert unless specific timestamp needed
-                                        set_clauses.append(f'"{timestamp_column}" = NOW()') 
-                                        # If you need the exact timestamp from the file:
-                                        # set_clauses.append(f'"{timestamp_column}" = EXCLUDED."{timestamp_column}"') 
+                                    # Remove any "EXCLUDED" version of the timestamp_column from set_clauses
+                                    excluded_timestamp_clause = f'\"{timestamp_column}\" = EXCLUDED.\"{timestamp_column}\"'
+                                    if excluded_timestamp_clause in set_clauses:
+                                        set_clauses.remove(excluded_timestamp_clause)
+                                    
+                                    # Always append the NOW() version
+                                    set_clauses.append(f'\"{timestamp_column}\" = NOW()')
                             
-                            update_clause = ', '.join(set_clauses)
-                            action_sql = f"DO UPDATE SET {update_clause}"
+                            if set_clauses: # Ensure set_clauses is not empty after potential removal
+                                update_clause = ', '.join(set_clauses)
+                                action_sql = f"DO UPDATE SET {update_clause}"
+                            else:
+                                # This case should ideally not be hit if actual_update_columns was initially populated
+                                # and timestamp_column was the only one.
+                                self.logger.warning(f"UPSERT for table {table_name}: set_clauses became empty after timestamp handling. Defaulting to DO NOTHING.")
+                                action_sql = "DO NOTHING"
                         else:
                             action_sql = "DO NOTHING" # No columns to update or explicitly told not to update
 

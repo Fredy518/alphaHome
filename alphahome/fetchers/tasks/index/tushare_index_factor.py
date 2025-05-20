@@ -120,7 +120,7 @@ class TushareIndexFactorProTask(TushareTask):
                 end_date=end_date_overall,
                 date_field='trade_date', # API 使用 trade_date 参数
                 ts_code=ts_code,         # 可选的指数代码
-                exchange='',             # 交易日历通常不需要指定交易所
+                exchange='SSE',             # 明确指定使用上交所日历作为A股代表
                 logger=self.logger
             )
             self.logger.info(f"成功生成 {len(batch_list)} 个单日期批次。")

@@ -508,7 +508,8 @@ class TushareTask(Task):
                 df = await self.api.query(
                     api_name=self.api_name,
                     fields=self.fields,
-                    params=api_params # 使用处理后的参数
+                    params=api_params, # 使用处理后的参数
+                    page_size=self.page_size # <<< 将任务配置的 page_size 传递给 API 查询 >>>
                 )
                 
                 if df is None: # 如果API调用返回None (通常是请求失败且未抛出异常，或内部处理决定返回None)
