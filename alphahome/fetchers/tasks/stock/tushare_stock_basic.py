@@ -104,45 +104,19 @@ class TushareStockBasicTask(TushareTask):
         """
         异步处理从API获取的原始数据。
         此方法可以被子类覆盖以实现特定的数据转换逻辑。
+        TushareDataTransformer 已处理通用日期转换。
         """
-        # 假设父类的 process_data 是同步的
-        df = super().process_data(df, **kwargs)
-
         # 如果df为空或者不是DataFrame，则直接返回
         if not isinstance(df, pd.DataFrame) or df.empty:
             return df
 
-        date_cols_to_process = ['list_date', 'delist_date']
-        fill_date = pd.Timestamp('1970-01-01') # 仅用于 date_column
-
-        for col_name in date_cols_to_process:
-            if col_name in df.columns:
-                original_dtype = df[col_name].dtype
-                # 尝试直接用 YYYYMMDD 转换，如果失败再用通用转换
-                try:
-                    # 确保输入是字符串类型，避免因混合类型（如整数）导致 format='%Y%m%d' 失败
-                    df[col_name] = pd.to_datetime(df[col_name].astype(str), format='%Y%m%d', errors='coerce')
-                except Exception:
-                    # 如果 format='%Y%m%d' 出错（例如数据不是纯粹的YYYYMMDD字符串），尝试通用转换
-                    self.logger.warning(f"任务 {self.name}: 列 '{col_name}' 使用 YYYYMMDD 格式转换失败，尝试通用解析。")
-                    df[col_name] = pd.to_datetime(df[col_name], errors='coerce')
-
-                nat_count = df[col_name].isnull().sum()
-                
-                # 只对主要的日期列 (self.date_column) 填充默认值
-                if col_name == self.date_column:
-                    if nat_count > 0:
-                        df[col_name].fillna(fill_date, inplace=True)
-                        self.logger.info(f"任务 {self.name}: 将 {nat_count} 个无效或缺失的 '{col_name}' (主日期列) 填充为 {fill_date.date()}")
-                # 对于其他日期列 (如 delist_date)，记录 NaT 数量但不填充
-                elif nat_count > 0:
-                    self.logger.info(f"任务 {self.name}: 列 '{col_name}' 包含 {nat_count} 个无效或缺失日期 (将保存为 NULL)")
-
-            else:
-                self.logger.warning(f"任务 {self.name}: DataFrame 中未找到日期列 '{col_name}'，跳过预处理。")
-
         # 调用基类方法完成其他处理 (应用 transformations, 排序等)
-        df = super().process_data(df, **kwargs)
+        # df = super().process_data(df, **kwargs)
+
+        # 所有必要的处理已由 TushareDataTransformer 完成。
+        # 此方法可以保留用于未来可能的、此任务真正特有的转换。
+        # 目前，它只检查并返回df。
+        self.logger.info(f"任务 {self.name}: process_data 被调用，返回 DataFrame (行数: {len(df)}). TushareDataTransformer 已完成主要处理。")
         return df
 
     async def validate_data(self, df: pd.DataFrame, **kwargs: Any) -> pd.DataFrame:

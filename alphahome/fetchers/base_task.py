@@ -380,9 +380,6 @@ class Task(ABC):
         if data.empty:
             return 0
         
-        # 这里不再需要手动转换和处理数据，直接使用db_manager的upsert方法
-        timestamp_column = 'update_time' if self.auto_add_update_time else None
-        
         # DBManager.upsert 需要支持 stop_event 才能在此处中断
         # 检查停止事件
         if stop_event and stop_event.is_set():
@@ -394,7 +391,7 @@ class Task(ABC):
             data=data,
             conflict_columns=self.primary_keys,
             update_columns=None,  # 自动更新所有非冲突列
-            timestamp_column=timestamp_column,
+            timestamp_column='update_time',
             stop_event=stop_event # Pass stop_event
         )
 

@@ -50,6 +50,7 @@ class TushareTask(Task):
     
     api_name = None  # Tushare API名称，子类必须定义
     fields = None    # 需要获取的字段列表，子类必须定义
+    timestamp_column_name: Optional[str] = 'update_time'  # 时间戳列名，默认为 'update_time'，None表示不使用
     
     def __init__(self, db_connection, api_token=None, api=None):
         """初始化 TushareTask

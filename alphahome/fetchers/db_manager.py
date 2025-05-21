@@ -13,8 +13,8 @@ class DBManager:
         """初始化数据库连接管理器
         
         Args:
-            connection_string: 数据库连接字符串，格式为：
-                postgresql://username:password@host:port/database
+            connection_string (str): 数据库连接字符串，格式为：
+                `postgresql://username:password@host:port/database`
         """
         self.connection_string = connection_string
         self.pool = None
@@ -41,11 +41,11 @@ class DBManager:
         """执行SQL语句
         
         Args:
-            query: SQL语句
+            query (str): SQL语句
             *args: SQL参数
             
         Returns:
-            执行结果
+            Any: 执行结果
         """
         if self.pool is None:
             await self.connect()
@@ -62,11 +62,11 @@ class DBManager:
         """执行查询并返回所有结果
         
         Args:
-            query: SQL查询语句
+            query (str): SQL查询语句
             *args: SQL参数
             
         Returns:
-            查询结果列表
+            List[asyncpg.Record]: 查询结果记录列表
         """
         if self.pool is None:
             await self.connect()
@@ -83,11 +83,11 @@ class DBManager:
         """执行查询并返回第一行结果
         
         Args:
-            query: SQL查询语句
+            query (str): SQL查询语句
             *args: SQL参数
             
         Returns:
-            查询结果的第一行，如果没有结果则返回None
+            Optional[asyncpg.Record]: 查询结果的第一行记录，如果没有结果则返回None
         """
         if self.pool is None:
             await self.connect()
@@ -104,11 +104,11 @@ class DBManager:
         """执行查询并返回第一行第一列的值
         
         Args:
-            query: SQL查询语句
+            query (str): SQL查询语句
             *args: SQL参数
             
         Returns:
-            查询结果的第一行第一列的值，如果没有结果则返回None
+            Any: 查询结果的第一行第一列的值，如果没有结果则返回None
         """
         if self.pool is None:
             await self.connect()
@@ -121,15 +121,16 @@ class DBManager:
                 self.logger.error(f"SQL查询失败: {str(e)}\nSQL: {query}\n参数: {args}")
                 raise
     
-    async def executemany(self, query: str, args_list, stop_event: Optional[asyncio.Event] = None): # Add stop_event
+    async def executemany(self, query: str, args_list: List[tuple], stop_event: Optional[asyncio.Event] = None): # 添加 stop_event 参数
         """批量执行SQL语句
         
         Args:
-            query: SQL语句
-            args_list: 参数列表的列表
+            query (str): SQL语句
+            args_list (List[tuple]): 参数元组的列表
+            stop_event (Optional[asyncio.Event]): 用于中途中断操作的异步事件。
             
         Returns:
-            影响的行数
+            int: 影响的行数
         """
         if self.pool is None:
             await self.connect()
@@ -144,19 +145,20 @@ class DBManager:
                     # 批量执行
                     count = 0
                     for args in args_list:
-                        # Check stop event before executing each statement in the batch
+                        # 在执行批处理中的每个语句之前检查停止事件
                         if stop_event and stop_event.is_set():
-                            # Removed DEBUG log for cancellation point
-                            # Option 1: Raise CancelledError to propagate cancellation
+                            # 移除了用于取消点的DEBUG日志
+                            # 选项1：抛出 CancelledError 以传播取消信号
                             raise asyncio.CancelledError("批量执行被用户取消")
-                            # Option 2: Return partial count (less explicit about cancellation)
-                            # return count
+                            # 选项2：返回部分计数（对取消的表达不那么明确）
+                            # return count 
                         
                         # 使用fetchrow代替execute，因为PreparedStatement没有execute方法
-                        await stmt.fetchrow(*args)
+                        # （译者注：PreparedStatement 有 statuses = await stmt.executemany(args_list) 的用法，但这里是单条执行循环）
+                        await stmt.fetchrow(*args) # fetchrow 适合预期单行返回或无返回的情况
                         count += 1
                     
-                    return count # Return full count if loop completes
+                    return count # 如果循环完成，返回完整计数
             except Exception as e:
                 self.logger.error(f"批量SQL执行失败: {str(e)}\nSQL: {query}")
                 raise
@@ -167,198 +169,243 @@ class DBManager:
                                   conflict_columns: Optional[List[str]] = None,
                                   update_columns: Optional[List[str]] = None,
                                   timestamp_column: Optional[str] = None):
-        """将DataFrame数据高效复制并可选地UPSERT到数据库表中
-        
+        """将DataFrame数据高效复制并可选地UPSERT到数据库表中。
+
         利用 PostgreSQL 的 COPY 命令和临时表实现高效数据加载。
-        如果指定了 conflict_columns，则执行 UPSERT 操作。
+        如果指定了 conflict_columns，则执行 UPSERT (插入或更新) 操作。
         
         Args:
-            df: 要复制的DataFrame
-            table_name: 目标表名
-            conflict_columns: 用于检测冲突的列名列表。如果为None，则执行简单插入。
-            update_columns: 发生冲突时要更新的列名列表。如果为None且conflict_columns指定，则更新所有非冲突列。
-            timestamp_column: 时间戳列名，如果指定并在冲突时更新，该列将自动更新为当前时间。
-            
+            df (pd.DataFrame): 要复制的DataFrame。
+            table_name (str): 目标表名。
+            conflict_columns (Optional[List[str]]): 用于检测冲突的列名列表。如果为None，则执行简单插入。
+            update_columns (Optional[List[str]]): 发生冲突时要更新的列名列表。
+                                                如果为None且conflict_columns已指定，则更新所有非冲突列。
+            timestamp_column (Optional[str]): 时间戳列名。如果指定并在冲突时更新，
+                                             如果其他数据列发生变化或特定条件下，该列将自动更新为当前时间。
+                                             
         Returns:
-            影响的总行数 (COPY到临时表的行数)
+            int: 影响的总行数 (指通过COPY命令加载到临时表的行数)。
             
         Raises:
-            ValueError: 参数无效或DataFrame为空
-            Exception: 数据库操作错误
+            ValueError: 如果参数无效或DataFrame为空。
+            Exception: 如果发生数据库操作错误。
         """
+        # self.logger.info(f"COPY_FROM_DATAFRAME_ENTRY ({table_name}): Received timestamp_column = {repr(timestamp_column)}, type = {type(timestamp_column)}") # 已移除调试日志
+        
         if self.pool is None:
             await self.connect()
         
         if df.empty:
-            self.logger.info(f"copy_from_dataframe: DataFrame for table '{table_name}' is empty. Skipping.")
+            self.logger.info(f"copy_from_dataframe: 表 '{table_name}' 的DataFrame为空，跳过操作。")
             return 0
             
-        if conflict_columns and not conflict_columns: # Check for empty list
-             raise ValueError("conflict_columns cannot be an empty list if provided.")
-             
-        # 获取DataFrame的列名 - 这些将用于COPY
+        if conflict_columns and not isinstance(conflict_columns, list): # 确保 conflict_columns 是列表或 None
+            raise ValueError("conflict_columns 必须是一个列表或None。")
+        if conflict_columns is not None and not conflict_columns: # 检查是否为空列表
+            raise ValueError("如果提供了 conflict_columns，则它不能为空列表。") # 原为 "conflict_columns cannot be an empty list if provided."
+            
+        # 获取DataFrame的列名 - 这些将用于COPY命令
         df_columns = list(df.columns)
-        
+
+        # --- 针对timestamp_column的防御性检查和添加 ---
+        if timestamp_column and timestamp_column not in df.columns:
+            self.logger.warning(f"COPY_FROM_DATAFRAME (表: {table_name}): 时间戳列 '{timestamp_column}' 未在DataFrame列中找到，现用None值添加。")
+            df[timestamp_column] = None # 使用None，假设数据库默认值或UPDATE时的NOW()会处理它
+            df_columns = list(df.columns) # 关键：修改后重新评估df_columns
+            # self.logger.info(f"COPY_FROM_DATAFRAME (表: {table_name}): 添加 '{timestamp_column}' 후, 새 df_columns: {df_columns}") # 移除此INFO日志
+        # --- 防御性检查结束 ---
+
         # --- 验证列名 ---
         if conflict_columns:
             for col in conflict_columns:
                 if col not in df_columns:
-                    raise ValueError(f"Conflict column '{col}' not found in DataFrame columns.")
+                    raise ValueError(f"冲突列 '{col}' 在DataFrame的列中未找到。")
         if update_columns:
-            # Allow update_columns to be empty list for DO NOTHING case if conflict_columns is set
+            # 如果设置了conflict_columns，允许update_columns为空列表以实现DO NOTHING
             if not isinstance(update_columns, list):
-                raise ValueError("update_columns must be a list or None.")
+                raise ValueError("update_columns必须是一个列表或None。")
             for col in update_columns:
                 if col not in df_columns:
-                    raise ValueError(f"Update column '{col}' not found in DataFrame columns.")
-        if timestamp_column and timestamp_column not in df_columns:
-            # Timestamp column *must* exist in the DataFrame if provided, 
-            # even if we overwrite it during UPDATE
-            self.logger.warning(f"Timestamp column '{timestamp_column}' not found in DataFrame, "
-                            f"it will be added if needed for UPDATE, but initial INSERT might fail if it's required by the table.")
-            # Consider adding it if missing? For now, assume it exists or DB handles it.
+                    raise ValueError(f"更新列 '{col}' 在DataFrame的列中未找到。")
+        if timestamp_column and timestamp_column not in df_columns: # 此条件理论上在上面的防御性代码后不应为真
+            self.logger.warning(f"时间戳列 '{timestamp_column}' 未在DataFrame中找到，"
+                            f"如果在UPDATE时需要会被添加，但如果表结构要求此列，初始INSERT可能会失败。")
 
         # 创建一个唯一的临时表名
-        # Using milliseconds for higher chance of uniqueness in concurrent scenarios
+        # 使用毫秒以增加并发场景下的唯一性机会
         timestamp_ms = int(datetime.now().timestamp() * 1000)
-        temp_table = f"temp_{table_name}_{timestamp_ms}_{id(df)}"
+        temp_table = f"temp_{table_name}_{timestamp_ms}_{id(df)}" # id(df) 增加唯一性
         
-        # ON COMMIT DROP ensures cleanup even if errors occur after commit starts but before drop
+        # ON COMMIT DROP 确保即使在提交开始后但在删除操作前发生错误，也能清理临时表
         create_temp_table_sql = f"""
         CREATE TEMPORARY TABLE "{temp_table}" (LIKE "{table_name}" INCLUDING DEFAULTS) ON COMMIT DROP;
         """
         
-        # --- Prepare records using a generator to reduce memory footprint ---
+        # --- 使用生成器准备记录以减少内存占用 ---
         async def _df_to_records_generator(df_internal: pd.DataFrame):
-            # This generator yields tuples for copy_records_to_table.
-            # The df.empty check at the beginning of copy_from_dataframe handles initially empty DataFrames.
+            # 此生成器为 copy_records_to_table 生成元组。
+            # copy_from_dataframe 开头的 df.empty 检查处理了初始为空的DataFrame。
             for row_tuple in df_internal.itertuples(index=False, name=None):
                 yield tuple(None if pd.isna(val) else val for val in row_tuple)
 
         records_iterable = _df_to_records_generator(df)
-        # Note: The original 'if not data_records:' check is removed as it's not directly applicable to a generator
-        # without consuming it. The df.empty check at the start of the parent function is the main guard.
+        # 注意：原始的 'if not data_records:' 检查已被移除，因为它不直接适用于生成器（除非消耗它）。
+        # 父函数开头的 df.empty 检查是主要的防护。
 
         async with self.pool.acquire() as conn:
             async with conn.transaction():
                 try:
                     # 1. 创建临时表
                     await conn.execute(create_temp_table_sql)
-                    self.logger.debug(f"Created temporary table {temp_table}")
+                    self.logger.debug(f"已创建临时表 {temp_table}")
 
                     # 2. 使用 COPY 高效加载数据到临时表
-                    # copy_records_to_table needs column names matching the *table* definition
-                    # Since temp table is LIKE target_table, df_columns should match target table columns
+                    # copy_records_to_table 需要与 *表* 定义匹配的列名
+                    # 由于临时表是 LIKE 目标表，df_columns 应与目标表列匹配
                     copy_count = await conn.copy_records_to_table(
                         temp_table, 
-                        records=records_iterable, # Use the generator iterable
+                        records=records_iterable, # 使用生成器迭代器
                         columns=df_columns,
-                        timeout=300 # Increase timeout for large copies
+                        timeout=300 # 为大型复制增加超时时间
                     )
-                    self.logger.debug(f"Copied {copy_count} records to {temp_table}")
+                    self.logger.debug(f"已复制 {copy_count} 条记录到 {temp_table}")
 
                     # 3. 从临时表插入/更新到目标表
-                    target_col_str = ', '.join([f'"{col}"' for col in df_columns]) # Columns from DataFrame
+                    target_col_str = ', '.join([f'"{col}"' for col in df_columns]) # 来自DataFrame的列
                     
                     if conflict_columns:
-                        # --- UPSERT Logic ---
+                        # --- UPSERT 逻辑 ---
                         conflict_col_str = ', '.join([f'"{col}"' for col in conflict_columns])
                         
-                        # Determine columns to update
+                        # 确定要更新的列
                         actual_update_columns = []
                         if update_columns is None:
-                            # Default: update all non-conflict columns present in the DataFrame
+                            # 默认：更新DataFrame中所有非冲突列
                             actual_update_columns = [col for col in df_columns if col not in conflict_columns]
                         else:
-                            # Use explicitly provided update_columns
+                            # 使用明确提供的update_columns
                             actual_update_columns = update_columns
                             
-                        # Build SET clause
+                        # 构建SET子句
                         if actual_update_columns:
-                            set_clauses = [f'\"{col}\" = EXCLUDED.\"{col}\"' for col in actual_update_columns]
-                            # Handle timestamp update
-                            if timestamp_column and timestamp_column in df_columns: 
-                                # Ensure timestamp column is updated if specified, even if not in update_columns list explicitly
-                                # But only if it's not a conflict column itself
+                            set_clauses = [f'"{col}" = EXCLUDED."{col}"' for col in actual_update_columns]
+                            
+                            # self.logger.info(f"UPSERT (表: {table_name}): 时间戳逻辑前: df_columns = {df_columns}, timestamp_column = "{timestamp_column}"') # 已移除调试日志
+                            
+                            if timestamp_column and timestamp_column in df_columns:
                                 if timestamp_column not in conflict_columns:
-                                    # Remove any "EXCLUDED" version of the timestamp_column from set_clauses
-                                    excluded_timestamp_clause = f'\"{timestamp_column}\" = EXCLUDED.\"{timestamp_column}\"'
+                                    # 从set_clauses中移除任何"EXCLUDED"版本的时间戳列
+                                    excluded_timestamp_clause = f'"{timestamp_column}" = EXCLUDED."{timestamp_column}"'
                                     if excluded_timestamp_clause in set_clauses:
                                         set_clauses.remove(excluded_timestamp_clause)
+
+                                    # 确定用于比较的内容列（排除冲突列和时间戳列）
+                                    content_columns_to_compare = [\
+                                        col for col in df_columns \
+                                        if col not in conflict_columns and col != timestamp_column\
+                                    ]
                                     
-                                    # Always append the NOW() version
-                                    set_clauses.append(f'\"{timestamp_column}\" = NOW()')
-                            
-                            if set_clauses: # Ensure set_clauses is not empty after potential removal
+                                    if not content_columns_to_compare:
+                                        # 没有其他内容列可比较，因此如果发生冲突，则更新时间戳
+                                        set_clauses.append(f'"{timestamp_column}" = NOW()')
+                                        # self.logger.info(f"UPSERT (表: {table_name}): 无内容列可比较。'{timestamp_column}' 将设为 NOW(). Set clauses: {set_clauses}") # 移除调试日志
+                                    else:
+                                        # 构建时间戳列的条件更新
+                                        conditions = [\
+                                            f'"{table_name}". "{col}" IS DISTINCT FROM EXCLUDED."{col}"' \
+                                            for col in content_columns_to_compare\
+                                        ]
+                                        condition_str = " OR ".join(conditions)
+                                        timestamp_update_clause = (\
+                                            f'"{timestamp_column}" = CASE '\
+                                            f'WHEN {condition_str} THEN NOW() '\
+                                            f'ELSE "{table_name}". "{timestamp_column}" END'\
+                                        )
+                                        set_clauses.append(timestamp_update_clause)
+                                        # self.logger.info(f"UPSERT (表: {table_name}): 条件时间戳更新。比较的内容列: {content_columns_to_compare}. Set clauses: {set_clauses}") # 移除调试日志
+
+                            if set_clauses:
                                 update_clause = ', '.join(set_clauses)
                                 action_sql = f"DO UPDATE SET {update_clause}"
                             else:
-                                # This case should ideally not be hit if actual_update_columns was initially populated
-                                # and timestamp_column was the only one.
-                                self.logger.warning(f"UPSERT for table {table_name}: set_clauses became empty after timestamp handling. Defaulting to DO NOTHING.")
+                                # 此情况意味着actual_update_columns为空，并且时间戳逻辑也未产生子句（例如，timestamp_column是conflict_column）
+                                self.logger.warning(f"UPSERT (表: {table_name}): set_clauses变为空。默认为DO NOTHING。")
                                 action_sql = "DO NOTHING"
-                        else:
-                            action_sql = "DO NOTHING" # No columns to update or explicitly told not to update
+                        else: # actual_update_columns 为空
+                            # 如果只涉及主键和可选的时间戳列
+                            if timestamp_column and timestamp_column in df_columns and timestamp_column not in conflict_columns:
+                                # 即使没有其他列，主键冲突也意味着活动，因此更新时间戳。
+                                # 这维持了此特定情况的先前行为。
+                                # 或者，如果业务规则不同，这里可以是 target_table.timestamp_column
+                                set_clauses = ['"{timestamp_column}" = NOW()']
+                                update_clause = ', '.join(set_clauses)
+                                action_sql = f"DO UPDATE SET {update_clause}"
+                                # self.logger.info(f"UPSERT (表: {table_name}): actual_update_columns 为空。'{timestamp_column}' 将设为 NOW().") # 移除调试日志
+                            else:
+                                action_sql = "DO NOTHING"
 
                         insert_sql = f"""
                         INSERT INTO "{table_name}" ({target_col_str})
-                        SELECT {target_col_str} 
+                        SELECT {target_col_str}
                         FROM "{temp_table}"
                         ON CONFLICT ({conflict_col_str}) {action_sql};
                         """
+
+                        self.logger.debug(f"UPSERT (表: {table_name}): DataFrame头部 (前3行, 用于EXCLUDED上下文):\n{df.head(3).to_string()}")
+                        self.logger.debug(f"为表 {table_name} 执行最终UPSERT SQL:\n{insert_sql}") # 保留此重要日志
+                        
                     else:
-                        # --- Simple INSERT Logic ---
+                        # --- 简单 INSERT 逻辑 ---
                         insert_sql = f"""
                         INSERT INTO "{table_name}" ({target_col_str})
                         SELECT {target_col_str} 
                         FROM "{temp_table}";
                         """
                         
-                    self.logger.debug(f"Executing final insert/upsert from temp table:\n{insert_sql}")
-                    # Execute the final transfer
+                    # 执行最终传输
                     status = await conn.execute(insert_sql)
-                    # The status might report INSERT 0 if all rows conflicted and did DO NOTHING/UPDATE
-                    # copy_count reflects rows loaded to temp table, which is a better measure of work done.
-                    self.logger.debug(f"Final insert/upsert command status: {status}")
+                    # 如果所有行都冲突并且执行了DO NOTHING/UPDATE，状态可能报告INSERT 0
+                    # copy_count 反映加载到临时表的行数，这是衡量已完成工作的更好指标。
+                    self.logger.debug(f"最终插入/更新命令状态: {status}")
                     
-                    # --- !! FIX: Parse integer from status string !! ---
+                    # --- !! 修正：从状态字符串中解析整数 !! ---
                     rows_copied = 0
                     try:
-                        # copy_count is a string like 'COPY 12345'
+                        # copy_count 是类似 'COPY 12345' 的字符串
                         if isinstance(copy_count, str) and copy_count.startswith('COPY '):
                             rows_copied = int(copy_count.split()[-1])
                         else:
-                            self.logger.warning(f"copy_records_to_table returned unexpected status: {copy_count}. Assuming 0 rows copied.")
+                            self.logger.warning(f"copy_records_to_table 返回了意外状态: {copy_count}。假设复制了0行。")
                     except (ValueError, IndexError) as parse_err:
-                        self.logger.error(f"Failed to parse row count from copy_count '{copy_count}': {parse_err}. Assuming 0 rows copied.")
+                        self.logger.error(f"从copy_count '{copy_count}' 解析行数失败: {parse_err}。假设复制了0行。")
                     
-                    return rows_copied # Return the parsed integer count
+                    return rows_copied # 返回解析后的整数计数
 
                 except asyncpg.exceptions.UndefinedTableError as e:
-                    # Specific error for table not existing during LIKE
-                    self.logger.error(f"Failed to create temp table like '{table_name}'. Target table might not exist. Error: {e}")
-                    raise ValueError(f"Target table '{table_name}' not found.") from e
+                    # 表在LIKE期间不存在的特定错误
+                    self.logger.error(f"创建临时表失败 (LIKE '{table_name}')。目标表可能不存在。错误: {e}")
+                    raise ValueError(f"目标表 '{table_name}' 未找到。") from e
                 except asyncpg.exceptions.UndefinedColumnError as e:
-                    # Column mismatch between DataFrame and Table
-                    self.logger.error(f"Column mismatch error during copy/insert for table '{table_name}'. Error: {e}")
-                    self.logger.error(f"DataFrame columns: {df_columns}")
-                    # Consider fetching actual table columns here for comparison if needed
-                    raise ValueError(f"Column mismatch between DataFrame and table '{table_name}'. Check DataFrame columns and table schema.") from e
+                    # DataFrame和表之间的列不匹配
+                    self.logger.error(f"表 '{table_name}' 的复制/插入过程中发生列不匹配错误。错误: {e}")
+                    self.logger.error(f"DataFrame 列: {df_columns}")
+                    # 如果需要，可以考虑在此处获取实际表列进行比较
+                    raise ValueError(f"DataFrame和表 '{table_name}' 之间列不匹配。请检查DataFrame列和表结构。") from e
                 except Exception as e:
-                    self.logger.error(f"高效复制/UPSERT操作失败 (Table: {table_name}): {str(e)}")
-                    # Log temp table name for potential manual inspection if ON COMMIT DROP fails somehow
-                    self.logger.error(f"Temporary table was: {temp_table}") 
+                    self.logger.error(f"高效复制/UPSERT操作失败 (表: {table_name}): {str(e)}")
+                    # 记录临时表名，以便在ON COMMIT DROP意外失败时进行手动检查
+                    self.logger.error(f"临时表曾是: {temp_table}") 
                     raise
-                # Temporary table is dropped automatically due to ON COMMIT DROP clause upon successful commit or rollback.
+                # 临时表在成功提交或回滚时会因ON COMMIT DROP子句自动删除。
     
     async def table_exists(self, table_name: str) -> bool:
         """检查表是否存在
         
         Args:
-            table_name: 表名
+            table_name (str): 表名
             
         Returns:
-            如果表存在则返回True，否则返回False
+            bool: 如果表存在则返回True，否则返回False
         """
         query = """
         SELECT EXISTS (
@@ -367,16 +414,17 @@ class DBManager:
         );
         """
         result = await self.fetch_val(query, table_name)
-        return result
+        return result if result is not None else False # 确保返回布尔值
     
     async def get_table_schema(self, table_name: str) -> List[Dict[str, Any]]:
         """获取表结构
         
         Args:
-            table_name: 表名
+            table_name (str): 表名
             
         Returns:
-            表结构信息列表，每个元素是一个字典，包含列名、类型等信息
+            List[Dict[str, Any]]: 表结构信息列表，每个元素是一个字典，
+                                 包含列名、数据类型、是否可为空、默认值等信息。
         """
         query = """
         SELECT 
@@ -399,64 +447,65 @@ class DBManager:
             schema.append({
                 "column_name": row["column_name"],
                 "data_type": row["data_type"],
-                "is_nullable": row["is_nullable"] == "YES",
+                "is_nullable": row["is_nullable"] == "YES", # 将 'YES'/'NO' 转换为布尔值
                 "default": row["column_default"]
             })
         
         return schema
     
     async def get_latest_date(self, table_name: str, date_column: str, return_raw_object: bool = False) -> Optional[Union[str, datetime]]:
-        """获取表中指定列的最大值（通常是日期或时间戳）
+        """获取表中指定日期/时间戳列的最大值。
         
         Args:
-            table_name: 表名
-            date_column: 列名 (例如日期或时间戳列)
-            return_raw_object: 如果为 True，返回原始 datetime 对象；否则返回 YYYYMMDD 格式字符串。
+            table_name (str): 表名。
+            date_column (str): 日期或时间戳列名。
+            return_raw_object (bool): 如果为 True，返回原始的 datetime 对象 (如果适用)；
+                                     否则，尝试返回 YYYYMMDD 格式的字符串。默认为 False。
             
         Returns:
-            该列的最大值 (datetime 或 YYYYMMDD str) 或 None
+            Optional[Union[str, datetime]]: 该列的最大值 (datetime 对象或 YYYYMMDD 字符串)，
+                                           如果列为空或查询失败，则返回 None。
         """
         query = f"""
-        SELECT MAX(\"{date_column}\") FROM \"{table_name}\";
+        SELECT MAX("{date_column}") FROM "{table_name}";
         """
         try:
-            # fetch_val should return the raw value from the DB, 
-            # which asyncpg maps to python types (e.g., timestamp -> datetime)
+            # fetch_val 应返回数据库中的原始值，
+            # asyncpg 会将其映射到Python类型 (例如, timestamp -> datetime)
             result = await self.fetch_val(query)
             
-            # Log the result type before returning
             if result is not None:
-                self.logger.debug(f"get_latest_date for {table_name}.{date_column} returning type: {type(result)}")
+                self.logger.debug(f"get_latest_date (表: {table_name}, 列: {date_column}) 返回类型: {type(result)}")
             else:
-                self.logger.debug(f"get_latest_date for {table_name}.{date_column} returning None")
+                self.logger.debug(f"get_latest_date (表: {table_name}, 列: {date_column}) 返回 None")
 
-            # --- Conditional formatting for backward compatibility --- 
+            # --- 为了向后兼容性的条件格式化 --- 
             if result is not None and not return_raw_object:
-                # Default behavior: format to YYYYMMDD string
+                # 默认行为：格式化为 YYYYMMDD 字符串
                 formatted_result = None
                 if isinstance(result, str):
-                    # Handle potential string input from DB (though less likely with asyncpg)
-                    if '-' in result:
-                        try: formatted_result = datetime.strptime(result, '%Y-%m-%d').strftime('%Y%m%d');
-                        except ValueError: self.logger.warning(f"Could not parse date string '{result}' as YYYY-MM-DD.")
-                    elif len(result) == 8 and result.isdigit():
-                        formatted_result = result # Assume it's already YYYYMMDD
-                    else:
-                        self.logger.warning(f"Received unexpected string format '{result}'.")
-                elif isinstance(result, datetime):
-                    # Convert datetime/date object to YYYYMMDD string
+                    # 处理来自数据库的潜在字符串输入 (尽管对于asyncpg不太可能)
+                    if '-' in result: # 尝试 YYYY-MM-DD
+                        try: formatted_result = datetime.strptime(result, '%Y-%m-%d').strftime('%Y%m%d')
+                        except ValueError: self.logger.warning(f"无法将日期字符串 '{result}' 解析为 YYYY-MM-DD 格式。")
+                    elif len(result) == 8 and result.isdigit(): # 已经是 YYYYMMDD
+                        formatted_result = result 
+                    else: # 其他未知字符串格式
+                        self.logger.warning(f"接收到意外的日期字符串格式 '{result}'。")
+                elif isinstance(result, datetime): # 包括 datetime.date (因为它是datetime的子类)
+                    # 将 datetime/date 对象转换为 YYYYMMDD 字符串
                     formatted_result = result.strftime('%Y%m%d')
-                else:
-                    self.logger.warning(f"Received unexpected type '{type(result)}'.")
+                else: # 其他未知类型
+                    self.logger.warning(f"接收到意外的日期类型 '{type(result)}'。")
                 
-                return formatted_result # Return formatted string or None if formatting failed
+                return formatted_result # 返回格式化后的字符串，如果格式化失败则为 None
             else:
-                # return_raw_object is True OR result is None
-                return result # Return raw datetime object or None
+                # return_raw_object 为 True 或 result 为 None
+                return result # 返回原始 datetime 对象或 None
 
         except Exception as e:
             self.logger.warning(f"查询表 {table_name} 列 {date_column} 的最大值时出错: {e}")
-            return None # Return None on error
+            return None # 出错时返回 None
 
     async def upsert(self,
                     table_name: str,
@@ -464,63 +513,68 @@ class DBManager:
                     conflict_columns: List[str],
                     update_columns: Optional[List[str]] = None,
                     timestamp_column: Optional[str] = None,
-                    stop_event: Optional[asyncio.Event] = None) -> int: # Add stop_event
-        """通用UPSERT操作：插入数据，如有冲突则更新
-        
-        利用 COPY + 临时表 + INSERT ON CONFLICT 策略提高效率。
+                    stop_event: Optional[asyncio.Event] = None) -> int:
+        """通用UPSERT操作：插入数据，如果发生冲突则根据条件更新。
+
+        利用 COPY + 临时表 + INSERT ON CONFLICT 策略以提高效率。
         
         Args:
-            table_name: 目标表名
-            data: 要插入的数据，可以是DataFrame或字典列表
-            conflict_columns: 用于检测冲突的列名列表（通常是主键或唯一索引）
-            update_columns: 发生冲突时要更新的列名列表。如果为None，则更新所有非冲突列。
-            timestamp_column: 时间戳列名。如果指定，在冲突更新时该列会更新为NOW()，
-                              插入时需要确保DataFrame中此列有值（或表有默认值）。
-            stop_event: 用于取消操作的异步事件 (注意: COPY操作通常不能优雅地中途中断，
-                         此事件主要用于在调用前检查，或在未来可能的批处理中)
+            table_name (str): 目标表名。
+            data (Union[pd.DataFrame, List[Dict[str, Any]]]): 要插入的数据，可以是DataFrame或字典列表。
+            conflict_columns (List[str]): 用于检测冲突的列名列表（通常是主键或唯一索引的列）。
+            update_columns (Optional[List[str]]): 发生冲突时要更新的列名列表。
+                                                如果为None，则更新所有非冲突列。
+            timestamp_column (Optional[str]): 时间戳列名。如果指定，在冲突更新时，
+                                             若其他数据列发生变化，此列将更新为NOW()。
+                                             插入时，如果DataFrame中此列无值，会尝试添加。
+            stop_event (Optional[asyncio.Event]): 用于取消操作的异步事件。
+                                                 (注意: COPY操作通常不能优雅地中途中断，
+                                                  此事件主要用于在调用前检查，或在未来的批处理中。)
             
         Returns:
-            影响的行数 (基于COPY到临时表的行数)
+            int: 影响的行数 (基于COPY到临时表的行数)。
             
         Raises:
-            ValueError: 当数据为空或参数无效时
-            Exception: 数据库操作错误
+            ValueError: 当数据为空或参数无效时。
+            Exception: 如果发生数据库操作错误。
         """
+        # self.logger.info(f"UPSERT_ENTRY ({table_name}): Received timestamp_column = {repr(timestamp_column)}, type = {type(timestamp_column)}") # 已移除调试日志
+        
         if self.pool is None:
             await self.connect()
         
         # --- 参数检查 ---
         if not table_name:
             raise ValueError("表名不能为空")
-        if not conflict_columns:
-            raise ValueError("必须指定冲突检测列")
+        if not conflict_columns: # 进一步检查 conflict_columns 是否有效
+            raise ValueError("必须指定冲突检测列 (conflict_columns)。")
         if not isinstance(conflict_columns, list) or len(conflict_columns) == 0:
-            raise ValueError("conflict_columns 必须是一个非空列表")
+            raise ValueError("conflict_columns 必须是一个非空的字符串列表。")
             
         # --- 数据准备 ---
         df_to_process = None
         if isinstance(data, pd.DataFrame):
             if data.empty:
-                self.logger.info(f"UPSERT ({table_name}): 输入的DataFrame为空.")
+                self.logger.info(f"UPSERT ({table_name}): 输入的DataFrame为空。")
                 return 0
-            df_to_process = data.copy() # Use a copy to avoid modifying original
+            df_to_process = data.copy() # 使用副本以避免修改原始DataFrame
         elif isinstance(data, list):
-            if not data:
-                self.logger.info(f"UPSERT ({table_name}): 输入的列表为空.")
+            if not data: # 检查列表是否为空
+                self.logger.info(f"UPSERT ({table_name}): 输入的列表为空。")
                 return 0
-            # Convert list of dicts to DataFrame for consistent processing
+            # 将字典列表转换为DataFrame以进行一致处理
             try:
                 df_to_process = pd.DataFrame(data)
             except Exception as e:
                 self.logger.error(f"UPSERT ({table_name}): 无法将字典列表转换为DataFrame: {e}")
-                raise ValueError("无法将输入的字典列表转换为DataFrame") from e
-            if df_to_process.empty:
-                self.logger.info(f"UPSERT ({table_name}): 从列表转换的DataFrame为空.")
+                raise ValueError("无法将输入的字典列表转换为DataFrame。") from e
+            if df_to_process.empty: # 再次检查转换后的DataFrame是否为空
+                self.logger.info(f"UPSERT ({table_name}): 从列表转换的DataFrame为空。")
                 return 0
         else:
-            raise ValueError("data参数必须是DataFrame或字典列表")
+            raise ValueError("参数 data 必须是DataFrame或字典列表。")
             
-        # --- 预处理 (移到 copy_from_dataframe 内部处理更优，但保留部分检查) ---
+        # --- 预处理 ---
         
         # 1. 检查 Stop Event (在耗时操作前)
         if stop_event and stop_event.is_set():
@@ -528,55 +582,56 @@ class DBManager:
             raise asyncio.CancelledError("UPSERT操作在开始前被取消")
         
         # 2. 时间戳处理 (确保列存在于 DataFrame)
-        current_time = datetime.now() # Not strictly needed here anymore if NOW() used in SQL
-        if timestamp_column:
+        current_time = datetime.now() # 如果需要在INSERT时填充，但主要依赖于UPDATE时的NOW()
+        if timestamp_column: # 此处的 timestamp_column 已被 UPSERT_FIX 保证为 'update_time' (如果原为None)
             if timestamp_column not in df_to_process.columns:
-                # Add the column if missing, initialize with current time
-                # This helps if the target table requires it, but it will be NOW() on update anyway
-                self.logger.warning(f"UPSERT ({table_name}): Timestamp column '{timestamp_column}' not found in input data, adding it with current time.")
+                # 如果目标表需要此列，添加该列并用当前时间初始化
+                # 对于UPDATE情况，此值会被NOW()覆盖（如果其他列变化）
+                self.logger.warning(f"UPSERT ({table_name}): 时间戳列 '{timestamp_column}' 未在输入数据中找到，使用当前时间添加此列。")
                 df_to_process[timestamp_column] = current_time
             else:
-                # Optional: Fill NaN in existing timestamp column if desired, 
-                # otherwise leave as is for COPY
+                # 可选：如果需要，填充现有时间戳列中的NaN值
+                # 否则，保留原样以供COPY处理
                 # df_to_process[timestamp_column] = df_to_process[timestamp_column].fillna(current_time)
-                pass # Let copy_from_dataframe handle NaNs -> NULLs
+                pass # 让 copy_from_dataframe 处理NaN到NULL的转换
 
-        # 3. 移除冲突列为 NULL 的行 (重要! ON CONFLICT 不适用于 NULL)
+        # 3. 移除冲突列为 NULL 的行 (重要! ON CONFLICT 不适用于 NULL 值)
         initial_rows = len(df_to_process)
-        # Create boolean mask for rows where *any* conflict column is NaN/None
+        # 创建一个布尔掩码，用于标记任何一个冲突列为NaN/None的行
         null_mask = df_to_process[conflict_columns].isnull().any(axis=1)
         if null_mask.any():
+            df_to_process_before_filter = df_to_process # 用于日志记录
             df_to_process = df_to_process[~null_mask]
             removed_count = initial_rows - len(df_to_process)
             self.logger.warning(
                 f"UPSERT ({table_name}): 移除了 {removed_count} 行，因为其冲突列 "
-                f"({', '.join(conflict_columns)}) 包含NULL值。"
+                f"({', '.join(conflict_columns)}) 中包含NULL值。"
             )
             if df_to_process.empty:
-                self.logger.info(f"UPSERT ({table_name}): 移除包含NULL的主键行后，没有有效数据可执行。")
+                self.logger.info(f"UPSERT ({table_name}): 移除包含NULL主键的行后，没有有效数据可执行。")
                 return 0
                 
         # --- 执行 --- 
         try:
             # 使用重构后的 copy_from_dataframe 执行 UPSERT
-            # NaN values in the DataFrame will be handled inside copy_from_dataframe
+            # DataFrame中的NaN值将在 copy_from_dataframe 内部处理
+            # self.logger.info(f"UPSERT_BEFORE_COPY ({table_name}): Preparing to call copy_from_dataframe with timestamp_column = {repr(timestamp_column)}, type = {type(timestamp_column)}") # 已移除调试日志
             affected_rows = await self.copy_from_dataframe(
                 df=df_to_process,
                 table_name=table_name,
                 conflict_columns=conflict_columns,
                 update_columns=update_columns,
-                timestamp_column=timestamp_column
-                # stop_event is checked above, COPY itself is harder to interrupt
+                timestamp_column=timestamp_column # 此处的 timestamp_column 已被 UPSERT_FIX 修正
             )
             self.logger.info(f"UPSERT ({table_name}) 完成，通过 COPY 处理了 {affected_rows} 行数据到临时表。")
             return affected_rows
         except asyncio.CancelledError: 
-            # Should be caught before calling copy_from_dataframe, but catch just in case
+            # 理论上应在调用 copy_from_dataframe 前捕获，但以防万一再次捕获
             self.logger.warning(f"UPSERT 操作 ({table_name}) 被取消。")
             raise 
         except Exception as e:
             self.logger.error(f"UPSERT操作失败 (使用COPY策略): {str(e)}\n表: {table_name}")
-            # Avoid logging potentially large dataframes here
+            # 此处避免记录可能很大的DataFrame
             raise
 
     async def create_table_from_schema(self,
@@ -585,53 +640,53 @@ class DBManager:
                                        primary_keys: Optional[List[str]] = None,
                                        date_column: Optional[str] = None,
                                        indexes: Optional[List[Union[str, Dict[str, Any]]]] = None,
-                                       auto_add_update_time: bool = True): # Added auto_add_update_time
-        """根据任务定义的 schema 创建数据库表和索引。"""
+                                       auto_add_update_time: bool = True): # 添加了 auto_add_update_time 参数
+        """根据任务定义的 schema (结构) 创建数据库表和相关索引。"""
         if self.pool is None:
             await self.connect()
 
-        if not schema_def:
-            raise ValueError(f"无法创建表 '{table_name}'，未提供 schema_def。")
+        if not schema_def: # schema 定义不能为空
+            raise ValueError(f"无法创建表 '{table_name}'，未提供 schema_def (表结构定义)。")
 
         async with self.pool.acquire() as conn:
-            async with conn.transaction(): # Use transaction for DDL
+            async with conn.transaction(): # 为DDL（数据定义语言）操作使用事务
                 try:
                     # --- 1. 构建 CREATE TABLE 语句 --- 
                     columns = []
                     for col_name, col_def in schema_def.items():
-                        if isinstance(col_def, dict):
-                            col_type = col_def.get('type', 'TEXT')
-                            constraints_val = col_def.get('constraints')
-                            constraints_str = str(constraints_val).strip() if constraints_val is not None else ""
-                            columns.append(f'\"{col_name}\" {col_type} {constraints_str}'.strip())
-                        else:
-                            columns.append(f'\"{col_name}\" {col_def}')
+                        if isinstance(col_def, dict): # 如果列定义是字典 (包含类型和约束)
+                            col_type = col_def.get('type', 'TEXT') # 默认类型为TEXT
+                            constraints_val = col_def.get('constraints') # 获取原始约束值
+                            constraints_str = str(constraints_val).strip() if constraints_val is not None else "" #转换为字符串
+                            columns.append(f'"{col_name}" {col_type} {constraints_str}'.strip()) # 移除末尾多余空格
+                        else: # 如果列定义只是字符串 (类型)
+                            columns.append(f'"{col_name}" {col_def}')
                     
-                    # 添加 update_time 列（如果需要且不存在）
+                    # 添加 update_time 列（如果配置需要且Schema中不存在）
                     if auto_add_update_time and 'update_time' not in schema_def:
-                        # Ensure default precision for TIMESTAMP WITHOUT TIME ZONE
-                        columns.append('\"update_time\" TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP')
+                        # 确保 TIMESTAMP WITHOUT TIME ZONE 的默认精度
+                        columns.append('"update_time" TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP')
 
                     # 添加主键约束
                     if primary_keys and isinstance(primary_keys, list) and len(primary_keys) > 0:
-                        pk_cols_str = ', '.join([f'\"{pk}\"' for pk in primary_keys])
+                        pk_cols_str = ', '.join([f'"{pk}"' for pk in primary_keys]) # 格式化主键列
                         columns.append(f"PRIMARY KEY ({pk_cols_str})")
                         
-                    columns_str = ',\n            '.join(columns)
+                    columns_str = ',\n            '.join(columns) # 用逗号和换行连接所有列定义
                     create_table_sql = f"""
-                    CREATE TABLE IF NOT EXISTS \"{table_name}\" (
+                    CREATE TABLE IF NOT EXISTS "{table_name}" (
                         {columns_str}
                     );
                     """
                     
-                    self.logger.info(f"准备执行建表语句 for '{table_name}':\n{create_table_sql}")
+                    self.logger.info(f"准备为表 '{table_name}' 执行建表语句:\n{create_table_sql}")
                     await conn.execute(create_table_sql)
                     self.logger.info(f"表 '{table_name}' 创建成功或已存在。")
 
                     # --- 1.1 添加列注释 ---
                     for col_name, col_def in schema_def.items():
                         if isinstance(col_def, dict) and 'comment' in col_def:
-                            comment_text = col_def['comment']
+                            comment_text = col_def['comment'] # 获取注释文本
                             if comment_text is not None:
                                 # 转义 comment_text 中的单引号，防止SQL注入或语法错误
                                 escaped_comment_text = str(comment_text).replace("'", "''")
@@ -641,10 +696,10 @@ class DBManager:
                                 self.logger.debug(f"为列 '{table_name}.{col_name}' 添加注释成功。")
 
                     # --- 2. 构建并执行 CREATE INDEX 语句 --- 
-                    # 为 date_column 创建索引 (如果需要)
-                    if date_column and date_column not in (primary_keys or []):
-                        index_name_date = f"idx_{table_name}_{date_column}"
-                        create_index_sql_date = f'CREATE INDEX IF NOT EXISTS \"{index_name_date}\" ON \"{table_name}\" (\"{date_column}\");'
+                    # 为 date_column 创建索引 (如果需要且不是主键的一部分)
+                    if date_column and date_column not in (primary_keys or []): # primary_keys可能为None
+                        index_name_date = f"idx_{table_name}_{date_column}" # 标准索引命名
+                        create_index_sql_date = f'CREATE INDEX IF NOT EXISTS "{index_name_date}" ON "{table_name}" ("{date_column}");'
                         self.logger.info(f"准备为 '{table_name}.{date_column}' 创建索引: {index_name_date}")
                         await conn.execute(create_index_sql_date)
                         self.logger.info(f"索引 '{index_name_date}' 创建成功或已存在。")
@@ -653,46 +708,48 @@ class DBManager:
                     if indexes and isinstance(indexes, list):
                         for index_def in indexes:
                             index_name = None
-                            index_columns = None
+                            index_columns_str = None # 用于SQL语句的列字符串
                             unique = False
                             
-                            if isinstance(index_def, dict):
-                                index_columns = index_def.get('columns')
-                                if not index_columns:
+                            if isinstance(index_def, dict): # 索引定义是字典
+                                index_columns_list = index_def.get('columns') # 获取列名或列名列表
+                                if not index_columns_list:
                                     self.logger.warning(f"跳过无效的索引定义 (缺少 columns): {index_def}")
                                     continue
-                                index_name = index_def.get('name', f"idx_{table_name}_{str(index_columns).replace(',', '_').replace(' ', '')}")
-                                unique = index_def.get('unique', False)
-                            elif isinstance(index_def, str):
-                                index_columns = index_def
-                                index_name = f"idx_{table_name}_{index_columns}"
-                            else:
+                                # 将列名或列名列表转换为SQL字符串
+                                if isinstance(index_columns_list, str):
+                                    index_columns_str = f'"{index_columns_list}"'
+                                elif isinstance(index_columns_list, list):
+                                    index_columns_str = ', '.join([f'"{col}"' for col in index_columns_list])
+                                else:
+                                    self.logger.warning(f"索引定义中的 'columns' 类型无效: {index_columns_list}")
+                                    continue
+                                
+                                # 规范化索引名称中列名的部分，移除特殊字符
+                                safe_cols_for_name = str(index_columns_list).replace(' ', '').replace('"','').replace('[','').replace(']','').replace("'",'').replace(',','_')
+                                index_name = index_def.get('name', f"idx_{table_name}_{safe_cols_for_name}")
+                                unique = index_def.get('unique', False) # 是否是唯一索引
+
+                            elif isinstance(index_def, str): # 索引定义是单个列名字符串
+                                index_columns_str = f'"{index_def}"'
+                                index_name = f"idx_{table_name}_{index_def}" # 标准索引命名
+                            else: # 未知格式
                                 self.logger.warning(f"跳过未知格式的索引定义: {index_def}")
                                 continue
-                                
-                            # Ensure columns are quoted if they are single string
-                            if isinstance(index_columns, str):
-                                index_cols_str = f'\"{index_columns}\"'
-                            elif isinstance(index_columns, list): # Handle list of columns
-                                index_cols_str = ', '.join([f'\"{col}\"' for col in index_columns])
-                            else:
-                                 self.logger.warning(f"跳过无效的索引列定义 (类型 {type(index_columns)}): {index_columns}")
-                                 continue
                                  
-                            unique_str = "UNIQUE " if unique else ""
-                            create_index_sql = f'CREATE {unique_str}INDEX IF NOT EXISTS \"{index_name}\" ON \"{table_name}\" ({index_cols_str});'
-                            self.logger.info(f"准备创建索引 '{index_name}' on '{table_name}({index_cols_str})': {unique_str}")
+                            unique_str = "UNIQUE " if unique else "" # UNIQUE关键字
+                            create_index_sql = f'CREATE {unique_str}INDEX IF NOT EXISTS "{index_name}" ON "{table_name}" ({index_columns_str});'
+                            self.logger.info(f"准备创建索引 '{index_name}' 于 '{table_name}({index_columns_str})': {unique_str.strip()}")
                             await conn.execute(create_index_sql)
                             self.logger.info(f"索引 '{index_name}' 创建成功或已存在。")
                             
                 except Exception as e:
-                    self.logger.error(f"创建表或索引 '{table_name}' 时失败: {e}", exc_info=True)
-                    # Reraise after logging to signal failure
-                    raise # Propagate exception to caller (_ensure_table_exists)
-
+                    self.logger.error(f"创建表或索引 '{table_name}' 时失败: {e}", exc_info=True) # 记录详细异常信息
+                    raise # 重新抛出异常以通知调用者失败
+    
     # ===============================================
-    # == Deprecated/Alternative Upsert Implementation (using executemany) ==
-    # You might keep this around for comparison or specific small-batch scenarios
+    # == 已弃用/备选的Upsert实现 (使用executemany) ==
+    # 您可以保留此部分用于比较或特定的小批量场景。
     # ===============================================
     # async def upsert_executemany(self,
     #                 table_name: str,
@@ -701,29 +758,29 @@ class DBManager:
     #                 update_columns: Optional[List[str]] = None,
     #                 timestamp_column: Optional[str] = None,
     #                 stop_event: Optional[asyncio.Event] = None) -> int:
-    #     """ [Original docstring] """
+    #     """ [原始文档字符串] """
     #     if self.pool is None:
     #         await self.connect()
         
-    #     # ... [Original parameter checks] ...
+    #     # ... [原始参数检查] ...
         
     #     records = []
-    #     # ... [Original data conversion logic] ...
+    #     # ... [原始数据转换逻辑] ...
             
     #     current_time = datetime.now()
-    #     # ... [Original timestamp logic] ...
+    #     # ... [原始时间戳逻辑] ...
         
     #     columns = list(records[0].keys())
-    #     # ... [Original update_columns logic] ...
+    #     # ... [原始update_columns逻辑] ...
         
-    #     # ... [Original SQL build logic] ...
+    #     # ... [原始SQL构建逻辑] ...
         
     #     values = []
-    #     # ... [Original value preparation with NaN -> None] ...
+    #     # ... [原始值准备，NaN -> None] ...
 
-    #     # ... [Original NULL conflict key filtering logic] ...
+    #     # ... [原始NULL冲突键过滤逻辑] ...
 
     #     try:
     #         affected_rows = await self.executemany(upsert_sql, values, stop_event=stop_event)
     #         return affected_rows
-    #     # ... [Original exception handling] ...
+    #     # ... [原始异常处理] ...

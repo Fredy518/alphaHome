@@ -113,51 +113,6 @@ class TushareFundBasicTask(TushareTask):
         self.logger.info(f"任务 {self.name}: 全量获取模式，生成单一批次。")
         return [{}]
 
-    async def process_data(self, df: pd.DataFrame, **kwargs: Any) -> pd.DataFrame:
-        """
-        异步处理从API获取的原始数据。
-        此方法可以被子类覆盖以实现特定的数据转换逻辑。
-        """
-        # 假设父类的 process_data 是同步的
-        df = super().process_data(df, **kwargs)
-
-        # 如果df为空或者不是DataFrame，则直接返回
-        if not isinstance(df, pd.DataFrame) or df.empty:
-            return df
-
-        date_cols_to_process = [
-            'found_date', 'due_date', 'list_date', 'issue_date', 'delist_date',
-            'purc_startdate', 'redm_startdate'
-        ]
-        fill_date = pd.Timestamp('1970-01-01') # 仅用于 date_column
-
-        for col_name in date_cols_to_process:
-            if col_name in df.columns:
-                # 尝试直接用 YYYYMMDD 转换，如果失败再用通用转换
-                try:
-                    df[col_name] = pd.to_datetime(df[col_name].astype(str), format='%Y%m%d', errors='coerce')
-                except Exception:
-                    self.logger.warning(f"任务 {self.name}: 列 '{col_name}' 使用 YYYYMMDD 格式转换失败，尝试通用解析。")
-                    df[col_name] = pd.to_datetime(df[col_name], errors='coerce')
-
-                nat_count = df[col_name].isnull().sum()
-                
-                # 只对主要的日期列 (self.date_column) 填充默认值
-                if col_name == self.date_column:
-                    if nat_count > 0:
-                        df[col_name].fillna(fill_date, inplace=True)
-                        self.logger.info(f"任务 {self.name}: 将 {nat_count} 个无效或缺失的 '{col_name}' (主日期列) 填充为 {fill_date.date()}")
-                # 对于其他日期列，记录 NaT 数量但不填充
-                elif nat_count > 0:
-                    self.logger.info(f"任务 {self.name}: 列 '{col_name}' 包含 {nat_count} 个无效或缺失日期 (将保存为 NULL)")
-
-            else:
-                self.logger.warning(f"任务 {self.name}: DataFrame 中未找到日期列 '{col_name}'，跳过预处理。")
-
-        # 调用基类方法完成其他处理 (应用 transformations, 排序等)
-        df = super().process_data(df, **kwargs)
-        return df
-
     async def validate_data(self, df: pd.DataFrame, **kwargs: Any) -> pd.DataFrame:
         """
         验证从 Tushare API 获取的数据。
@@ -183,4 +138,20 @@ class TushareFundBasicTask(TushareTask):
             raise ValueError(error_msg)
 
         self.logger.info(f"任务 {self.name}: 数据验证通过，获取了 {len(df)} 条有效记录。")
+        return df 
+
+    async def process_data(self, df: pd.DataFrame, **kwargs: Any) -> pd.DataFrame:
+        """
+        异步处理从API获取的原始数据。
+        此方法可以被子类覆盖以实现特定的数据转换逻辑。
+        TushareDataTransformer 已处理通用日期转换。
+        """
+        # 如果df为空或者不是DataFrame，则直接返回
+        if not isinstance(df, pd.DataFrame) or df.empty:
+            return df
+
+        # 所有必要的处理已由 TushareDataTransformer 完成。
+        # 此方法可以保留用于未来可能的、此任务真正特有的转换。
+        # 目前，它只检查并返回df。
+        self.logger.info(f"任务 {self.name}: process_data 被调用，返回 DataFrame (行数: {len(df)}). TushareDataTransformer 已完成主要处理。")
         return df 

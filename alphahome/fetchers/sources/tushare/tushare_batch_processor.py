@@ -143,6 +143,7 @@ class TushareBatchProcessor:
                     table_name=self.task.table_name,
                     data=validated_data,
                     conflict_columns=getattr(self.task, 'primary_keys', []),
+                    timestamp_column=self.task.timestamp_column_name,
                     stop_event=stop_event
                 )
                 if isinstance(result_rows, int) and result_rows >= 0:
