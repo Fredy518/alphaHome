@@ -51,12 +51,13 @@ class DBManager:
             self.pool = None
             self.logger.info("数据库连接池已关闭")
     
-    async def execute(self, query: str, *args):
+    async def execute(self, query: str, *args, **kwargs):
         """执行SQL语句
         
         Args:
             query (str): SQL语句
-            *args: SQL参数
+            *args: SQL位置参数
+            **kwargs: SQL关键字参数
             
         Returns:
             Any: 执行结果
@@ -66,18 +67,19 @@ class DBManager:
         
         async with self.pool.acquire() as conn:
             try:
-                result = await conn.execute(query, *args)
+                result = await conn.execute(query, *args, **kwargs)
                 return result
             except Exception as e:
-                self.logger.error(f"SQL执行失败: {str(e)}\nSQL: {query}\n参数: {args}")
+                self.logger.error(f"SQL执行失败: {str(e)}\nSQL: {query}\n位置参数: {args}\n关键字参数: {kwargs}")
                 raise
     
-    async def fetch(self, query: str, *args):
+    async def fetch(self, query: str, *args, **kwargs):
         """执行查询并返回所有结果
         
         Args:
             query (str): SQL查询语句
-            *args: SQL参数
+            *args: SQL位置参数
+            **kwargs: SQL关键字参数
             
         Returns:
             List[asyncpg.Record]: 查询结果记录列表
@@ -87,18 +89,19 @@ class DBManager:
         
         async with self.pool.acquire() as conn:
             try:
-                result = await conn.fetch(query, *args)
+                result = await conn.fetch(query, *args, **kwargs)
                 return result
             except Exception as e:
-                self.logger.error(f"SQL查询失败: {str(e)}\nSQL: {query}\n参数: {args}")
+                self.logger.error(f"SQL查询失败: {str(e)}\nSQL: {query}\n位置参数: {args}\n关键字参数: {kwargs}")
                 raise
     
-    async def fetch_one(self, query: str, *args):
+    async def fetch_one(self, query: str, *args, **kwargs):
         """执行查询并返回第一行结果
         
         Args:
             query (str): SQL查询语句
-            *args: SQL参数
+            *args: SQL位置参数
+            **kwargs: SQL关键字参数
             
         Returns:
             Optional[asyncpg.Record]: 查询结果的第一行记录，如果没有结果则返回None
@@ -108,18 +111,19 @@ class DBManager:
         
         async with self.pool.acquire() as conn:
             try:
-                result = await conn.fetchrow(query, *args)
+                result = await conn.fetchrow(query, *args, **kwargs)
                 return result
             except Exception as e:
-                self.logger.error(f"SQL查询失败: {str(e)}\nSQL: {query}\n参数: {args}")
+                self.logger.error(f"SQL查询失败: {str(e)}\nSQL: {query}\n位置参数: {args}\n关键字参数: {kwargs}")
                 raise
     
-    async def fetch_val(self, query: str, *args):
+    async def fetch_val(self, query: str, *args, **kwargs):
         """执行查询并返回第一行第一列的值
         
         Args:
             query (str): SQL查询语句
-            *args: SQL参数
+            *args: SQL位置参数
+            **kwargs: SQL关键字参数
             
         Returns:
             Any: 查询结果的第一行第一列的值，如果没有结果则返回None
@@ -129,10 +133,10 @@ class DBManager:
         
         async with self.pool.acquire() as conn:
             try:
-                result = await conn.fetchval(query, *args)
+                result = await conn.fetchval(query, *args, **kwargs)
                 return result
             except Exception as e:
-                self.logger.error(f"SQL查询失败: {str(e)}\nSQL: {query}\n参数: {args}")
+                self.logger.error(f"SQL查询失败: {str(e)}\nSQL: {query}\n位置参数: {args}\n关键字参数: {kwargs}")
                 raise
     
     async def executemany(self, query: str, args_list: List[tuple], stop_event: Optional[asyncio.Event] = None): # 添加 stop_event 参数
@@ -226,7 +230,7 @@ class DBManager:
             self.logger.warning(f"COPY_FROM_DATAFRAME (表: {table_name}): 时间戳列 '{timestamp_column}' 未在DataFrame列中找到，现用None值添加。")
             df[timestamp_column] = None # 使用None，假设数据库默认值或UPDATE时的NOW()会处理它
             df_columns = list(df.columns) # 关键：修改后重新评估df_columns
-            # self.logger.info(f"COPY_FROM_DATAFRAME (表: {table_name}): 添加 '{timestamp_column}' 후, 새 df_columns: {df_columns}") # 移除此INFO日志
+            # self.logger.info(f"COPY_FROM_DATAFRAME (表: {table_name}): 添加 '{timestamp_column}' 后, 新 df_columns: {df_columns}") # 移除此INFO日志
         # --- 防御性检查结束 ---
 
         # --- 验证列名 ---
@@ -244,26 +248,6 @@ class DBManager:
         if timestamp_column and timestamp_column not in df_columns: # 此条件理论上在上面的防御性代码后不应为真
             self.logger.warning(f"时间戳列 '{timestamp_column}' 未在DataFrame中找到，"
                             f"如果在UPDATE时需要会被添加，但如果表结构要求此列，初始INSERT可能会失败。")
-
-        # --- BEGIN: 特殊处理VARCHAR日期列相关的Timestamp问题 ---
-        if timestamp_column and timestamp_column in df.columns:
-            tables_needing_timestamp_to_str_conversion = [
-                "tushare_macro_mnysupply",
-                "tushare_macro_pmi",
-                "tushare_macro_ppi"
-                # "tushare_macro_aggfinacing", # 已移除, 因为 aggfinacing 现在使用 DATE 类型主键
-                # "tushare_macro_cpi" # 已移除, 因为 cpi 现在使用 DATE 类型主键
-                # 如果发现其他表也有类似问题，可以添加到这里
-            ]
-            if table_name in tables_needing_timestamp_to_str_conversion:
-                self.logger.info(f"UPSERT ({table_name}): 检测到需要将 '{timestamp_column}' (Timestamp) 列转换为字符串以用于COPY。")
-                # 应用健壮的转换函数
-                # 将 self.logger 传递给辅助函数以便记录内部警告
-                df[timestamp_column] = df[timestamp_column].apply(
-                    lambda x: _robust_datetime_to_iso_string(x, logger_instance=self.logger)
-                )
-                self.logger.debug(f"UPSERT ({table_name}): 列 '{timestamp_column}' 转换后。前5值: {df[timestamp_column].head().tolist() if not df.empty else 'N/A'}")
-        # --- END: 特殊处理 ---
 
         # 创建一个唯一的临时表名
         # 使用毫秒以增加并发场景下的唯一性机会

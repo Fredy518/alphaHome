@@ -1,3 +1,33 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+"""
+基于 Tushare API 的数据任务基类
+
+核心设计：
+1. 基类只提供最基础的数据获取功能
+2. 具体的参数映射和批处理策略由子类决定
+
+重要说明：
+如果子类需要自定义数据处理逻辑，可以重写 process_data 方法。
+在重写时，确保:
+1. 方法签名为 `def process_data(self, data)` - 注意这是同步方法
+2. 必须调用 `super().process_data(data)` 确保基础处理逻辑执行
+3. 返回最终处理的 DataFrame
+
+例如:
+```python
+def process_data(self, data):
+    # 首先调用父类的处理方法
+    data = super().process_data(data)
+
+    # 自定义处理逻辑
+    # ...
+
+    return data
+```
+"""
+
 import abc
 import os
 import asyncio
@@ -310,15 +340,15 @@ class TushareTask(Task):
         """执行任务的完整生命周期 (已重构日期逻辑, 批处理聚合, 最终结果构造)"""
         self.logger.info(f"开始执行任务: {self.name}, 原始参数: {kwargs}")
 
-        progress_callback = kwargs.get('progress_callback') # Not used in current TushareTask execute
+        progress_callback = kwargs.get('progress_callback') # 当前 TushareTask execute 中未使用
         stop_event = kwargs.get('stop_event')
 
-        # Initialize execution state variables
+        # 初始化执行状态变量
         total_rows = 0
         failed_batches = 0
         error_message = ""
-        final_status = "success" # Default to success, will be updated by aggregation or errors
-        batch_list = [] # Initialize batch_list
+        final_status = "success" # 默认为成功，将由聚合或错误更新
+        batch_list = [] # 初始化批处理列表
 
         try:
             await self.pre_execute(stop_event=stop_event)
@@ -329,7 +359,7 @@ class TushareTask(Task):
             if should_skip:
                 self.logger.warning(f"任务 {self.name}: 跳过执行，原因: {skip_message}")
                 skip_status = "failed" if "错误" in skip_message or "未定义" in skip_message or "缺少" in skip_message else "skipped"
-                # Use _build_final_result for skipped result
+                # 使用 _build_final_result 生成跳过结果
                 final_result_dict = self._build_final_result(skip_status, skip_message, 0, 0)
                 await self.post_execute(result=final_result_dict, stop_event=stop_event)
                 return final_result_dict
@@ -371,7 +401,7 @@ class TushareTask(Task):
 
             if not batch_list:
                 self.logger.info(f"任务 {self.name}: get_batch_list 返回空列表。无需处理。")
-                # Use _build_final_result for no_data result
+                # 使用 _build_final_result 生成无数据结果
                 final_result_dict = self._build_final_result("no_data", "批处理列表为空", 0, 0)
                 await self.post_execute(result=final_result_dict, stop_event=stop_event)
                 return final_result_dict
@@ -395,29 +425,29 @@ class TushareTask(Task):
             if tasks_to_run:
                 batch_execution_results = await asyncio.gather(*tasks_to_run, return_exceptions=True)
             
-            # Aggregate results. total_rows and failed_batches are re-assigned here.
-            # final_status and error_message are also determined here.
+            # 汇总结果。total_rows 和 failed_batches 在此处重新赋值。
+            # final_status 和 error_message 也在此处确定。
             total_rows, failed_batches, final_status, error_message = self._aggregate_batch_results(
                 batch_execution_results,
-                initial_total_rows=0, # Start fresh for this execution run
-                initial_failed_batches=0 # Start fresh for this execution run
+                initial_total_rows=0, # 为此次执行运行重新开始计数
+                initial_failed_batches=0 # 为此次执行运行重新开始计数
             )
 
         except asyncio.CancelledError:
             self.logger.warning(f"任务 {self.name} 在执行主流程中被取消。")
             final_status = "cancelled"
             error_message = "任务被用户取消"
-            # total_rows and failed_batches reflect progress up to cancellation if aggregation occurred.
-            # If cancellation was before aggregation, they remain at their initial values (likely 0).
+            # total_rows 和 failed_batches 反映了直到取消时的进度（如果发生了汇总）。
+            # 如果取消发生在汇总之前，它们保持初始值（可能为0）。
         except Exception as e:
             self.logger.error(f"任务 {self.name} 执行过程中发生未处理的严重错误", exc_info=True)
             final_status = "failed"
             error_message = f"严重错误: {type(e).__name__} - {str(e)}"
-            total_rows = 0 # Reset on catastrophic failure before aggregation
-            failed_batches = len(batch_list) if batch_list else 0 # Mark all as failed if batch_list was generated
+            total_rows = 0 # 在汇总前发生灾难性失败时重置
+            failed_batches = len(batch_list) if batch_list else 0 # 如果已生成批处理列表，则将所有批次标记为失败
         
         finally:
-            # Use _build_final_result in the finally block
+            # 在finally块中使用 _build_final_result
             final_result_dict = self._build_final_result(final_status, error_message, total_rows, failed_batches)
             await self.post_execute(result=final_result_dict, stop_event=stop_event)
             self.logger.info(f"任务 {self.name} 最终处理完成，状态: {final_status}, 总行数: {total_rows}, 失败/取消批次数: {failed_batches}")
@@ -453,22 +483,21 @@ class TushareTask(Task):
         current_total_rows = initial_total_rows
         current_failed_batches = initial_failed_batches
         aggregated_error_message = ""
-        # Initial status assumes success if all batches go through.
-        # If any batch is cancelled or fails, this will be updated.
+        # 初始状态假定如果所有批次都成功执行，则为成功。
+        # 如果任何批次被取消或失败，这将被更新。
         current_final_status = "success" 
         
         num_cancelled_internally = 0
 
         for idx, result in enumerate(batch_execution_results):
-            batch_num_for_log = idx + 1 # For logging purposes
+            batch_num_for_log = idx + 1 # 用于日志记录目的
             if isinstance(result, asyncio.CancelledError):
-                # This typically means the cancellation was raised from within _process_single_batch or its sub-methods
-                # or process_batch_wrapper itself before _process_single_batch was called.
-                # or process_batch_wrapper itself before _process_single_batch was called.
+                # 这通常意味着取消操作是从 _process_single_batch 内部或其子方法中引发的
+                # 或者是在调用 _process_single_batch 前的 process_batch_wrapper 自身引发的。
                 self.logger.warning(f"批次 {batch_num_for_log} (任务 {self.name}) 被内部取消: {result}")
                 current_failed_batches += 1
                 aggregated_error_message += f"批次 {batch_num_for_log} 取消: {result}; "
-                current_final_status = "cancelled" # If one is cancelled, the whole task might be considered cancelled.
+                current_final_status = "cancelled" # 如果有一个被取消，整个任务可能被视为已取消。
                 num_cancelled_internally +=1
             elif isinstance(result, Exception):
                 self.logger.error(f"批次 {batch_num_for_log} (任务 {self.name}) 执行失败: {result}", exc_info=result)
@@ -479,29 +508,29 @@ class TushareTask(Task):
             elif isinstance(result, int):
                 if result > 0:
                     current_total_rows += result
-                elif result == 0: # _process_single_batch returns 0 for failure or 0 rows processed successfully
-                    # The logger inside _process_single_batch would have indicated the specific cause.
-                    # We count it as a "failed batch" for aggregation if it intended to process data but didn't.
-                    # If it was an empty fetch that correctly returned 0, it's not a "failed batch" in the same sense,
-                    # but for simplicity in aggregation, we might still log it or count it.
-                    # Let's assume _process_single_batch returning 0 means it effectively failed or had no impact.
+                elif result == 0: # _process_single_batch 返回 0 表示失败或成功处理了 0 行数据
+                    # _process_single_batch 内部的日志应该已经指明具体原因。
+                    # 如果它本应处理数据但未能处理，我们将其计为"失败批次"进行汇总。
+                    # 如果是正确返回 0 的空获取，严格来说它不是同一意义上的"失败批次"，
+                    # 但为了汇总的简单性，我们仍可能记录或计数。
+                    # 我们假设 _process_single_batch 返回 0 意味着它实际上失败或没有产生影响。
                     self.logger.warning(f"批次 {batch_num_for_log} (任务 {self.name}) 返回 0 (可能内部失败或无数据处理)，计为失败批次。")
                     current_failed_batches += 1
                     aggregated_error_message += f"批次 {batch_num_for_log} 返回0; "
                     if current_final_status != "cancelled":
                         current_final_status = "failed"
-                # else: negative result from _process_single_batch - should not happen, but good to log if it does.
-                # Already logged within _process_single_batch if it were to return negative.
-            else: # Unexpected result type
+                # 其他情况：_process_single_batch 返回负数 - 这不应该发生，但如果发生则记录日志。
+                # 如果返回负数，_process_single_batch 内部应该已经记录了日志。
+            else: # 意外的结果类型
                 self.logger.error(f"批次 {batch_num_for_log} (任务 {self.name}) 返回未知类型: {type(result)} ({result})")
                 current_failed_batches += 1
                 aggregated_error_message += f"批次 {batch_num_for_log} 返回未知类型 ({type(result)}); "
                 if current_final_status != "cancelled":
                     current_final_status = "failed"
         
-        # Final status adjustment based on aggregated results
+        # 根据汇总结果调整最终状态
         if current_final_status == "cancelled":
-            # If any internal batch was cancelled, the overall status is cancelled.
+            # 如果任何内部批次被取消，整体状态为已取消。
             self.logger.warning(f"任务 {self.name}: {num_cancelled_internally} 个批次被内部取消。整体任务状态设为 \'cancelled\'。")
             aggregated_error_message = f"任务因 {num_cancelled_internally} 个批次内部取消而被标记为取消。 " + aggregated_error_message
         elif current_failed_batches > 0:
@@ -509,9 +538,9 @@ class TushareTask(Task):
             self.logger.warning(f"任务 {self.name} 执行完成，但有 {current_failed_batches} 个批次处理失败或被取消。")
             if current_final_status == "partial_success":
                 aggregated_error_message = f"完成但有 {current_failed_batches} 个批次失败/取消。 " + aggregated_error_message
-            else: # failed
+            else: # 失败
                 aggregated_error_message = f"任务失败，共 {current_failed_batches} 个批次失败/取消。 " + aggregated_error_message
-        # If no failures and not cancelled, current_final_status remains "success" (initial value)
+        # 如果没有失败且未取消，current_final_status 保持为 "success"（初始值）
 
         return current_total_rows, current_failed_batches, current_final_status, aggregated_error_message.strip()
 

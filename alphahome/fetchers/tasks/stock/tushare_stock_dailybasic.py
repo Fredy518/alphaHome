@@ -84,11 +84,7 @@ class TushareStockDailyBasicTask(TushareTask):
         "float_share": {"type": "NUMERIC(20,4)"},
         "free_share": {"type": "NUMERIC(20,4)"},
         "total_mv": {"type": "NUMERIC(20,4)"},
-        "circ_mv": {"type": "NUMERIC(20,4)"},
-        "free_mv": {"type": "NUMERIC(20,4)"},
-        "float_ratio": {"type": "NUMERIC(18,4)"},
-        "bp_ratio": {"type": "NUMERIC(18,4)"},
-        "annual_div_yield": {"type": "NUMERIC(18,4)"}
+        "circ_mv": {"type": "NUMERIC(20,4)"}
     }
 
     # 7.数据验证规则
