@@ -298,3 +298,80 @@ async def generate_single_date_batches(
     except Exception as e:
         _logger.error(f"生成单日期批次时出错: {e}", exc_info=True)
         raise RuntimeError(f"生成单日期批次失败: {e}") from e
+
+
+# =============================================================================
+# 月度批次生成函数
+# =============================================================================
+
+async def generate_month_batches(
+    start_m: str,
+    end_m: str,
+    batch_size: int = 12,
+    ts_code: Optional[str] = None,
+    date_format: str = '%Y%m',
+    logger: Optional[logging.Logger] = None
+) -> List[Dict[str, Any]]:
+    """
+    生成基于月份的批次（如宏观数据常用的YYYYMM格式）。
+
+    参数:
+        start_m: 开始月份字符串（YYYYMM格式）
+        end_m: 结束月份字符串（YYYYMM格式）
+        batch_size: 每个批次包含的月份数，默认12（即一年）
+        ts_code: 可选的代码参数，如有则添加到每个批次
+        date_format: 月份格式字符串，默认为'%Y%m'
+        logger: 可选的日志记录器
+
+    返回:
+        批次参数列表，每个批次是包含'start_m'和'end_m'的字典
+    """
+    _logger = logger if logger else logging.getLogger(__name__)
+    _logger.info(f"生成月度批次: {start_m} 到 {end_m}, 批次大小: {batch_size}")
+
+    try:
+        # 校验并转换参数
+        start_dt = pd.to_datetime(start_m, format=date_format)
+        end_dt = pd.to_datetime(end_m, format=date_format)
+        if start_dt > end_dt:
+            _logger.warning(f"开始月份 {start_m} 晚于结束月份 {end_m}")
+            return []
+        # 生成月份范围
+        month_range = pd.date_range(start=start_dt, end=end_dt, freq='MS')
+        month_list = [d.strftime(date_format) for d in month_range]
+        if not month_list:
+            _logger.warning(f"在 {start_m} 和 {end_m} 之间未找到有效月份")
+            return []
+        _logger.info(f"找到 {len(month_list)} 个月份")
+        # 按批次大小分割月份
+        batch_list = []
+        for i in range(0, len(month_list), batch_size):
+            batch_months = month_list[i : i + batch_size]
+            if not batch_months:
+                continue
+            batch_params = {
+                'start_m': batch_months[0],
+                'end_m': batch_months[-1]
+            }
+            if ts_code:
+                batch_params['ts_code'] = ts_code
+            batch_list.append(batch_params)
+            _logger.debug(f"创建月度批次 {len(batch_list)}: {batch_months[0]} - {batch_months[-1]}")
+        # 边缘情况：找到月份但未生成批次
+        if not batch_list and month_list:
+            _logger.warning("月份列表非空但未生成批次，使用整个范围作为单个批次")
+            batch_params = {
+                'start_m': month_list[0],
+                'end_m': month_list[-1]
+            }
+            if ts_code:
+                batch_params['ts_code'] = ts_code
+            return [batch_params]
+        _logger.info(f"成功生成 {len(batch_list)} 个月度批次")
+        return batch_list
+    except Exception as e:
+        _logger.error(f"生成月度批次时出错: {e}", exc_info=True)
+        raise RuntimeError(f"生成月度批次失败: {e}") from e
+
+# 用法示例：
+# batches = await generate_month_batches('202001', '202312', batch_size=6)

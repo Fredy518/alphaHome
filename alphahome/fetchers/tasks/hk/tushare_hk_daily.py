@@ -33,12 +33,9 @@ class TushareHKDailyTask(TushareTask):
 
     # 2. TushareTask 特有属性
     api_name = "hk_daily"
-    # Tushare hk_daily 接口实际返回的字段 (请根据Tushare文档核实和调整)
-    # 包括了复权因子和后复权价格
     fields = [
         "ts_code", "trade_date", "open", "high", "low", "close", "pre_close", 
-        "change", "pct_chg", "vol", "amount", "adj_factor",
-        "open_adj", "high_adj", "low_adj", "close_adj", "vwap" # vwap (成交均价) 也是常见日线字段
+        "change", "pct_chg", "vol", "amount"
     ]
     
     # 3. 列名映射 (vol -> volume)
@@ -56,13 +53,7 @@ class TushareHKDailyTask(TushareTask):
         "change": float,
         "pct_chg": float,
         "vol": float,  # API返回的是vol, 会被映射为volume
-        "amount": float,
-        "adj_factor": float,
-        "open_adj": float,
-        "high_adj": float,
-        "low_adj": float,
-        "close_adj": float,
-        "vwap": float
+        "amount": float
     }
     
     # 5. 数据库表结构
@@ -77,13 +68,7 @@ class TushareHKDailyTask(TushareTask):
         "change": {"type": "NUMERIC(12,4)"},
         "pct_chg": {"type": "NUMERIC(10,4)"},
         "volume": {"type": "NUMERIC(20,2)"},  # 港股的成交量单位可能是股
-        "amount": {"type": "NUMERIC(20,3)"}, # 港股的成交额单位可能是千港元
-        "adj_factor": {"type": "NUMERIC(18,6)"},
-        "open_adj": {"type": "NUMERIC(12,4)"},
-        "high_adj": {"type": "NUMERIC(12,4)"},
-        "low_adj": {"type": "NUMERIC(12,4)"},
-        "close_adj": {"type": "NUMERIC(12,4)"},
-        "vwap": {"type": "NUMERIC(12,4)"}
+        "amount": {"type": "NUMERIC(20,3)"} # 港股的成交额单位可能是千港元
     }
 
     # 6. 自定义索引

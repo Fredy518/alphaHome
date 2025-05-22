@@ -2,193 +2,317 @@
 
 ## 项目简介
 
-AlphaHome 是一个基于 Python 异步框架构建的、灵活且可扩展的金融数据获取、处理和存储系统。它旨在简化从 Tushare 等数据源自动同步金融数据的过程，并将其存储到 PostgreSQL 数据库中。
+AlphaHome 是一个基于 Python 异步框架 (`asyncio`) 构建的、灵活且可扩展的金融数据获取、处理和存储系统。它旨在简化从 Tushare 等数据源自动同步金融数据的过程，并将其高效地存储到 PostgreSQL 数据库中。
 
-系统采用模块化任务设计，每个数据任务（例如获取股票日线、获取财务指标）都被封装为独立的类，易于管理和扩展。
+系统核心采用模块化任务设计，通过 `TaskFactory` ([`alphahome/fetchers/task_factory.py`](alphahome/fetchers/task_factory.py:135)) 管理。每个数据任务（例如获取股票日线、财务指标）都继承自 `Task` ([`alphahome/fetchers/base_task.py`](alphahome/fetchers/base_task.py:10)) 或更具体的 `TushareTask` ([`alphahome/fetchers/sources/tushare/tushare_task.py`](alphahome/fetchers/sources/tushare/tushare_task.py:18)) 基类。近期架构已重构，将复杂的 Tushare 数据处理逻辑分解到 `TushareBatchProcessor` ([`alphahome/fetchers/sources/tushare/tushare_batch_processor.py`](alphahome/fetchers/sources/tushare/tushare_batch_processor.py:12)) 和 `TushareDataTransformer` ([`alphahome/fetchers/sources/tushare/tushare_data_transformer.py`](alphahome/fetchers/sources/tushare/tushare_data_transformer.py:10)) 中，以提高代码的可维护性和可扩展性。
 
 ## 主要特性
 
-*   **异步高效**: 基于 `asyncio` 构建，支持高并发数据获取。
-*   **声明式任务定义**: 通过类属性清晰地定义任务元数据（如 API 名称、表名、主键、字段等）。
-*   **自动化数据处理**: 内置数据类型转换、列名映射和基本验证。
-*   **灵活的更新模式**: 支持全量更新、增量更新（按天数、按日期范围、自动检测）。
-*   **配置驱动**: 通过配置文件管理数据库连接、API 密钥及任务参数。
-*   **易于扩展**: 可以方便地添加新的数据源和数据任务。
-*   **数据库集成**: 自动处理数据库表创建（包括列注释）和数据插入/更新（基于 `upsert`）。
-*   **速率限制管理**: 支持按 Tushare API 接口设置不同的调用频率限制。
-*   **命令行工具**: 提供方便的命令行脚本来执行数据更新任务。
-*   **智能批处理**: 支持按交易日历智能分批获取数据，可根据API要求按固定交易日数分批或按单个交易日分批。
-*   **交易日历集成**: 内置交易日历工具，自动识别交易日并优化数据获取流程。
+*   **异步高效**: 基于 `asyncio` 和 `aiohttp` 构建，支持高并发数据获取和处理。
+*   **模块化任务设计**: 通过 `Task` ([`alphahome/fetchers/base_task.py`](alphahome/fetchers/base_task.py:10)) 和 `TushareTask` ([`alphahome/fetchers/sources/tushare/tushare_task.py`](alphahome/fetchers/sources/tushare/tushare_task.py:18)) 基类，以及 `TushareBatchProcessor` ([`alphahome/fetchers/sources/tushare/tushare_batch_processor.py`](alphahome/fetchers/sources/tushare/tushare_batch_processor.py:12)) 和 `TushareDataTransformer` ([`alphahome/fetchers/sources/tushare/tushare_data_transformer.py`](alphahome/fetchers/sources/tushare/tushare_data_transformer.py:10))，实现清晰的任务编排与数据处理。
+*   **声明式任务定义**: 通过类属性清晰定义任务元数据（API名称、表名、主键、字段、Schema等）。
+*   **自动化数据处理与验证**: 内置数据类型转换、列名映射、日期处理和基本的数据验证逻辑。
+*   **灵活的更新策略**: 支持全量更新、多种增量更新模式（包括基于数据库最新日期的智能增量）。
+*   **配置驱动**: 通过 `.env` 文件和用户特定目录下的 `config.json` 文件管理敏感信息（API Token, DB连接）和应用配置（任务参数覆盖）。
+*   **深度数据库集成 (PostgreSQL)**:
+    *   使用 `DBManager` ([`alphahome/fetchers/db_manager.py`](alphahome/fetchers/db_manager.py:9)) 进行异步数据库操作。
+    *   自动建表、创建索引，并支持在表定义中添加列注释。
+    *   高效的 `UPSERT` 操作，确保数据唯一性并高效更新。
+*   **API 速率限制管理**: 内置针对 Tushare API 的请求频率和并发控制机制。
+*   **命令行工具集**: 提供位于 `scripts/` 目录下的丰富脚本，用于单任务更新、批量任务更新及数据质量检查。
+## 系统架构
 
-## 环境配置
+AlphaHome 采用分层和模块化的架构设计，主要包括以下几个核心层面：
+
+*   **数据源层 (`alphahome/fetchers/sources/`)**: 负责封装与外部数据提供商（如 Tushare）的 API 交互逻辑，包括请求发送、数据解析和错误处理。
+*   **任务层 (`alphahome/fetchers/tasks/`)**: 定义具体的数据获取和处理任务。每个任务都是一个独立的类，继承自通用的任务基类，并负责特定数据的完整生命周期管理。
+*   **核心工具层 (`alphahome/fetchers/`)**: 提供项目共享的核心组件，例如：
+    *   `DBManager` ([`alphahome/fetchers/db_manager.py`](alphahome/fetchers/db_manager.py:9)): 统一管理与 PostgreSQL 数据库的异步交互。
+    *   `TaskFactory` ([`alphahome/fetchers/task_factory.py`](alphahome/fetchers/task_factory.py:135)): 负责任务的注册、发现和实例化。
+    *   `BaseTask` ([`alphahome/fetchers/base_task.py`](alphahome/fetchers/base_task.py:10)) 和 `TushareTask` ([`alphahome/fetchers/sources/tushare/tushare_task.py`](alphahome/fetchers/sources/tushare/tushare_task.py:18)): 提供任务定义的基础框架。
+*   **图形用户界面 (GUI) 层 (`alphahome/gui/`)**: 基于 Tkinter 构建，提供用户友好的操作界面。
+    *   它通过 `Controller` ([`alphahome/gui/controller.py`](alphahome/gui/controller.py:47)) 与后端逻辑进行异步通信（使用 Python 的 `queue.Queue`），确保界面操作的流畅性。
+*   **脚本层 (`scripts/`)**: 包含一系列命令行脚本，用于自动化执行数据更新、数据质量检查等维护任务。
+
+这种分层设计使得系统各部分职责清晰，易于维护和扩展。
+*   **智能批处理**: 能够根据交易日历 ([`alphahome/fetchers/tools/calendar.py`](alphahome/fetchers/tools/calendar.py)) 和任务特性自动拆分大数据量任务为小批次执行。
+*   **图形用户界面 (GUI)**: 提供基于 Tkinter 的用户界面 ([`alphahome/gui/`](alphahome/gui/))，方便任务选择、配置、执行监控和日志查看。
+*   **数据质量检查**: 内置数据质量检查工具 ([`alphahome/fetchers/data_checker.py`](alphahome/fetchers/data_checker.py:23))，可检查数据覆盖率和完整性。
+*   **易于扩展**: 清晰的架构设计使得添加新的数据源适配器和数据任务相对简单。
+
+## 环境配置与安装
+
+### 前提条件
+
+*   **Python**: >=3.9 (根据 [`pyproject.toml`](pyproject.toml) 定义)
+*   **PostgreSQL**: 12+ (推荐)
+*   **Git**
+
+### 安装步骤
+
+1.  **克隆仓库**:
+    ```bash
+    git clone <your-repository-url> # 请替换为实际的仓库 URL
+    cd alphaHome
+    ```
+
+2.  **创建并激活虚拟环境** (推荐):
+    ```bash
+    python -m venv venv
+    # Windows
+    venv\Scripts\activate
+    # macOS/Linux
+    source venv/bin/activate
+    ```
+
+3.  **安装依赖**:
+    项目使用 [`pyproject.toml`](pyproject.toml) 管理依赖。推荐使用以下命令安装项目及其依赖：
+    ```bash
+    pip install .
+    ```
+    如果需要进行开发，可以使用编辑模式安装：
+    ```bash
+    pip install -e .
+    ```
+    或者，如果 [`requirements.txt`](requirements.txt) 包含了所有必要的运行时和开发依赖（请确认其与 [`pyproject.toml`](pyproject.toml) 的同步情况）：
+    ```bash
+    pip install -r requirements.txt
+    # 如果有开发特定依赖，可能需要 pip install -r requirements-dev.txt
+    ```
 
 ### 配置文件说明
-项目中主要涉及以下几类配置文件：
+
+AlphaHome 使用两种主要的配置文件：
 
 1.  **`.env` 文件 (项目根目录)**:
-    *   用于存储敏感信息和基本环境配置。
-    *   **必需创建此文件**，可以从复制并修改 `.env.example` (如果提供了该模板文件) 开始。
-    *   主要配置项:
-        *   `TUSHARE_API_TOKEN`: 你的 Tushare Pro API Token (必需)。
-        *   `DB_CONNECTION_STRING`: PostgreSQL 数据库连接字符串 (必需)。
-    *   此文件中的配置主要供后端脚本和默认情况使用。
+    *   **用途**: 存储敏感信息和基础环境配置，如 API Token 和数据库连接字符串。
+    *   **创建**: 此文件**必须创建**。您可以复制项目根目录下的 `.env.example` (如果提供) 并重命名为 `.env`，然后填入您的实际配置。
+    *   **主要配置项**:
+        *   `TUSHARE_API_TOKEN`: 您的 Tushare Pro API Token (必需)。
+        *   `DB_CONNECTION_STRING`: PostgreSQL 数据库连接字符串 (必需)，格式为 `postgresql+asyncpg://<user>:<password>@<host>:<port>/<database>`。
+            *   示例: `postgresql+asyncpg://alphahome_user:your_password@localhost:5432/alphahome_db`
+    *   **优先级**: 此文件中的配置主要供后端脚本和作为系统默认值使用。
 
 2.  **`config.json` (用户配置目录)**:
-    *   用于存储用户特定的配置，可以覆盖任务的默认参数以及 `.env` 中的某些设置（特别是通过GUI修改时）。
-    *   项目根目录下提供了 `config.example.json`，请**将其复制到你的用户配置目录，并重命名为 `config.json`**，然后根据实际情况填写内容。
-    *   用户配置目录路径通常为：`C:/Users/<你的用户名>/AppData/Local/trademaster/alphahome/config.json` (Windows) 或类似的路径 (macOS/Linux)。请参考程序首次运行时日志中关于加载此文件路径的提示。
-    *   GUI界面的"存储设置"（如数据库连接和API Token）会保存到此文件中。
-    *   还可以配置任务级别的参数，例如特定任务的 `concurrent_limit`, `page_size` 等。
+    *   **用途**: 存储用户特定的配置，例如通过 GUI 修改的设置（如 Tushare Token、数据库连接信息），以及覆盖任务默认参数（如并发限制、批次大小等）。
+    *   **创建与位置**:
+        *   项目根目录下提供了 `config.example.json` 作为模板。
+        *   请将此模板复制到您的用户特定配置目录，并重命名为 `config.json`，然后根据需要修改。
+        *   用户配置目录通常位于：
+            *   Windows: `C:/Users/<YourUserName>/AppData/Local/AlphaHome/AlphaHome/config.json` (路径可能因 `appdirs` 库的具体实现略有不同，请以程序首次运行时的日志提示为准)
+            *   macOS: `~/Library/Application Support/AlphaHome/config.json`
+            *   Linux: `~/.config/AlphaHome/config.json` 或 `~/.local/share/AlphaHome/config.json`
+    *   **优先级**: 此文件中的配置会覆盖 `.env` 文件中对应的设置（当通过 GUI 保存时）以及任务代码内定义的默认参数。
 
-3.  **任务代码内默认配置**:
-    *   各个任务类内部可以定义 `default_concurrent_limit`, `default_page_size` 等属性作为代码级别的默认值。
-    *   这些默认值优先级最低，会被用户 `config.json` 中的配置覆盖。
+**配置优先级总结**: 用户 `config.json` > `.env` 文件 > 任务代码内默认值。
 
-### 1. 克隆项目
-
+### (可选) 数据库初始化
+如果项目包含数据库初始化脚本 (例如 `scripts/init_database.py`，请根据实际情况确认)，您可能需要在首次配置完成后运行它来创建必要的数据库表结构。
 ```bash
-git clone <your-repository-url>
-cd alphaHome
+# 示例命令，请根据实际脚本路径和名称调整
+python scripts/init_database.py
 ```
 
-### 2. 安装依赖
+## 使用说明
 
-建议使用虚拟环境：
+AlphaHome 项目可以通过图形用户界面 (GUI) 或命令行脚本进行操作。
 
-```bash
-python -m venv venv
-# Windows
-venv\\Scripts\\activate
-# macOS/Linux
-source venv/bin/activate
+### 图形用户界面 (GUI)
 
-pip install -r requirements.txt
-```
+GUI 提供了一个用户友好的方式来管理任务、配置设置和监控数据获取过程。
 
-### 3. 配置 `.env` 文件
+**启动 GUI:**
 
-在项目根目录下创建（或复制并重命名 `.env.example`）一个 `.env` 文件，并填入以下内容：
+*   **从源码运行**:
+    ```bash
+    python -m alphahome.gui.main_window
+    ```
+*   **如果项目已通过 `pip install .` 安装**:
+    ```bash
+    alphahome
+    ```
 
-```dotenv
-# .env 文件示例
+**GUI 主要功能简介:**
 
-# Tushare API Token (必需)
-# 请替换为你的 Tushare Pro API Token
-TUSHARE_API_TOKEN=your_actual_tushare_api_token
+*   **任务列表**: 查看、选择、筛选和排序所有已注册的数据获取任务。
+*   **存储设置**: 配置和保存 Tushare API Token。数据库连接信息目前主要通过配置文件管理。
+*   **任务运行**: 选择任务执行模式（智能增量、手动增量、全量导入），指定日期范围（如果需要），并启动选定的任务。
+*   **运行状态与日志**: 实时监控任务执行状态、进度以及详细的日志输出。
 
-# PostgreSQL 数据库连接字符串 (必需)
-# 格式: postgresql+asyncpg://<user>:<password>@<host>:<port>/<database>
-# 例如: postgresql+asyncpg://user:password@localhost:5432/finance_db
-DB_CONNECTION_STRING=your_database_connection_string
+更详细的 GUI 操作指南请参阅 [用户指南](docs/user_guide.md)。
 
-# 全局默认并发限制 (可选, 各任务类中可能有自己的默认值)
-# 控制同时向 Tushare API 发送请求的数量
-# CONCURRENT_LIMIT=5 # 通常在任务类或 config.json 中具体配置
+### 命令行脚本
 
-# Tushare API 默认速率限制 (可选, TushareAPI 类中已有默认值)
-# 可以为特定的 Tushare 接口在 config.json 中设置每分钟的请求次数限制
-# TUSHARE_API_RATE_LIMIT_DEFAULT=50 # 通常在TushareAPI类中定义
-```
+项目在 `scripts/` 目录下提供了多种命令行脚本，用于自动化数据更新和维护任务。
 
-**重要**:
-*   确保已安装并运行 PostgreSQL 数据库。
-*   将 `your_actual_tushare_api_token` 替换为你的 Tushare Pro 账户的有效 Token。
-*   将 `your_database_connection_string` 替换为你的 PostgreSQL 数据库的实际连接信息。
+**主要脚本类型:**
 
-### 4. (可选) 配置用户 `config.json`
-参照项目根目录下的 `config.example.json`，在你的用户配置目录下创建并编辑 `config.json`。这允许你微调任务参数或通过GUI保存连接设置。
+*   **单任务更新脚本**: 位于 `scripts/tasks/` 下，按数据类别组织 (如 `stock`, `finance`)，用于更新特定的数据任务。
+*   **批量更新脚本**: 如 `scripts/batch/update_all_tasks.py`，用于一次性更新所有或指定的多个任务。
+*   **数据质量检查脚本**: 如 `scripts/check_db_quality.py`，用于检查数据库中数据的完整性和覆盖情况。
 
-### 5. (可选) 从 Wheel 文件安装
+**示例用法:**
 
-如果你获得了项目的 `.whl` 分发包（例如 `dist/alphahome-1.0.0-py3-none-any.whl`），你可以直接使用 pip 安装：
+*   更新最近4个季度的现金流量表数据:
+    ```bash
+    python scripts/tasks/finance/update_cashflow.py --quarters 4
+    ```
+*   更新指定日期范围的股票日线数据:
+    ```bash
+    python scripts/tasks/stock/update_daily.py --start-date 20230101 --end-date 20230331
+    ```
+*   运行全面的数据库质量检查:
+    ```bash
+    python scripts/check_db_quality.py
+    ```
 
-```bash
-# 确保你已经安装了所有非 Python 依赖（例如 PostgreSQL）
-pip install dist/alphahome-1.0.0-py3-none-any.whl
-
-# 安装后，你仍然需要创建和配置 .env 文件以及用户 config.json 文件（见上文）
-# 并根据你的安装方式运行 GUI 或脚本
-```
-
-## 添加新任务
-
-要添加一个新的数据获取任务（例如，获取指数数据）：
-
-1.  在 `fetchers/tasks/` 下创建一个新的 Python 文件（例如 `fetchers/tasks/index/tushare_index_daily.py`）。
-2.  在该文件中创建一个新的类，继承自 `fetchers.sources.tushare.tushare_task.TushareTask` (或其他合适的数据源基类)。
-3.  在类中定义必要的属性：
-    *   `name`: 任务的唯一标识符 (例如 `"tushare_index_daily"`)。
-    *   `description`: 任务描述。
-    *   `table_name`: 对应的数据库表名。
-    *   `primary_keys`: 数据表的主键列表。
-    *   `date_column`: 用于增量更新的日期列名。
-    *   `api_name`: 对应的 Tushare API 接口名称 (例如 `"index_daily"`)。
-    *   `fields`: 需要从 API 获取的字段列表。
-    *   `schema`: 定义数据库表结构。**重要**: 每个列定义（一个字典）可以包含一个 `comment` 键，其值将作为该列在数据库中的注释。例如: `{"type": "VARCHAR(10)", "constraints": "NOT NULL", "comment": "股票代码"}`。
-    *   `(可选)` `column_mapping`: API 字段名到数据库列名的映射。
-    *   `(可选)` `transformations`: 列的数据类型转换规则。
-    *   `(可选)` `validations`: 数据验证规则。
-    *   `(可选)` `indexes`: 需要在数据库表中创建的自定义索引。
-    *   `(可选)` `batch_trade_days_single_code` / `batch_trade_days_all_codes`: 当使用 `generate_trade_day_batches` 时，分别定义单代码查询和全市场查询的批次大小（交易日数量）。如果任务的API特性更适合按单个交易日批处理（例如使用 `generate_single_date_batches`），则这些属性可能不需要。
-4.  根据需要实现或重写方法：
-    *   `get_batch_list`: 定义如何根据输入参数（如日期范围、代码列表）生成 API 调用批次。
-        *   可使用系统提供的 `generate_trade_day_batches` 工具函数，按固定交易日数分批。
-        *   或者，如果API要求（尤其在全市场查询时）按单个交易日获取数据，可以使用 `generate_single_date_batches` 工具函数。它会为指定日期范围内的每个交易日生成一个批次，并将日期参数名设置为指定的 `date_field` (例如 `'trade_date'`)。
-    *   `prepare_params`: 准备每次 API 调用所需的具体参数。
-    *   `(可选)` `process_data`: 添加自定义的数据处理逻辑。
-    *   `(可选)` `validate_data`: 添加自定义的数据验证逻辑。
-5.  (重要) 在相应子目录的 `__init__.py` (例如 `fetchers/tasks/stock/__init__.py`) 和更高一级的 `fetchers/tasks/__init__.py` 文件中导入并导出你新创建的任务类，以便 `TaskFactory` 能够发现它。
-6.  现在你可以通过 `TaskFactory.get_task("your_new_task_name")` 来获取和使用你的新任务了。
+详细的脚本列表、参数说明和使用示例，请参阅 [`docs/user_guide.md`](docs/user_guide.md) 和 [`docs/developer_guide.md`](docs/developer_guide.md)。
 
 ## 项目结构
 
 ```
-alphaHome/
-├── .env                    # 环境变量配置文件 (需手动创建, .env.example 为模板)
-├── .gitignore              # Git 忽略文件配置
-├── config.example.json     # 用户配置文件的模板
-├── requirements.txt        # Python 依赖库
-├── fetchers/               # 数据模块核心
-│   ├── __init__.py         # fetchers 包初始化
-│   ├── base_task.py        # 基础任务类 Task
-│   ├── db_manager.py       # 数据库交互 (连接, 表管理包括列注释, CRUD)
-│   ├── task_decorator.py   # 任务注册装饰器
-│   ├── task_factory.py     # 任务工厂，用于创建和管理任务实例
-│   ├── sources/            # 数据源 API 封装
+alphahome/
+├── alphahome/                # AlphaHome 主包
+│   ├── __init__.py
+│   ├── عوامل/              # 因子计算模块 (当前为空或占位)
 │   │   ├── __init__.py
-│   │   └── tushare/        # Tushare 数据源
+│   │   ├── core/
+│   │   ├── definitions/
+│   │   ├── pipelines/
+│   │   └── utils/
+│   ├── fetchers/             # 数据获取与管理核心
+│   │   ├── __init__.py
+│   │   ├── base_task.py      # 任务基类 (Task)
+│   │   ├── data_checker.py   # 数据质量检查工具
+│   │   ├── db_manager.py     # 数据库管理器 (PostgreSQL)
+│   │   ├── task_decorator.py # 任务注册装饰器 (@task_register)
+│   │   ├── task_factory.py   # 任务工厂
+│   │   ├── sources/          # 数据源适配层
+│   │   │   ├── __init__.py
+│   │   │   └── tushare/      # Tushare 数据源实现
+│   │   │       ├── __init__.py
+│   │   │       ├── tushare_api.py
+│   │   │       ├── tushare_batch_processor.py
+│   │   │       ├── tushare_data_transformer.py
+│   │   │       └── tushare_task.py (TushareTask 基类)
+│   │   ├── tasks/            # 具体数据任务定义 (按数据类型组织)
+│   │   │   ├── __init__.py   # 导入所有任务子模块
+│   │   │   ├── finance/
+│   │   │   ├── fund/
+│   │   │   ├── hk/
+│   │   │   ├── index/
+│   │   │   ├── macro/
+│   │   │   ├── option/
+│   │   │   ├── others/
+│   │   │   └── stock/
+│   │   └── tools/            # 通用工具
 │   │       ├── __init__.py
-│   │       ├── tushare_api.py  # Tushare API 客户端 (速率限制)
-│   │       └── tushare_task.py # Tushare 任务基类 TushareTask
-│   ├── tasks/              # 具体的业务数据任务实现
-│   │   ├── __init__.py     # !! 需要在此导入并导出所有任务模块 !!
-│   │   ├── finance/
-│   │   ├── fund/
-│   │   ├── hk/
-│   │   ├── index/
-│   │   └── stock/          # 股票相关任务
-│   │       ├── __init__.py # !! 需要在此导入并导出目录内所有任务类 !!
-│   │       ├── tushare_stock_daily.py
-│   │       ├── tushare_stock_chips.py # 新增：每日筹码任务示例
-│   │       └── ...
-│   └── tools/              # 通用工具
-│       ├── __init__.py
-│       ├── calendar.py     # 交易日历工具 (异步)
-│       └── batch_utils.py  # 批处理工具 (包含多种交易日批次生成函数)
-├── docs/                   # 文档目录
-│   └── ...
-├── logs/                   # 日志输出目录 (自动创建)
-├── scripts/                # 命令行脚本目录
-│   └── ...
-├── gui/                    # GUI界面相关代码
-│   └── ...
-└── README.md               # 本文档
+│   │       ├── batch_utils.py # 批处理工具
+## 扩展性
 
-# 注： .git, __pycache__, venv 等目录已省略
-# 用户 config.json 存储在用户特定的应用数据目录中。
+AlphaHome 设计时考虑了良好的可扩展性，方便开发者添加新的数据获取任务或未来可能的因子计算、数据处理等功能。
+
+### 添加新数据任务
+
+添加一个新的数据获取任务（例如，针对 Tushare 的新接口或新的数据源）通常遵循以下步骤：
+
+1.  **创建任务类**: 在 `alphahome/fetchers/tasks/` 下相应的子目录（如 `stock/`, `fund/`，或为新数据源创建新目录）中创建一个新的 Python 文件。在该文件中定义一个新的任务类，它应继承自 `TushareTask` ([`alphahome/fetchers/sources/tushare/tushare_task.py`](alphahome/fetchers/sources/tushare/tushare_task.py:18))（如果使用 Tushare 数据源）或通用的 `Task` 基类 ([`alphahome/fetchers/base_task.py`](alphahome/fetchers/base_task.py:10))（如果为其他数据源）。
+2.  **定义任务属性**: 在新创建的类中，定义必要的类属性，例如：
+    *   `name`: 任务的唯一标识符 (字符串)。
+    *   `description`: 任务功能的简要描述。
+    *   `table_name`: 数据将存储到的数据库表名。
+    *   `primary_keys`: 表的主键列表 (用于 `UPSERT` 操作)。
+    *   `date_column`: 用于增量更新的日期列名 (如果适用)。
+    *   `api_name` (特指 `TushareTask`): 对应的 Tushare API 接口名称。
+    *   `fields` (特指 `TushareTask`): 需要从 API 获取的字段列表。
+    *   `schema`: 定义数据库表结构，包括列名、数据类型、约束以及可选的 `comment` (将作为数据库列注释)。
+    *   可选属性如 `column_mapping` (API字段到数据库列的映射), `transformations` (数据转换规则), `validations` (数据验证规则), `indexes` (自定义数据库索引)。
+3.  **实现核心方法**: 根据任务需求，实现或重写关键方法：
+    *   `get_batch_list(self, **kwargs) -> List[Dict]`: (异步方法) 定义如何根据输入参数（如日期范围、代码列表）生成 API 调用所需的参数批次列表。可以使用项目提供的 `generate_trade_day_batches` 或 `generate_single_date_batches` 等工具函数 ([`alphahome/fetchers/tools/batch_utils.py`](alphahome/fetchers/tools/batch_utils.py)) 来辅助生成批次。
+    *   `prepare_params(self, batch: Dict, **kwargs) -> Dict`: (异步方法) 准备每一次 API 调用所需的具体参数。
+    *   可选地，可以重写 `process_data` (数据后处理) 或 `validate_data` (自定义验证) 等方法。
+4.  **注册任务**: 使用 `@task_register()` 装饰器 ([`alphahome/fetchers/task_decorator.py`](alphahome/fetchers/task_decorator.py:13)) 标记你的任务类，使其能被 `TaskFactory` ([`alphahome/fetchers/task_factory.py`](alphahome/fetchers/task_factory.py:135)) 自动发现和注册。
+5.  **导入任务**: (重要) 确保在相应的 `__init__.py` 文件中导入新创建的任务类，以便任务工厂能够扫描到。通常需要修改任务所在子目录的 `__init__.py` (例如 `alphahome/fetchers/tasks/stock/__init__.py`) 以及 `alphahome/fetchers/tasks/__init__.py`。
+
+更详细的步骤和示例请参考 [开发者指南](docs/developer_guide.md)。
+
+### 未来扩展方向
+
+*   **因子计算 (`alphahome/factors/`)**: 此模块目前为占位结构，未来可以扩展用于定义和计算各种金融因子。
+*   **数据处理器 (`alphahome/processors/`)**: 此模块目前也为占位结构，未来可以用于实现更复杂的数据处理流水线或衍生数据计算。
+## 项目结构
+
 ```
+alphahome/
+├── alphahome/                # AlphaHome 主包
+│   ├── __init__.py
+│   ├── factors/              # 因子计算模块 (当前为空或占位)
+│   │   ├── __init__.py
+│   │   ├── core/
+│   │   ├── definitions/
+│   │   ├── pipelines/
+│   │   └── utils/
+│   ├── fetchers/             # 数据获取与管理核心
+│   │   ├── __init__.py
+│   │   ├── base_task.py      # 任务基类 (Task)
+│   │   ├── data_checker.py   # 数据质量检查工具
+│   │   ├── db_manager.py     # 数据库管理器 (PostgreSQL)
+│   │   ├── task_decorator.py # 任务注册装饰器 (@task_register)
+│   │   ├── task_factory.py   # 任务工厂
+│   │   ├── sources/          # 数据源适配层
+│   │   │   ├── __init__.py
+│   │   │   └── tushare/      # Tushare 数据源实现
+│   │   │       ├── __init__.py
+│   │   │       ├── tushare_api.py
+│   │   │       ├── tushare_batch_processor.py
+│   │   │       ├── tushare_data_transformer.py
+│   │   │       └── tushare_task.py (TushareTask 基类)
+│   │   ├── tasks/            # 具体数据任务定义 (按数据类型组织)
+│   │   │   ├── __init__.py   # 导入所有任务子模块
+│   │   │   ├── finance/
+│   │   │   ├── fund/
+│   │   │   ├── hk/
+│   │   │   ├── index/
+│   │   │   ├── macro/
+│   │   │   ├── option/
+│   │   │   ├── others/
+│   │   │   └── stock/
+│   │   └── tools/            # 通用工具
+│   │       ├── __init__.py
+│   │       ├── batch_utils.py # 批处理工具
+│   │       └── calendar.py    # 交易日历工具
+│   ├── gui/                  # 图形用户界面 (Tkinter)
+│   │   ├── __init__.py
+│   │   ├── controller.py     # GUI 控制器
+│   │   ├── event_handlers.py # 事件处理器和 UI 构建
+│   │   └── main_window.py    # GUI 主窗口和入口
+│   └── processors/           # 数据处理模块 (当前为空或占位)
+│       └── __init__.py
+├── docs/                     # 项目文档
+│   ├── developer_guide.md
+│   ├── tusharedb_usage.md
+│   └── user_guide.md
+├── scripts/                  # 命令行脚本 (具体内容参考文档)
+├── tests/                    # 测试代码
+├── .env.example              # .env 文件模板
+├── .gitignore
+├── config.example.json       # 用户 config.json 文件模板
+├── pyproject.toml            # 项目构建和依赖配置文件
+├── README.md                 # 本文档
+├── README_old.md             # 旧版 README 备份
+├── requirements.txt          # Python 依赖 (建议通过 pyproject.toml 管理)
+└── run.py                    # GUI 启动脚本
+```
+*注：`logs/` 和 `venv/` 等自动生成或环境特定的目录未列出。用户 `config.json` 存储在用户特定的应用数据目录中。*
 
 ## 批处理功能说明
+## 详细文档
+
+更详细的关于项目使用、开发和数据库结构的信息，请参阅 `docs/` 目录下的相关文档：
+
+*   **[用户指南](docs/user_guide.md)**: 详细介绍了系统的安装、配置、GUI 使用方法、命令行脚本操作以及常见问题解答。
+*   **[开发者指南](docs/developer_guide.md)**: 提供了系统架构、代码组织、核心组件设计、开发流程、测试指南以及如何添加新功能（如数据源、任务）的详细说明。
+*   **[TushareDB 使用文档](docs/tusharedb_usage.md)**: 详细描述了 `tusharedb` 数据库的表结构、各字段含义以及对应的数据来源 (Tushare API)。
 
 系统提供了智能批处理功能，可以根据交易日历自动将数据获取任务分成多个批次进行处理。主要通过 `alphahome/fetchers/tools/batch_utils.py` 中的工具函数实现。
 

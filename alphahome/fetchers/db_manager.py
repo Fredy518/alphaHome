@@ -6,6 +6,20 @@ from datetime import datetime
 import asyncpg
 import pandas as pd
 
+# 辅助转换函数
+def _robust_datetime_to_iso_string(val, logger_instance=None): # 添加可选的 logger
+    if pd.isnull(val):
+        return None
+    if hasattr(val, 'isoformat'): # 适用于 datetime.datetime 和 pd.Timestamp
+        return val.isoformat()
+    if isinstance(val, str): # 如果已经是字符串，直接返回
+        return val
+    
+    # 遇到未知类型，记录警告并转换为字符串
+    if logger_instance:
+        logger_instance.warning(f"RobusttoISO: 遇到未知类型 {type(val)}，将尝试使用 str() 转换。值: {str(val)[:100]}") # 记录前100个字符
+    return str(val)
+
 class DBManager:
     """数据库连接管理器"""
     
@@ -231,6 +245,26 @@ class DBManager:
             self.logger.warning(f"时间戳列 '{timestamp_column}' 未在DataFrame中找到，"
                             f"如果在UPDATE时需要会被添加，但如果表结构要求此列，初始INSERT可能会失败。")
 
+        # --- BEGIN: 特殊处理VARCHAR日期列相关的Timestamp问题 ---
+        if timestamp_column and timestamp_column in df.columns:
+            tables_needing_timestamp_to_str_conversion = [
+                "tushare_macro_mnysupply",
+                "tushare_macro_pmi",
+                "tushare_macro_ppi"
+                # "tushare_macro_aggfinacing", # 已移除, 因为 aggfinacing 现在使用 DATE 类型主键
+                # "tushare_macro_cpi" # 已移除, 因为 cpi 现在使用 DATE 类型主键
+                # 如果发现其他表也有类似问题，可以添加到这里
+            ]
+            if table_name in tables_needing_timestamp_to_str_conversion:
+                self.logger.info(f"UPSERT ({table_name}): 检测到需要将 '{timestamp_column}' (Timestamp) 列转换为字符串以用于COPY。")
+                # 应用健壮的转换函数
+                # 将 self.logger 传递给辅助函数以便记录内部警告
+                df[timestamp_column] = df[timestamp_column].apply(
+                    lambda x: _robust_datetime_to_iso_string(x, logger_instance=self.logger)
+                )
+                self.logger.debug(f"UPSERT ({table_name}): 列 '{timestamp_column}' 转换后。前5值: {df[timestamp_column].head().tolist() if not df.empty else 'N/A'}")
+        # --- END: 特殊处理 ---
+
         # 创建一个唯一的临时表名
         # 使用毫秒以增加并发场景下的唯一性机会
         timestamp_ms = int(datetime.now().timestamp() * 1000)
@@ -246,7 +280,13 @@ class DBManager:
             # 此生成器为 copy_records_to_table 生成元组。
             # copy_from_dataframe 开头的 df.empty 检查处理了初始为空的DataFrame。
             for row_tuple in df_internal.itertuples(index=False, name=None):
-                yield tuple(None if pd.isna(val) else val for val in row_tuple)
+                processed_values = []
+                for val in row_tuple:
+                    if pd.isna(val):
+                        processed_values.append(None)
+                    else:
+                        processed_values.append(val)
+                yield tuple(processed_values)
 
         records_iterable = _df_to_records_generator(df)
         # 注意：原始的 'if not data_records:' 检查已被移除，因为它不直接适用于生成器（除非消耗它）。

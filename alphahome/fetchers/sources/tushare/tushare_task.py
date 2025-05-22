@@ -51,6 +51,7 @@ class TushareTask(Task):
     api_name = None  # Tushare API名称，子类必须定义
     fields = None    # 需要获取的字段列表，子类必须定义
     timestamp_column_name: Optional[str] = 'update_time'  # 时间戳列名，默认为 'update_time'，None表示不使用
+    single_batch = False  # 单批次处理模式，适用于数据量小的任务，例如宏观数据
     
     def __init__(self, db_connection, api_token=None, api=None):
         """初始化 TushareTask
@@ -333,6 +334,34 @@ class TushareTask(Task):
                 await self.post_execute(result=final_result_dict, stop_event=stop_event)
                 return final_result_dict
 
+            # 对于单批次处理模式，直接执行单次获取
+            if self.single_batch:
+                self.logger.info(f"任务 {self.name} 使用单批次模式执行")
+                batch = {"start_date": self.default_start_date, "end_date": None}  # end_date为None表示获取到当前
+                results = await self.fetch_batch(batch)
+                if results is not None and not results.empty:
+                    processed_data = await self.data_transformer.process_data(results)
+                    validated_data = await self.data_transformer.validate_data(processed_data)
+                    if not validated_data.empty:
+                        # 使用BatchProcessor来保存数据，而不是直接调用save_batch
+                        rows_saved = await self.batch_processor._save_validated_batch_data_with_retry(
+                            validated_data, 
+                            f"单批次模式 (任务 {self.name})", 
+                            stop_event
+                        )
+                        total_rows = rows_saved
+                        self.logger.info(f"单批次模式：成功处理并保存 {total_rows} 行数据")
+                        final_result_dict = self._build_final_result("success", "单批次模式执行成功", total_rows, 0)
+                    else:
+                        self.logger.warning("单批次模式：数据验证后为空")
+                        final_result_dict = self._build_final_result("no_data", "数据验证后为空", 0, 0)
+                else:
+                    self.logger.warning("单批次模式：未获取到数据或获取失败")
+                    final_result_dict = self._build_final_result("no_data", "未获取到数据或获取失败", 0, 1)
+                
+                await self.post_execute(result=final_result_dict, stop_event=stop_event)
+                return final_result_dict
+
             kwargs_for_batch_list = kwargs.copy()
             kwargs_for_batch_list['start_date'] = final_start_date
             kwargs_for_batch_list['end_date'] = final_end_date
@@ -596,6 +625,8 @@ class TushareTask(Task):
         # 仅当API需要特殊参数处理时，子类才需要重写此方法
         return batch_params
         
+    # save_batch 方法已移除，改用 TushareBatchProcessor 中的 _save_validated_batch_data_with_retry 方法
+
     async def fetch_data(self, **kwargs):
         """从Tushare获取数据
         

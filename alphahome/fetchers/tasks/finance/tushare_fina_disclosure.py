@@ -126,7 +126,12 @@ class TushareFinaDisclosureTask(TushareTask):
                 # 计算当前季度的结束日期
                 current_quarter_month_end = ((current_date.month - 1) // 3 + 1) * 3
                 final_end_date_dt = datetime(current_date.year, current_quarter_month_end, 1) + relativedelta(months=1) - relativedelta(days=1)
-                
+
+                # Add time control: if before 21:00, set end date to yesterday
+                # 如果当前时间在21:00之前，将结束日期设置为前一天
+                if current_date.hour < 21:
+                    final_end_date_dt = final_end_date_dt - timedelta(days=1)
+
                 # 计算回溯季度的起始日期
                 start_lookback_period_dt = final_end_date_dt - relativedelta(months=3 * (self.quarter_lookback -1))
                 first_month_of_start_quarter = ((start_lookback_period_dt.month - 1) // 3) * 3 + 1

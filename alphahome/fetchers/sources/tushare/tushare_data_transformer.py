@@ -66,6 +66,7 @@ class TushareDataTransformer:
         """处理日期列
         
         将日期列转换为标准的日期时间格式，并移除无效日期的行。
+        支持YYYYMMDD和YYYYMM格式的日期。
         
         Args:
             data (DataFrame): 原始数据
@@ -80,8 +81,19 @@ class TushareDataTransformer:
             return data
             
         try:
-            # 如果是字符串格式（如'20210101'），转换为日期对象
-            data[self.task.date_column] = pd.to_datetime(data[self.task.date_column], format='%Y%m%d', errors='coerce')
+            # 根据日期列值的长度自动识别格式
+            sample_value = str(data[self.task.date_column].iloc[0]) if len(data) > 0 else ""
+            
+            if len(sample_value) == 6:  # YYYYMM 格式
+                self.logger.info(f"检测到 '{self.task.date_column}' 列使用 YYYYMM 格式")
+                date_format = '%Y%m'
+            else:  # 默认使用 YYYYMMDD 格式
+                self.logger.info(f"检测到 '{self.task.date_column}' 列使用 YYYYMMDD 格式")
+                date_format = '%Y%m%d'
+                
+            # 使用检测到的格式转换日期列
+            data[self.task.date_column] = pd.to_datetime(data[self.task.date_column], format=date_format, errors='coerce')
+            
             # 删除转换失败的行 (NaT)
             original_count = len(data)
             data.dropna(subset=[self.task.date_column], inplace=True)
