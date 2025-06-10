@@ -22,12 +22,13 @@ dependencies = [
     "aiohttp>=3.11.11",
     "asyncpg>=0.30.0",
     "matplotlib>=3.10.1",
-    "numpy>=2.2.5",
+    "numpy>=2.2.3",
     "pandas>=2.2.3",
     "python-dotenv>=1.1.0",
     "tkcalendar>=1.6.1",
     "tqdm>=4.67.1",
     "appdirs>=1.4.4",
+    "zipline-reloaded>=3.0.4",
     # 添加 Tushare Pro 依赖 (如果 Tushare Pro 是通过 pip 安装的)
     # "tushare>=1.2.0", # 取消注释并调整版本（如果需要）
 ]

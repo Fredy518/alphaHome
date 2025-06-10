@@ -222,29 +222,23 @@ class TushareTask(Task):
             return
 
         try:
-            # 尝试执行一个简单的查询来检查表是否存在，例如查询表的行数
-            # 这比直接查询元数据更通用，但如果表非常大，可能会慢。
-            # 或者，某些数据库驱动程序有特定的检查表存在的方法。
-            # 对于asyncpg，通常是捕获UndefinedTableError。
-            # 我们先尝试一个快速查询，如果失败则认为表可能不存在。
-            await self.db.execute(f"SELECT 1 FROM {self.table_name} LIMIT 1")
-            self.logger.debug(f"表 '{self.table_name}' 已存在。")
-        except getattr(__import__('asyncpg.exceptions', fromlist=['UndefinedTableError']), 'UndefinedTableError', Exception) as e_undefined:
-            # 捕获特定的 UndefinedTableError
-            self.logger.info(f"表 '{self.table_name}' 不存在，正在尝试创建... ({e_undefined})")
-            try:
-                # 使用 db_manager 中的 create_table_from_schema 方法
-                # 假设 db_manager (self.db) 有 create_table_from_schema 方法
-                await self.db.create_table_from_schema(
-                    table_name=self.table_name,
-                    schema_def=self.schema,
-                    primary_keys=getattr(self, 'primary_keys', []),
-                    date_column=getattr(self, 'date_column', None),
-                    indexes=getattr(self, 'indexes', [])
-                )
-                self.logger.info(f"表 '{self.table_name}' 创建成功。")
-            except Exception as create_e:
-                self.logger.error(f"创建表 '{self.table_name}' 失败: {create_e}", exc_info=True)
+            # 使用 db_manager 的 table_exists 方法检查表是否存在
+            if not await self.db.table_exists(self.table_name):
+                self.logger.info(f"表 '{self.table_name}' 不存在，正在尝试创建...")
+                try:
+                    # 使用 db_manager 中的 create_table_from_schema 方法
+                    await self.db.create_table_from_schema(
+                        table_name=self.table_name,
+                        schema_def=self.schema,
+                        primary_keys=getattr(self, 'primary_keys', []),
+                        date_column=getattr(self, 'date_column', None),
+                        indexes=getattr(self, 'indexes', [])
+                    )
+                    self.logger.info(f"表 '{self.table_name}' 创建成功。")
+                except Exception as create_e:
+                    self.logger.error(f"创建表 '{self.table_name}' 失败: {create_e}", exc_info=True)
+            else:
+                self.logger.debug(f"表 '{self.table_name}' 已存在。")
         except Exception as e:
             # 其他可能的错误，例如连接问题
             self.logger.error(f"检查表 '{self.table_name}' 是否存在时发生非预期的错误: {e}", exc_info=True)

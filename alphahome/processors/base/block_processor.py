@@ -9,7 +9,6 @@
 """
 
 import abc
-import logging
 from typing import Dict, List, Any, Optional, Union, Tuple, Callable, Iterator
 import pandas as pd
 import numpy as np
@@ -17,6 +16,7 @@ from datetime import datetime, date, timedelta
 import asyncio
 import math
 
+from ...common.logging_utils import get_logger
 
 class BlockProcessor(abc.ABC):
     """块处理器基类
@@ -83,8 +83,7 @@ class BlockProcessor(abc.ABC):
         
     def _setup_logger(self) -> logging.Logger:
         """设置日志记录器"""
-        logger = logging.getLogger(f"block_processor.{self.name}")
-        logger.setLevel(logging.INFO)
+        logger = get_logger(f"block_processor.{self.name}")
         return logger
         
     async def execute(self, **kwargs) -> Dict[str, Any]:

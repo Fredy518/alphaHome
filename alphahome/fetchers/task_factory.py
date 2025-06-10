@@ -1,134 +1,16 @@
 import logging
-import os
-import json
-import shutil # <-- Import shutil for file moving
 from typing import List, Optional, Dict, Type, Any
-import appdirs # <-- 导入 appdirs
 
 from .base_task import Task
-from .db_manager import DBManager
+from ..common.db_manager import DBManager
+from ..common.config_manager import (
+    load_config, 
+    get_database_url, 
+    get_tushare_token, 
+    get_task_config,
+    reload_config as _reload_config
+)
 from .tasks import *  # 导入所有任务类
-
-# --- 使用 appdirs 定义配置文件路径 (与 controller.py 保持一致) ---
-APP_NAME = "alphahome" # <--- 确保与 controller.py 中的值相同
-APP_AUTHOR = "trademaster" # <--- 确保与 controller.py 中的值相同
-CONFIG_DIR = appdirs.user_config_dir(APP_NAME, APP_AUTHOR)
-CONFIG_FILE = os.path.join(CONFIG_DIR, 'config.json')
-
-# --- 配置缓存 ---
-_config_cache = None
-_config_loaded = False
-
-# 读取配置文件
-def load_config():
-    global _config_cache, _config_loaded
-    if _config_loaded and _config_cache is not None:
-        logger.debug("从缓存加载配置。")
-        return _config_cache
-
-    # --- BEGIN: Configuration Migration Logic ---
-    try:
-        # Define old path components
-        OLD_APP_NAME = "alphaHomeApp"
-        OLD_APP_AUTHOR = "YourAppNameOrAuthor"
-        # Generate old config directory and file path
-        old_config_dir = appdirs.user_config_dir(OLD_APP_NAME, OLD_APP_AUTHOR)
-        old_config_file_path = os.path.join(old_config_dir, 'config.json')
-
-        # Check if old file exists and new file does NOT exist
-        if os.path.exists(old_config_file_path) and not os.path.exists(CONFIG_FILE):
-            logger.info(f"检测到旧配置文件: {old_config_file_path}")
-            logger.info(f"将尝试迁移到新路径: {CONFIG_FILE}")
-            try:
-                # Ensure the new directory exists
-                os.makedirs(CONFIG_DIR, exist_ok=True)
-                # Move the file
-                shutil.move(old_config_file_path, CONFIG_FILE)
-                logger.info("配置文件已成功迁移到新路径。")
-            except (IOError, OSError, shutil.Error) as move_err:
-                logger.warning(f"迁移旧配置文件失败: {move_err}")
-        # else: No migration needed or possible (old doesn't exist or new already exists)
-    except Exception as migration_err:
-        # Catch any unexpected error during migration path generation/check
-        logger.error(f"检查或迁移旧配置文件时发生意外错误: {migration_err}")
-    # --- END: Configuration Migration Logic ---
-
-    logger.info(f"尝试从用户配置路径加载设置: {CONFIG_FILE}") # This log remains
-
-    config_data = {}
-    # 首先尝试读取配置文件 (now always reads from the new CONFIG_FILE path)
-    if os.path.exists(CONFIG_FILE):
-        try:
-            with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
-                config_data = json.load(f)
-        except Exception as e:
-            logger.warning(f"读取配置文件 {CONFIG_FILE} 失败: {e}，使用环境变量或默认值")
-    else:
-        logger.warning(f"配置文件 {CONFIG_FILE} 未找到，将尝试环境变量。")
-    
-    # 合并/处理环境变量 (只在首次加载或配置文件不存在/错误时检查)
-    db_url = config_data.get("database", {}).get("url")
-    tushare_token = config_data.get("api", {}).get("tushare_token")
-
-    if not db_url: # 如果配置文件中没有 db_url
-        logger.info("配置文件中未找到数据库 URL，尝试从环境变量 DATABASE_URL 加载。")
-        db_url_from_env = os.environ.get('DATABASE_URL')
-        if db_url_from_env: # 检查是否成功从环境变量获取
-            logger.info("成功从环境变量 DATABASE_URL 加载数据库 URL。")
-            db_url = db_url_from_env # 使用环境变量的值
-        else: # 如果环境变量也没有
-            logger.warning("配置文件和环境变量均未设置有效的数据库 URL。")
-    # else: # 如果配置文件中有 db_url，则无需额外操作
-    #     pass # 或者可以加一行日志 logger.debug("已从配置文件加载数据库 URL。")
-    
-    if not tushare_token:
-        tushare_token_from_env = os.environ.get('TUSHARE_TOKEN')
-        if tushare_token_from_env:
-            logger.info("从环境变量 TUSHARE_TOKEN 加载 Tushare Token。")
-            tushare_token = tushare_token_from_env
-        # Token 可以为空，不强制要求
-        
-    # 确保返回的结构完整
-    final_config = {
-        "database": {"url": db_url},
-        "api": {"tushare_token": tushare_token or ''},
-        "tasks": config_data.get("tasks", {})
-    }
-
-    _config_cache = final_config
-    _config_loaded = True
-    logger.debug("配置已加载并缓存。")
-    return _config_cache
-
-# --- 配置缓存结束 ---
-
-# 获取配置值的函数
-def get_database_url():
-    return load_config()["database"]["url"]
-
-def get_tushare_token():
-    return load_config()["api"]["tushare_token"]
-
-def get_task_config(task_name, key=None, default=None):
-    """获取任务特定配置
-    
-    Args:
-        task_name: 任务名称
-        key: 配置键名，如果为None则返回整个任务配置
-        default: 默认值，当配置不存在时返回
-    
-    Returns:
-        任务配置或特定配置值
-        
-    Note:
-        如果配置文件中没有指定任务配置，将返回空字典，让任务类使用自己的默认值
-    """
-    config = load_config()
-    task_config = config.get("tasks", {}).get(task_name, {})
-    
-    if key is None:
-        return task_config
-    return task_config.get(key, default)
 
 logger = logging.getLogger('task_factory')
 
@@ -192,15 +74,8 @@ class TaskFactory:
     @classmethod
     async def reload_config(cls):
         """重新加载配置并重新初始化数据库连接。"""
-        global _config_cache, _config_loaded # 引入全局变量
         logger.info("开始重新加载 TaskFactory 配置...")
         
-        # --- 清空配置缓存 ---
-        _config_cache = None
-        _config_loaded = False
-        logger.info("配置缓存已清除，将重新加载。")
-        # --- 清空配置缓存结束 ---
-
         try:
             # 1. 关闭现有数据库连接 (如果存在)
             if cls._db_manager:
@@ -215,11 +90,10 @@ class TaskFactory:
             else:
                  logger.info("没有需要关闭的现有数据库连接。")
 
-            # 2. 加载新配置
-            logger.info("正在加载新配置...")
-            new_config = load_config()
+            # 2. 重新加载配置（这会清空 ConfigManager 的缓存）
+            logger.info("正在重新加载配置...")
+            new_config = _reload_config()
             new_db_url = new_config.get("database", {}).get("url")
-            new_token = new_config.get("api", {}).get("tushare_token")
 
             if not new_db_url:
                 logger.error("新配置中缺少有效的数据库 URL，无法重新初始化。")
@@ -228,7 +102,6 @@ class TaskFactory:
                 raise ValueError("新配置中缺少数据库 URL")
 
             logger.info(f"加载到新的数据库 URL: {new_db_url}")
-            # 注意：Token 的更新主要影响新创建的任务实例
 
             # 3. 使用新 URL 重新初始化 DBManager
             logger.info("正在使用新 URL 创建新的 DBManager 实例...")

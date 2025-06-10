@@ -5,7 +5,11 @@ from . import controller
 from typing import Dict, Any, List
 import operator # For sorting
 import urllib.parse # For URL parsing/building
-import logging
+
+from ..common.logging_utils import get_logger
+
+# 获取该模块的 logger
+logger = get_logger("gui.event_handlers")
 
 # 尝试导入 tkcalendar
 try:
@@ -888,15 +892,15 @@ def process_controller_update(root: tk.Tk, ui_elements: Dict[str, tk.Widget], up
                     if task_item.get('name') == task_name:
                         task_item['latest_update_time'] = new_time
                         cache_updated = True
-                        logging.debug(f"Received timestamp update for {task_name}: {new_time}") # Use logging
+                        logger.debug(f"Received timestamp update for {task_name}: {new_time}") # Use logging
                         break
                 if cache_updated:
                     # Refresh the treeview display using the updated global cache
                     _update_task_tree_display(ui_elements)
                 else:
-                     logging.warning(f"收到任务 {task_name} 的时间戳更新，但在缓存中未找到该任务。") # Use logging
+                     logger.warning(f"收到任务 {task_name} 的时间戳更新，但在缓存中未找到该任务。") # Use logging
             else:
-                logging.warning(f"收到无效的 TASK_TIMESTAMP_UPDATE 数据: {data}") # Use logging
+                logger.warning(f"收到无效的 TASK_TIMESTAMP_UPDATE 数据: {data}") # Use logging
                 
         elif update_type == 'TASK_EXECUTION_COMPLETE':
             # Legacy or potentially used for final state update?
@@ -981,7 +985,7 @@ def process_controller_update(root: tk.Tk, ui_elements: Dict[str, tk.Widget], up
 
     except Exception as e:
         # Log the exception from the update processing itself
-        logging.exception(f"处理控制器更新 '{update_type}' 时发生内部错误")
+        logger.exception(f"处理控制器更新 '{update_type}' 时发生内部错误")
         # Optionally show a generic error in status bar
         if statusbar:
             statusbar.config(text=f"处理UI更新时发生错误: {type(e).__name__}")

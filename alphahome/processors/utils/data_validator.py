@@ -10,8 +10,8 @@
 from typing import Dict, List, Any, Optional, Union, Callable
 import pandas as pd
 import numpy as np
-import logging
 
+from ...common.logging_utils import get_logger
 
 class DataValidator:
     """数据验证工具
@@ -19,14 +19,10 @@ class DataValidator:
     用于验证和清洁数据框的工具类，提供多种验证和转换方法。
     """
     
-    def __init__(self, log_level=logging.INFO):
+    def __init__(self):
         """初始化数据验证器
-        
-        Args:
-            log_level: 日志级别
         """
-        self.logger = logging.getLogger("DataValidator")
-        self.logger.setLevel(log_level)
+        self.logger = get_logger("DataValidator")
         
     def validate(self, df: pd.DataFrame, schema: Dict[str, Dict[str, Any]]) -> pd.DataFrame:
         """根据schema验证数据框

@@ -9,12 +9,12 @@
 """
 
 import abc
-import logging
 from typing import Dict, List, Any, Optional, Union
 import pandas as pd
 import asyncio
 from datetime import datetime, timedelta
 
+from ...common.logging_utils import get_logger
 
 class ProcessorTask(abc.ABC):
     """数据处理任务基类
@@ -46,8 +46,7 @@ class ProcessorTask(abc.ABC):
         
     def _setup_logger(self) -> logging.Logger:
         """设置日志记录器"""
-        logger = logging.getLogger(f"processor.{self.name}")
-        logger.setLevel(logging.INFO)
+        logger = get_logger(f"processor.{self.name}")
         return logger
         
     async def execute(self, data=None, **kwargs):

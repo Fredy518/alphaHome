@@ -1,7 +1,8 @@
 import asyncio
 import queue
 import threading
-import logging
+import logging  # 仍需导入，但仅用于类型继承
+from ..common.logging_utils import get_logger, setup_logging
 import json
 import os
 from datetime import datetime
@@ -9,6 +10,9 @@ from typing import List, Dict, Any, Optional, Tuple, Callable
 import urllib.parse # 需要导入 urllib.parse
 import appdirs # <-- 导入 appdirs
 import traceback
+
+# 初始化模块级 logger
+logger = get_logger(__name__)  # 使用当前模块名称获取logger
 
 # 使用绝对导入，假设项目根目录在 sys.path 中
 from ..fetchers import TaskFactory, base_task
@@ -59,18 +63,18 @@ def _start_async_loop():
     """Target function for the background thread."""
     global _backend_running
     _backend_running = True
-    logging.info("后台异步循环启动")
+    logger.info("后台异步循环启动")
     asyncio.set_event_loop(asyncio.new_event_loop())
     loop = asyncio.get_event_loop()
     try:
         loop.run_until_complete(_process_requests())
     except Exception as e:
-        logging.exception("后台异步循环异常终止")
+        logger.exception("后台异步循环异常终止")
         response_queue.put(('ERROR', f"后台严重错误: {e}"))
     finally:
         loop.close()
         _backend_running = False
-        logging.info("后台异步循环已关闭。")
+        logger.info("后台异步循环已关闭。")
 
 async def _process_requests():
     """The main async function processing requests from the GUI."""
@@ -82,9 +86,8 @@ async def _process_requests():
     queue_handler = QueueHandler(log_queue)
     formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s', '%H:%M:%S')
     queue_handler.setFormatter(formatter)
-    root_logger = logging.getLogger() # 同时捕获来自 data_module 的日志
+    root_logger = get_logger() # 获取根 logger，同时捕获来自 data_module 的日志
     root_logger.addHandler(queue_handler)
-    root_logger.setLevel(logging.INFO) # Restore to INFO level after debugging
 
     # 初始化 TaskFactory
     try:
@@ -131,7 +134,7 @@ async def _process_requests():
                 else:
                     response_queue.put(('LOG_ENTRY', "收到停止请求，但当前没有任务在运行或任务不支持停止。"))
             elif request_type == 'SHUTDOWN':
-                logging.info("收到关闭请求，开始关闭...")
+                logger.info("收到关闭请求，开始关闭...")
                 await TaskFactory.shutdown()
                 response_queue.put(('LOG_ENTRY', "后台服务已正常关闭。"))
                 _backend_running = False # 设置标志以退出循环
@@ -143,10 +146,10 @@ async def _process_requests():
             elif request_type == 'SAVE_SETTINGS':
                 await _handle_save_settings(data) # data = 来自 GUI 的设置
             else:
-                 response_queue.put(('LOG_ENTRY', f"未知请求类型: {request_type}"))
+                response_queue.put(('LOG_ENTRY', f"未知请求类型: {request_type}"))
 
         except Exception as e:
-            logging.exception(f"处理请求 {request_type} 时出错") # 记录异常详情
+            logger.exception(f"处理请求 {request_type} 时出错") # 记录异常详情
             response_queue.put(('ERROR', f"处理请求 {request_type} 时出错: {e}"))
 
 # --- 请求处理器 (在异步循环中运行) ---
@@ -195,7 +198,7 @@ async def _handle_get_tasks():
                     'table_name': getattr(task_instance, 'table_name', None) # 添加 table_name
                 })
             except Exception as e:
-                logging.error(f"获取任务 {name} 详情失败: {e}")
+                logger.error(f"获取任务 {name} 详情失败: {e}")
                 # 添加错误状态？或跳过？暂时跳过。
 
         # 按类型然后按名称排序以供显示
@@ -204,7 +207,7 @@ async def _handle_get_tasks():
         # 获取 DBManager 实例
         db_manager = TaskFactory.get_db_manager()
         if not db_manager:
-            logging.warning("DBManager not available, cannot fetch update times.")
+            logger.warning("DBManager not available, cannot fetch update times.")
             for task_detail in _task_list_cache:
                 task_detail['latest_update_time'] = "N/A (DB Error)"
             response_queue.put(('TASK_LIST_UPDATE', _task_list_cache))
@@ -230,9 +233,9 @@ async def _handle_get_tasks():
 
         # 2. 并发执行查询
         if query_coroutines:
-            logging.info(f"Starting concurrent query for {len(query_coroutines)} table timestamps...")
+            logger.info(f"Starting concurrent query for {len(query_coroutines)} table timestamps...")
             results = await asyncio.gather(*query_coroutines, return_exceptions=True)
-            logging.info("Concurrent timestamp query finished.")
+            logger.info("Concurrent timestamp query finished.")
 
             # 3. 处理查询结果
             for i, result in enumerate(results):
@@ -240,7 +243,7 @@ async def _handle_get_tasks():
                 latest_timestamp_str = "N/A" # 重置默认值
 
                 if isinstance(result, Exception):
-                    logging.warning(f"Error querying latest timestamp for table {table_name}: {type(result).__name__} - {result}")
+                    logger.warning(f"Error querying latest timestamp for table {table_name}: {type(result).__name__} - {result}")
                     latest_timestamp_str = "N/A (Query Error)"
                 else:
                     # result 是查询结果 (时间戳) 或 None
@@ -254,7 +257,7 @@ async def _handle_get_tasks():
                             latest_timestamp_str = latest_timestamp.strftime('%Y-%m-%d %H:%M:%S')
                         else:
                             # 其他类型，尝试转为字符串
-                            logging.warning(f"Expected datetime object for {table_name}, but got {type(latest_timestamp)}. Converting to string.")
+                            logger.warning(f"Expected datetime object for {table_name}, but got {type(latest_timestamp)}. Converting to string.")
                             latest_timestamp_str = str(latest_timestamp)
                     else:
                         latest_timestamp_str = "No Data"
@@ -263,10 +266,10 @@ async def _handle_get_tasks():
                 if 0 <= task_index < len(_task_list_cache):
                     _task_list_cache[task_index]['latest_update_time'] = latest_timestamp_str
                 else:
-                    logging.error(f"Task index {task_index} out of bounds while processing timestamp results.")
+                    logger.error(f"Task index {task_index} out of bounds while processing timestamp results.")
         # --- 并发查询结束 --- 
 
-        logging.info(f"Sending updated TASK_LIST with {len(_task_list_cache)} tasks to GUI.")
+        logger.info(f"Sending updated TASK_LIST with {len(_task_list_cache)} tasks to GUI.")
         response_queue.put(('TASK_LIST_UPDATE', _task_list_cache))
         response_queue.put(('STATUS', f'任务列表已刷新 (共 {len(_task_list_cache)} 个任务)'))
         success = True # Mark as successful
@@ -274,7 +277,7 @@ async def _handle_get_tasks():
     except RuntimeError as e:
         # --- 专门处理 TaskFactory 未初始化的 RuntimeError ---
         if "TaskFactory 尚未初始化" in str(e):
-            logging.warning("获取任务列表失败，因为 TaskFactory 尚未初始化。请用户配置数据库。")
+            logger.warning("获取任务列表失败，因为 TaskFactory 尚未初始化。请用户配置数据库。")
             # 发送状态消息，而不是错误弹窗
             response_queue.put(('STATUS', "数据库未配置，无法加载任务。请前往'存储设置'配置并保存。"))
             # 清空缓存并更新 GUI 列表为空
@@ -283,13 +286,13 @@ async def _handle_get_tasks():
             success = False
         else:
             # 其他类型的 RuntimeError，仍然作为错误处理
-            logging.exception("获取任务列表时发生意外的 RuntimeError")
+            logger.exception("获取任务列表时发生意外的 RuntimeError")
             response_queue.put(('ERROR', f"获取任务列表时发生运行时错误: {e}"))
             success = False
             
     except Exception as e:
         # --- 处理其他所有异常 --- 
-        logging.exception("获取任务列表失败")
+        logger.exception("获取任务列表失败")
         # 仍然作为错误发送给 GUI
         response_queue.put(('ERROR', f"获取任务列表失败: {e}"))
         success = False
@@ -301,7 +304,7 @@ async def _handle_get_tasks():
 def _format_task_list_for_tkinter_treeview() -> List[Dict[str, Any]]:
     """Format the cache for Tkinter Treeview (returns list of dicts)."""
     # 返回所需信息，GUI 端将格式化 'selected' 列
-    logging.warning("_format_task_list_for_tkinter_treeview is likely obsolete as full cache is sent.")
+    logger.warning("_format_task_list_for_tkinter_treeview is likely obsolete as full cache is sent.")
     return _task_list_cache # 暂时返回完整缓存
 
 def _handle_toggle_select(row_index: int):
@@ -312,11 +315,11 @@ def _handle_toggle_select(row_index: int):
         response_queue.put(('TASK_LIST_UPDATE', _task_list_cache))
     else:
         if 'TASK_RUN_PROGRESS' not in item:
-            logging.warning(f"_handle_toggle_select: 行 {row_index} 数据不完整，缺少进度字段。")
+            logger.warning(f"_handle_toggle_select: 行 {row_index} 数据不完整，缺少进度字段。")
 
 def _handle_select_specific(task_names: List[str]):
     """Set selection state to True for specific tasks and send update."""
-    print(f"Controller: Handling SELECT_SPECIFIC for {len(task_names)} tasks.")
+    logger.info(f"Controller: Handling SELECT_SPECIFIC for {len(task_names)} tasks.")
     changed = False
     task_name_set = set(task_names) # 使用集合以加快查找速度
     for task in _task_list_cache:
@@ -327,11 +330,11 @@ def _handle_select_specific(task_names: List[str]):
     if changed:
         response_queue.put(('TASK_LIST_UPDATE', _task_list_cache))
     else:
-        print("Controller: No state changed during SELECT_SPECIFIC.")
+        logger.info("Controller: No state changed during SELECT_SPECIFIC.")
 
 def _handle_deselect_specific(task_names: List[str]):
     """Set selection state to False for specific tasks and send update."""
-    print(f"Controller: Handling DESELECT_SPECIFIC for {len(task_names)} tasks.")
+    logger.info(f"Controller: Handling DESELECT_SPECIFIC for {len(task_names)} tasks.")
     changed = False
     task_name_set = set(task_names) # 使用集合以加快查找速度
     for task in _task_list_cache:
@@ -342,7 +345,7 @@ def _handle_deselect_specific(task_names: List[str]):
     if changed:
         response_queue.put(('TASK_LIST_UPDATE', _task_list_cache))
     else:
-        print("Controller: No state changed during DESELECT_SPECIFIC.")
+        logger.info("Controller: No state changed during DESELECT_SPECIFIC.")
 
 # --- Helper function to update running task status ---
 def _update_task_status(
@@ -353,11 +356,11 @@ def _update_task_status(
     end_time: Optional[datetime] = None, 
     details: Optional[str] = None
 ):
-    """Updates the status of a single running task and notifies the GUI."""
+    """更新单个运行任务的状态并通知GUI。"""
     global _running_task_status
     
     if task_name in _running_task_status:
-        update_payload = {} # Store updates to send
+        update_payload = {} # 存储要发送的更新
         task_status = _running_task_status[task_name]
         
         if status is not None:
@@ -368,47 +371,47 @@ def _update_task_status(
             update_payload['progress'] = progress
         if start_time is not None:
             start_time_str = start_time.strftime('%Y-%m-%d %H:%M:%S')
-            task_status['start_time'] = start_time_str # Store formatted string
+            task_status['start_time'] = start_time_str # 存储格式化的字符串
             update_payload['start_time'] = start_time_str
         if end_time is not None:
             end_time_str = end_time.strftime('%Y-%m-%d %H:%M:%S')
-            task_status['end_time'] = end_time_str # Store formatted string
+            task_status['end_time'] = end_time_str # 存储格式化的字符串
             update_payload['end_time'] = end_time_str
         if details is not None:
             task_status['details'] = details
             update_payload['details'] = details
             
-        # Send update for this specific task
-        if update_payload: # Only send if something actually changed
-             # Ensure required fields are present even if not updated in this call
-             # This ensures the GUI receives a complete-enough dict
-             full_update_for_gui = task_status.copy() 
-             response_queue.put(('TASK_RUN_UPDATE', {task_name: full_update_for_gui}))
-             logging.debug(f"Updated status for {task_name}: {update_payload}")
+        # 为特定任务发送更新
+        if update_payload: # 只有当确实有变化时才发送
+            # 确保即使在本次调用中未更新的必要字段也存在
+            # 这确保GUI接收到一个足够完整的字典
+            full_update_for_gui = task_status.copy() 
+            response_queue.put(('TASK_RUN_UPDATE', {task_name: full_update_for_gui}))
+            logger.debug(f"已更新{task_name}的状态: {update_payload}")
     else:
-        logging.warning(f"Attempted to update status for unknown task: {task_name}")
+        logger.warning(f"尝试更新未知任务的状态: {task_name}")
 
 async def _handle_execute_tasks(mode: str, start_date_str: Optional[str], end_date_str: Optional[str], task_names: List[str], smart_increment: bool):
-    """Handles the execution of selected tasks in the background."""
+    """处理后台选定任务的执行。"""
     global _running_task_status, _current_stop_event
 
     if not task_names:
         response_queue.put(('LOG_ENTRY', "没有选中的任务可执行。"))
-        # Send TASKS_FINISHED even if no tasks selected, to update GUI state
+        # 即使没有选择任务，也发送TASKS_FINISHED以更新GUI状态
         response_queue.put(('TASKS_FINISHED', {'completed': 0, 'failed': 0, 'canceled': 0, 'total': 0}))
         return
 
-    logging.info(f"开始执行 {len(task_names)} 个任务，模式: {mode}, 开始: {start_date_str}, 结束: {end_date_str}, 智能增量: {smart_increment}") # Log smart_increment
+    logger.info(f"开始执行 {len(task_names)} 个任务，模式: {mode}, 开始: {start_date_str}, 结束: {end_date_str}, 智能增量: {smart_increment}") # 记录smart_increment参数
     response_queue.put(('LOG_ENTRY', f"开始执行 {len(task_names)} 个任务 (模式: {mode})..."))
 
-    # Create initial status list for RUN_TABLE_INIT
+    # 创建初始状态列表用于RUN_TABLE_INIT
     initial_statuses = []
     for name in task_names:
         task_info = next((t for t in _task_list_cache if t['name'] == name), None)
         initial_statuses.append({
-             'name': name,
+            'name': name,
             'type': task_info['type'] if task_info else '未知',
-             'status': STATUS_MAP_CN['PENDING'],
+            'status': STATUS_MAP_CN['PENDING'],
             'progress': '0%',
             'start_time': None,
             'end_time': None,
@@ -416,19 +419,19 @@ async def _handle_execute_tasks(mode: str, start_date_str: Optional[str], end_da
         })
     _running_task_status = {item['name']: item for item in initial_statuses}
     response_queue.put(('RUN_TABLE_INIT', initial_statuses))
-    response_queue.put(('STATUS', f'正在准备执行 {len(task_names)} 个任务...')) # Update initial status
+    response_queue.put(('STATUS', f'正在准备执行 {len(task_names)} 个任务...')) # 更新初始状态
 
-    # Create stop event
+    # 创建停止事件
     _current_stop_event = asyncio.Event()
 
     total_tasks = len(task_names)
     completed_tasks = 0
     failed_tasks = 0
-    canceled_tasks = 0 # Add counter for canceled tasks
+    canceled_tasks = 0 # 添加已取消任务的计数器
 
     # --- 顺序执行选中任务 --- #
     for task_name in task_names:
-        # <<< Record Start Time >>>
+        # <<< 记录开始时间 >>>
         start_time = datetime.now()
 
         # 更新状态为 '运行中'
@@ -436,14 +439,14 @@ async def _handle_execute_tasks(mode: str, start_date_str: Optional[str], end_da
 
         # 检查停止标志（在开始执行前）
         if _current_stop_event.is_set():
-            logging.warning(f"任务 {task_name} 在开始前被取消。")
+            logger.warning(f"任务 {task_name} 在开始前被取消。")
             _update_task_status(task_name, status=STATUS_MAP_CN['CANCELED'], details="执行前被取消")
             canceled_tasks += 1
             continue # 跳过此任务，执行下一个
 
         try:
             task = await TaskFactory.get_task(task_name)
-            # Checklist Item 4: Pass smart_increment to _execute_single_task
+            # 检查表项目4: 将smart_increment传递给_execute_single_task
             result = await _execute_single_task(
                 task_name,
                 task,
@@ -454,7 +457,7 @@ async def _handle_execute_tasks(mode: str, start_date_str: Optional[str], end_da
                 smart_increment # Pass the flag
             )
 
-            # <<< Record End Time >>>
+            # <<< 记录结束时间 >>>
             end_time = datetime.now()
 
             # 根据执行结果更新状态
@@ -471,7 +474,7 @@ async def _handle_execute_tasks(mode: str, start_date_str: Optional[str], end_da
                 # 添加对 skipped 状态的处理，视为成功但显示为"已跳过"
                 _update_task_status(task_name, status=STATUS_MAP_CN['SKIPPED'], progress='100%', end_time=end_time, details=f"已跳过: {result.get('message', '无详细原因')}")
                 completed_tasks += 1 # 跳过也算作完成
-            elif result.get('status') == 'cancelled': # Check for specific cancelled status
+            elif result.get('status') == 'cancelled': # 检查特定的已取消状态
                 _update_task_status(task_name, status=STATUS_MAP_CN['CANCELED'], end_time=end_time, details="任务被取消")
                 canceled_tasks += 1
             else:
@@ -481,21 +484,21 @@ async def _handle_execute_tasks(mode: str, start_date_str: Optional[str], end_da
         except asyncio.CancelledError:
             # <<< Record End Time on Cancellation >>>
             end_time = datetime.now()
-            logging.warning(f"任务 {task_name} 执行被取消。")
+            logger.warning(f"任务 {task_name} 执行被取消。")
             _update_task_status(task_name, status=STATUS_MAP_CN['CANCELED'], end_time=end_time, details="任务被取消")
             canceled_tasks += 1
         except Exception as e:
             # <<< Record End Time on Exception >>>
             end_time = datetime.now()
             error_str = f"执行任务 {task_name} 时出错: {type(e).__name__} - {e}"
-            logging.exception(error_str)
+            logger.exception(error_str)
             _update_task_status(task_name, status=STATUS_MAP_CN['FAILED'], end_time=end_time, details=f"失败: {e}")
             failed_tasks += 1
 
     # 所有任务完成后
     _current_stop_event = None # 清除停止事件
     final_status_msg = f"任务执行完毕: {completed_tasks} 成功, {failed_tasks} 失败, {canceled_tasks} 取消"
-    logging.info(final_status_msg)
+    logger.info(final_status_msg)
     response_queue.put(('LOG_ENTRY', final_status_msg))
     response_queue.put(('TASKS_FINISHED', {'completed': completed_tasks, 'failed': failed_tasks, 'canceled': canceled_tasks, 'total': total_tasks}))
 
@@ -507,44 +510,44 @@ async def _execute_single_task(
     start_date_str: Optional[str],
     end_date_str: Optional[str],
     stop_event: Optional[asyncio.Event],
-    smart_increment: bool # Accept the flag
+    smart_increment: bool # 接收标志
 ) -> Dict[str, Any]:
-    """Executes a single task and returns its result."""
+    """执行单个任务并返回其结果。"""
     try:
-        logging.info(f"开始执行单个任务: {task_name}, 模式: {mode}, 智能增量: {smart_increment}") # Log smart_increment
-        # Checklist Item 5: Conditional execution logic
+        logger.info(f"开始执行单个任务: {task_name}, 模式: {mode}, 智能增量: {smart_increment}") # 记录smart_increment参数
+        # Checklist Item 5: 条件执行逻辑
         if smart_increment:
-            logging.info(f"调用 {task_name}.smart_incremental_update")
-            # Checklist Item 6: Pass stop_event
+            logger.info(f"调用 {task_name}.smart_incremental_update")
+            # Checklist Item 6: 传递stop_event
             result = await task.smart_incremental_update(stop_event=stop_event)
         else:
             execute_kwargs = {
                 'stop_event': stop_event,
                 'start_date': start_date_str,
                 'end_date': end_date_str,
-                # 'smart_increment': smart_increment, # TushareTask.execute uses force_full instead
+                # 'smart_increment': smart_increment, # TushareTask.execute使用force_full替代
             }
 
-            # Set force_full=True if mode is '全量导入'
+            # 如果模式为'全量导入'，则设置force_full=True
             if mode == "全量导入":
                 execute_kwargs['force_full'] = True
-            # For '智能增量', TushareTask.execute handles it if start/end date are None and force_full is False.
-            # smart_increment flag from GUI is mainly to distinguish from '手动增量' if dates were also None.
-            # If TushareTask's execute specifically needs a 'smart_increment' bool, it can be added.
-            # However, its current logic relies on start_date, end_date, and force_full.
+            # 对于'智能增量'，如果start/end日期为None且force_full为False，TushareTask.execute会处理。
+            # GUI中的smart_increment标志主要用于区分日期也为None时的'手动增量'。
+            # 如果TushareTask的execute特别需要'smart_increment'布尔值，可以添加。
+            # 但是，其当前逻辑依赖于start_date、end_date和force_full。
 
-            logging.info(f"调用 {task_name}.execute with kwargs: {execute_kwargs}")
+            logger.info(f"调用 {task_name}.execute，参数: {execute_kwargs}")
             result = await task.execute(**execute_kwargs)
 
-        logging.info(f"单个任务 {task_name} 执行结果: {result}")
+        logger.info(f"单个任务 {task_name} 执行结果: {result}")
         return result
     except asyncio.CancelledError:
         # 重要: 重新抛出 CancelledError 以便 _handle_execute_tasks 可以捕获它
-        logging.warning(f"单个任务 {task_name} 被取消")
+        logger.warning(f"单个任务 {task_name} 被取消")
         raise
     except Exception as e:
         error_str = f"执行单个任务 {task_name} 失败: {type(e).__name__} - {e}"
-        logging.exception(error_str)
+        logger.exception(error_str)
         return {
             "status": "error",
             "error": error_str,
@@ -556,39 +559,39 @@ def _load_settings() -> Dict:
     """加载配置文件 (config.json) - 现在从用户配置目录加载"""
     try:
         # 确保在使用前打印或记录最终的 CONFIG_FILE_PATH 以便调试
-        logging.info(f"尝试从用户配置路径加载设置: {CONFIG_FILE_PATH}")
+        logger.info(f"尝试从用户配置路径加载设置: {CONFIG_FILE_PATH}")
         with open(CONFIG_FILE_PATH, 'r', encoding='utf-8') as f:
             settings = json.load(f)
-            logging.info(f"从 {CONFIG_FILE_PATH} 加载设置成功。")
+            logger.info(f"从 {CONFIG_FILE_PATH} 加载设置成功。")
             return settings
     except FileNotFoundError:
-        logging.warning(f"配置文件 {CONFIG_FILE_PATH} 未找到，将使用空设置。")
+        logger.warning(f"配置文件 {CONFIG_FILE_PATH} 未找到，将使用空设置。")
         return {}
     except json.JSONDecodeError:
-        logging.error(f"解析配置文件 {CONFIG_FILE_PATH} 失败。文件可能已损坏。")
+        logger.error(f"解析配置文件 {CONFIG_FILE_PATH} 失败。文件可能已损坏。")
         return {} # 返回空字典而不是抛出异常
     except Exception as e:
-        logging.exception(f"加载配置文件时发生未知错误: {CONFIG_FILE_PATH}")
+        logger.exception(f"加载配置文件时发生未知错误: {CONFIG_FILE_PATH}")
         return {}
 
 def _save_settings(settings: Dict) -> bool:
     """保存设置到配置文件 (config.json) - 现在保存到用户配置目录"""
     try:
         # 确保目录存在 (这是关键步骤)
-        logging.info(f"尝试保存设置到用户配置路径: {CONFIG_FILE_PATH}")
+        logger.info(f"尝试保存设置到用户配置路径: {CONFIG_FILE_PATH}")
         os.makedirs(os.path.dirname(CONFIG_FILE_PATH), exist_ok=True)
         with open(CONFIG_FILE_PATH, 'w', encoding='utf-8') as f:
             json.dump(settings, f, indent=4, ensure_ascii=False)
-        logging.info(f"设置已成功保存到 {CONFIG_FILE_PATH}")
+        logger.info(f"设置已成功保存到 {CONFIG_FILE_PATH}")
         # 保存成功后不再发送 LOG_ENTRY，由 _perform_save_settings 或 _handle_save_settings 发送状态
         return True
     except IOError as e:
-        logging.error(f"写入配置文件 {CONFIG_FILE_PATH} 时出错: {e}")
+        logger.error(f"写入配置文件 {CONFIG_FILE_PATH} 时出错: {e}")
         # 保存失败时也不发送 ERROR，让上层函数处理错误报告
         # response_queue.put(('ERROR', f"保存配置失败: 文件写入错误 ({e})。"))
         return False
     except Exception as e:
-        logging.exception(f"保存配置文件时发生未知错误: {CONFIG_FILE_PATH}")
+        logger.exception(f"保存配置文件时发生未知错误: {CONFIG_FILE_PATH}")
         # response_queue.put(('ERROR', f"保存配置失败: 未知错误 ({e})。"))
         return False
 
@@ -600,9 +603,9 @@ def initialize_controller():
     if _backend_thread is None or not _backend_thread.is_alive():
         _backend_thread = threading.Thread(target=_start_async_loop, daemon=True)
         _backend_thread.start()
-        logging.info("后台处理线程已启动。")
+        logger.info("后台处理线程已启动。")
     else:
-        logging.warning("尝试初始化控制器，但后台线程已在运行。")
+        logger.warning("尝试初始化控制器，但后台线程已在运行。")
 
 def request_task_list():
     """向后台请求任务列表。"""
@@ -627,7 +630,7 @@ def get_cached_task_list() -> List[Dict[str, Any]]:
     return list(_task_list_cache)
 
 def get_current_settings() -> Dict:
-    """Load settings from config file or return defaults."""
+    """从配置文件加载设置或返回默认值。"""
     try:
         settings = _load_settings()
         # 确保返回的字典结构完整，即使文件为空或部分缺失
@@ -641,12 +644,12 @@ def get_current_settings() -> Dict:
         merged_settings = default_settings.copy()
         if isinstance(settings, dict):
             if "database" in settings and isinstance(settings["database"], dict):
-                 merged_settings["database"].update(settings["database"])
+                merged_settings["database"].update(settings["database"])
             if "api" in settings and isinstance(settings["api"], dict):
-                 merged_settings["api"].update(settings["api"])
+                merged_settings["api"].update(settings["api"])
         else:
             # 如果 _load_settings 返回的不是字典（例如 None 或异常被捕获返回空），则返回默认
-            logging.warning("无法从 config.json 加载有效设置，返回默认空设置。")
+            logger.warning("无法从 config.json 加载有效设置，返回默认空设置。")
             return default_settings
             
         # 清理 None 值，替换为空字符串，以便 GUI 显示
@@ -657,7 +660,7 @@ def get_current_settings() -> Dict:
             
         return merged_settings
     except Exception as e:
-        logging.error(f"获取当前设置时出错: {e}")
+        logger.error(f"获取当前设置时出错: {e}")
         # 发生任何异常，都返回安全的默认值
         return {
             "database": {"url": ""}, 
@@ -665,25 +668,25 @@ def get_current_settings() -> Dict:
         }
 
 def save_settings(settings_from_gui: Dict):
-    """Request saving settings (only Tushare token)."""
+    """请求保存设置（仅Tushare令牌）。"""
     request_queue.put(('SAVE_SETTINGS', settings_from_gui))
 
 def request_task_execution(mode: str, start_date: Optional[str], end_date: Optional[str], task_names: List[str], smart_increment: bool = False):
-    """Request the backend to execute selected tasks."""
+    """请求后端执行选定的任务。"""
     if not _backend_thread or not _backend_thread.is_alive():
         response_queue.put(('ERROR', '后台服务未运行，无法执行任务'))
         return
-    # Checklist Item 2: Include smart_increment in the data payload
+    # Checklist Item 2: 在数据负载中包含smart_increment
     request_queue.put(('EXECUTE_TASKS', {
         'mode': mode,
         'start_date': start_date,
         'end_date': end_date,
-        'task_names': task_names, # Pass selected task names
+        'task_names': task_names, # 传递选定的任务名称
         'smart_increment': smart_increment
     }))
 
 def request_stop_execution():
-    """Request stopping the current task execution from the GUI thread."""
+    """从GUI线程请求停止当前任务执行。"""
     request_queue.put(('REQUEST_STOP', None))
 
 def request_shutdown():
@@ -708,7 +711,7 @@ def check_for_updates() -> List:
 # 重命名内部保存函数
 def _perform_save_settings(settings_from_gui: Dict) -> bool:
     """实际执行保存设置到文件系统的操作 (在后台线程调用)。"""
-    print(f"Controller (BG): Performing save with data: {settings_from_gui}")
+    logger.info(f"Controller (BG): Performing save with data: {settings_from_gui}")
     new_token = settings_from_gui.get('tushare_token')
     new_db_url = settings_from_gui.get('database_url')
 
@@ -720,7 +723,7 @@ def _perform_save_settings(settings_from_gui: Dict) -> bool:
         full_config = _load_settings()
         if not full_config:
             full_config = {'database': {}, 'api': {}, 'tasks': {}}
-            print("Controller (BG): Creating new config structure.")
+            logger.info("控制器 (BG): 创建新的配置结构。")
 
         if 'api' not in full_config: full_config['api'] = {}
         if 'database' not in full_config: full_config['database'] = {}
@@ -728,14 +731,14 @@ def _perform_save_settings(settings_from_gui: Dict) -> bool:
         # 直接使用从 GUI 接收的结构来更新
         full_config['api']['tushare_token'] = new_token
         full_config['database']['url'] = new_db_url
-        print(f"Controller (BG): Updated config: api.token={new_token}, db.url={new_db_url}")
+        logger.info(f"控制器 (BG): 已更新配置: api.token={new_token}, db.url={new_db_url}")
 
         # 调用原始的文件保存函数
         saved_file = _save_settings(full_config) # _save_settings 现在只负责写文件和发送LOG
-        print(f"Controller (BG): File save result: {saved_file}")
+        logger.info(f"控制器 (BG): 文件保存结果: {saved_file}")
         return saved_file
     except Exception as e:
-        logging.exception("Controller (BG): _perform_save_settings Exception")
+        logger.exception("控制器 (BG): _perform_save_settings 异常")
         response_queue.put(('ERROR', f"保存设置时发生内部错误: {e}"))
         return False
 
@@ -748,24 +751,24 @@ async def _handle_save_settings(settings_from_gui: Dict):
         response_queue.put(('STATUS', '设置已成功保存，正在尝试重新加载配置...'))
         try:
             # !! 重要 !!: TaskFactory 需要有 reload_config 方法
-            print("Controller (BG): Calling TaskFactory.reload_config()...")
+            logger.info("控制器 (BG): 正在调用 TaskFactory.reload_config()...")
             await TaskFactory.reload_config() # 假设是异步类方法或通过实例调用
-            print("Controller (BG): TaskFactory.reload_config() completed.")
+            logger.info("控制器 (BG): TaskFactory.reload_config() 已完成。")
             response_queue.put(('LOG_ENTRY', '后台任务配置已根据新设置重新加载。'))
             response_queue.put(('STATUS', '设置已保存并重新加载。'))
         except AttributeError:
-            logging.error("TaskFactory 没有 reload_config 方法！无法动态重载配置。")
+            logger.error("TaskFactory 没有 reload_config 方法！无法动态重载配置。")
             response_queue.put(('ERROR', '保存成功，但无法自动重载任务配置 (缺少方法)。请重启应用生效。'))
             response_queue.put(('STATUS', '设置已保存，请重启应用生效。'))
         except Exception as e:
-            logging.exception("调用 TaskFactory.reload_config() 时出错")
+            logger.exception("调用 TaskFactory.reload_config() 时出错")
             response_queue.put(('ERROR', f"保存成功，但重载任务配置时出错: {e}"))
             response_queue.put(('STATUS', '设置已保存但重载失败。'))
     # else: # 保存失败，错误消息已由 _perform_save_settings 发送
     #     response_queue.put(('STATUS', '设置保存失败。'))
 
 def _fail_all_running_tasks():
-    # Placeholder implementation - needed if cancellation logic uses it
-    logging.warning("_fail_all_running_tasks called but not fully implemented.")
-    # Potentially loop through _running_task_status and update PENDING/RUNNING to CANCELED
+    # 占位实现 - 如果取消逻辑使用它，则需要此功能
+    logger.warning("_fail_all_running_tasks 被调用但未完全实现。")
+    # 潜在地遍历 _running_task_status 并将 PENDING/RUNNING 更新为 CANCELED
     pass

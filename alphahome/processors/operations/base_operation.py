@@ -9,9 +9,9 @@
 
 from typing import Dict, Any, Optional
 import pandas as pd
-import logging
 import abc
 
+from ...common.logging_utils import get_logger
 
 class Operation(abc.ABC):
     """数据处理操作基类
@@ -43,7 +43,7 @@ class Operation(abc.ABC):
         """
         self.name = name or self.__class__.__name__
         self.config = config or {}
-        self.logger = logging.getLogger(f"operation.{self.name}")
+        self.logger = get_logger(f"operation.{self.name}")
         
     @abc.abstractmethod
     async def apply(self, data: pd.DataFrame) -> pd.DataFrame:
@@ -95,7 +95,7 @@ class OperationPipeline:
         """
         self.name = name
         self.operations = []
-        self.logger = logging.getLogger(f"pipeline.{name}")
+        self.logger = get_logger(f"pipeline.{name}")
         
     def add_operation(self, operation: Operation, condition=None) -> 'OperationPipeline':
         """添加操作到流水线

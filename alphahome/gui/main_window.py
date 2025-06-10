@@ -1,10 +1,15 @@
 import tkinter as tk
 from tkinter import ttk
 from tkinter import messagebox
-import logging
 import time # 用于关闭时短暂等待
 import platform
 import ctypes
+
+from ..common.logging_utils import get_logger, setup_logging
+
+# 初始化日志配置
+setup_logging(log_level="INFO", log_format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', date_format='%H:%M:%S')
+logger = get_logger("main_window")  # 创建 main_window 模块的 logger
 
 # --- DPI Awareness (Windows specific) ---
 def enable_dpi_awareness():
@@ -13,20 +18,17 @@ def enable_dpi_awareness():
             # Try modern DPI awareness context (Windows 10 version 1607+)
             # DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 = -4
             ctypes.windll.shcore.SetProcessDpiAwarenessContext(ctypes.c_ssize_t(-4))
-            logging.info("已启用 Per Monitor V2 DPI Awareness Context。")
+            logger.info("已启用 Per Monitor V2 DPI Awareness Context。")
         except (AttributeError, OSError):
             try:
                 # Try older DPI awareness setting (Windows Vista+)
                 ctypes.windll.user32.SetProcessDPIAware()
-                logging.info("已启用 System DPI Awareness。")
+                logger.info("已启用 System DPI Awareness。")
             except (AttributeError, OSError):
-                logging.warning("无法设置 DPI Awareness。在高分屏上界面可能模糊。")
+                logger.warning("无法设置 DPI Awareness。在高分屏上界面可能模糊。")
 
 enable_dpi_awareness() # 在创建 Tk 窗口前调用
 # --- End DPI Awareness ---
-
-# 配置基本日志记录
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
 # 导入其他 GUI 组件和控制器
 from . import event_handlers, controller
@@ -51,7 +53,7 @@ def run_gui():
     try:
         controller.initialize_controller()
     except Exception as e:
-        logging.exception("无法初始化后台控制器")
+        logger.exception("无法初始化后台控制器")
         messagebox.showerror("初始化错误", f"无法初始化后台控制器: {e}\n请检查日志文件。应用程序将退出。")
         root.destroy()
         return
@@ -88,7 +90,7 @@ def run_gui():
         ui_elements.update(event_handlers.create_task_execution_tab(tab3_frame, ui_elements))
         ui_elements.update(event_handlers.create_task_log_tab(tab4_frame))
     except Exception as e:
-        logging.exception("创建界面布局时出错")
+        logger.exception("创建界面布局时出错")
         messagebox.showerror("布局错误", f"创建界面布局时出错: {e}\n应用程序将退出。")
         root.destroy()
         return
@@ -102,7 +104,7 @@ def run_gui():
                 # 调用 event_handlers 中的处理函数（需要修改）
                 event_handlers.process_controller_update(root, ui_elements, update_type, data)
         except Exception as e:
-            logging.exception("处理控制器更新时出错")
+            logger.exception("处理控制器更新时出错")
             # 不在这里弹窗，避免过多中断，错误应在 process_controller_update 中处理
             if 'statusbar' in ui_elements:
                  ui_elements['statusbar'].config(text=f"处理更新时出错: {e}")
@@ -114,7 +116,7 @@ def run_gui():
     def on_closing():
         """处理窗口关闭事件。"""
         if messagebox.askokcancel("退出", "确定要退出 AlphaHome 数据管理工具吗？"):
-            logging.info("请求关闭...")
+            logger.info("请求关闭...")
             if 'statusbar' in ui_elements:
                 ui_elements['statusbar'].config(text="正在关闭后台服务...")
             root.update_idletasks() # 确保状态栏更新显示
@@ -130,21 +132,21 @@ def run_gui():
                      event_handlers.process_controller_update(root, ui_elements, update_type, data)
 
 
-            logging.info("销毁窗口。")
+            logger.info("销毁窗口。")
             root.destroy()
 
     root.protocol("WM_DELETE_WINDOW", on_closing) # 绑定关闭事件
 
     # --- 初始化加载 ---
     try:
-        logging.info("请求初始任务列表和设置...")
+        logger.info("请求初始任务列表和设置...")
         controller.request_task_list()
         # --> 实际调用加载设置的回调函数来填充初始值
         print(f"DEBUG: main_window - ui_elements keys before load: {list(ui_elements.keys())}")
         event_handlers.handle_load_settings(ui_elements)
         print("DEBUG: main_window - handle_load_settings called.")
     except Exception as e:
-        logging.error(f"初始化加载数据时出错: {e}")
+        logger.error(f"初始化加载数据时出错: {e}")
         if 'statusbar' in ui_elements:
             ui_elements['statusbar'].config(text=f"初始化加载数据时出错: {e}")
 
@@ -152,9 +154,9 @@ def run_gui():
     root.after(100, check_queue)
 
     # --- 运行主事件循环 ---
-    logging.info("启动 GUI 主循环。")
+    logger.info("启动 GUI 主循环。")
     root.mainloop()
-    logging.info("GUI 主循环结束。")
+    logger.info("GUI 主循环结束。")
 
 
 if __name__ == '__main__':

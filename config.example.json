@@ -1,24 +1,29 @@
 {
     "_comment": "请将本文件复制到你的用户配置目录（如 C:/Users/<你的用户名>/AppData/Local/YourAppNameOrAuthor/alphaHomeApp/config.json），并根据实际情况填写数据库和API信息。",
     "database": {
-        "url": "postgresql://<your_user>:<your_password>@<your_host>:<your_port>/<your_db>"
+        "url": "postgresql://username:password@localhost:5432/tusharedb"
     },
     "api": {
-        "tushare_token": "<your_tushare_api_token>"
+        "tushare_token": "your_tushare_token_here"
     },
     "tasks": {
         "_comment": "在此处为特定任务覆盖默认设置",
         "tushare_stock_daily": {
-            "concurrent_limit": 10,
-            "page_size": 6000,
-            "max_retries": 3,
-            "retry_delay": 2
+            "batch_size": 100,
+            "retry_count": 3,
+            "delay_seconds": 1
         },
-        "tushare_stock_dailybasic": {
-            "concurrent_limit": 10,
-            "page_size": 6000,
-            "max_retries": 3,
-            "retry_delay": 2
+        "tushare_stock_basic": {
+            "update_frequency": "daily"
         }
+    },
+    "backtesting": {
+        "default_cash": 100000,
+        "default_commission": 0.001,
+        "cache_data": true,
+        "max_cache_size": 1000,
+        "default_start_date": "2023-01-01",
+        "default_end_date": "2023-12-31",
+        "default_table": "tushare_stock_daily"
     }
 }

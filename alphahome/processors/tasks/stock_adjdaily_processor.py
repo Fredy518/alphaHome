@@ -22,7 +22,6 @@
   并带有 'is_trade' 标记。
 """
 
-import logging
 from typing import Dict, List, Any, Optional
 import pandas as pd
 import numpy as np
@@ -31,6 +30,8 @@ from datetime import datetime, date, timedelta
 # 实际项目中，你需要确保这些导入路径是正确的
 from ..base.block_processor import BlockProcessor
 from ..utils.query_builder import QueryBuilder
+from ...common.db_manager import DBManager
+from ...common.logging_utils import get_logger
 
 
 class StockAdjDailyProcessor(BlockProcessor):

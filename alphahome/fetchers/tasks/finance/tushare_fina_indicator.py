@@ -210,16 +210,10 @@ class TushareFinaIndicatorTask(TushareTask):
         
         # 检查表是否存在
         try:
-            # 检查表是否存在
-            table_exists = False
-            try:
-                await self.db.execute(f"SELECT 1 FROM {self.table_name} LIMIT 1")
-                table_exists = True
-            except Exception as e:
-                if "does not exist" in str(e).lower():
-                    self.logger.info(f"表 '{self.table_name}' 不存在，将在执行任务时创建。")
-                else:
-                    self.logger.error(f"检查表 '{self.table_name}' 是否存在时发生错误: {e}")
+            # 使用 db_manager 的 table_exists 方法检查表是否存在
+            table_exists = await self.db.table_exists(self.table_name)
+            if not table_exists:
+                self.logger.info(f"表 '{self.table_name}' 不存在，将在执行任务时创建。")
                 return  # 表不存在，后续操作不需要执行
             
             # 表存在，检查并处理现有数据
