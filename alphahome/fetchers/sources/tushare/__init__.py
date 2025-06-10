@@ -3,4 +3,4 @@
 from .tushare_api import TushareAPI
 from .tushare_task import TushareTask
 
-__all__ = ['TushareAPI', 'TushareTask']
+__all__ = ["TushareAPI", "TushareTask"]

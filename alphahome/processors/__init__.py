@@ -17,4 +17,4 @@ alphaHome 数据处理模块
 - 具体处理任务 (tasks/)
 """
 
-__version__ = '0.1.0'
+__version__ = "0.1.0"

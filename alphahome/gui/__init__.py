@@ -1,1 +1,1 @@
-from . import controller, main_window, event_handlers
+from . import controller, event_handlers, main_window

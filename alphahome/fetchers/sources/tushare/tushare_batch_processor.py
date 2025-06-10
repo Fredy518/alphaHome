@@ -1,79 +1,106 @@
 import asyncio
-import pandas as pd
-import time
 import logging
-from typing import TYPE_CHECKING, Optional, Dict, Any
+import time
+from typing import TYPE_CHECKING, Any, Dict, Optional
+
+import pandas as pd
 
 # 避免循环导入，仅用于类型提示
 if TYPE_CHECKING:
-    from .tushare_task import TushareTask # type: ignore
-    from .tushare_data_transformer import TushareDataTransformer # type: ignore
+    from .tushare_data_transformer import TushareDataTransformer  # type: ignore
+    from .tushare_task import TushareTask  # type: ignore
+
 
 class TushareBatchProcessor:
     """负责 Tushare 任务的单个批次处理流程，包括获取、转换、验证和保存。"""
 
-    def __init__(self, task_instance: 'TushareTask', data_transformer: 'TushareDataTransformer'):
+    def __init__(
+        self, task_instance: "TushareTask", data_transformer: "TushareDataTransformer"
+    ):
         """初始化 BatchProcessor。
 
         Args:
             task_instance: 关联的 TushareTask 实例。
             data_transformer: TushareDataTransformer 实例。
-        """ 
+        """
         self.task = task_instance
         self.data_transformer = data_transformer
-        self.logger = self.task.logger if hasattr(self.task, 'logger') else logging.getLogger(__name__)
+        self.logger = (
+            self.task.logger
+            if hasattr(self.task, "logger")
+            else logging.getLogger(__name__)
+        )
 
-    async def _fetch_raw_batch_with_retry(self, batch_params: Dict, batch_log_prefix: str) -> Optional[pd.DataFrame]:
+    async def _fetch_raw_batch_with_retry(
+        self, batch_params: Dict, batch_log_prefix: str
+    ) -> Optional[pd.DataFrame]:
         """获取单个原始批次数据，包含重试逻辑。"""
         # Ensure default_max_retries and default_retry_delay are accessible from task instance
-        max_retries = getattr(self.task, 'max_retries', 3) # Default to 3 if not found
-        retry_delay = getattr(self.task, 'retry_delay', 2) # Default to 2 if not found
+        max_retries = getattr(self.task, "max_retries", 3)  # Default to 3 if not found
+        retry_delay = getattr(self.task, "retry_delay", 2)  # Default to 2 if not found
 
         for attempt in range(max_retries + 1):
             try:
                 if attempt > 0:
-                    self.logger.info(f"{batch_log_prefix}: 重试获取数据 (尝试 {attempt+1}/{max_retries+1})")
+                    self.logger.info(
+                        f"{batch_log_prefix}: 重试获取数据 (尝试 {attempt+1}/{max_retries+1})"
+                    )
                 else:
                     self.logger.info(f"{batch_log_prefix}: 开始获取数据")
 
                 # 调用 TushareTask 实例的 fetch_batch 方法
                 batch_data = await self.task.fetch_batch(batch_params)
-                
+
                 if isinstance(batch_data, pd.DataFrame):
                     if not batch_data.empty:
-                        self.logger.info(f"{batch_log_prefix}: 获取数据成功 ({len(batch_data)} 行)")
+                        self.logger.info(
+                            f"{batch_log_prefix}: 获取数据成功 ({len(batch_data)} 行)"
+                        )
                         return batch_data
                     else:
-                        self.logger.info(f"{batch_log_prefix}: 获取数据成功，但数据为空。")
+                        self.logger.info(
+                            f"{batch_log_prefix}: 获取数据成功，但数据为空。"
+                        )
                         return batch_data
                 elif batch_data is None:
                     self.logger.info(f"{batch_log_prefix}: 获取数据返回 None。")
                 else:
-                    self.logger.warning(f"{batch_log_prefix}: fetch_batch 返回非预期类型: {type(batch_data)} (尝试 {attempt+1})")
+                    self.logger.warning(
+                        f"{batch_log_prefix}: fetch_batch 返回非预期类型: {type(batch_data)} (尝试 {attempt+1})"
+                    )
 
             except Exception as e:
-                self.logger.warning(f"{batch_log_prefix}: 获取数据时发生错误 (尝试 {attempt+1}/{max_retries+1}): {e}", exc_info=False)
-            
+                self.logger.warning(
+                    f"{batch_log_prefix}: 获取数据时发生错误 (尝试 {attempt+1}/{max_retries+1}): {e}",
+                    exc_info=False,
+                )
+
             if attempt >= max_retries:
-                self.logger.error(f"{batch_log_prefix}: 获取数据失败，已达最大重试次数。")
+                self.logger.error(
+                    f"{batch_log_prefix}: 获取数据失败，已达最大重试次数。"
+                )
                 return None
             else:
                 await asyncio.sleep(retry_delay)
 
         return None
 
-    async def _transform_and_validate_batch_data(self, batch_data: pd.DataFrame, batch_log_prefix: str) -> Optional[pd.DataFrame]:
+    async def _transform_and_validate_batch_data(
+        self, batch_data: pd.DataFrame, batch_log_prefix: str
+    ) -> Optional[pd.DataFrame]:
         """处理和验证批次数据。"""
         processed_data = None
         validated_data = None
-        
+
         try:
             self.logger.info(f"{batch_log_prefix}: 处理 {len(batch_data)} 行数据")
             # 调用 TushareDataTransformer 的 process_data
             processed_data = await self.data_transformer.process_data(batch_data)
 
             if not isinstance(processed_data, pd.DataFrame):
-                self.logger.error(f"{batch_log_prefix}: 处理数据后没有得到有效的DataFrame，而是: {type(processed_data)}")
+                self.logger.error(
+                    f"{batch_log_prefix}: 处理数据后没有得到有效的DataFrame，而是: {type(processed_data)}"
+                )
                 return None
 
             if processed_data.empty:
@@ -81,93 +108,141 @@ class TushareBatchProcessor:
                 return processed_data
 
         except Exception as e:
-            self.logger.error(f"{batch_log_prefix}: 处理数据时发生错误: {e}", exc_info=True)
+            self.logger.error(
+                f"{batch_log_prefix}: 处理数据时发生错误: {e}", exc_info=True
+            )
             return None
 
         try:
-            self.logger.info(f"{batch_log_prefix}: 验证处理后的数据 ({len(processed_data)} 行)")
+            self.logger.info(
+                f"{batch_log_prefix}: 验证处理后的数据 ({len(processed_data)} 行)"
+            )
             # 调用 TushareDataTransformer 的 validate_data
             validated_data = await self.data_transformer.validate_data(processed_data)
 
             if not isinstance(validated_data, pd.DataFrame):
-                self.logger.error(f"{batch_log_prefix}: 验证数据后没有得到有效的DataFrame，而是: {type(validated_data)}")
+                self.logger.error(
+                    f"{batch_log_prefix}: 验证数据后没有得到有效的DataFrame，而是: {type(validated_data)}"
+                )
                 return None
 
             if validated_data.empty:
-                self.logger.info(f"{batch_log_prefix}: 数据验证后为空或所有数据均被过滤。")
+                self.logger.info(
+                    f"{batch_log_prefix}: 数据验证后为空或所有数据均被过滤。"
+                )
                 return validated_data
 
             # 主键去重逻辑现在应该在 TushareDataTransformer.validate_data 或 TushareDataTransformer.process_data 内部处理
             # 或者 TushareTask 应该提供一个方法给 Transformer 调用
             # For now, assuming primary_keys are accessible via self.task if still needed here, but ideally it's part of transformer logic.
-            if hasattr(self.task, 'primary_keys') and self.task.primary_keys:
+            if hasattr(self.task, "primary_keys") and self.task.primary_keys:
                 original_count = len(validated_data)
                 # It's generally better if TushareDataTransformer.validate_data returns data already de-duplicated
                 # or TushareDataTransformer.process_data handles this.
                 # If TushareTask needs to enforce it after transformation and validation by the helper:
-                validated_data.drop_duplicates(subset=self.task.primary_keys, keep='last', inplace=True)
+                validated_data.drop_duplicates(
+                    subset=self.task.primary_keys, keep="last", inplace=True
+                )
                 deduped_count = len(validated_data)
                 if deduped_count < original_count:
-                    self.logger.debug(f"{batch_log_prefix}: (在Processor中)基于主键 {self.task.primary_keys} 去重，移除了 {original_count - deduped_count} 行重复数据。")
-            
-            self.logger.info(f"{batch_log_prefix}: 数据处理和验证完成，得到 {len(validated_data)} 行有效数据。")
+                    self.logger.debug(
+                        f"{batch_log_prefix}: (在Processor中)基于主键 {self.task.primary_keys} 去重，移除了 {original_count - deduped_count} 行重复数据。"
+                    )
+
+            self.logger.info(
+                f"{batch_log_prefix}: 数据处理和验证完成，得到 {len(validated_data)} 行有效数据。"
+            )
             return validated_data
 
         except Exception as e:
-            self.logger.error(f"{batch_log_prefix}: 验证数据或去重时发生错误: {e}", exc_info=True)
+            self.logger.error(
+                f"{batch_log_prefix}: 验证数据或去重时发生错误: {e}", exc_info=True
+            )
             return None
 
-    async def _save_validated_batch_data_with_retry(self, validated_data: pd.DataFrame, batch_log_prefix: str, stop_event: Optional[asyncio.Event]) -> int:
+    async def _save_validated_batch_data_with_retry(
+        self,
+        validated_data: pd.DataFrame,
+        batch_log_prefix: str,
+        stop_event: Optional[asyncio.Event],
+    ) -> int:
         """保存验证后的批次数据，包含重试逻辑。"""
         rows_saved = 0
-        max_retries = getattr(self.task, 'max_retries', 3)
-        retry_delay = getattr(self.task, 'retry_delay', 2)
+        max_retries = getattr(self.task, "max_retries", 3)
+        retry_delay = getattr(self.task, "retry_delay", 2)
 
         for attempt in range(max_retries + 1):
             if stop_event and stop_event.is_set():
-                self.logger.warning(f"{batch_log_prefix}: 在保存重试尝试 {attempt+1} 前检测到停止信号。")
-                raise asyncio.CancelledError("Task cancelled by stop event during save retry")
+                self.logger.warning(
+                    f"{batch_log_prefix}: 在保存重试尝试 {attempt+1} 前检测到停止信号。"
+                )
+                raise asyncio.CancelledError(
+                    "Task cancelled by stop event during save retry"
+                )
 
             try:
                 if attempt > 0:
-                    self.logger.info(f"{batch_log_prefix}: 重试保存数据 (尝试 {attempt+1}/{max_retries+1}) - {len(validated_data)} 行")
+                    self.logger.info(
+                        f"{batch_log_prefix}: 重试保存数据 (尝试 {attempt+1}/{max_retries+1}) - {len(validated_data)} 行"
+                    )
                 else:
-                    self.logger.info(f"{batch_log_prefix}: 保存 {len(validated_data)} 行数据到表 {self.task.table_name}")
+                    self.logger.info(
+                        f"{batch_log_prefix}: 保存 {len(validated_data)} 行数据到表 {self.task.table_name}"
+                    )
 
                 # 确保 self.task.db 存在且可用
-                if not hasattr(self.task, 'db') or not self.task.db:
-                    self.logger.error(f"{batch_log_prefix}: 数据库连接 (self.task.db) 不可用。无法保存数据。")
-                    return 0 # 返回0表示保存失败
-                    
+                if not hasattr(self.task, "db") or not self.task.db:
+                    self.logger.error(
+                        f"{batch_log_prefix}: 数据库连接 (self.task.db) 不可用。无法保存数据。"
+                    )
+                    return 0  # 返回0表示保存失败
+
                 result_rows = await self.task.db.upsert(
                     table_name=self.task.table_name,
                     data=validated_data,
-                    conflict_columns=getattr(self.task, 'primary_keys', []),
+                    conflict_columns=getattr(self.task, "primary_keys", []),
                     timestamp_column=self.task.timestamp_column_name,
-                    stop_event=stop_event
+                    stop_event=stop_event,
                 )
                 if isinstance(result_rows, int) and result_rows >= 0:
-                    self.logger.info(f"{batch_log_prefix}: DB操作调度成功，处理了 {result_rows} 行 (COPY到临时表)。")
+                    self.logger.info(
+                        f"{batch_log_prefix}: DB操作调度成功，处理了 {result_rows} 行 (COPY到临时表)。"
+                    )
                     rows_saved = result_rows
                     return rows_saved
                 else:
-                    self.logger.error(f"{batch_log_prefix}: DB操作返回非预期结果: {repr(result_rows)} (尝试 {attempt+1})。")
+                    self.logger.error(
+                        f"{batch_log_prefix}: DB操作返回非预期结果: {repr(result_rows)} (尝试 {attempt+1})。"
+                    )
 
             except asyncio.CancelledError as ce:
-                self.logger.warning(f"{batch_log_prefix}: 保存操作在尝试 {attempt+1} 时被取消: {ce}")
+                self.logger.warning(
+                    f"{batch_log_prefix}: 保存操作在尝试 {attempt+1} 时被取消: {ce}"
+                )
                 raise
             except Exception as e:
-                self.logger.warning(f"{batch_log_prefix}: 保存数据时发生错误 (尝试 {attempt+1}/{max_retries+1}): {e}", exc_info=False)
+                self.logger.warning(
+                    f"{batch_log_prefix}: 保存数据时发生错误 (尝试 {attempt+1}/{max_retries+1}): {e}",
+                    exc_info=False,
+                )
 
             if attempt >= max_retries:
-                self.logger.error(f"{batch_log_prefix}: 保存数据失败，已达最大重试次数。")
+                self.logger.error(
+                    f"{batch_log_prefix}: 保存数据失败，已达最大重试次数。"
+                )
                 return 0
             else:
                 await asyncio.sleep(retry_delay)
-        
+
         return 0
 
-    async def process_single_batch(self, batch_index: int, total_batches: int, batch_params: Dict, stop_event: Optional[asyncio.Event] = None) -> int:
+    async def process_single_batch(
+        self,
+        batch_index: int,
+        total_batches: int,
+        batch_params: Dict,
+        stop_event: Optional[asyncio.Event] = None,
+    ) -> int:
         """协调单个批次数据的获取、处理、验证和保存。"""
         # 使用 self.task.name 获取任务名称
         batch_log_prefix = f"批次 {batch_index+1}/{total_batches} (任务 {getattr(self.task, 'name', 'UnknownTask')})"
@@ -176,10 +251,14 @@ class TushareBatchProcessor:
 
         if stop_event and stop_event.is_set():
             self.logger.info(f"{batch_log_prefix}: 在处理开始前检测到停止信号，跳过。")
-            raise asyncio.CancelledError("Task cancelled by stop event before processing batch")
+            raise asyncio.CancelledError(
+                "Task cancelled by stop event before processing batch"
+            )
 
         try:
-            batch_data = await self._fetch_raw_batch_with_retry(batch_params, batch_log_prefix)
+            batch_data = await self._fetch_raw_batch_with_retry(
+                batch_params, batch_log_prefix
+            )
             if batch_data is None:
                 self.logger.error(f"{batch_log_prefix}: 获取数据最终失败。")
                 return 0
@@ -188,33 +267,49 @@ class TushareBatchProcessor:
                 self.logger.info(f"{batch_log_prefix}: 获取到空数据，无需进一步处理。")
                 return 0
 
-            validated_data = await self._transform_and_validate_batch_data(batch_data, batch_log_prefix)
+            validated_data = await self._transform_and_validate_batch_data(
+                batch_data, batch_log_prefix
+            )
             if validated_data is None:
                 self.logger.error(f"{batch_log_prefix}: 处理或验证数据失败。")
                 return 0
-                
+
             if validated_data.empty:
-                self.logger.info(f"{batch_log_prefix}: 处理和验证后数据为空，无需保存。")
+                self.logger.info(
+                    f"{batch_log_prefix}: 处理和验证后数据为空，无需保存。"
+                )
                 return 0
 
             if stop_event and stop_event.is_set():
-                self.logger.info(f"{batch_log_prefix}: 在保存前检测到停止信号，跳过保存。")
-                raise asyncio.CancelledError("Task cancelled by stop event before saving batch")
+                self.logger.info(
+                    f"{batch_log_prefix}: 在保存前检测到停止信号，跳过保存。"
+                )
+                raise asyncio.CancelledError(
+                    "Task cancelled by stop event before saving batch"
+                )
 
-            processed_rows_count = await self._save_validated_batch_data_with_retry(validated_data, batch_log_prefix, stop_event)
-            if processed_rows_count == 0 and not validated_data.empty: # Check if save failed despite having data
+            processed_rows_count = await self._save_validated_batch_data_with_retry(
+                validated_data, batch_log_prefix, stop_event
+            )
+            if (
+                processed_rows_count == 0 and not validated_data.empty
+            ):  # Check if save failed despite having data
                 self.logger.error(f"{batch_log_prefix}: 保存数据最终失败。")
 
         except asyncio.CancelledError as ce:
             self.logger.warning(f"{batch_log_prefix}: 处理被取消。 ({ce})")
             raise
         except Exception as e:
-            self.logger.error(f"{batch_log_prefix}: 处理过程中发生意外错误: {e}", exc_info=True)
+            self.logger.error(
+                f"{batch_log_prefix}: 处理过程中发生意外错误: {e}", exc_info=True
+            )
             processed_rows_count = 0
 
         finally:
             duration = time.time() - batch_start_time
             status_msg = "成功" if processed_rows_count > 0 else "失败或无数据"
-            self.logger.debug(f"{batch_log_prefix}: 处理完成。状态: {status_msg}, 保存行数: {processed_rows_count}, 耗时: {duration:.2f}s")
+            self.logger.debug(
+                f"{batch_log_prefix}: 处理完成。状态: {status_msg}, 保存行数: {processed_rows_count}, 耗时: {duration:.2f}s"
+            )
 
-        return processed_rows_count 
+        return processed_rows_count

@@ -7,15 +7,17 @@
 继承自 TushareTask。
 """
 
-import pandas as pd
 import logging
-from typing import Dict, List, Any
+from typing import Any, Dict, List
+
+import pandas as pd
 
 from ...sources.tushare.tushare_task import TushareTask
 from ...task_decorator import task_register
 
 # logger 由 Task 基类提供
 # logger = logging.getLogger(__name__)
+
 
 @task_register()
 class TushareHKBasicTask(TushareTask):
@@ -26,19 +28,29 @@ class TushareHKBasicTask(TushareTask):
     description = "获取港股上市公司基础信息"
     table_name = "tushare_hk_basic"
     primary_keys = ["ts_code"]
-    date_column = None # 该任务不以日期为主，全量更新
-    default_start_date = "19700101" # 全量任务，此日期仅为满足基类全量模式的日期要求，实际API调用不使用此日期
+    date_column = None  # 该任务不以日期为主，全量更新
+    default_start_date = "19700101"  # 全量任务，此日期仅为满足基类全量模式的日期要求，实际API调用不使用此日期
 
     # --- 代码级默认配置 (会被 config.json 覆盖) --- #
     default_concurrent_limit = 1
-    default_page_size = 8000 # Tushare hk_basic 接口可能没有分页，但保留
+    default_page_size = 8000  # Tushare hk_basic 接口可能没有分页，但保留
 
     # 2. TushareTask 特有属性
     api_name = "hk_basic"
     # Tushare hk_basic 接口实际返回的字段 (请根据Tushare文档核实和调整)
     fields = [
-        'ts_code', 'name', 'fullname', 'enname', 'cn_spell', 'market', 'list_status', 
-        'list_date', 'delist_date', 'trade_unit', 'isin', 'curr_type' # 确保与API返回一致
+        "ts_code",
+        "name",
+        "fullname",
+        "enname",
+        "cn_spell",
+        "market",
+        "list_status",
+        "list_date",
+        "delist_date",
+        "trade_unit",
+        "isin",
+        "curr_type",  # 确保与API返回一致
     ]
 
     # 3. 列名映射 (API字段名与数据库列名一致，为空)
@@ -52,18 +64,18 @@ class TushareHKBasicTask(TushareTask):
 
     # 5. 数据库表结构
     schema = {
-        "ts_code": {"type": "VARCHAR(15)", "constraints": "NOT NULL"}, 
-        "name": {"type": "VARCHAR(100)"}, 
+        "ts_code": {"type": "VARCHAR(15)", "constraints": "NOT NULL"},
+        "name": {"type": "VARCHAR(100)"},
         "fullname": {"type": "VARCHAR(255)"},
         "enname": {"type": "VARCHAR(255)"},
-        "cn_spell": {"type": "VARCHAR(50)"}, 
-        "market": {"type": "VARCHAR(10)"}, 
-        "list_status": {"type": "VARCHAR(1)"}, 
+        "cn_spell": {"type": "VARCHAR(50)"},
+        "market": {"type": "VARCHAR(10)"},
+        "list_status": {"type": "VARCHAR(1)"},
         "list_date": {"type": "DATE"},
         "delist_date": {"type": "DATE"},
-        "trade_unit": {"type": "NUMERIC(10,0)"}, # 每手股数
-        "isin": {"type": "VARCHAR(20)"},           # 新增 ISIN 码, VARCHAR(12) 通常也够用
-        "curr_type": {"type": "VARCHAR(10)"}      # 货币类型, 从 'currency' 修改而来
+        "trade_unit": {"type": "NUMERIC(10,0)"},  # 每手股数
+        "isin": {"type": "VARCHAR(20)"},  # 新增 ISIN 码, VARCHAR(12) 通常也够用
+        "curr_type": {"type": "VARCHAR(10)"},  # 货币类型, 从 'currency' 修改而来
         # "min_tick": {"type": "NUMERIC(10,5)"}, # 从 fields 列表来看，此字段不由API提供，移除
         # "security_type": {"type": "VARCHAR(20)"} # 从 fields 列表来看，此字段不由API提供，移除
         # update_time 会自动添加
@@ -74,7 +86,7 @@ class TushareHKBasicTask(TushareTask):
         {"name": "idx_hk_basic_name", "columns": "name"},
         {"name": "idx_hk_basic_market", "columns": "market"},
         {"name": "idx_hk_basic_list_status", "columns": "list_status"},
-        {"name": "idx_hk_basic_update_time", "columns": "update_time"}
+        {"name": "idx_hk_basic_update_time", "columns": "update_time"},
         # 移除了 security_type 相关的索引
         # {"name": "idx_hk_basic_security_type", "columns": "security_type"}
     ]
@@ -92,7 +104,7 @@ class TushareHKBasicTask(TushareTask):
         """
         self.logger.info(f"任务 {self.name}: 全量获取模式，生成单一批次。")
         # Tushare hk_basic 接口可能支持按 list_status 过滤，但全量通常一次获取
-        return [{}] # 触发一次不带参数的 API 调用
+        return [{}]  # 触发一次不带参数的 API 调用
 
     async def process_data(self, df: pd.DataFrame, **kwargs: Any) -> pd.DataFrame:
         """
@@ -106,14 +118,16 @@ class TushareHKBasicTask(TushareTask):
         # 如果df为空或者不是DataFrame，则直接返回
         if not isinstance(df, pd.DataFrame) or df.empty:
             return df
-        
+
         # 调用基类方法完成其他处理 (应用 transformations, 排序等)
         # df = super().process_data(df, **kwargs)
 
         # 所有必要的处理已由 TushareDataTransformer 完成。
         # 此方法可以保留用于未来可能的、此任务真正特有的转换。
         # 目前，它只检查并返回df。
-        self.logger.info(f"任务 {self.name}: process_data 被调用，返回 DataFrame (行数: {len(df)}). TushareDataTransformer 已完成主要处理。")
+        self.logger.info(
+            f"任务 {self.name}: process_data 被调用，返回 DataFrame (行数: {len(df)}). TushareDataTransformer 已完成主要处理。"
+        )
         return df
 
     async def validate_data(self, df: pd.DataFrame, **kwargs: Any) -> pd.DataFrame:
@@ -123,10 +137,12 @@ class TushareHKBasicTask(TushareTask):
         - 检查关键业务字段 ('name') 是否全部为空 (ts_code is primary key, should always exist)。
         """
         if df.empty:
-            self.logger.warning(f"任务 {self.name}: 从 API 获取的 DataFrame 为空，无需验证。")
+            self.logger.warning(
+                f"任务 {self.name}: 从 API 获取的 DataFrame 为空，无需验证。"
+            )
             return df
 
-        critical_cols = ['name'] # ts_code is already handled as PK
+        critical_cols = ["name"]  # ts_code is already handled as PK
         missing_cols = [col for col in critical_cols if col not in df.columns]
         if missing_cols:
             error_msg = f"任务 {self.name}: 数据验证失败 - 缺失关键业务字段: {', '.join(missing_cols)}。"
@@ -134,19 +150,24 @@ class TushareHKBasicTask(TushareTask):
             raise ValueError(error_msg)
 
         # 替换空字符串为 NA 以便 isnull() 检测
-        df_check = df[critical_cols].replace('', pd.NA)
+        df_check = df[critical_cols].replace("", pd.NA)
         # Check if all critical columns are null for any row
         if df_check.isnull().all(axis=1).any():
             # More precise logging: find rows where all critical cols are null
             all_null_rows = df[df_check.isnull().all(axis=1)]
-            self.logger.warning(f"任务 {self.name}: 数据验证发现 {len(all_null_rows)} 行的关键业务字段 ({', '.join(critical_cols)}) 同时为空: {all_null_rows['ts_code'].tolist() if 'ts_code' in all_null_rows else 'ts_code not available'}")
+            self.logger.warning(
+                f"任务 {self.name}: 数据验证发现 {len(all_null_rows)} 行的关键业务字段 ({', '.join(critical_cols)}) 同时为空: {all_null_rows['ts_code'].tolist() if 'ts_code' in all_null_rows else 'ts_code not available'}"
+            )
             # Depending on strictness, one might raise ValueError here or just warn.
             # For hk_basic, a stock must have a name.
-            if df_check.isnull().all(axis=1).all(): # if ALL rows have all critical_cols as null
+            if (
+                df_check.isnull().all(axis=1).all()
+            ):  # if ALL rows have all critical_cols as null
                 error_msg = f"任务 {self.name}: 数据验证失败 - 所有行的关键业务字段 ({', '.join(critical_cols)}) 均为空值。"
                 self.logger.critical(error_msg)
                 raise ValueError(error_msg)
 
-
-        self.logger.info(f"任务 {self.name}: 数据验证通过（或有警告），获取了 {len(df)} 条记录。")
-        return df 
+        self.logger.info(
+            f"任务 {self.name}: 数据验证通过（或有警告），获取了 {len(df)} 条记录。"
+        )
+        return df

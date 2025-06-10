@@ -10,6 +10,6 @@ Data Layer for Backtesting Module
 from .feeds import PostgreSQLDataFeed, PostgreSQLDataFeedFactory
 
 __all__ = [
-    'PostgreSQLDataFeed',
-    'PostgreSQLDataFeedFactory',
-] 
+    "PostgreSQLDataFeed",
+    "PostgreSQLDataFeedFactory",
+]

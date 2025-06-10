@@ -14,35 +14,32 @@ BT Extensions - Backtrader 增强插件
 5. 结果增强分析 - 扩展Backtrader的分析功能
 """
 
+# 结果分析增强
+from .analyzers.enhanced_analyzer import EnhancedAnalyzer
+
 # 数据源扩展
 from .data.feeds import PostgreSQLDataFeed
+from .execution.batch_loader import BatchDataLoader
 
 # 执行增强工具
 from .execution.parallel_runner import ParallelBacktestRunner
-from .execution.batch_loader import BatchDataLoader
 
 # 缓存系统
 from .utils.cache_manager import CacheManager
 from .utils.performance_monitor import PerformanceMonitor
 
-# 结果分析增强
-from .analyzers.enhanced_analyzer import EnhancedAnalyzer
-
 __version__ = "1.0.0"
 __all__ = [
     # 数据源
-    'PostgreSQLDataFeed',
-    
+    "PostgreSQLDataFeed",
     # 执行工具
-    'ParallelBacktestRunner', 
-    'BatchDataLoader',
-    
+    "ParallelBacktestRunner",
+    "BatchDataLoader",
     # 缓存和性能
-    'CacheManager',
-    'PerformanceMonitor',
-    
+    "CacheManager",
+    "PerformanceMonitor",
     # 分析工具
-    'EnhancedAnalyzer'
+    "EnhancedAnalyzer",
 ]
 
 # 使用说明
@@ -74,4 +71,4 @@ cerebro.broker.setcommission(commission=0.001)
 
 # 运行回测
 results = cerebro.run()
-""" 
+"""

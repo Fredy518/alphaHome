@@ -7,13 +7,15 @@
 并使用 UPSERT 更新到数据库。
 """
 
-import pandas as pd
 import logging
-from typing import Dict, List, Any
+from typing import Any, Dict, List
+
+import pandas as pd
 
 # 确认导入路径正确
 from ...sources.tushare.tushare_task import TushareTask
 from ...task_decorator import task_register
+
 
 @task_register()
 class TushareIndexCiMemberTask(TushareTask):
@@ -23,8 +25,8 @@ class TushareIndexCiMemberTask(TushareTask):
     name = "tushare_index_cimember"
     description = "获取中信(CITIC)行业成分数据 (含历史, UPSERT)"
     table_name = "tushare_index_cimember"
-    primary_keys = ["ts_code", "l3_code", "in_date"] # <-- 修改主键为 l3_code
-    date_column = None # <-- 明确一下没有主日期列用于增量
+    primary_keys = ["ts_code", "l3_code", "in_date"]  # <-- 修改主键为 l3_code
+    date_column = None  # <-- 明确一下没有主日期列用于增量
 
     # --- 代码级默认配置 (会被 config.json 覆盖) --- #
     default_concurrent_limit = 2
@@ -34,10 +36,19 @@ class TushareIndexCiMemberTask(TushareTask):
     api_name = "ci_index_member"
     # 根据 Tushare 文档更新字段列表
     fields = [
-        "l1_code", "l1_name", "l2_code", "l2_name", "l3_code", "l3_name",
-        "ts_code", "name", "in_date", "out_date", "is_new"
+        "l1_code",
+        "l1_name",
+        "l2_code",
+        "l2_name",
+        "l3_code",
+        "l3_name",
+        "ts_code",
+        "name",
+        "in_date",
+        "out_date",
+        "is_new",
     ]
-    
+
     # 3. 列名映射 (API字段名与数据库列名一致，为空)
     column_mapping = {}
 
@@ -48,15 +59,18 @@ class TushareIndexCiMemberTask(TushareTask):
     schema = {
         "l1_code": {"type": "VARCHAR(20)"},
         "l1_name": {"type": "VARCHAR(50)"},
-        "l2_code": {"type": "VARCHAR(20)"}, # <-- 移除 NOT NULL
+        "l2_code": {"type": "VARCHAR(20)"},  # <-- 移除 NOT NULL
         "l2_name": {"type": "VARCHAR(50)"},
-        "l3_code": {"type": "VARCHAR(20)", "constraints": "NOT NULL"}, # <-- 添加 NOT NULL
-        "l3_name": {"type": "VARCHAR(100)"}, # 新增
-        "ts_code": {"type": "VARCHAR(30)", "constraints": "NOT NULL"}, # 主键部分
+        "l3_code": {
+            "type": "VARCHAR(20)",
+            "constraints": "NOT NULL",
+        },  # <-- 添加 NOT NULL
+        "l3_name": {"type": "VARCHAR(100)"},  # 新增
+        "ts_code": {"type": "VARCHAR(30)", "constraints": "NOT NULL"},  # 主键部分
         "name": {"type": "VARCHAR(100)"},
-        "in_date": {"type": "DATE", "constraints": "NOT NULL"}, # 主键部分, NOT NULL
-        "out_date": {"type": "DATE"}, # 新增
-        "is_new": {"type": "VARCHAR(1)"} # 新增
+        "in_date": {"type": "DATE", "constraints": "NOT NULL"},  # 主键部分, NOT NULL
+        "out_date": {"type": "DATE"},  # 新增
+        "is_new": {"type": "VARCHAR(1)"},  # 新增
         # update_time 会自动添加 (默认)
     }
 
@@ -65,7 +79,10 @@ class TushareIndexCiMemberTask(TushareTask):
         # 主键 ("ts_code", "l3_code", "in_date") 已自动创建索引
         {"name": "idx_index_cimember_l1", "columns": "l1_code"},
         {"name": "idx_index_cimember_l3", "columns": "l3_code"},
-        {"name": "idx_index_cimember_update_time", "columns": "update_time"} # 新增 update_time 索引
+        {
+            "name": "idx_index_cimember_update_time",
+            "columns": "update_time",
+        },  # 新增 update_time 索引
     ]
 
     def __init__(self, db_connection, api_token=None):
@@ -85,7 +102,7 @@ class TushareIndexCiMemberTask(TushareTask):
         返回两个批次参数。
         """
         self.logger.info(f"任务 {self.name}: 生成获取最新(Y)和历史(N)行业成分的批次。")
-        return [{'is_new': 'Y'}, {'is_new': 'N'}] # <-- 返回两个批次 
+        return [{"is_new": "Y"}, {"is_new": "N"}]  # <-- 返回两个批次
 
     async def validate_data(self, df: pd.DataFrame, **kwargs: Any) -> pd.DataFrame:
         """
@@ -94,12 +111,14 @@ class TushareIndexCiMemberTask(TushareTask):
         - 检查关键标识字段 (ts_code, l2_code, in_date) 是否全部为空。
         """
         if df.empty:
-            self.logger.warning(f"任务 {self.name}: 从 API 获取的 DataFrame 为空，无需验证。")
+            self.logger.warning(
+                f"任务 {self.name}: 从 API 获取的 DataFrame 为空，无需验证。"
+            )
             return df
 
         # 1. 检查关键字段是否存在 (映射后的字段名)
         # 注意: column_mapping 将 index_code 映射为 ts_code
-        critical_cols = ['ts_code', 'l3_code', 'in_date']
+        critical_cols = ["ts_code", "l3_code", "in_date"]
         missing_cols = [col for col in critical_cols if col not in df.columns]
         if missing_cols:
             error_msg = f"任务 {self.name}: 数据验证失败 - 缺失关键业务字段: {', '.join(missing_cols)}。"
@@ -107,13 +126,15 @@ class TushareIndexCiMemberTask(TushareTask):
             raise ValueError(error_msg)
 
         # 2. 检查关键字段是否在所有行中都为空值
-        df_check = df[critical_cols].replace('', pd.NA)
+        df_check = df[critical_cols].replace("", pd.NA)
         if df_check.isnull().all(axis=1).all():
             error_msg = f"任务 {self.name}: 数据验证失败 - 所有行的关键字段 ({', '.join(critical_cols)}) 均为空值。可能数据源返回异常数据。"
             self.logger.critical(error_msg)
             raise ValueError(error_msg)
 
-        self.logger.info(f"任务 {self.name}: 数据验证通过，获取了 {len(df)} 条有效成分记录。")
+        self.logger.info(
+            f"任务 {self.name}: 数据验证通过，获取了 {len(df)} 条有效成分记录。"
+        )
         return df
 
     # 可选：如果需要在保存前进行额外处理，可以覆盖 process_data
@@ -124,4 +145,4 @@ class TushareIndexCiMemberTask(TushareTask):
 
     # 可选：如果需要在任务执行后进行操作，可以覆盖 post_execute
     # async def post_execute(self, results: List[pd.DataFrame], **kwargs: Any) -> None:
-    #     self.logger.info(f"任务 {self.name} 完成。") 
+    #     self.logger.info(f"任务 {self.name} 完成。")

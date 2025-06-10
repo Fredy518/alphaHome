@@ -1,27 +1,31 @@
-import pandas as pd
-from typing import Dict, List, Any, Optional
 from datetime import datetime, timedelta
+from typing import Any, Dict, List, Optional
+
+import pandas as pd
 
 from ...sources.tushare import TushareTask
 from ...task_decorator import task_register
-from ...tools.calendar import get_trade_days_between # 导入交易日工具
-from ...tools.batch_utils import generate_trade_day_batches # 导入交易日批次生成工具函数
+from ...tools.batch_utils import (  # 导入交易日批次生成工具函数
+    generate_trade_day_batches,
+)
+from ...tools.calendar import get_trade_days_between  # 导入交易日工具
+
 
 @task_register()
 class TushareStockDailyBasicTask(TushareTask):
     """股票每日基本面指标任务
-    
+
     获取股票的每日基本面指标，包括市盈率、市净率、换手率、总市值等数据。
     该任务使用Tushare的daily_basic接口获取数据，并依赖于股票日线数据任务。
     """
-    
+
     # 1.核心属性
     name = "tushare_stock_dailybasic"
     description = "获取股票每日基本面指标"
     table_name = "tushare_stock_dailybasic"
     primary_keys = ["ts_code", "trade_date"]
     date_column = "trade_date"
-    default_start_date = "19910101" # Tushare 股票日基本指标大致起始日期
+    default_start_date = "19910101"  # Tushare 股票日基本指标大致起始日期
 
     # --- 代码级默认配置 (会被 config.json 覆盖) --- #
     default_concurrent_limit = 10
@@ -31,16 +35,31 @@ class TushareStockDailyBasicTask(TushareTask):
     indexes = [
         {"name": "idx_tushare_daily_basic_code", "columns": "ts_code"},
         {"name": "idx_tushare_daily_basic_date", "columns": "trade_date"},
-        {"name": "idx_tushare_daily_basic_update_time", "columns": "update_time"}
+        {"name": "idx_tushare_daily_basic_update_time", "columns": "update_time"},
     ]
-    
+
     # 3.Tushare特有属性
     api_name = "daily_basic"
     fields = [
-        "ts_code", "trade_date", "close", "turnover_rate", "turnover_rate_f", 
-        "volume_ratio", "pe", "pe_ttm", "pb", "ps", "ps_ttm", "dv_ratio", 
-        "dv_ttm", "total_share", "float_share", "free_share", "total_mv", "circ_mv"
-    ]   
+        "ts_code",
+        "trade_date",
+        "close",
+        "turnover_rate",
+        "turnover_rate_f",
+        "volume_ratio",
+        "pe",
+        "pe_ttm",
+        "pb",
+        "ps",
+        "ps_ttm",
+        "dv_ratio",
+        "dv_ttm",
+        "total_share",
+        "float_share",
+        "free_share",
+        "total_mv",
+        "circ_mv",
+    ]
 
     # 4.数据类型转换
     transformations = {
@@ -59,12 +78,12 @@ class TushareStockDailyBasicTask(TushareTask):
         "float_share": float,
         "free_share": float,
         "total_mv": float,
-        "circ_mv": float
+        "circ_mv": float,
     }
 
     # 5.列名映射
     column_mapping = {}
-    
+
     # 6.表结构定义
     schema = {
         "ts_code": {"type": "VARCHAR(10)", "constraints": "NOT NULL"},
@@ -84,7 +103,7 @@ class TushareStockDailyBasicTask(TushareTask):
         "float_share": {"type": "NUMERIC(20,4)"},
         "free_share": {"type": "NUMERIC(20,4)"},
         "total_mv": {"type": "NUMERIC(20,4)"},
-        "circ_mv": {"type": "NUMERIC(20,4)"}
+        "circ_mv": {"type": "NUMERIC(20,4)"},
     }
 
     # 7.数据验证规则
@@ -102,8 +121,8 @@ class TushareStockDailyBasicTask(TushareTask):
     # ]
 
     # 8. 分批配置 (与 TushareStockDailyTask 保持一致或根据需要调整)
-    batch_trade_days_single_code = 240 # 单代码查询时，每个批次的交易日数量 (约1年)
-    batch_trade_days_all_codes = 15    # 全市场查询时，每个批次的交易日数量 (3周)
+    batch_trade_days_single_code = 240  # 单代码查询时，每个批次的交易日数量 (约1年)
+    batch_trade_days_all_codes = 15  # 全市场查询时，每个批次的交易日数量 (3周)
 
     async def get_batch_list(self, **kwargs) -> List[Dict]:
         """生成批处理参数列表 (使用专用交易日批次工具)
@@ -115,25 +134,34 @@ class TushareStockDailyBasicTask(TushareTask):
             List[Dict]: 批处理参数列表
         """
         # 获取查询参数
-        start_date = kwargs.get('start_date', '19910101')  # 保留原始默认值
-        end_date = kwargs.get('end_date', datetime.now().strftime('%Y%m%d'))  # 保留原始默认值
-        ts_code = kwargs.get('ts_code')  # 获取可能的ts_code
-        exchange = kwargs.get('exchange', 'SSE')  # 获取可能的交易所参数
+        start_date = kwargs.get("start_date", "19910101")  # 保留原始默认值
+        end_date = kwargs.get(
+            "end_date", datetime.now().strftime("%Y%m%d")
+        )  # 保留原始默认值
+        ts_code = kwargs.get("ts_code")  # 获取可能的ts_code
+        exchange = kwargs.get("exchange", "SSE")  # 获取可能的交易所参数
 
-        self.logger.info(f"任务 {self.name}: 使用交易日批次工具生成批处理列表，范围: {start_date} 到 {end_date}")
+        self.logger.info(
+            f"任务 {self.name}: 使用交易日批次工具生成批处理列表，范围: {start_date} 到 {end_date}"
+        )
 
         try:
             # 使用简化的专用函数
             batch_list = await generate_trade_day_batches(
                 start_date=start_date,
                 end_date=end_date,
-                batch_size=self.batch_trade_days_single_code if ts_code else self.batch_trade_days_all_codes,
+                batch_size=(
+                    self.batch_trade_days_single_code
+                    if ts_code
+                    else self.batch_trade_days_all_codes
+                ),
                 ts_code=ts_code,
                 exchange=exchange,
-                logger=self.logger
+                logger=self.logger,
             )
             return batch_list
         except Exception as e:
-            self.logger.error(f"任务 {self.name}: 生成交易日批次时出错: {e}", exc_info=True)
+            self.logger.error(
+                f"任务 {self.name}: 生成交易日批次时出错: {e}", exc_info=True
+            )
             return []
-
