@@ -18,3 +18,24 @@ alphaHome 数据处理模块
 """
 
 __version__ = "0.1.0"
+
+from .processor_task import ProcessorTask
+
+# 重新导出统一任务系统的组件
+from ..common.task_system import (
+    BaseTask,
+    UnifiedTaskFactory,
+    task_register,
+    get_task,
+    get_tasks_by_type,
+    get_task_types,
+)
+
+# 导入所有具体的processor任务（这会触发@task_register装饰器）
+from . import tasks
+
+# 确保processor任务注册到UnifiedTaskFactory（放在任务导入之后）
+from ..common.task_system.task_decorator import register_tasks_to_factory
+register_tasks_to_factory()
+
+__all__ = ["ProcessorTask", "BaseTask"]

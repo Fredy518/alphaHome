@@ -1,3 +1,11 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+"""
+GUI 控制器模块
+负责在主线程（GUI）和后台异步任务之间协调通信。
+"""
+
 import asyncio
 import json
 import logging  # 仍需导入，但仅用于类型继承
@@ -7,6 +15,7 @@ import threading
 import traceback
 import urllib.parse  # 需要导入 urllib.parse
 from datetime import datetime
+from logging.handlers import QueueHandler
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import appdirs  # <-- 导入 appdirs
@@ -18,6 +27,15 @@ logger = get_logger(__name__)  # 使用当前模块名称获取logger
 
 # 使用绝对导入，假设项目根目录在 sys.path 中
 from ..fetchers import TaskFactory, base_task
+# 导入统一任务系统以支持类型分类
+from ..common.task_system import UnifiedTaskFactory, get_task_types, get_tasks_by_type
+
+# 导入processors模块以确保processor任务被注册
+from .. import processors
+
+# 强制重新同步所有任务到UnifiedTaskFactory（包括processor任务）
+from ..common.task_system.task_decorator import register_tasks_to_factory
+register_tasks_to_factory(force=True)
 
 # --- 配置 ---
 # 使用 appdirs 获取用户配置目录
@@ -34,11 +52,14 @@ response_queue = queue.Queue()  # 后端线程 -> GUI
 
 # --- 内部状态 ---
 _task_list_cache: List[Dict[str, Any]] = []  # 任务详情和选择状态的缓存
+_collection_task_cache: List[Dict[str, Any]] = []  # 数据采集任务缓存
+_processing_task_cache: List[Dict[str, Any]] = []  # 数据处理任务缓存
 _running_task_status: Dict[str, Dict[str, Any]] = {}  # 当前运行中任务的状态
 _stop_requested = False  # 用于发出停止任务信号的标志 (基础版本)
 _backend_thread: Optional[threading.Thread] = None  # 跟踪线程
 _backend_running = False  # 指示异步循环是否活动的标志
 _current_stop_event: Optional[asyncio.Event] = None
+_initialized = False  # 添加初始化标志
 
 # --- 中文状态映射 ---
 STATUS_MAP_CN = {
@@ -85,29 +106,17 @@ def _start_async_loop():
 
 
 async def _process_requests():
-    """The main async function processing requests from the GUI."""
-    global _stop_requested, _backend_running
-
-    # 配置日志处理器
-    log_queue = response_queue
-    # 配置日志处理器
-    queue_handler = QueueHandler(log_queue)
-    formatter = logging.Formatter(
-        "%(asctime)s - %(name)s - %(levelname)s - %(message)s", "%H:%M:%S"
-    )
-    queue_handler.setFormatter(formatter)
-    root_logger = get_logger()  # 获取根 logger，同时捕获来自 data_module 的日志
-    root_logger.addHandler(queue_handler)
-
-    # 初始化 TaskFactory
-    try:
-        await TaskFactory.initialize()
-        response_queue.put(("STATUS", "后台初始化完成"))
-    except Exception as e:
-        response_queue.put(("ERROR", f"TaskFactory 初始化失败: {e}"))
-        return
-
-    while _backend_running:  # 检查标志而不是 True
+    """处理来自主线程的请求队列。"""
+    global _backend_running, _current_stop_event
+    
+    # 首先初始化后台
+    if not _initialized:
+        await _initialize_backend()
+    
+    _backend_running = True
+    logger.info("后台请求处理器已启动")
+    
+    while _backend_running:
         try:
             # 使用带有短超时的非阻塞 get 以允许检查 _backend_running
             request_type, data = request_queue.get(timeout=0.1)
@@ -118,8 +127,16 @@ async def _process_requests():
         try:
             if request_type == "GET_TASKS":
                 await _handle_get_tasks()
+            elif request_type == "GET_COLLECTION_TASKS":
+                await _handle_get_collection_tasks()
+            elif request_type == "GET_PROCESSING_TASKS":
+                await _handle_get_processing_tasks()
             elif request_type == "TOGGLE_SELECT":
                 _handle_toggle_select(data)  # data = 行索引
+            elif request_type == "TOGGLE_COLLECTION_SELECT":
+                _handle_toggle_collection_select(data)  # data = 行索引
+            elif request_type == "TOGGLE_PROCESSING_SELECT":
+                _handle_toggle_processing_select(data)  # data = 行索引
             elif request_type == "EXECUTE_TASKS":
                 # 开始前重置停止标志
                 _stop_requested = False
@@ -176,12 +193,20 @@ async def _process_requests():
 
 # --- 请求处理器 (在异步循环中运行) ---
 async def _handle_get_tasks():
-    """Fetch task list from factory, update cache, and send formatted list to GUI."""
+    """Fetch task list from factory with type classification support."""
     global _task_list_cache
     success = False  # Track success for final message
     try:
-        # 尝试获取任务名称，这可能会因为 TaskFactory 未初始化而失败
+        # 尝试获取任务名称，支持类型分类
         task_names = TaskFactory.get_all_task_names()  # 可能引发 RuntimeError
+        
+        # 获取任务类型信息
+        try:
+            available_types = get_task_types()
+            logger.info(f"发现任务类型: {available_types}")
+        except Exception as e:
+            logger.warning(f"无法获取任务类型信息: {e}")
+            available_types = []
 
         # --- 如果成功获取 task_names，继续正常处理 ---
         new_cache = []
@@ -194,24 +219,27 @@ async def _handle_get_tasks():
                 task_instance = await TaskFactory.get_task(name)
                 selected = existing_selection.get(name, False)  # 保留选择状态
 
-                # --- 增强的类型提取 ---
-                parts = name.split("_")
-                task_type = "unknown"  # 默认类型
-                if len(parts) > 1:
-                    # 映射特定前缀或使用第二部分
-                    prefix = parts[0]
-                    second_part = parts[1]
-                    if prefix == "tushare":
-                        if second_part == "fina":
-                            task_type = "finance"
-                        elif second_part in ["stock", "fund", "index"]:
-                            task_type = second_part
+                # --- 增强的类型提取：优先使用task_type属性 ---
+                task_type = getattr(task_instance, 'task_type', 'unknown')
+                
+                # 如果仍然是unknown，尝试从名称推断
+                if task_type == 'unknown':
+                    parts = name.split("_")
+                    if len(parts) > 1:
+                        # 映射特定前缀或使用第二部分
+                        prefix = parts[0]
+                        second_part = parts[1]
+                        if prefix == "tushare":
+                            if second_part == "fina":
+                                task_type = "finance"
+                            elif second_part in ["stock", "fund", "index"]:
+                                task_type = second_part
+                            else:
+                                # 如果需要，为其他 tushare 类型提供回退
+                                task_type = second_part
                         else:
-                            # 如果需要，为其他 tushare 类型提供回退
-                            task_type = second_part
-                    else:
-                        # 对于非 tushare 任务，也许使用前缀？
-                        task_type = prefix
+                            # 对于非 tushare 任务，也许使用前缀？
+                            task_type = prefix
                 # --- 增强的类型提取结束 ---
 
                 new_cache.append(
@@ -483,7 +511,20 @@ async def _handle_execute_tasks(
     # 创建初始状态列表用于RUN_TABLE_INIT
     initial_statuses = []
     for name in task_names:
-        task_info = next((t for t in _task_list_cache if t["name"] == name), None)
+        # 尝试从新的缓存中查找任务信息
+        task_info = None
+        
+        # 首先在数据采集任务缓存中查找
+        task_info = next((t for t in _collection_task_cache if t["name"] == name), None)
+        
+        # 如果没找到，在数据处理任务缓存中查找
+        if not task_info:
+            task_info = next((t for t in _processing_task_cache if t["name"] == name), None)
+        
+        # 如果还没找到，回退到旧缓存
+        if not task_info:
+            task_info = next((t for t in _task_list_cache if t["name"] == name), None)
+        
         initial_statuses.append(
             {
                 "name": name,
@@ -755,23 +796,36 @@ def initialize_controller():
 
 
 def request_task_list():
-    """向后台请求任务列表。"""
+    """请求后台发送任务列表"""
     request_queue.put(("GET_TASKS", None))
+    print("DEBUG: request_task_list called")
 
 
-def toggle_task_selection(row_index: int):
-    """请求切换指定索引任务的选择状态。"""
-    request_queue.put(("TOGGLE_SELECT", row_index))
+def request_collection_tasks():
+    """请求后台发送数据采集任务列表"""
+    request_queue.put(("GET_COLLECTION_TASKS", None))
+    print("DEBUG: request_collection_tasks called")
 
 
-def request_select_specific(task_names: List[str]):
-    """请求将指定列表中的任务设置为选中状态。"""
-    request_queue.put(("SELECT_SPECIFIC", task_names))
+def request_processing_tasks():
+    """请求后台发送数据处理任务列表"""
+    request_queue.put(("GET_PROCESSING_TASKS", None))
+    print("DEBUG: request_processing_tasks called")
 
 
-def request_deselect_specific(task_names: List[str]):
-    """请求将指定列表中的任务设置为未选中状态。"""
-    request_queue.put(("DESELECT_SPECIFIC", task_names))
+def request_toggle_select(task_index: int):
+    """切换指定任务的选择状态"""
+    request_queue.put(("TOGGLE_SELECT", task_index))
+
+
+def request_collection_toggle_select(task_index: int):
+    """切换指定数据采集任务的选择状态"""
+    request_queue.put(("TOGGLE_COLLECTION_SELECT", task_index))
+
+
+def request_processing_toggle_select(task_index: int):
+    """切换指定数据处理任务的选择状态"""
+    request_queue.put(("TOGGLE_PROCESSING_SELECT", task_index))
 
 
 # --- 新增方法 --- #
@@ -949,3 +1003,248 @@ def _fail_all_running_tasks():
     logger.warning("_fail_all_running_tasks 被调用但未完全实现。")
     # 潜在地遍历 _running_task_status 并将 PENDING/RUNNING 更新为 CANCELED
     pass
+
+
+async def _handle_get_collection_tasks():
+    """获取数据采集任务列表（fetch类型）"""
+    global _collection_task_cache
+    success = False
+    try:
+        # 确保UnifiedTaskFactory已初始化
+        from ..common.task_system import UnifiedTaskFactory
+        if not UnifiedTaskFactory._initialized:
+            logger.warning("UnifiedTaskFactory尚未初始化，正在初始化...")
+            await UnifiedTaskFactory.initialize()
+        
+        # 获取fetch类型的任务
+        fetch_tasks = get_tasks_by_type("fetch")
+        logger.info(f"发现 {len(fetch_tasks)} 个数据采集任务")
+        
+        new_cache = []
+        existing_selection = {
+            item["name"]: item["selected"] for item in _collection_task_cache
+        }
+        
+        # 检查返回的数据类型并处理
+        if isinstance(fetch_tasks, dict):
+            task_names = sorted(fetch_tasks.keys())
+        elif isinstance(fetch_tasks, list):
+            task_names = sorted(fetch_tasks)
+        else:
+            logger.error(f"get_tasks_by_type返回了意外的数据类型: {type(fetch_tasks)}")
+            task_names = []
+        
+        for name in task_names:
+            try:
+                # 使用UnifiedTaskFactory而不是旧的TaskFactory
+                task_instance = await UnifiedTaskFactory.get_task(name)
+                selected = existing_selection.get(name, False)
+                
+                # 获取任务类型，优先使用task_type属性
+                task_type = getattr(task_instance, 'task_type', 'fetch')
+                
+                # 如果仍然是fetch，尝试从名称推断具体类型
+                if task_type == 'fetch':
+                    parts = name.split("_")
+                    if len(parts) > 1:
+                        if parts[0] == "tushare":
+                            if len(parts) > 1:
+                                task_type = parts[1]  # stock, fund, index等
+                        else:
+                            task_type = parts[0]
+                
+                new_cache.append({
+                    "name": name,
+                    "type": task_type,
+                    "description": getattr(task_instance, "description", ""),
+                    "selected": selected,
+                    "table_name": getattr(task_instance, "table_name", None),
+                })
+            except Exception as e:
+                logger.error(f"获取采集任务 {name} 详情失败: {e}")
+        
+        # 按类型然后按名称排序
+        _collection_task_cache = sorted(new_cache, key=lambda x: (x["type"], x["name"]))
+        
+        # 获取更新时间
+        db_manager = UnifiedTaskFactory.get_db_manager()
+        if db_manager:
+            # 获取更新时间的逻辑类似于原来的_handle_get_tasks
+            query_coroutines = []
+            tasks_to_query_info = []
+            
+            for index, task_detail in enumerate(_collection_task_cache):
+                table_name = task_detail.get("table_name")
+                if table_name:
+                    coro = db_manager.get_latest_date(
+                        table_name, "update_time", return_raw_object=True
+                    )
+                    query_coroutines.append(coro)
+                    tasks_to_query_info.append((index, table_name))
+                else:
+                    task_detail["latest_update_time"] = "N/A (No Table)"
+            
+            if query_coroutines:
+                results = await asyncio.gather(*query_coroutines, return_exceptions=True)
+                for i, result in enumerate(results):
+                    task_index, table_name = tasks_to_query_info[i]
+                    if isinstance(result, Exception):
+                        latest_timestamp_str = "N/A (Query Error)"
+                    else:
+                        if result is not None and isinstance(result, datetime):
+                            latest_timestamp_str = result.strftime("%Y-%m-%d %H:%M:%S")
+                        elif result is not None:
+                            latest_timestamp_str = str(result)
+                        else:
+                            latest_timestamp_str = "No Data"
+                    
+                    if 0 <= task_index < len(_collection_task_cache):
+                        _collection_task_cache[task_index]["latest_update_time"] = latest_timestamp_str
+        else:
+            for task_detail in _collection_task_cache:
+                task_detail["latest_update_time"] = "N/A (DB Error)"
+        
+        response_queue.put(("COLLECTION_TASK_LIST_UPDATE", _collection_task_cache))
+        response_queue.put(("STATUS", f"数据采集任务列表已刷新 (共 {len(_collection_task_cache)} 个任务)"))
+        success = True
+        
+    except Exception as e:
+        logger.exception("获取数据采集任务列表失败")
+        response_queue.put(("ERROR", f"获取数据采集任务列表失败: {e}"))
+        success = False
+    
+    finally:
+        response_queue.put(("COLLECTION_REFRESH_COMPLETE", {"success": success}))
+
+
+async def _handle_get_processing_tasks():
+    """获取数据处理任务列表（processor类型）"""
+    global _processing_task_cache
+    success = False
+    try:
+        # 确保UnifiedTaskFactory已初始化
+        from ..common.task_system import UnifiedTaskFactory
+        if not UnifiedTaskFactory._initialized:
+            logger.warning("UnifiedTaskFactory尚未初始化，正在初始化...")
+            await UnifiedTaskFactory.initialize()
+        
+        # 获取processor类型的任务
+        processor_tasks = get_tasks_by_type("processor")
+        logger.info(f"发现 {len(processor_tasks)} 个数据处理任务")
+        
+        new_cache = []
+        existing_selection = {
+            item["name"]: item["selected"] for item in _processing_task_cache
+        }
+        
+        # 检查返回的数据类型并处理
+        if isinstance(processor_tasks, dict):
+            task_names = sorted(processor_tasks.keys())
+        elif isinstance(processor_tasks, list):
+            task_names = sorted(processor_tasks)
+        else:
+            logger.error(f"get_tasks_by_type返回了意外的数据类型: {type(processor_tasks)}")
+            task_names = []
+        
+        for name in task_names:
+            try:
+                # 使用UnifiedTaskFactory而不是旧的TaskFactory
+                task_instance = await UnifiedTaskFactory.get_task(name)
+                selected = existing_selection.get(name, False)
+                
+                # 获取依赖信息
+                dependencies = getattr(task_instance, 'dependencies', [])
+                dependencies_str = ", ".join(dependencies) if dependencies else "无"
+                
+                new_cache.append({
+                    "name": name,
+                    "type": "processor",
+                    "description": getattr(task_instance, "description", ""),
+                    "dependencies": dependencies_str,
+                    "selected": selected,
+                    "table_name": getattr(task_instance, "table_name", None),
+                })
+            except Exception as e:
+                logger.error(f"获取处理任务 {name} 详情失败: {e}")
+        
+        # 按名称排序
+        _processing_task_cache = sorted(new_cache, key=lambda x: x["name"])
+        
+        # 获取更新时间
+        db_manager = UnifiedTaskFactory.get_db_manager()
+        if db_manager:
+            query_coroutines = []
+            tasks_to_query_info = []
+            
+            for index, task_detail in enumerate(_processing_task_cache):
+                table_name = task_detail.get("table_name")
+                if table_name:
+                    coro = db_manager.get_latest_date(
+                        table_name, "update_time", return_raw_object=True
+                    )
+                    query_coroutines.append(coro)
+                    tasks_to_query_info.append((index, table_name))
+                else:
+                    task_detail["latest_update_time"] = "N/A (No Table)"
+            
+            if query_coroutines:
+                results = await asyncio.gather(*query_coroutines, return_exceptions=True)
+                for i, result in enumerate(results):
+                    task_index, table_name = tasks_to_query_info[i]
+                    if isinstance(result, Exception):
+                        latest_timestamp_str = "N/A (Query Error)"
+                    else:
+                        if result is not None and isinstance(result, datetime):
+                            latest_timestamp_str = result.strftime("%Y-%m-%d %H:%M:%S")
+                        elif result is not None:
+                            latest_timestamp_str = str(result)
+                        else:
+                            latest_timestamp_str = "No Data"
+                    
+                    if 0 <= task_index < len(_processing_task_cache):
+                        _processing_task_cache[task_index]["latest_update_time"] = latest_timestamp_str
+        else:
+            for task_detail in _processing_task_cache:
+                task_detail["latest_update_time"] = "N/A (DB Error)"
+        
+        response_queue.put(("PROCESSING_TASK_LIST_UPDATE", _processing_task_cache))
+        response_queue.put(("STATUS", f"数据处理任务列表已刷新 (共 {len(_processing_task_cache)} 个任务)"))
+        success = True
+        
+    except Exception as e:
+        logger.exception("获取数据处理任务列表失败")
+        response_queue.put(("ERROR", f"获取数据处理任务列表失败: {e}"))
+        success = False
+    
+    finally:
+        response_queue.put(("PROCESSING_REFRESH_COMPLETE", {"success": success}))
+
+
+async def _initialize_backend():
+    """异步初始化后台任务管理器。"""
+    global _initialized
+    try:
+        # 配置日志处理器
+        log_queue = response_queue
+        queue_handler = QueueHandler(log_queue)
+        formatter = logging.Formatter(
+            "%(asctime)s - %(name)s - %(levelname)s - %(message)s", "%H:%M:%S"
+        )
+        queue_handler.setFormatter(formatter)
+        root_logger = get_logger()  # 获取根 logger，同时捕获来自 data_module 的日志
+        root_logger.addHandler(queue_handler)
+        
+        logger.info("初始化任务工厂...")
+        await TaskFactory.initialize()
+        
+        # 初始化统一任务工厂
+        from ..common.task_system import UnifiedTaskFactory
+        await UnifiedTaskFactory.initialize()
+        
+        _initialized = True
+        logger.info("后台初始化完成。")
+        response_queue.put(("STATUS", "后台初始化完成"))
+    except Exception as e:
+        logger.exception("后台初始化失败")
+        response_queue.put(("ERROR", f"后台初始化失败: {e}"))
+        _initialized = False

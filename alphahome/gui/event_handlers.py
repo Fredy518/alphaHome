@@ -387,6 +387,227 @@ def create_task_log_tab(parent: ttk.Frame) -> Dict[str, tk.Widget]:
     return widgets
 
 
+def create_data_collection_tab(parent: ttk.Frame) -> Dict[str, tk.Widget]:
+    """创建"数据采集"标签页的 Tkinter 布局 (显示fetch类型任务)"""
+    widgets = {}  # 存储此标签页创建的控件
+    hsb = None  # 防御性初始化
+
+    # --- 顶部按钮框架 ---
+    top_frame = ttk.Frame(parent)
+    top_frame.pack(side=tk.TOP, fill=tk.X, pady=(0, 5))
+
+    refresh_button = ttk.Button(
+        top_frame, text="刷新列表", command=lambda w=widgets: handle_refresh_collection_tasks(w)
+    )
+    refresh_button.pack(side=tk.LEFT, padx=(0, 5))
+    widgets["refresh_collection_button"] = refresh_button
+
+    select_all_button = ttk.Button(
+        top_frame, text="全选", command=lambda w=widgets: handle_select_all_collection(w)
+    )
+    select_all_button.pack(side=tk.LEFT, padx=(0, 5))
+    widgets["select_all_collection_button"] = select_all_button
+
+    deselect_all_button = ttk.Button(
+        top_frame, text="取消全选", command=lambda w=widgets: handle_deselect_all_collection(w)
+    )
+    deselect_all_button.pack(side=tk.LEFT, padx=(0, 5))
+    widgets["deselect_all_collection_button"] = deselect_all_button
+
+    # 添加类型过滤下拉框（针对采集任务的类型）
+    ttk.Label(top_frame, text=" 类型过滤:").pack(side=tk.LEFT, padx=(15, 5))
+    collection_types = [_ALL_TYPES_OPTION, "stock", "fund", "index", "future", "option", "hk"]
+    type_filter_combo = ttk.Combobox(
+        top_frame, values=collection_types, state="readonly", width=15
+    )
+    type_filter_combo.set(_ALL_TYPES_OPTION)  # 默认选中
+    type_filter_combo.pack(side=tk.LEFT, padx=(0, 5))
+    type_filter_combo.bind(
+        "<<ComboboxSelected>>", lambda event: handle_collection_type_filter_change(widgets)
+    )  # 绑定事件
+    widgets["collection_type_filter_combo"] = type_filter_combo
+
+    # --- Treeview (表格) 框架 ---
+    tree_frame = ttk.Frame(parent)
+    tree_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+
+    # 定义字体
+    tree_font = tkFont.Font(family="Microsoft YaHei UI", size=10)
+
+    # 定义列
+    columns = ("selected", "type", "name", "description", "update_time")
+    tree = ttk.Treeview(
+        tree_frame, columns=columns, show="headings"
+    )
+
+    # 应用字体到 Treeview (使用默认样式)
+    style = ttk.Style()
+    default_rowheight = int(tree_font.metrics("linespace") * 1.3)
+    style.configure("Treeview", font=tree_font, rowheight=default_rowheight)
+    style.configure("Treeview.Heading", font=tree_font)
+
+    # 定义列标题和宽度
+    tree.heading("selected", text="选择")
+    tree.heading(
+        "type", text="类型", command=lambda: handle_sort_column(widgets, "type")
+    )
+    tree.heading(
+        "name", text="名称", command=lambda: handle_sort_column(widgets, "name")
+    )
+    tree.heading(
+        "description",
+        text="描述",
+        command=lambda: handle_sort_column(widgets, "description"),
+    )
+    tree.heading(
+        "update_time",
+        text="更新时间",
+        command=lambda: handle_sort_column(widgets, "update_time"),
+    )
+
+    tree.column("selected", width=50, anchor=tk.CENTER, stretch=False)
+    tree.column("type", width=100, stretch=False)
+    tree.column("name", width=200, stretch=False)
+    tree.column("description", width=300, stretch=True)
+    tree.column("update_time", width=150, anchor=tk.CENTER)
+
+    # 添加滚动条
+    vsb = ttk.Scrollbar(tree_frame, orient="vertical", command=tree.yview)
+    hsb = ttk.Scrollbar(tree_frame, orient="horizontal", command=tree.xview)
+    tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+
+    # 布局 Treeview 和滚动条
+    tree.grid(row=0, column=0, sticky="nsew")
+    vsb.grid(row=0, column=1, sticky="ns")
+    hsb.grid(row=1, column=0, sticky="ew")
+
+    tree_frame.grid_rowconfigure(0, weight=1)
+    tree_frame.grid_columnconfigure(0, weight=1)
+
+    # 绑定点击事件来切换选择状态
+    tree.bind(
+        "<ButtonRelease-1>", lambda event: handle_collection_task_tree_click(event, tree)
+    )
+
+    widgets["collection_task_tree"] = tree  # 存储 Treeview 引用
+
+    # 初始加载提示
+    tree.insert("", tk.END, values=("", "", "正在加载数据采集任务...", "", ""), tags=("loading",))
+
+    # Add attributes to tree for sorting state
+    tree._last_sort_col = _current_sort_col
+    tree._last_sort_reverse = _current_sort_reverse
+
+    return widgets
+
+
+def create_data_processing_tab(parent: ttk.Frame) -> Dict[str, tk.Widget]:
+    """创建"数据处理"标签页的 Tkinter 布局 (显示processor类型任务)"""
+    widgets = {}  # 存储此标签页创建的控件
+    hsb = None  # 防御性初始化
+
+    # --- 顶部按钮框架 ---
+    top_frame = ttk.Frame(parent)
+    top_frame.pack(side=tk.TOP, fill=tk.X, pady=(0, 5))
+
+    refresh_button = ttk.Button(
+        top_frame, text="刷新列表", command=lambda w=widgets: handle_refresh_processing_tasks(w)
+    )
+    refresh_button.pack(side=tk.LEFT, padx=(0, 5))
+    widgets["refresh_processing_button"] = refresh_button
+
+    select_all_button = ttk.Button(
+        top_frame, text="全选", command=lambda w=widgets: handle_select_all_processing(w)
+    )
+    select_all_button.pack(side=tk.LEFT, padx=(0, 5))
+    widgets["select_all_processing_button"] = select_all_button
+
+    deselect_all_button = ttk.Button(
+        top_frame, text="取消全选", command=lambda w=widgets: handle_deselect_all_processing(w)
+    )
+    deselect_all_button.pack(side=tk.LEFT, padx=(0, 5))
+    widgets["deselect_all_processing_button"] = deselect_all_button
+
+    # 暂时不需要类型过滤，因为都是processor类型
+    ttk.Label(top_frame, text="  所有任务均为数据处理类型").pack(side=tk.LEFT, padx=(15, 5))
+
+    # --- Treeview (表格) 框架 ---
+    tree_frame = ttk.Frame(parent)
+    tree_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+
+    # 定义字体
+    tree_font = tkFont.Font(family="Microsoft YaHei UI", size=10)
+
+    # 定义列
+    columns = ("selected", "name", "description", "dependencies", "update_time")
+    tree = ttk.Treeview(
+        tree_frame, columns=columns, show="headings"
+    )
+
+    # 应用字体到 Treeview (使用默认样式)
+    style = ttk.Style()
+    default_rowheight = int(tree_font.metrics("linespace") * 1.3)
+    # 注意：这里会覆盖之前的Treeview样式设置，但这是可以接受的
+    style.configure("Treeview", font=tree_font, rowheight=default_rowheight)
+    style.configure("Treeview.Heading", font=tree_font)
+
+    # 定义列标题和宽度
+    tree.heading("selected", text="选择")
+    tree.heading(
+        "name", text="名称", command=lambda: handle_sort_column(widgets, "name")
+    )
+    tree.heading(
+        "description",
+        text="描述",
+        command=lambda: handle_sort_column(widgets, "description"),
+    )
+    tree.heading(
+        "dependencies",
+        text="依赖",
+        command=lambda: handle_sort_column(widgets, "dependencies"),
+    )
+    tree.heading(
+        "update_time",
+        text="更新时间",
+        command=lambda: handle_sort_column(widgets, "update_time"),
+    )
+
+    tree.column("selected", width=50, anchor=tk.CENTER, stretch=False)
+    tree.column("name", width=200, stretch=False)
+    tree.column("description", width=250, stretch=True)
+    tree.column("dependencies", width=150, stretch=False)
+    tree.column("update_time", width=150, anchor=tk.CENTER)
+
+    # 添加滚动条
+    vsb = ttk.Scrollbar(tree_frame, orient="vertical", command=tree.yview)
+    hsb = ttk.Scrollbar(tree_frame, orient="horizontal", command=tree.xview)
+    tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+
+    # 布局 Treeview 和滚动条
+    tree.grid(row=0, column=0, sticky="nsew")
+    vsb.grid(row=0, column=1, sticky="ns")
+    hsb.grid(row=1, column=0, sticky="ew")
+
+    tree_frame.grid_rowconfigure(0, weight=1)
+    tree_frame.grid_columnconfigure(0, weight=1)
+
+    # 绑定点击事件来切换选择状态
+    tree.bind(
+        "<ButtonRelease-1>", lambda event: handle_processing_task_tree_click(event, tree)
+    )
+
+    widgets["processing_task_tree"] = tree  # 存储 Treeview 引用
+
+    # 初始加载提示
+    tree.insert("", tk.END, values=("", "正在加载数据处理任务...", "", "", ""), tags=("loading",))
+
+    # Add attributes to tree for sorting state
+    tree._last_sort_col = _current_sort_col
+    tree._last_sort_reverse = _current_sort_reverse
+
+    return widgets
+
+
 # --- Tkinter 事件回调函数 (骨架) ---
 # --- Tkinter 事件回调函数 ---
 
@@ -719,19 +940,21 @@ def handle_exec_mode_change(widgets: Dict[str, tk.Widget]):
 
 def handle_run_tasks(main_ui_elements: Dict[str, tk.Widget]):
     """处理"运行选中任务"按钮点击事件。"""
-    task_tree = main_ui_elements.get("task_tree")
+    # 新架构：尝试从数据采集和数据处理标签页获取任务树
+    collection_task_tree = main_ui_elements.get("collection_task_tree")
+    processing_task_tree = main_ui_elements.get("processing_task_tree")
+    
+    # 其他UI元素
     exec_mode_combo = main_ui_elements.get("exec_mode_combo")
     manual_date_entry = main_ui_elements.get("manual_date_entry")
-    manual_end_date_entry = main_ui_elements.get(
-        "manual_end_date_entry"
-    )  # 获取结束日期控件
+    manual_end_date_entry = main_ui_elements.get("manual_end_date_entry")
     run_button = main_ui_elements.get("run_button")
     stop_button = main_ui_elements.get("stop_button")
     statusbar = main_ui_elements.get("statusbar")
 
+    # 检查必需的UI元素（除了任务树，因为我们有两个）
     if not all(
         [
-            task_tree,
             exec_mode_combo,
             manual_date_entry,
             manual_end_date_entry,
@@ -743,8 +966,6 @@ def handle_run_tasks(main_ui_elements: Dict[str, tk.Widget]):
         messagebox.showerror("错误", "界面元素不完整，无法运行任务。")
         # 增加调试信息
         missing = []
-        if not task_tree:
-            missing.append("task_tree")
         if not exec_mode_combo:
             missing.append("exec_mode_combo")
         if not manual_date_entry:
@@ -759,18 +980,37 @@ def handle_run_tasks(main_ui_elements: Dict[str, tk.Widget]):
             missing.append("statusbar")
         print(
             f"DEBUG: handle_run_tasks 中缺失的控件: {missing} (字典 main_ui_elements 中存在 keys: {list(main_ui_elements.keys())})"
-        )  # 打印具体缺失和现有keys
+        )
         return
 
-    # 1. 获取选中的任务
+    # 检查是否至少有一个任务树可用
+    if not collection_task_tree and not processing_task_tree:
+        messagebox.showerror("错误", "未找到任务列表，无法运行任务。")
+        print("DEBUG: 两个任务树都不可用 - collection_task_tree 和 processing_task_tree")
+        return
+
+    # 1. 从两个任务树中获取选中的任务
     selected_task_names = []
-    for item_id in task_tree.get_children():
-        values = task_tree.item(item_id, "values")
-        # 假设 'selected' 列是第一列 (索引 0)
-        if values and values[0] == "✓":  # 或者您用来表示选中的标记
-            # 假设 'name' 列是第三列 (索引 2)
-            if len(values) > 2:
-                selected_task_names.append(values[2])
+    
+    # 从数据采集任务树获取选中任务
+    if collection_task_tree:
+        for item_id in collection_task_tree.get_children():
+            values = collection_task_tree.item(item_id, "values")
+            # columns: ("selected", "type", "name", "description", "update_time")
+            if values and values[0] == "✓":
+                # 名称在索引2
+                if len(values) > 2:
+                    selected_task_names.append(values[2])
+    
+    # 从数据处理任务树获取选中任务
+    if processing_task_tree:
+        for item_id in processing_task_tree.get_children():
+            values = processing_task_tree.item(item_id, "values")
+            # columns: ("selected", "name", "description", "dependencies", "update_time")
+            if values and values[0] == "✓":
+                # 名称在索引1
+                if len(values) > 1:
+                    selected_task_names.append(values[1])
 
     if not selected_task_names:
         messagebox.showwarning("提示", "请至少选择一个任务。")
@@ -1025,10 +1265,86 @@ def _update_task_tree_display(widgets: Dict[str, tk.Widget]):
 run_task_item_map: Dict[str, str] = {}
 
 
+def update_collection_task_list_ui(root, ui_elements: Dict[str, tk.Widget], task_list: List[Dict]):
+    """更新数据采集任务列表UI"""
+    tree = ui_elements.get("collection_task_tree")
+    type_filter_combo = ui_elements.get("collection_type_filter_combo")
+    
+    if not tree:
+        return
+    
+    # 存储原始任务数据到tree对象中，以支持过滤和排序
+    tree._raw_task_data = task_list
+    
+    # 动态更新类型过滤下拉菜单的选项
+    if type_filter_combo and task_list:
+        # 获取所有唯一的任务类型
+        all_types = sorted(list(set(task.get("type", "unknown") for task in task_list)))
+        # 保存当前选择
+        current_selection = type_filter_combo.get()
+        # 更新下拉菜单选项
+        new_values = [_ALL_TYPES_OPTION] + all_types
+        type_filter_combo["values"] = new_values
+        # 尝试保持当前选择，如果不存在则选择"所有类型"
+        if current_selection not in new_values:
+            type_filter_combo.set(_ALL_TYPES_OPTION)
+        else:
+            type_filter_combo.set(current_selection)
+    
+    # 应用过滤和排序后更新显示
+    _update_collection_task_display(ui_elements)
+
+
+def update_processing_task_list_ui(root, ui_elements: Dict[str, tk.Widget], task_list: List[Dict]):
+    """更新数据处理任务列表UI"""
+    tree = ui_elements.get("processing_task_tree")
+    if not tree:
+        return
+    
+    # 清空现有条目
+    for item in tree.get_children():
+        tree.delete(item)
+    
+    # 插入新数据
+    for task in task_list:
+        selected_mark = "✓" if task.get("selected", False) else ""
+        tree.insert("", tk.END, values=(
+            selected_mark,
+            task.get("name", ""),
+            task.get("description", ""),
+            task.get("dependencies", "无"),
+            task.get("latest_update_time", "N/A")
+        ))
+
+
+def handle_collection_refresh_complete(ui_elements: Dict[str, tk.Widget], data: Dict):
+    """处理数据采集任务刷新完成"""
+    refresh_button = ui_elements.get("refresh_collection_button")
+    if refresh_button:
+        refresh_button.config(state=tk.NORMAL)
+    
+    if data.get("success", False):
+        statusbar = ui_elements.get("statusbar")
+        if statusbar:
+            statusbar.config(text="数据采集任务列表刷新完成")
+
+
+def handle_processing_refresh_complete(ui_elements: Dict[str, tk.Widget], data: Dict):
+    """处理数据处理任务刷新完成"""
+    refresh_button = ui_elements.get("refresh_processing_button")
+    if refresh_button:
+        refresh_button.config(state=tk.NORMAL)
+    
+    if data.get("success", False):
+        statusbar = ui_elements.get("statusbar")
+        if statusbar:
+            statusbar.config(text="数据处理任务列表刷新完成")
+
+
 def process_controller_update(
     root: tk.Tk, ui_elements: Dict[str, tk.Widget], update_type: str, data: Any
 ):
-    """根据从控制器接收到的更新类型处理UI更新。"""
+    """处理来自控制器的响应消息。"""
     # print(f"DEBUG: process_controller_update - Type: {update_type}, Data: {data}") # Optional: Add for detailed debugging
     statusbar = ui_elements.get("statusbar")
     task_tree = ui_elements.get("task_tree")
@@ -1141,15 +1457,14 @@ def process_controller_update(
                     if isinstance(item_data, dict):
                         # Define the order of columns for the values tuple
                         # Must match the order in create_task_execution_tab
-                        # Columns: ('type', 'name', 'status', 'progress', 'start', 'end', 'details')
+                        # Columns: ('type', 'name', 'status', 'progress', 'start', 'end')
                         values_tuple = (
-                            item_data.get("type", "N/A"),
+                            item_data.get("type", "未知"),
                             item_data.get("name", "Unknown"),
                             item_data.get("status", "PENDING"),
                             item_data.get("progress", ""),
                             item_data.get("start", ""),
                             item_data.get("end", ""),
-                            item_data.get("details", ""),
                         )
                         # Use 'name' as the item ID (iid)
                         run_status_tree.insert(
@@ -1211,6 +1526,15 @@ def process_controller_update(
 
         # --- END OF NEW/MODIFIED HANDLERS ---
 
+        elif update_type == "COLLECTION_TASK_LIST_UPDATE":
+            update_collection_task_list_ui(root, ui_elements, data)
+        elif update_type == "PROCESSING_TASK_LIST_UPDATE":
+            update_processing_task_list_ui(root, ui_elements, data)
+        elif update_type == "COLLECTION_REFRESH_COMPLETE":
+            handle_collection_refresh_complete(ui_elements, data)
+        elif update_type == "PROCESSING_REFRESH_COMPLETE":
+            handle_processing_refresh_complete(ui_elements, data)
+
     except Exception as e:
         # Log the exception from the update processing itself
         logger.exception(f"处理控制器更新 '{update_type}' 时发生内部错误")
@@ -1231,7 +1555,8 @@ def _update_run_status_table(
                 tree.set(task_name, "progress", status_dict.get("progress", ""))
                 tree.set(task_name, "start", status_dict.get("start_time", ""))
                 tree.set(task_name, "end", status_dict.get("end_time", ""))
-                tree.set(task_name, "details", status_dict.get("details", ""))
+                # 注意：运行状态表没有"details"列，跳过该设置
+                # run_columns = ("type", "name", "status", "progress", "start", "end")
             except Exception as e:
                 print(f"警告：更新运行状态表行 '{task_name}' 时出错: {e}")
         # else: Task might not be in the table if RUN_TABLE_INIT hasn't been processed yet
@@ -1239,3 +1564,188 @@ def _update_run_status_table(
 
 # --- 其他事件处理函数 (保持不变或根据需要修改) ---
 # ... (handle_refresh_tasks, handle_select_all, etc.) ...
+
+# --- 数据采集页面的事件处理函数 ---
+
+def handle_refresh_collection_tasks(widgets: Dict[str, tk.Widget]):
+    """处理数据采集页面的刷新列表按钮点击"""
+    print("回调：刷新数据采集任务列表...")
+    
+    refresh_button = widgets.get("refresh_collection_button")
+    statusbar = ui_elements.get("statusbar")  # 从全局ui_elements获取
+    
+    if refresh_button:
+        refresh_button.config(state=tk.DISABLED)
+    
+    if statusbar:
+        statusbar.config(text="正在刷新数据采集任务列表，请稍候...")
+        statusbar.master.update_idletasks()
+    
+    controller.request_collection_tasks()
+
+
+def handle_refresh_processing_tasks(widgets: Dict[str, tk.Widget]):
+    """处理数据处理页面的刷新列表按钮点击"""
+    print("回调：刷新数据处理任务列表...")
+    
+    refresh_button = widgets.get("refresh_processing_button")
+    statusbar = ui_elements.get("statusbar")  # 从全局ui_elements获取
+    
+    if refresh_button:
+        refresh_button.config(state=tk.DISABLED)
+    
+    if statusbar:
+        statusbar.config(text="正在刷新数据处理任务列表，请稍候...")
+        statusbar.master.update_idletasks()
+    
+    controller.request_processing_tasks()
+
+
+def handle_select_all_collection(widgets: Dict[str, tk.Widget]):
+    """处理数据采集页面的全选按钮"""
+    tree = widgets.get("collection_task_tree")
+    if not tree:
+        return
+    
+    # 实现全选逻辑
+    for item_id in tree.get_children():
+        values = list(tree.item(item_id, "values"))
+        if len(values) >= 5:
+            values[0] = "✓"
+            tree.item(item_id, values=values)
+
+
+def handle_deselect_all_collection(widgets: Dict[str, tk.Widget]):
+    """处理数据采集页面的取消全选按钮"""
+    tree = widgets.get("collection_task_tree")
+    if not tree:
+        return
+    
+    # 实现取消全选逻辑
+    for item_id in tree.get_children():
+        values = list(tree.item(item_id, "values"))
+        if len(values) >= 5:
+            values[0] = ""
+            tree.item(item_id, values=values)
+
+
+def handle_select_all_processing(widgets: Dict[str, tk.Widget]):
+    """处理数据处理页面的全选按钮"""
+    tree = widgets.get("processing_task_tree")
+    if not tree:
+        return
+    
+    # 实现全选逻辑
+    for item_id in tree.get_children():
+        values = list(tree.item(item_id, "values"))
+        if len(values) >= 5:
+            values[0] = "✓"
+            tree.item(item_id, values=values)
+
+
+def handle_deselect_all_processing(widgets: Dict[str, tk.Widget]):
+    """处理数据处理页面的取消全选按钮"""
+    tree = widgets.get("processing_task_tree")
+    if not tree:
+        return
+    
+    # 实现取消全选逻辑
+    for item_id in tree.get_children():
+        values = list(tree.item(item_id, "values"))
+        if len(values) >= 5:
+            values[0] = ""
+            tree.item(item_id, values=values)
+
+
+def _update_collection_task_display(ui_elements: Dict[str, tk.Widget]):
+    """根据当前过滤条件更新数据采集任务显示"""
+    tree = ui_elements.get("collection_task_tree")
+    type_filter_combo = ui_elements.get("collection_type_filter_combo")
+    
+    if not tree or not hasattr(tree, '_raw_task_data'):
+        return
+        
+    # 获取过滤条件
+    selected_filter = type_filter_combo.get() if type_filter_combo else _ALL_TYPES_OPTION
+    
+    # 清空现有条目
+    for item in tree.get_children():
+        tree.delete(item)
+    
+    # 过滤数据
+    filtered_tasks = tree._raw_task_data
+    if selected_filter != _ALL_TYPES_OPTION and selected_filter:
+        filtered_tasks = [task for task in tree._raw_task_data 
+                         if task.get("type", "").lower() == selected_filter.lower()]
+    
+    # 插入过滤后的数据
+    for task in filtered_tasks:
+        selected_mark = "✓" if task.get("selected", False) else ""
+        tree.insert("", tk.END, values=(
+            selected_mark,
+            task.get("type", ""),
+            task.get("name", ""),
+            task.get("description", ""),
+            task.get("latest_update_time", "N/A")
+        ))
+
+
+def handle_collection_sort_column(widgets: Dict[str, tk.Widget], col: str):
+    """处理数据采集页面的列排序"""
+    tree = widgets.get("collection_task_tree")
+    if not tree or not hasattr(tree, '_raw_task_data'):
+        return
+    
+    # 切换排序方向
+    if hasattr(tree, '_last_sort_col') and tree._last_sort_col == col:
+        tree._last_sort_reverse = not getattr(tree, '_last_sort_reverse', False)
+    else:
+        tree._last_sort_reverse = False
+    tree._last_sort_col = col
+    
+    # 排序数据
+    def sort_key(task):
+        value = task.get(col, "")
+        if col == "update_time" or col == "latest_update_time":
+            # 时间列特殊处理
+            if value in ["N/A", "No Data", ""]:
+                return "0000-00-00 00:00:00"  # 放在最前面
+            return value
+        return value.lower() if isinstance(value, str) else str(value)
+    
+    tree._raw_task_data.sort(key=sort_key, reverse=tree._last_sort_reverse)
+    
+    # 刷新显示
+    _update_collection_task_display(widgets)
+
+
+def handle_collection_type_filter_change(widgets: Dict[str, tk.Widget]):
+    """处理数据采集页面的类型过滤下拉框变化"""
+    print("回调：数据采集任务类型过滤更改")
+    _update_collection_task_display(widgets)
+
+
+def handle_collection_task_tree_click(event, tree):
+    """处理数据采集页面的任务列表点击事件"""
+    region = tree.identify("region", event.x, event.y)
+    if region == "cell":
+        item_id = tree.identify_row(event.y)
+        if item_id:
+            # 切换选择状态
+            values = list(tree.item(item_id, "values"))
+            if len(values) >= 5:
+                values[0] = "✓" if values[0] != "✓" else ""
+                tree.item(item_id, values=values)
+
+
+def handle_processing_task_tree_click(event, tree):
+    """处理数据处理页面的任务列表点击事件"""
+    region = tree.identify("region", event.x, event.y)
+    if region == "cell":
+        item_id = tree.identify_row(event.y)
+        if item_id:
+            # 切换选择状态
+            values = list(tree.item(item_id, "values"))
+            if len(values) >= 5:
+                values[0] = "✓" if values[0] != "✓" else ""
+                tree.item(item_id, values=values)

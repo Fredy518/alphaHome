@@ -71,16 +71,18 @@ def run_gui():
     notebook = ttk.Notebook(root)
     ui_elements["notebook"] = notebook  # 存储引用
 
-    # 为每个标签页创建 Frame
-    tab1_frame = ttk.Frame(notebook, padding="10")
-    tab2_frame = ttk.Frame(notebook, padding="10")
-    tab3_frame = ttk.Frame(notebook, padding="10")
-    tab4_frame = ttk.Frame(notebook, padding="10")
+    # 为每个标签页创建 Frame - 修改为5个页面
+    data_collection_frame = ttk.Frame(notebook, padding="10")
+    data_processing_frame = ttk.Frame(notebook, padding="10")
+    storage_settings_frame = ttk.Frame(notebook, padding="10")
+    task_execution_frame = ttk.Frame(notebook, padding="10")
+    task_log_frame = ttk.Frame(notebook, padding="10")
 
-    notebook.add(tab1_frame, text="任务列表")
-    notebook.add(tab2_frame, text="存储设置")
-    notebook.add(tab3_frame, text="任务运行")
-    notebook.add(tab4_frame, text="任务日志")
+    notebook.add(data_collection_frame, text="数据采集")
+    notebook.add(data_processing_frame, text="数据处理")
+    notebook.add(storage_settings_frame, text="存储设置")
+    notebook.add(task_execution_frame, text="任务运行")
+    notebook.add(task_log_frame, text="任务日志")
 
     notebook.pack(expand=True, fill="both", padx=5, pady=5)
 
@@ -93,12 +95,13 @@ def run_gui():
 
     # --- 填充标签页内容 (调用 event_handlers) ---
     try:
-        ui_elements.update(event_handlers.create_task_list_tab(tab1_frame))
-        ui_elements.update(event_handlers.create_storage_settings_tab(tab2_frame))
+        ui_elements.update(event_handlers.create_data_collection_tab(data_collection_frame))
+        ui_elements.update(event_handlers.create_data_processing_tab(data_processing_frame))
+        ui_elements.update(event_handlers.create_storage_settings_tab(storage_settings_frame))
         ui_elements.update(
-            event_handlers.create_task_execution_tab(tab3_frame, ui_elements)
+            event_handlers.create_task_execution_tab(task_execution_frame, ui_elements)
         )
-        ui_elements.update(event_handlers.create_task_log_tab(tab4_frame))
+        ui_elements.update(event_handlers.create_task_log_tab(task_log_frame))
     except Exception as e:
         logger.exception("创建界面布局时出错")
         messagebox.showerror("布局错误", f"创建界面布局时出错: {e}\n应用程序将退出。")
@@ -155,7 +158,9 @@ def run_gui():
     # --- 初始化加载 ---
     try:
         logger.info("请求初始任务列表和设置...")
-        controller.request_task_list()
+        # 分别请求数据采集和数据处理任务
+        controller.request_collection_tasks()
+        controller.request_processing_tasks()
         # --> 实际调用加载设置的回调函数来填充初始值
         print(
             f"DEBUG: main_window - ui_elements keys before load: {list(ui_elements.keys())}"
