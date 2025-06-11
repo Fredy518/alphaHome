@@ -28,24 +28,24 @@ class DBManager(
     - DataOperationsMixin: 复杂数据操作（copy_from_dataframe, upsert等）
     - SchemaManagementMixin: 表结构管理（table_exists, create_table等）
     - UtilityMixin: 实用工具（get_latest_date, test_connection等）
-
+    
     支持两种工作模式：
     - async: 使用 asyncpg，适用于异步环境（如 fetchers）
     - sync: 使用 psycopg2，适用于同步环境（如 Backtrader）
     """
-
+    
     pass  # 所有功能都通过Mix-in继承获得
 
-
+    
 # === 工厂函数 ===
 
 
 def create_async_manager(connection_string: str) -> DBManager:
     """创建异步模式的数据库管理器
-
+    
     Args:
         connection_string (str): 数据库连接字符串
-
+        
     Returns:
         DBManager: 异步模式的数据库管理器实例
     """
@@ -54,12 +54,12 @@ def create_async_manager(connection_string: str) -> DBManager:
 
 def create_sync_manager(connection_string: str) -> DBManager:
     """创建同步模式的数据库管理器
-
+    
     专为 Backtrader 等同步环境设计，使用 psycopg2 提供真正的同步操作
-
+    
     Args:
         connection_string (str): 数据库连接字符串
-
+        
     Returns:
         DBManager: 同步模式的数据库管理器实例
     """
