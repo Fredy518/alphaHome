@@ -99,12 +99,13 @@
 
 1. 初始化数据库：
    ```bash
-   python scripts/init_database.py
+   # 数据库初始化现在通过其他方式进行
+   # 请参考项目的具体设置说明
    ```
 
 2. 配置任务设置：
    
-   根据需要修改`fetchers/config.json`文件，设置数据库连接 (`database.url`)、API Token (`api.tushare_token`) 以及可选的任务特定参数 (`tasks`)。
+   将`config.example.json`复制为`config.json`并根据需要修改，设置数据库连接 (`database.url`)、API Token (`api.tushare_token`) 以及可选的任务特定参数 (`tasks`)。
 
 ## 图形用户界面 (GUI)
 
@@ -115,52 +116,52 @@
 确保您位于项目的根目录 (`alphaHome`) 下，然后在命令行或终端中运行：
 
 ```bash
-python -m gui.main_window
+python -m alphahome.gui.main_window
 ```
 
 GUI 窗口将会启动，包含以下几个标签页：
 
-### 1. 任务列表 (Task List)
+### 1. 数据采集 (Data Collection)
 
-此标签页用于查看、选择和管理所有已注册的数据任务。
+此标签页用于查看、选择和管理所有已注册的数据获取任务。
 
-`[在此处插入任务列表截图]`
+`[在此处插入数据采集标签页截图]`
 
-- **显示**: 以表格形式展示任务。
+- **显示**: 以表格形式展示数据获取任务。
 - **列信息**: 
     - `选择`: 显示一个 '✓' 标记表示该任务已被选中。
     - `类型`: 任务的分类 (如 `stock`, `fund`, `index`, `finance`)。
     - `名称`: 任务的唯一标识符。
     - `描述`: 任务功能的简要说明。
+    - `最新更新时间`: 显示任务最后执行的时间。
 - **刷新**: 点击"刷新列表"按钮从后台重新加载任务信息。
-- **过滤**: 点击"类型过滤"下拉框，可以选择只显示特定类型的任务，或选择"所有类型"显示全部。
-- **排序**: 点击"类型"、"名称"或"描述"的**表头**，可以按该列对当前显示的列表进行升序或降序排序。
+- **过滤**: 
+    - 点击"类型过滤"下拉框，可以选择只显示特定类型的任务，或选择"所有类型"显示全部。
+    - 在"名称过滤"输入框中输入关键词可以按任务名称进行筛选。
+- **排序**: 点击"类型"、"名称"、"描述"或"最新更新时间"的**表头**，可以按该列对当前显示的列表进行升序或降序排序。
 - **选择/取消选择**: 
     - 点击列表中的**任意一行**可以切换该任务的选中状态。
     - 点击"全选"按钮会将**当前可见**的所有任务（经过滤和排序后）标记为选中。
     - 点击"取消全选"按钮会将**当前可见**的所有任务标记为未选中。
 
-### 2. 存储设置 (Storage Settings)
+### 2. 数据处理 (Data Processing)
 
-此标签页用于配置系统运行所需的 API Token。
+此标签页用于查看、选择和管理所有已注册的数据处理任务。
 
-`[在此处插入存储设置截图]`
+`[在此处插入数据处理标签页截图]`
 
-- **数据库设置**: 
-    - **注意**: 数据库连接信息（主机、端口、用户名、密码、数据库名）**不能**通过此界面直接修改。
-    - 如需修改数据库连接，请直接编辑项目根目录下的 `fetchers/config.json` 文件，修改 `database` 部分下的 `url` 字段。
-    - 界面上显示的数据库字段信息是从当前的 `database.url` 解析出来的，仅供参考，且处于**禁用**状态。
-- **Tushare 设置**: 
-    - 您可以在 "Tushare Token" 输入框中查看、输入或修改您的 Tushare API Token。
-- **操作按钮**: 
-    - "加载当前设置": 点击此按钮会从 `config.json` 文件重新加载当前的 Tushare Token 并显示在输入框中（也会尝试解析并显示只读的数据库信息）。
-    - "保存设置": 点击此按钮会将您在 "Tushare Token" 输入框中输入的值保存回 `config.json` 文件。**保存操作仅针对 Tushare Token**，数据库设置不会被修改。
+- **显示**: 以表格形式展示数据处理任务。
+- **任务依赖**: 显示任务之间的依赖关系，确保数据处理的正确顺序。
+- **选择操作**: 与数据采集标签页类似，支持任务的选择和批量操作。
 
-### 3. 任务运行 (Task Execution)
+### 3. 任务运行与状态 (Task Execution and Status)
 
 此标签页用于控制和监控选中任务的执行。
 
-`[在此处插入任务运行截图]`
+`[在此处插入任务运行标签页截图]`
+
+- **任务执行历史**: 显示当前和历史任务的执行状态。
+- **历史模式切换**: 可以在当前任务和历史任务之间切换查看。
 
 - **运行控制**: 
     - `执行模式`: 下拉框选择任务运行模式：
@@ -181,10 +182,28 @@ GUI 窗口将会启动，包含以下几个标签页：
 
 此标签页显示后台控制器和任务执行过程中产生的日志信息。
 
-`[在此处插入任务日志截图]`
+`[在此处插入任务日志标签页截图]`
 
 - 日志会自动滚动，显示最新的信息。
 - 可以用于查看任务执行的详细步骤、遇到的警告或错误信息。
+- 支持清除日志功能。
+
+### 5. 存储与设置 (Storage and Settings)
+
+此标签页用于配置系统运行所需的数据库连接和API Token。
+
+`[在此处插入存储设置标签页截图]`
+
+- **数据库设置**: 
+    - **注意**: 数据库连接信息（主机、端口、用户名、密码、数据库名）**不能**通过此界面直接修改。
+    - 如需修改数据库连接，请直接编辑项目根目录下的 `config.json` 文件，修改 `database` 部分下的 `url` 字段。
+    - 界面上显示的数据库字段信息是从当前的 `database.url` 解析出来的，仅供参考，且处于**禁用**状态。
+- **Tushare 设置**: 
+    - 您可以在 "Tushare Token" 输入框中查看、输入或修改您的 Tushare API Token。
+- **操作按钮**: 
+    - "加载当前设置": 点击此按钮会从 `config.json` 文件重新加载当前的 Tushare Token 并显示在输入框中（也会尝试解析并显示只读的数据库信息）。
+    - "保存设置": 点击此按钮会将您在 "Tushare Token" 输入框中输入的值保存回 `config.json` 文件。**保存操作仅针对 Tushare Token**，数据库设置不会被修改。
+    - "测试数据库连接": 验证当前数据库连接是否正常。
 
 ## 数据获取
 
@@ -197,46 +216,51 @@ GUI 窗口将会启动，包含以下几个标签页：
 
 2. **其他数据源**：可通过开发对应的适配器来支持更多数据源
 
-### 数据获取命令
+### 数据获取方式
 
-获取股票数据：
-```bash
-python scripts/tasks/stock/fetch_stock_daily.py --start_date 2023-01-01 --end_date 2023-12-31
-```
+数据获取现在主要通过GUI界面进行：
 
-获取基金数据：
-```bash
-python scripts/tasks/fund/fetch_fund_daily.py --start_date 2023-01-01 --end_date 2023-12-31
-```
+1. **通过GUI界面**（推荐）：
+   - 启动GUI：`python -m alphahome.gui.main_window`
+   - 在"数据采集"标签页中选择相应的任务
+   - 在"任务运行与状态"标签页中执行任务
 
-获取指数数据：
-```bash
-python scripts/tasks/index/fetch_index_daily.py --start_date 2023-01-01 --end_date 2023-12-31
-```
-
-获取财务数据：
-```bash
-python scripts/tasks/finance/fetch_financial_report.py --period 20231231
-```
+2. **编程方式**：
+   ```python
+   from alphahome.fetchers import TaskFactory
+   
+   # 初始化任务工厂
+   await TaskFactory.initialize()
+   
+   # 获取并执行特定任务
+   task = await TaskFactory.get_task("tushare_stock_daily")
+   await task.execute(start_date="20230101", end_date="20231231")
+   
+   # 清理
+   await TaskFactory.shutdown()
+   ```
 
 ### 数据更新策略
 
 系统支持多种数据更新策略：
 
-1. **完全更新**：重新获取指定时间范围内的所有数据
-   ```bash
-   python scripts/tasks/stock/fetch_stock_daily.py --start_date 2023-01-01 --end_date 2023-12-31 --mode full
-   ```
+1. **智能增量更新**：自动从上次更新日期开始获取数据
+   - 在GUI的"任务运行与状态"标签页中选择"智能增量"模式
 
-2. **增量更新**：仅获取数据库中不存在的数据
-   ```bash
-   python scripts/tasks/stock/fetch_stock_daily.py --start_date 2023-01-01 --end_date 2023-12-31 --mode incremental
-   ```
+2. **手动增量更新**：指定开始日期，获取该日期之后的数据
+   - 在GUI中选择"手动增量"模式并设置开始日期
 
-3. **修复更新**：检查并修复数据缺失或异常的部分
-   ```bash
-   python scripts/tasks/stock/fetch_stock_daily.py --start_date 2023-01-01 --end_date 2023-12-31 --mode repair
-   ```
+3. **全量导入**：重新获取所有历史数据
+   - 在GUI中选择"全量导入"模式
+
+通过编程方式也可以实现：
+```python
+# 智能增量更新
+await task.smart_incremental_update()
+
+# 指定日期范围的更新
+await task.execute(start_date="20230101", end_date="20231231")
+```
 
 ## 数据库连接管理
 
@@ -734,7 +758,7 @@ class MyTask(Task):
         print(f"所有已注册的任务: {task_names}")
         await TaskFactory.shutdown()
     ```
-    这对于需要批量执行所有可用任务的场景（如 `scripts/batch/update_all_tasks.py`）非常有用。
+    这对于需要批量执行所有可用任务的场景非常有用。
 
 2.  **获取特定任务的实例**：
     ```python
@@ -775,7 +799,7 @@ await TaskFactory.shutdown()
 
 `TaskFactory` 负责从配置文件加载任务特定的配置参数，并在创建任务实例时应用这些配置。
 
-配置文件结构 (`fetchers/config.json`)：
+配置文件结构 (`config.json`)：
 
 ```json
 {
@@ -845,39 +869,39 @@ async def example_get_tasks_by_type():
 
 ### 运行质量检查
 
-现在系统提供了全面的数据质量检查功能，可以通过`scripts/check_db_quality.py`脚本运行。该脚本使用`DataQualityChecker`类来分析数据库中表的质量，包括：
+系统提供了全面的数据质量检查功能，可以通过以下方式运行：
 
+**通过编程方式运行质量检查**：
+
+```python
+from alphahome.common.data_quality_checker import DataQualityChecker
+from alphahome.common.db_manager import create_sync_manager
+
+# 创建数据库连接和质量检查器
+db_manager = create_sync_manager()
+quality_checker = DataQualityChecker(db_manager)
+
+# 检查所有表
+results = await quality_checker.check_all_tables()
+
+# 检查特定表
+results = await quality_checker.check_tables(['tushare_stock_daily', 'tushare_fund_daily'])
+
+# 生成报告
+await quality_checker.generate_html_report(results, output_dir='./logs/quality_check')
+```
+
+质量检查功能包括：
 - 检查数据完整性和空值率
 - 分析日期覆盖情况
 - 识别数据质量问题
 - 生成可视化报告和图表
 
-脚本用法示例：
-
-```bash
-# 检查所有表
-python scripts/check_db_quality.py
-
-# 检查特定表
-python scripts/check_db_quality.py -t tushare_stock_daily tushare_fund_daily
-
-# 检查特定日期范围
-python scripts/check_db_quality.py -s 20220101 -e 20221231
-
-# 指定输出目录
-python scripts/check_db_quality.py -o ./logs/custom_quality_check
-
-# 显示详细日志
-python scripts/check_db_quality.py -v
-```
-
-参数说明：
-- `-t, --tables`: 指定要检查的表名列表（用空格分隔多个表名）
-- `-s, --start-date`: 指定检查的开始日期（YYYYMMDD格式）
-- `-e, --end-date`: 指定检查的结束日期（YYYYMMDD格式）
-- `-o, --output-dir`: 指定输出目录路径
-- `-v, --verbose`: 启用详细日志输出
-- `-h, --help`: 显示帮助信息
+主要参数：
+- `tables`: 指定要检查的表名列表
+- `start_date`: 检查的开始日期
+- `end_date`: 检查的结束日期
+- `output_dir`: 输出目录路径
 
 ### 理解质量报告
 
@@ -929,12 +953,29 @@ HTML报告包括：
 
 每日数据更新的推荐流程：
 
-1. 执行增量更新获取最新数据
-   ```bash
-   python scripts/batch/daily_update.py
+1. **通过GUI执行增量更新**：
+   - 启动GUI：`python -m alphahome.gui.main_window`
+   - 在"数据采集"标签页选择需要更新的任务
+   - 在"任务运行与状态"标签页选择"智能增量"模式并执行
+
+2. **通过编程方式执行批量更新**：
+   ```python
+   from alphahome.fetchers import TaskFactory
+   
+   # 初始化
+   await TaskFactory.initialize()
+   
+   # 获取所有获取类型的任务并执行智能增量更新
+   fetch_task_names = TaskFactory.get_task_names_by_type('fetch')
+   for task_name in fetch_task_names:
+       task = await TaskFactory.get_task(task_name)
+       await task.smart_incremental_update()
+   
+   # 清理
+   await TaskFactory.shutdown()
    ```
 
-2. 运行质量检查确保数据正确
-   ```bash
-   python scripts/check_db_quality.py -s $(date -d "7 days ago" +%Y%m%d) -e $(date +%Y%m%d)
+3. **运行质量检查确保数据正确**：
+   ```python
+   # 如前面质量检查部分所示的代码
    ```

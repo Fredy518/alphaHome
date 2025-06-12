@@ -71,9 +71,22 @@ async def handle_get_collection_tasks():
                     elif parts[0] != "tushare":
                         task_type = parts[0]
 
+                # 推断数据源
+                data_source = getattr(task_instance, 'data_source', None)
+                if data_source is None:
+                    # 如果任务类未定义data_source，则从名称推断
+                    parts = name.split('_')
+                    if parts[0] == "tushare":
+                        data_source = "tushare"
+                    elif parts[0] in ["wind", "jqdata", "baostock", "sina", "yahoo", "ifind"]:
+                        data_source = parts[0]
+                    else:
+                        data_source = "unknown"
+
                 new_cache.append({
                     "name": name,
                     "type": task_type,
+                    "data_source": data_source,
                     "description": getattr(task_instance, "description", ""),
                     "selected": existing_selection.get(name, False),
                     "table_name": getattr(task_instance, "table_name", None),

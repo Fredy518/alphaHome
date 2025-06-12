@@ -28,6 +28,7 @@ class BaseTask(ABC):
     date_column = None
     description = ""
     auto_add_update_time = True  # 是否自动添加更新时间
+    data_source: Optional[str] = None  # 数据源标识（如'tushare', 'wind', 'jqdata'等）
     
     # 新增：支持processor任务的属性
     source_tables = []        # 源数据表列表（processor任务使用）

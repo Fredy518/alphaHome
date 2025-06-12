@@ -123,6 +123,12 @@ class MainWindow(tk.Tk):
                 self.ui_elements
             )
         )
+        self.ui_elements["collection_data_source_combo"].bind(
+            "<<ComboboxSelected>>",
+            lambda e: data_collection_handler.handle_collection_data_source_filter_change(
+                self.ui_elements
+            ),
+        )
         self.ui_elements["collection_task_type_combo"].bind(
             "<<ComboboxSelected>>",
             lambda e: data_collection_handler.handle_collection_type_filter_change(
@@ -153,7 +159,7 @@ class MainWindow(tk.Tk):
         )
 
         # Bind sort headers for collection task tree
-        for col in ("type", "name", "description", "latest_update_time"):
+        for col in ("data_source", "type", "name", "description", "latest_update_time"):
             self.ui_elements["collection_task_tree"].heading(
                 col,
                 text=self.ui_elements["collection_task_tree"].heading(col)["text"],

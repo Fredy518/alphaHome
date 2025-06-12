@@ -75,6 +75,9 @@ class TushareTask(Task):
     ```
     """
 
+    # 数据源标识
+    data_source = "tushare"
+
     # 默认配置
     default_concurrent_limit = 5  # 默认并发限制
     default_page_size = 5000  # 默认每页数据量

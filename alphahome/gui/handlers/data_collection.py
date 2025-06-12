@@ -21,7 +21,8 @@ _full_task_list_data: List[Dict[str, Any]] = []
 # 中文表头映射
 _COLUMN_HEADERS = {
     "selected": "选择",
-    "type": "类型", 
+    "type": "类型",
+    "data_source": "数据源",
     "name": "名称",
     "description": "描述",
     "latest_update_time": "更新时间"
@@ -40,7 +41,7 @@ def handle_select_all_collection(widgets: Dict[str, tk.Widget]):
     tree = widgets.get("collection_task_tree")
     if not tree: return
     for item_id in tree.get_children():
-        task_name = tree.item(item_id, "values")[2]
+        task_name = tree.item(item_id, "values")[3]
         _set_task_selection_state(task_name, True)
     _update_collection_task_display(widgets)
 
@@ -50,7 +51,7 @@ def handle_deselect_all_collection(widgets: Dict[str, tk.Widget]):
     tree = widgets.get("collection_task_tree")
     if not tree: return
     for item_id in tree.get_children():
-        task_name = tree.item(item_id, "values")[2]
+        task_name = tree.item(item_id, "values")[3]
         _set_task_selection_state(task_name, False)
     _update_collection_task_display(widgets)
 
@@ -61,7 +62,7 @@ def handle_collection_task_tree_click(event, tree):
     if not item_id: return
 
     if tree.identify_column(event.x) == "#1":  # "选择"列
-        task_name = tree.item(item_id, "values")[2]
+        task_name = tree.item(item_id, "values")[3]
         task = next((t for t in _full_task_list_data if t["name"] == task_name), None)
         if task:
             task["selected"] = not task.get("selected", False)
@@ -93,6 +94,10 @@ def handle_collection_type_filter_change(widgets: Dict[str, tk.Widget]):
     """处理数据采集任务列表的类型过滤。"""
     _update_collection_task_display(widgets)
 
+def handle_collection_data_source_filter_change(widgets: Dict[str, tk.Widget]):
+    """处理数据采集任务列表的数据源过滤。"""
+    _update_collection_task_display(widgets)
+
 def handle_collection_name_filter_change(widgets: Dict[str, tk.Widget]):
     """处理数据采集任务列表的名称过滤。"""
     _update_collection_task_display(widgets)
@@ -102,14 +107,23 @@ def update_collection_task_list_ui(widgets: Dict[str, tk.Widget], task_list: Lis
     global _full_task_list_data
     _full_task_list_data = task_list
     
+    # 更新数据源过滤器
+    data_source_combo = widgets.get("collection_data_source_combo")
+    if data_source_combo:
+        data_sources = sorted(list(set(t.get("data_source", "unknown") for t in task_list)))
+        current_data_source_selection = data_source_combo.get()
+        data_source_combo["values"] = [_ALL_TYPES_OPTION] + data_sources
+        if current_data_source_selection not in data_source_combo["values"]:
+            data_source_combo.set(_ALL_TYPES_OPTION)
+    
     # 更新类型过滤器
-    combo = widgets.get("collection_task_type_combo")
-    if combo:
+    type_combo = widgets.get("collection_task_type_combo")
+    if type_combo:
         types = sorted(list(set(t["type"] for t in task_list)))
-        current_selection = combo.get()
-        combo["values"] = [_ALL_TYPES_OPTION] + types
-        if current_selection not in combo["values"]:
-            combo.set(_ALL_TYPES_OPTION)
+        current_type_selection = type_combo.get()
+        type_combo["values"] = [_ALL_TYPES_OPTION] + types
+        if current_type_selection not in type_combo["values"]:
+            type_combo.set(_ALL_TYPES_OPTION)
 
     _update_collection_task_display(widgets)
     button = widgets.get("collection_refresh_button")
@@ -122,6 +136,7 @@ def _update_collection_task_display(widgets: Dict[str, tk.Widget]):
     """根据当前的过滤和排序更新Treeview。"""
     tree = widgets.get("collection_task_tree")
     type_combo = widgets.get("collection_task_type_combo")
+    data_source_combo = widgets.get("collection_data_source_combo")
     name_filter_entry = widgets.get("collection_filter_entry")
     if not tree: return
 
@@ -129,6 +144,11 @@ def _update_collection_task_display(widgets: Dict[str, tk.Widget]):
         tree.delete(item)
 
     filtered_list = _full_task_list_data
+    
+    # 数据源过滤
+    if data_source_combo and data_source_combo.get() != _ALL_TYPES_OPTION:
+        selected_data_source = data_source_combo.get()
+        filtered_list = [t for t in filtered_list if t.get("data_source") == selected_data_source]
     
     # 类型过滤
     if type_combo and type_combo.get() != _ALL_TYPES_OPTION:
@@ -149,6 +169,7 @@ def _update_collection_task_display(widgets: Dict[str, tk.Widget]):
     for task in filtered_list:
         values = (
             "✓" if task.get("selected") else "",
+            task.get("data_source", ""),
             task.get("type", ""),
             task.get("name", ""),
             task.get("description", ""),

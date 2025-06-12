@@ -138,7 +138,7 @@ async def handle_request(command: str, data: Optional[Dict[str, Any]] = None):
             logger.warning(f"Unknown command received: {command}")
             if _response_callback:
                 _response_callback("LOG", {"level": "warning", "message": f"收到未知命令: {command}"})
-
+        
     except Exception as e:
         logger.error(f"Error handling command '{command}': {e}", exc_info=True)
         if _response_callback:

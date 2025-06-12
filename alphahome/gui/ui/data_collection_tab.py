@@ -50,9 +50,17 @@ def create_data_collection_tab(parent: ttk.Frame) -> Dict[str, tk.Widget]:
     name_filter_entry.pack(side=tk.LEFT, padx=(0, 10))
     widgets["collection_filter_entry"] = name_filter_entry
 
+    ttk.Label(filter_frame, text="数据源过滤:").pack(side=tk.LEFT, padx=(0, 5))
+    data_source_filter_combo = ttk.Combobox(
+        filter_frame, values=[_ALL_TYPES_OPTION], state="readonly", width=10
+    )
+    data_source_filter_combo.set(_ALL_TYPES_OPTION)
+    data_source_filter_combo.pack(side=tk.LEFT, padx=(0, 10))
+    widgets["collection_data_source_combo"] = data_source_filter_combo
+
     ttk.Label(filter_frame, text="类型过滤:").pack(side=tk.LEFT, padx=(0, 5))
     type_filter_combo = ttk.Combobox(
-        filter_frame, values=[_ALL_TYPES_OPTION], state="readonly", width=15
+        filter_frame, values=[_ALL_TYPES_OPTION], state="readonly", width=12
     )
     type_filter_combo.set(_ALL_TYPES_OPTION)
     type_filter_combo.pack(side=tk.LEFT)
@@ -68,21 +76,23 @@ def create_data_collection_tab(parent: ttk.Frame) -> Dict[str, tk.Widget]:
     style.configure("Collection.Treeview", font=tree_font, rowheight=default_rowheight)
     style.configure("Collection.Treeview.Heading", font=tree_font)
 
-    columns = ("selected", "type", "name", "description", "latest_update_time")
+    columns = ("selected", "data_source", "type", "name", "description", "latest_update_time")
     tree = ttk.Treeview(
         tree_frame, columns=columns, show="headings", style="Collection.Treeview"
     )
 
     tree.heading("selected", text="选择")
+    tree.heading("data_source", text="数据源")
     tree.heading("type", text="类型")
     tree.heading("name", text="名称")
     tree.heading("description", text="描述")
     tree.heading("latest_update_time", text="更新时间")
 
     tree.column("selected", width=50, anchor=tk.CENTER, stretch=False)
-    tree.column("type", width=120, stretch=False)
-    tree.column("name", width=250, stretch=False)
-    tree.column("description", width=400, stretch=True)
+    tree.column("data_source", width=80, anchor=tk.CENTER, stretch=False)
+    tree.column("type", width=100, stretch=False)
+    tree.column("name", width=220, stretch=False)
+    tree.column("description", width=350, stretch=True)
     tree.column("latest_update_time", width=160, anchor=tk.CENTER, stretch=False)
 
     vsb = ttk.Scrollbar(tree_frame, orient="vertical", command=tree.yview)
@@ -97,7 +107,7 @@ def create_data_collection_tab(parent: ttk.Frame) -> Dict[str, tk.Widget]:
     tree_frame.grid_columnconfigure(0, weight=1)
 
     widgets["collection_task_tree"] = tree
-    tree.insert("", tk.END, values=("", "", "正在加载, 请稍候...", "", ""), tags=("loading",))
+    tree.insert("", tk.END, values=("", "", "", "正在加载, 请稍候...", "", ""), tags=("loading",))
 
     # 为排序状态添加属性
     tree._last_sort_col = "type"

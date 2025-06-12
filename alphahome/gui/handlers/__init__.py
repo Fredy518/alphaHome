@@ -27,6 +27,7 @@ from .data_collection import (
     handle_collection_sort_column,
     handle_collection_task_tree_click,
     handle_collection_type_filter_change,
+    handle_collection_data_source_filter_change,
     handle_deselect_all_collection,
     handle_refresh_collection_tasks,
     handle_select_all_collection,
