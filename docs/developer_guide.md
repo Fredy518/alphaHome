@@ -7,11 +7,14 @@
 - [开发者指南](#开发者指南)
   - [目录](#目录)
   - [系统架构](#系统架构)
+    - [GUI交互与架构](#gui交互与架构)
   - [代码组织](#代码组织)
   - [核心组件](#核心组件)
     - [数据源适配器](#数据源适配器)
     - [任务管理器](#任务管理器)
     - [数据处理工具](#数据处理工具)
+    - [DBManager](#dbmanager)
+    - [图形用户界面 (GUI) - 重构后架构](#图形用户界面-gui---重构后架构)
   - [开发环境设置](#开发环境设置)
     - [前提条件](#前提条件)
     - [环境配置](#环境配置)
@@ -76,15 +79,30 @@
 4.  **脚本层 (`scripts`)**: 包含用于执行任务、数据库初始化、质量检查等的命令行脚本。
 5.  **图形界面层 (`gui`)**: 提供一个基于 Tkinter 的用户界面，用于任务管理和执行。
 
-### GUI交互
+### GUI交互与架构
 
-GUI 层通过一个 `Controller` (`gui/controller.py`) 与后端逻辑（主要是 `TaskFactory` 和任务执行）进行交互。通信主要通过 Python 的 `queue.Queue` 实现：
+GUI 层采用重构后的模块化架构，通过 `Controller` (`gui/controller.py`) 与后端逻辑进行交互。新架构按功能域进行清晰分离：
 
-- **请求队列 (`request_queue`)**: GUI 前端 (`event_handlers.py`) 将用户操作（如刷新列表、运行任务、保存设置）封装成消息发送到此队列。
-- **响应队列 (`response_queue`)**: `Controller` 在后台处理请求（例如查询任务列表、执行任务、加载/保存配置）后，将结果或状态更新封装成消息发送回此队列。
-- **主线程轮询**: GUI 主线程 (`main_window.py`) 定期检查响应队列，并根据收到的消息更新界面显示（如任务列表、运行状态、日志）。
+**核心架构组件：**
+- **主控制器** (`gui/controller.py`): 简化的协调器，委托具体业务逻辑给专门的处理器
+- **后台逻辑层** (`gui/controller_logic/`): 包含异步业务逻辑处理器
+  - `task_execution.py`: 任务执行逻辑
+  - `storage_settings.py`: 配置管理
+  - `data_collection.py` & `data_processing.py`: 数据处理逻辑
+- **UI事件处理器** (`gui/handlers/`): UI事件响应逻辑
+  - `task_execution.py`: 任务执行UI事件
+  - `storage_settings.py`: 设置界面事件
+  - 其他功能域的事件处理器
+- **UI组件创建器** (`gui/ui/`): 纯UI组件创建逻辑
+  - 各标签页的UI创建函数（如 `task_execution_tab.py`）
+- **通用工具** (`gui/utils/`): 共享的工具函数
 
-这种设计使得 GUI 界面保持响应，而耗时的操作（如数据获取）在后台线程中执行。
+**通信机制：**
+- **异步消息传递**: 通过 `asyncio` 和回调机制实现前后端通信
+- **事件驱动**: UI事件通过专门的处理器响应，业务逻辑在后台异步执行
+- **职责分离**: UI创建、事件处理、业务逻辑完全分离，便于维护和测试
+
+这种重构后的设计实现了单一职责原则，提高了代码的可维护性和可扩展性。
 
 ## 代码组织
 
@@ -203,32 +221,50 @@ class DataValidator:
 - 提供连接管理、事务处理、批量插入/更新等功能。
 - 从 `config.json` 读取数据库连接 URL。
 
-### 图形用户界面 (GUI)
+### 图形用户界面 (GUI) - 重构后架构
 
-(`gui/` 目录)
+(`gui/` 目录) - **已完成模块化重构，采用功能域分离设计**
+
+**主要组件：**
 
 - **`main_window.py`**: 
-  - Tkinter 应用的入口点。
-  - 创建主窗口、Notebook (用于标签页)。
-  - 初始化 `Controller` 和两个通信队列 (`request_queue`, `response_queue`)。
-  - 设置主事件循环 (`root.mainloop()`) 和定期检查响应队列的定时器 (`root.after`)。
-  - 调用 `event_handlers.py` 中的函数来构建各个标签页的 UI 布局。
-  - 处理 DPI 感知（在 Windows 上使用 `ctypes`）。
-- **`event_handlers.py`**: 
-  - 包含创建各个标签页 UI 布局的函数 (使用 `tkinter.ttk` 部件)。
-  - 定义了 UI 事件的回调函数（如按钮点击、列表选择）。
-  - 这些回调函数通常会创建一个请求消息，并将其放入 `request_queue` 发送给 `Controller`。
-  - 包含处理从 `response_queue` 收到的消息并更新 UI 的逻辑（由 `main_window.py` 中的定时器调用）。
-- **`controller.py`**: 
-  - 运行在独立的后台线程中。
-  - 循环监听 `request_queue`。
-  - 根据收到的请求消息，执行相应的业务逻辑：
-    - 调用 `TaskFactory` 获取任务列表。
-    - 调用 `TaskFactory` 加载/保存配置 (主要是 Tushare Token)。
-    - 调用 `TaskFactory` 执行选定的任务（在另一个线程池中执行，以避免阻塞 Controller）。
-    - 将执行结果或状态更新放入 `response_queue` 发送回 GUI 前端。
-  - 使用 `asyncio`（如果需要）和 `concurrent.futures.ThreadPoolExecutor` 来管理任务执行。
-  - 负责将日志消息也放入 `response_queue` 以便在 GUI 中显示。
+  - Tkinter 应用的入口点和主窗口管理
+  - 创建主窗口、Notebook (用于标签页)
+  - 初始化 `Controller` 并设置异步通信机制
+  - 调用模块化的UI创建器构建各标签页
+  - 处理DPI感知和窗口生命周期管理
+
+- **`controller.py`** *(已简化)*: 
+  - 轻量级协调器，委托业务逻辑给 `controller_logic/` 模块
+  - 管理与前端的异步通信
+  - 处理请求路由和响应分发
+
+- **`controller_logic/`** *(新增后台逻辑层)*:
+  - `task_execution.py`: 任务执行的异步业务逻辑
+  - `storage_settings.py`: 配置加载/保存逻辑  
+  - `data_collection.py` & `data_processing.py`: 数据处理业务逻辑
+  - 所有耗时操作在此层异步执行，保持UI响应性
+
+- **`handlers/`** *(新增UI事件处理层)*:
+  - `task_execution.py`: 任务执行相关的UI事件处理
+  - `storage_settings.py`: 设置界面的事件响应
+  - 其他功能域的专门事件处理器
+  - 负责UI状态管理和用户交互逻辑
+
+- **`ui/`** *(新增UI组件层)*:
+  - `task_execution_tab.py`, `storage_settings_tab.py` 等: 各标签页的UI组件创建
+  - 纯UI创建逻辑，无业务逻辑耦合
+  - 使用 `tkinter.ttk` 组件构建界面布局
+
+- **`utils/`**: 
+  - `common.py`: 共享工具函数（状态映射、日期验证等）
+  - 跨模块的通用功能
+
+**重构优势：**
+- **单一职责**: 每个模块职责明确，便于维护和测试
+- **可扩展性**: 新功能可以独立添加而不影响现有模块  
+- **代码复用**: UI组件和业务逻辑可独立复用
+- **降低耦合**: 各层之间依赖关系清晰，减少相互影响
 
 ## 开发环境设置
 

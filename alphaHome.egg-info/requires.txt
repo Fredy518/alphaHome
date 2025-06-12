@@ -1,9 +1,10 @@
 aiohttp>=3.11.11
 asyncpg>=0.30.0
 matplotlib>=3.10.1
-numpy>=2.2.5
+numpy>=2.2.3
 pandas>=2.2.3
 python-dotenv>=1.1.0
 tkcalendar>=1.6.1
 tqdm>=4.67.1
 appdirs>=1.4.4
+zipline-reloaded>=3.0.4

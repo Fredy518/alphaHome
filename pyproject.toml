@@ -40,8 +40,8 @@ include = ["alphahome", "alphahome.*"]
 # exclude = ["tests*"] # 如果您有测试目录，可以排除
 
 # 定义 GUI 启动脚本
-[project.gui-scripts]
-alphahome = "alphahome.gui.main_window:run_gui" # 当用户安装后，可以运行 alphahome 命令启动 GUI 
+[project.scripts]
+alphahome = "alphahome.gui.main_window:run_gui" # 当用户安装后，可以运行 alphahome 命令启动 GUI
 
 [tool.black]
 line-length = 88
