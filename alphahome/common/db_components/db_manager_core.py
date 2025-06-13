@@ -6,8 +6,10 @@ from urllib.parse import urlparse
 
 import asyncpg
 import psycopg2
+import pandas as pd
 
 from ..logging_utils import get_logger
+from .table_name_resolver import TableNameResolver
 
 
 class DBManagerCore:
@@ -29,6 +31,7 @@ class DBManagerCore:
         self.connection_string = connection_string
         self.mode = mode.lower()
         self.logger = get_logger(f"db_manager_{self.mode}")
+        self.resolver = TableNameResolver()
 
         if self.mode not in ["async", "sync"]:
             raise ValueError(f"不支持的模式: {mode}，只支持 'async' 或 'sync'")

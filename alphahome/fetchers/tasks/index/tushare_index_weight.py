@@ -7,7 +7,7 @@ from pandas.tseries.offsets import YearBegin, YearEnd  # 需要导入
 # 假设 TushareTask 是 Tushare 相关任务的基类。
 # 如果导入路径不同，请相应调整。
 from alphahome.fetchers.sources.tushare.tushare_task import TushareTask
-from alphahome.fetchers.task_decorator import task_register
+from alphahome.common.task_system.task_decorator import task_register
 
 
 @task_register()
@@ -51,9 +51,9 @@ class TushareIndexWeightTask(TushareTask):
     }
 
     # 5. 数据库表结构
-    schema = {
-        "index_code": {"type": "VARCHAR(30)", "constraints": "NOT NULL"},
-        "con_code": {"type": "VARCHAR(30)", "constraints": "NOT NULL"},  # 股票代码
+    schema_def = {
+        "index_code": {"type": "VARCHAR(20)", "constraints": "NOT NULL"},
+        "con_code": {"type": "VARCHAR(20)", "constraints": "NOT NULL"},
         "trade_date": {"type": "DATE", "constraints": "NOT NULL"},
         "weight": {"type": "FLOAT"},
         # update_time 通常由基类自动添加

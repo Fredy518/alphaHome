@@ -14,7 +14,7 @@ import pandas as pd
 
 # 确认导入路径正确
 from ...sources.tushare.tushare_task import TushareTask
-from ...task_decorator import task_register
+from alphahome.common.task_system.task_decorator import task_register
 
 
 @task_register()
@@ -55,8 +55,11 @@ class TushareIndexCiMemberTask(TushareTask):
     # 4. 数据类型转换 (日期列由基类处理)
     transformations = {}
 
-    # 5. 数据库表结构 (添加缺失字段，更新约束)
-    schema = {
+    # 5. 数据库表结构
+    schema_def = {
+        "index_code": {"type": "VARCHAR(20)", "constraints": "NOT NULL"},
+        "con_code": {"type": "VARCHAR(20)", "constraints": "NOT NULL"},
+        "in_date": {"type": "DATE", "constraints": "NOT NULL"},
         "l1_code": {"type": "VARCHAR(20)"},
         "l1_name": {"type": "VARCHAR(50)"},
         "l2_code": {"type": "VARCHAR(20)"},  # <-- 移除 NOT NULL
@@ -68,7 +71,6 @@ class TushareIndexCiMemberTask(TushareTask):
         "l3_name": {"type": "VARCHAR(100)"},  # 新增
         "ts_code": {"type": "VARCHAR(30)", "constraints": "NOT NULL"},  # 主键部分
         "name": {"type": "VARCHAR(100)"},
-        "in_date": {"type": "DATE", "constraints": "NOT NULL"},  # 主键部分, NOT NULL
         "out_date": {"type": "DATE"},  # 新增
         "is_new": {"type": "VARCHAR(1)"},  # 新增
         # update_time 会自动添加 (默认)

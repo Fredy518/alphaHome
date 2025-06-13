@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional
 import pandas as pd
 
 from ...sources.tushare import TushareTask
-from ...task_decorator import task_register
+from alphahome.common.task_system.task_decorator import task_register
 from ...tools.batch_utils import (  # 导入交易日批次生成工具函数
     generate_trade_day_batches,
 )
@@ -85,25 +85,25 @@ class TushareStockDailyBasicTask(TushareTask):
     column_mapping = {}
 
     # 6.表结构定义
-    schema = {
-        "ts_code": {"type": "VARCHAR(10)", "constraints": "NOT NULL"},
+    schema_def = {
+        "ts_code": {"type": "VARCHAR(15)", "constraints": "NOT NULL"},
         "trade_date": {"type": "DATE", "constraints": "NOT NULL"},
         "close": {"type": "NUMERIC(18,4)"},
-        "turnover_rate": {"type": "NUMERIC(18,4)"},
-        "turnover_rate_f": {"type": "NUMERIC(18,4)"},
-        "volume_ratio": {"type": "NUMERIC(18,4)"},
-        "pe": {"type": "NUMERIC(18,4)"},
-        "pe_ttm": {"type": "NUMERIC(18,4)"},
-        "pb": {"type": "NUMERIC(18,4)"},
-        "ps": {"type": "NUMERIC(18,4)"},
-        "ps_ttm": {"type": "NUMERIC(18,4)"},
-        "dv_ratio": {"type": "NUMERIC(18,4)"},
-        "dv_ttm": {"type": "NUMERIC(18,4)"},
-        "total_share": {"type": "NUMERIC(20,4)"},
-        "float_share": {"type": "NUMERIC(20,4)"},
-        "free_share": {"type": "NUMERIC(20,4)"},
-        "total_mv": {"type": "NUMERIC(20,4)"},
-        "circ_mv": {"type": "NUMERIC(20,4)"},
+        "turnover_rate": {"type": "FLOAT"},
+        "turnover_rate_f": {"type": "FLOAT"},
+        "volume_ratio": {"type": "FLOAT"},
+        "pe": {"type": "FLOAT"},
+        "pe_ttm": {"type": "FLOAT"},
+        "pb": {"type": "FLOAT"},
+        "ps": {"type": "FLOAT"},
+        "ps_ttm": {"type": "FLOAT"},
+        "dv_ratio": {"type": "FLOAT"},
+        "dv_ttm": {"type": "FLOAT"},
+        "total_share": {"type": "FLOAT"},
+        "float_share": {"type": "FLOAT"},
+        "free_share": {"type": "FLOAT"},
+        "total_mv": {"type": "FLOAT"},
+        "circ_mv": {"type": "FLOAT"},
     }
 
     # 7.数据验证规则

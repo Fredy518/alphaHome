@@ -4,7 +4,7 @@ from typing import Dict, List
 import pandas as pd
 
 from ...sources.tushare import TushareTask
-from ...task_decorator import task_register
+from alphahome.common.task_system.task_decorator import task_register
 from ...tools.batch_utils import generate_natural_day_batches
 
 
@@ -234,7 +234,7 @@ class TushareFinaIndicatorTask(TushareTask):
     column_mapping = {}
 
     # 6.表结构定义 (Define schema based on fields and expected types)
-    schema = {
+    schema_def = {
         "ts_code": {"type": "VARCHAR(10)", "constraints": "NOT NULL"},
         "ann_date": {"type": "DATE", "constraints": "NOT NULL"},
         "end_date": {"type": "DATE", "constraints": "NOT NULL"},
@@ -383,7 +383,7 @@ class TushareFinaIndicatorTask(TushareTask):
         # 检查表是否存在
         try:
             # 使用 db_manager 的 table_exists 方法检查表是否存在
-            table_exists = await self.db.table_exists(self.table_name)
+            table_exists = await self.db.table_exists(self)
             if not table_exists:
                 self.logger.info(f"表 '{self.table_name}' 不存在，将在执行任务时创建。")
                 return  # 表不存在，后续操作不需要执行
@@ -392,7 +392,7 @@ class TushareFinaIndicatorTask(TushareTask):
             if table_exists:
                 # 1. 检查 ann_date 为 NULL 的记录 - 修改SQL查询，避免在DATE类型上使用空字符串比较
                 null_check_query = (
-                    f"SELECT COUNT(*) FROM {self.table_name} WHERE ann_date IS NULL"
+                    f"SELECT COUNT(*) FROM {self.get_full_table_name()} WHERE ann_date IS NULL"
                 )
                 null_count_result = await self.db.fetch_one(null_check_query)
                 null_count = null_count_result[0] if null_count_result else 0
@@ -402,7 +402,7 @@ class TushareFinaIndicatorTask(TushareTask):
                         f"表 '{self.table_name}' 中存在 {null_count} 条 ann_date 为 NULL 的记录，尝试使用 end_date 填充"
                     )
                     # 使用 end_date 填充 NULL 的 ann_date
-                    update_null_query = f"UPDATE {self.table_name} SET ann_date = end_date WHERE ann_date IS NULL"
+                    update_null_query = f"UPDATE {self.get_full_table_name()} SET ann_date = end_date WHERE ann_date IS NULL"
                     await self.db.execute(update_null_query)
                     self.logger.info(
                         f"已将 {null_count} 条记录的 ann_date 用 end_date 填充"
@@ -414,7 +414,7 @@ class TushareFinaIndicatorTask(TushareTask):
                     # 检查重复记录
                     duplicate_check_query = f"""
                     SELECT ts_code, end_date, COUNT(*) as count
-                    FROM {self.table_name}
+                    FROM {self.get_full_table_name()}
                     GROUP BY ts_code, end_date
                     HAVING COUNT(*) > 1
                     """
@@ -436,11 +436,11 @@ class TushareFinaIndicatorTask(TushareTask):
 
                             # 删除除最新记录外的所有重复记录
                             delete_duplicates_query = f"""
-                            DELETE FROM {self.table_name}
+                            DELETE FROM {self.get_full_table_name()}
                             WHERE ts_code = '{ts_code}' AND end_date = '{end_date}'
                             AND ctid NOT IN (
                                 SELECT ctid
-                                FROM {self.table_name}
+                                FROM {self.get_full_table_name()}
                                 WHERE ts_code = '{ts_code}' AND end_date = '{end_date}'
                                 ORDER BY update_time DESC NULLS LAST
                                 LIMIT 1
@@ -457,7 +457,7 @@ class TushareFinaIndicatorTask(TushareTask):
                     SELECT a.attname
                     FROM   pg_index i
                     JOIN   pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
-                    WHERE  i.indrelid = '{self.table_name}'::regclass
+                    WHERE  i.indrelid = '{self.get_full_table_name()}'::regclass
                     AND    i.indisprimary
                     """
                     primary_keys = await self.db.fetch(pk_query)
@@ -475,7 +475,7 @@ class TushareFinaIndicatorTask(TushareTask):
                         SELECT COUNT(*) 
                         FROM (
                             SELECT {', '.join(self.primary_keys)}, COUNT(*) 
-                            FROM {self.table_name} 
+                            FROM {self.get_full_table_name()} 
                             GROUP BY {', '.join(self.primary_keys)} 
                             HAVING COUNT(*) > 1
                         ) t
@@ -496,17 +496,17 @@ class TushareFinaIndicatorTask(TushareTask):
                             create_temp_table_query = f"""
                             CREATE TEMP TABLE {temp_table} AS
                             SELECT DISTINCT ON ({', '.join(self.primary_keys)}) *
-                            FROM {self.table_name}
+                            FROM {self.get_full_table_name()}
                             ORDER BY {', '.join(self.primary_keys)}, update_time DESC NULLS LAST
                             """
                             await self.db.execute(create_temp_table_query)
 
                             # 2. 截断原表
-                            truncate_query = f"TRUNCATE TABLE {self.table_name}"
+                            truncate_query = f"TRUNCATE TABLE {self.get_full_table_name()}"
                             await self.db.execute(truncate_query)
 
                             # 3. 从临时表恢复数据到原表
-                            restore_query = f"INSERT INTO {self.table_name} SELECT * FROM {temp_table}"
+                            restore_query = f"INSERT INTO {self.get_full_table_name()} SELECT * FROM {temp_table}"
                             await self.db.execute(restore_query)
 
                             # 4. 删除临时表
@@ -520,13 +520,13 @@ class TushareFinaIndicatorTask(TushareTask):
                         # 更新主键约束
                         # 删除现有主键约束
                         drop_pk_query = f"""
-                        ALTER TABLE {self.table_name} DROP CONSTRAINT IF EXISTS {self.table_name}_pkey;
+                        ALTER TABLE {self.get_full_table_name()} DROP CONSTRAINT IF EXISTS {self.table_name}_pkey;
                         """
                         await self.db.execute(drop_pk_query)
 
                         # 添加新的主键约束
                         add_pk_query = f"""
-                        ALTER TABLE {self.table_name} ADD PRIMARY KEY ({', '.join(self.primary_keys)});
+                        ALTER TABLE {self.get_full_table_name()} ADD PRIMARY KEY ({', '.join(self.primary_keys)});
                         """
                         await self.db.execute(add_pk_query)
 

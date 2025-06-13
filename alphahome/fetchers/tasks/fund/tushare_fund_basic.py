@@ -14,7 +14,7 @@ import pandas as pd
 
 # 确认导入路径正确 (相对于当前文件)
 from ...sources.tushare.tushare_task import TushareTask
-from ...task_decorator import task_register
+from alphahome.common.task_system.task_decorator import task_register
 
 # logger 由 Task 基类提供
 # logger = logging.getLogger(__name__)
@@ -82,7 +82,7 @@ class TushareFundBasicTask(TushareTask):
     }
 
     # 5. 数据库表结构
-    schema = {
+    schema_def = {
         "ts_code": {"type": "VARCHAR(15)", "constraints": "NOT NULL"},
         "name": {"type": "VARCHAR(100)"},
         "management": {"type": "VARCHAR(100)"},
@@ -172,17 +172,88 @@ class TushareFundBasicTask(TushareTask):
     async def process_data(self, df: pd.DataFrame, **kwargs: Any) -> pd.DataFrame:
         """
         异步处理从API获取的原始数据。
-        此方法可以被子类覆盖以实现特定的数据转换逻辑。
-        TushareDataTransformer 已处理通用日期转换。
+        直接实现数据处理逻辑，避免与TushareDataTransformer形成循环调用。
         """
         # 如果df为空或者不是DataFrame，则直接返回
         if not isinstance(df, pd.DataFrame) or df.empty:
             return df
 
-        # 所有必要的处理已由 TushareDataTransformer 完成。
-        # 此方法可以保留用于未来可能的、此任务真正特有的转换。
-        # 目前，它只检查并返回df。
+        # 手动执行TushareDataTransformer的处理步骤，但不调用其process_data方法
+        data = df.copy()
+
+        # 1. 应用列名映射
+        data = self.data_transformer._apply_column_mapping(data)
+
+        # 2. 处理主要的 date_column (如果定义)
+        data = self.data_transformer._process_date_column(data)
+
+        # 3. 应用通用数据类型转换
+        data = self.data_transformer._apply_transformations(data)
+
+        # 4. 手动处理 schema_def 中定义的其他 DATE/TIMESTAMP 列
+        if hasattr(self, "schema_def") and self.schema_def:
+            date_columns_to_process = []
+            # 识别需要处理的日期列
+            for col_name, col_def in self.schema_def.items():
+                col_type = (
+                    col_def.get("type", "").upper()
+                    if isinstance(col_def, dict)
+                    else str(col_def).upper()
+                )
+                if (
+                    ("DATE" in col_type or "TIMESTAMP" in col_type)
+                    and col_name in data.columns
+                    and col_name != getattr(self, "date_column", None)
+                ):
+                    # 仅处理尚未是日期时间类型的列
+                    if data[col_name].dtype == "object" or pd.api.types.is_string_dtype(
+                        data[col_name]
+                    ):
+                        date_columns_to_process.append(col_name)
+
+            # 批量处理识别出的日期列
+            if date_columns_to_process:
+                self.logger.info(
+                    f"转换以下列为日期时间格式: {', '.join(date_columns_to_process)}"
+                )
+                
+                for col_name in date_columns_to_process:
+                    try:
+                        # 首先尝试直接转换
+                        converted_col = pd.to_datetime(data[col_name], errors="coerce")
+                        
+                        # 检查是否大部分转换成功
+                        success_rate = converted_col.notna().sum() / len(converted_col)
+                        
+                        if success_rate < 0.5:  # 如果成功率低于50%，尝试其他格式
+                            self.logger.info(f"列 {col_name} 直接转换成功率较低 ({success_rate:.2%})，尝试YYYYMMDD格式")
+                            # 尝试 YYYYMMDD 格式
+                            converted_col = pd.to_datetime(
+                                data[col_name], format="%Y%m%d", errors="coerce"
+                            )
+                            
+                        # 检查最终转换结果
+                        final_success_rate = converted_col.notna().sum() / len(converted_col)
+                        invalid_count = converted_col.isna().sum()
+                        
+                        if invalid_count > 0:
+                            self.logger.warning(
+                                f"列 {col_name}: {invalid_count} 个值无法转换为日期，将设为NaT"
+                            )
+                        
+                        # 将转换后的列赋值回原数据
+                        data[col_name] = converted_col
+                        
+                        self.logger.info(f"列 {col_name} 成功转换为datetime类型，成功率: {final_success_rate:.2%}")
+                            
+                    except Exception as e:
+                        self.logger.error(f"转换列 {col_name} 时发生错误: {e}")
+                        continue
+
+        # 5. 对数据进行排序
+        data = self.data_transformer._sort_data(data)
+
         self.logger.info(
-            f"任务 {self.name}: process_data 被调用，返回 DataFrame (行数: {len(df)}). TushareDataTransformer 已完成主要处理。"
+            f"任务 {self.name}: process_data 处理完成，返回 DataFrame (行数: {len(data)})."
         )
-        return df
+        return data

@@ -47,7 +47,7 @@ class StockAdjustedPriceTask(ProcessorTask):
     required_columns = ["ts_code", "trade_date", "adj_open", "adj_high", "adj_low", "adj_close", "adj_vol"]
     
     # 数据库表结构定义
-    schema = {
+    schema_def = {
         "ts_code": {"type": "VARCHAR(20)", "constraints": "NOT NULL"},
         "trade_date": {"type": "VARCHAR(8)", "constraints": "NOT NULL"},
         "adj_open": {"type": "DECIMAL(10,2)"},

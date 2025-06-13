@@ -217,15 +217,16 @@ class ProcessorTask(BaseTask):
     
     async def _check_table_exists(self, table_name: str) -> bool:
         """检查表是否存在"""
-        query = """
-        SELECT EXISTS (
-            SELECT FROM information_schema.tables 
-            WHERE table_name = %s
-        );
-        """
+        # 使用 db_manager 的 table_exists 方法，支持 schema-aware 查询
         try:
-            result = await self.db.fetch_one(query, [table_name])
-            return result[0] if result else False
+            # 创建一个虚拟任务对象用于解析表名
+            class TableProxy:
+                def __init__(self, table_name):
+                    self.table_name = table_name
+                    self.data_source = None  # 默认使用 public schema
+                    
+            proxy = TableProxy(table_name)
+            return await self.db.table_exists(proxy)
         except Exception as e:
             self.logger.error(f"检查表 {table_name} 是否存在时出错: {str(e)}")
             return False

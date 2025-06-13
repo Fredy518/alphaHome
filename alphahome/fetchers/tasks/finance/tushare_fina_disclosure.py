@@ -14,7 +14,7 @@ import pandas as pd
 from dateutil.relativedelta import relativedelta
 
 from ...sources.tushare.tushare_task import TushareTask
-from ...task_decorator import task_register
+from alphahome.common.task_system.task_decorator import task_register
 from ...tools.batch_utils import generate_quarter_end_batches
 
 
@@ -73,10 +73,10 @@ class TushareFinaDisclosureTask(TushareTask):
     # 5. 列名映射
     column_mapping = {}
 
-    # 6. 表结构定义
-    schema = {
-        "ts_code": {"type": "VARCHAR(10)", "constraints": "NOT NULL"},
-        "ann_date": {"type": "DATE", "constraints": ""},
+    # 6. 数据库表结构
+    schema_def = {
+        "ts_code": {"type": "VARCHAR(15)", "constraints": "NOT NULL"},
+        "ann_date": {"type": "DATE"},
         "end_date": {"type": "DATE", "constraints": "NOT NULL"},
         "pre_date": {"type": "DATE", "constraints": ""},
         "actual_date": {"type": "DATE", "constraints": ""},

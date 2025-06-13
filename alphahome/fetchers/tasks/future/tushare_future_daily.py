@@ -15,7 +15,7 @@ import pandas as pd
 
 # 确认导入路径正确 (相对于当前文件)
 from ...sources.tushare.tushare_task import TushareTask
-from ...task_decorator import task_register
+from alphahome.common.task_system.task_decorator import task_register
 
 # 导入自然日批次生成工具函数
 from ...tools.batch_utils import generate_natural_day_batches
@@ -81,8 +81,8 @@ class TushareFutureDailyTask(TushareTask):
         "oi_chg": float,
     }
 
-    # 5. 数据库表结构 (根据 fields 和类型定义，使用映射后的列名 volume)
-    schema = {
+    # 5. 数据库表结构
+    schema_def = {
         "ts_code": {
             "type": "VARCHAR(20)",
             "constraints": "NOT NULL",

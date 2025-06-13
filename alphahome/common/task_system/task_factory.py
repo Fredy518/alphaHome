@@ -2,13 +2,7 @@ import inspect
 import logging
 from typing import Any, Dict, List, Optional, Type
 
-from ..config_manager import (
-    get_database_url,
-    get_task_config,
-    get_tushare_token,
-    load_config,
-)
-from ..config_manager import reload_config as _reload_config
+from ..config_manager import get_database_url, get_task_config, get_tushare_token, reload_config as _reload_config
 from ..db_manager import DBManager
 from .base_task import BaseTask
 
@@ -295,6 +289,18 @@ async def get_task(task_name: str) -> BaseTask:
 
 def get_tasks_by_type(task_type: str = None) -> Dict[str, Type]:
     """便捷函数，按类型获取任务字典"""
+    # 如果UnifiedTaskFactory未初始化，从装饰器注册表获取
+    if not UnifiedTaskFactory._initialized:
+        from .task_decorator import _task_registry
+        if task_type is None:
+            return _task_registry.copy()
+        
+        filtered_tasks = {}
+        for name, task_class in _task_registry.items():
+            if hasattr(task_class, 'task_type') and task_class.task_type == task_type:
+                filtered_tasks[name] = task_class
+        return filtered_tasks
+    
     return UnifiedTaskFactory.get_tasks_by_type(task_type)
 
 
@@ -305,4 +311,13 @@ def get_task_names_by_type(task_type: str = None) -> List[str]:
 
 def get_task_types() -> List[str]:
     """便捷函数，获取所有任务类型"""
+    # 如果UnifiedTaskFactory未初始化，从装饰器注册表获取
+    if not UnifiedTaskFactory._initialized:
+        from .task_decorator import _task_registry
+        types = set()
+        for task_class in _task_registry.values():
+            if hasattr(task_class, 'task_type'):
+                types.add(task_class.task_type)
+        return sorted(list(types))
+    
     return UnifiedTaskFactory.get_task_types() 

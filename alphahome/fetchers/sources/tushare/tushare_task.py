@@ -42,7 +42,7 @@ import numpy as np  # 导入 numpy
 import pandas as pd
 from tqdm.asyncio import tqdm
 
-from ...base_task import Task
+from ....common.task_system.base_task import BaseTask as Task
 from .tushare_api import TushareAPI
 from .tushare_batch_processor import TushareBatchProcessor
 from .tushare_data_transformer import TushareDataTransformer
@@ -75,6 +75,9 @@ class TushareTask(Task):
     ```
     """
 
+    # 任务类型标识
+    task_type = "fetch"
+    
     # 数据源标识
     data_source = "tushare"
 
@@ -198,8 +201,9 @@ class TushareTask(Task):
             return None
 
         try:
+            # 使用 db_manager 的 table_exists 方法检查表是否存在
             query = (
-                f"SELECT MAX({self.date_column}) as latest_date FROM {self.table_name}"
+                f"SELECT MAX({self.date_column}) as latest_date FROM {self.get_full_table_name()}"
             )
             result = await self.db.fetch_one(query)
 
@@ -259,24 +263,20 @@ class TushareTask(Task):
         if not self.table_name:
             self.logger.error("任务未定义 table_name，无法确保表存在。")
             return
-        if not hasattr(self, "schema") or not self.schema:
+        if not hasattr(self, "schema_def") or not self.schema_def:
             self.logger.warning(
-                f"任务 {self.name} 未定义 schema，无法自动创建表 {self.table_name}。"
+                f"任务 {self.name} 未定义 schema_def，无法自动创建表 {self.table_name}。"
             )
             return
 
         try:
             # 使用 db_manager 的 table_exists 方法检查表是否存在
-            if not await self.db.table_exists(self.table_name):
+            if not await self.db.table_exists(self):
                 self.logger.info(f"表 '{self.table_name}' 不存在，正在尝试创建...")
                 try:
                     # 使用 db_manager 中的 create_table_from_schema 方法
                     await self.db.create_table_from_schema(
-                        table_name=self.table_name,
-                        schema_def=self.schema,
-                        primary_keys=getattr(self, "primary_keys", []),
-                        date_column=getattr(self, "date_column", None),
-                        indexes=getattr(self, "indexes", []),
+                        self
                     )
                     self.logger.info(f"表 '{self.table_name}' 创建成功。")
                 except Exception as create_e:

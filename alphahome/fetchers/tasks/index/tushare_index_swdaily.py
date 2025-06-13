@@ -14,7 +14,7 @@ import pandas as pd
 
 # 导入基础类和装饰器
 from ...sources.tushare.tushare_task import TushareTask
-from ...task_decorator import task_register
+from alphahome.common.task_system.task_decorator import task_register
 
 # 导入批处理工具
 from ...tools.batch_utils import generate_trade_day_batches
@@ -79,8 +79,8 @@ class TushareIndexSwDailyTask(TushareTask):
     }
 
     # 5. 数据库表结构
-    schema = {
-        "ts_code": {"type": "VARCHAR(15)", "constraints": "NOT NULL"},
+    schema_def = {
+        "ts_code": {"type": "VARCHAR(20)", "constraints": "NOT NULL"},
         "trade_date": {"type": "DATE", "constraints": "NOT NULL"},
         "name": {"type": "VARCHAR(100)"},
         "open": {"type": "FLOAT"},

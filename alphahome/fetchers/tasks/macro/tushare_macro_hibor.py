@@ -15,7 +15,7 @@ import pandas as pd
 
 # 确认导入路径正确 (相对于当前文件)
 from ...sources.tushare.tushare_task import TushareTask
-from ...task_decorator import task_register
+from alphahome.common.task_system.task_decorator import task_register
 
 # 导入自然日批次生成工具函数
 from ...tools.batch_utils import generate_natural_day_batches
@@ -61,7 +61,7 @@ class TushareMacroHiborTask(TushareTask):
     }
 
     # 5. 数据库表结构
-    schema = {
+    schema_def = {
         "date": {"type": "DATE", "constraints": "NOT NULL"},
         "on": {"type": "NUMERIC(10,4)"},  # 隔夜拆借利率
         "1w": {"type": "NUMERIC(10,4)"},  # 1周拆借利率

@@ -24,7 +24,7 @@ from .ui import (
     task_execution_tab,
     task_log_tab,
 )
-from .utils.screen_utils import get_window_geometry_string, center_window_on_screen
+from .utils.screen_utils import get_window_geometry_string, center_window_on_screen, position_window_top_left
 from .utils.dpi_manager import initialize_dpi_manager, get_dpi_manager, DisplayMode
 from .utils.dpi_aware_ui import initialize_ui_factory
 
@@ -89,8 +89,8 @@ class MainWindow(tk.Tk):
         min_width, min_height = self.ui_factory.get_scaled_dimensions(1200, 800)
         self.minsize(min_width, min_height)
         
-        # 窗口居中显示
-        self.after_idle(lambda: center_window_on_screen(self))
+        # 窗口定位到左上角
+        self.after_idle(lambda: position_window_top_left(self))
 
         self.ui_elements = {}
 

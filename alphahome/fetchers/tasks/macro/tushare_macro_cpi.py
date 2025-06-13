@@ -15,7 +15,7 @@ import pandas as pd
 
 # 确认导入路径正确 (相对于当前文件)
 from ...sources.tushare.tushare_task import TushareTask
-from ...task_decorator import task_register
+from alphahome.common.task_system.task_decorator import task_register
 
 # 导入月份批次生成工具函数
 from ...tools.batch_utils import generate_month_batches
@@ -66,8 +66,8 @@ class TushareMacroCpiTask(TushareTask):
     # 所有字段转换为 float，除了 month
     transformations = {field: float for field in fields if field != "month"}
 
-    # 5. 数据库表结构 (根据 fields 和类型定义)
-    schema = {
+    # 5. 数据库表结构
+    schema_def = {
         "month": {
             "type": "VARCHAR(10)",
             "constraints": "NOT NULL",

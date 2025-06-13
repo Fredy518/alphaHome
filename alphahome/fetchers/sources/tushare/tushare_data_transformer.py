@@ -260,12 +260,12 @@ class TushareDataTransformer:
         # 3. 应用通用数据类型转换 (from transformations dict)
         data = self._apply_transformations(data)
 
-        # 4. 显式处理 schema 中定义的其他 DATE/TIMESTAMP 列
-        # 检查 self.task 是否具有 schema 属性
-        if hasattr(self.task, "schema") and self.task.schema:
+        # 4. 显式处理 schema_def 中定义的其他 DATE/TIMESTAMP 列
+        # 检查 self.task 是否具有 schema_def 属性
+        if hasattr(self.task, "schema_def") and self.task.schema_def:
             date_columns_to_process = []
             # 识别需要处理的日期列
-            for col_name, col_def in self.task.schema.items():
+            for col_name, col_def in self.task.schema_def.items():
                 col_type = (
                     col_def.get("type", "").upper()
                     if isinstance(col_def, dict)
@@ -285,20 +285,49 @@ class TushareDataTransformer:
             # 批量处理识别出的日期列
             if date_columns_to_process:
                 self.logger.info(
-                    f"转换以下列为日期时间格式 (YYYYMMDD): {', '.join(date_columns_to_process)}"
+                    f"转换以下列为日期时间格式: {', '.join(date_columns_to_process)}"
                 )
-                original_count = len(data)
+                
                 for col_name in date_columns_to_process:
-                    # 尝试使用 YYYYMMDD 格式转换
-                    converted_col = pd.to_datetime(
-                        data[col_name], format="%Y%m%d", errors="coerce"
-                    )
-                    data[col_name] = converted_col
-
-                if len(data) < original_count:
-                    self.logger.warning(
-                        f"处理日期列: 移除了 {original_count - len(data)} 行 (注意：移除逻辑已修改)。"
-                    )
+                    self.logger.debug(f"处理日期列: {col_name}")
+                    original_dtype = data[col_name].dtype
+                    
+                    try:
+                        # 首先尝试直接转换（适用于已经是正确格式的日期）
+                        converted_col = pd.to_datetime(data[col_name], errors="coerce")
+                        
+                        # 检查是否大部分转换成功
+                        success_rate = converted_col.notna().sum() / len(converted_col)
+                        
+                        if success_rate < 0.5:  # 如果成功率低于50%，尝试其他格式
+                            self.logger.info(f"列 {col_name} 直接转换成功率较低 ({success_rate:.2%})，尝试YYYYMMDD格式")
+                            # 尝试 YYYYMMDD 格式
+                            converted_col = pd.to_datetime(
+                                data[col_name], format="%Y%m%d", errors="coerce"
+                            )
+                            
+                        # 检查最终转换结果
+                        final_success_rate = converted_col.notna().sum() / len(converted_col)
+                        invalid_count = converted_col.isna().sum()
+                        
+                        if invalid_count > 0:
+                            self.logger.warning(
+                                f"列 {col_name}: {invalid_count} 个值无法转换为日期，将设为NaT"
+                            )
+                        
+                        # 将转换后的列赋值回原数据
+                        data[col_name] = converted_col
+                        
+                        # 验证转换结果
+                        if not pd.api.types.is_datetime64_any_dtype(data[col_name]):
+                            self.logger.error(f"列 {col_name} 转换后仍不是datetime类型: {data[col_name].dtype}")
+                        else:
+                            self.logger.info(f"列 {col_name} 成功转换为datetime类型，成功率: {final_success_rate:.2%}")
+                            
+                    except Exception as e:
+                        self.logger.error(f"转换列 {col_name} 时发生错误: {e}")
+                        # 保持原始数据不变
+                        continue
 
         # 5. 对数据进行排序 (应该在所有转换后进行)
         data = self._sort_data(data)

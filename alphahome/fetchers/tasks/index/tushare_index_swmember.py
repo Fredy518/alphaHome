@@ -15,7 +15,7 @@ import pandas as pd
 
 # 确认导入路径正确
 from ...sources.tushare.tushare_task import TushareTask
-from ...task_decorator import task_register
+from alphahome.common.task_system.task_decorator import task_register
 
 
 @task_register()
@@ -57,7 +57,7 @@ class TushareIndexSwmemberTask(TushareTask):  # <-- 类名改回
     transformations = {}
 
     # 5. 数据库表结构
-    schema = {
+    schema_def = {
         "l1_code": {"type": "VARCHAR(20)"},
         "l1_name": {"type": "VARCHAR(50)"},
         "l2_code": {"type": "VARCHAR(20)"},

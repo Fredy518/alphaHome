@@ -237,4 +237,43 @@ def center_window_on_screen(root: tk.Tk, width: int = None, height: int = None) 
     
     geometry_str = f"{width}x{height}+{x}+{y}"
     root.geometry(geometry_str)
-    logger.info(f"窗口居中: {geometry_str}") 
+    logger.info(f"窗口居中: {geometry_str}")
+
+
+def position_window_top_left(root: tk.Tk, width: int = None, height: int = None, 
+                           offset_x: int = 450, offset_y: int = 250) -> None:
+    """
+    将窗口定位到屏幕左上角
+    
+    Args:
+        root: Tkinter根窗口实例
+        width: 窗口宽度，如果为None则使用当前窗口宽度
+        height: 窗口高度，如果为None则使用当前窗口高度
+        offset_x: 距离屏幕左边缘的偏移量（像素）
+        offset_y: 距离屏幕上边缘的偏移量（像素）
+    """
+    if width is None or height is None:
+        root.update_idletasks()
+        current_geometry = root.geometry()
+        if 'x' in current_geometry:
+            size_part = current_geometry.split('+')[0]
+            if 'x' in size_part:
+                w, h = size_part.split('x')
+                width = width or int(w)
+                height = height or int(h)
+    
+    screen_info = get_screen_info(root)
+    screen_width = screen_info['width']
+    screen_height = screen_info['height']
+    
+    # 设置左上角位置，带有偏移量
+    x = offset_x
+    y = offset_y
+    
+    # 确保窗口不会超出屏幕边界
+    x = max(0, min(x, screen_width - width))
+    y = max(0, min(y, screen_height - height))
+    
+    geometry_str = f"{width}x{height}+{x}+{y}"
+    root.geometry(geometry_str)
+    logger.info(f"窗口定位到左上角: {geometry_str}") 

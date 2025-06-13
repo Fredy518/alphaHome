@@ -26,13 +26,13 @@ def task_register(task_name=None):
 
     Examples:
         @task_register()
-        class MyFetchTask(FetchTask):
+        class MyFetchTask(BaseTask):  # 直接继承BaseTask
             name = "tushare_stock_daily"
             task_type = "fetch"
             # ...
 
         @task_register()
-        class MyProcessorTask(ProcessorTask):
+        class MyProcessorTask(BaseTask):  # 直接继承BaseTask
             name = "stock_adjusted_price"
             task_type = "processor"
             # ...

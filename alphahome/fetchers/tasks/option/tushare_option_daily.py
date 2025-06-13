@@ -15,7 +15,7 @@ import pandas as pd
 
 # 确认导入路径正确 (相对于当前文件)
 from ...sources.tushare.tushare_task import TushareTask
-from ...task_decorator import task_register
+from alphahome.common.task_system.task_decorator import task_register
 
 # 导入自然日批次生成工具函数
 from ...tools.batch_utils import generate_natural_day_batches
@@ -81,22 +81,22 @@ class TushareOptionDailyTask(TushareTask):
         "oi": float,
     }
 
-    # 5. 数据库表结构 (根据 fields 和类型定义，使用映射后的列名 volume)
-    schema = {
-        "ts_code": {"type": "VARCHAR(20)", "constraints": "NOT NULL"},
+    # 5. 数据库表结构
+    schema_def = {
+        "ts_code": {"type": "VARCHAR(30)", "constraints": "NOT NULL"},
         "trade_date": {"type": "DATE", "constraints": "NOT NULL"},
         "exchange": {"type": "VARCHAR(10)"},
-        "pre_settle": {"type": "NUMERIC(15,4)"},
-        "pre_close": {"type": "NUMERIC(15,4)"},
-        "open": {"type": "NUMERIC(15,4)"},
-        "high": {"type": "NUMERIC(15,4)"},
-        "low": {"type": "NUMERIC(15,4)"},
-        "close": {"type": "NUMERIC(15,4)"},
-        "settle": {"type": "NUMERIC(15,4)"},  # 结算价
-        "pre_settle": {"type": "NUMERIC(15,4)"},  # 昨日结算价
-        "volume": {"type": "NUMERIC(20,4)"},  # 成交量 (映射后的名称)
-        "amount": {"type": "NUMERIC(20,4)"},  # 成交额
-        "oi": {"type": "NUMERIC(20,4)"},  # 持仓量
+        "pre_settle": {"type": "FLOAT"},
+        "pre_close": {"type": "FLOAT"},
+        "open": {"type": "FLOAT"},
+        "high": {"type": "FLOAT"},
+        "low": {"type": "FLOAT"},
+        "close": {"type": "FLOAT"},
+        "settle": {"type": "FLOAT"},  # 结算价
+        "pre_settle": {"type": "FLOAT"},  # 昨日结算价
+        "volume": {"type": "FLOAT"},  # 成交量 (映射后的名称)
+        "amount": {"type": "FLOAT"},  # 成交额
+        "oi": {"type": "FLOAT"},  # 持仓量
         # update_time 会自动添加
     }
 

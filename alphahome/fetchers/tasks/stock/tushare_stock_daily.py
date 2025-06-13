@@ -4,7 +4,7 @@ from typing import Dict, List
 import pandas as pd
 
 from ...sources.tushare import TushareTask
-from ...task_decorator import task_register
+from alphahome.common.task_system.task_decorator import task_register
 
 # from ...tools.calendar import get_trade_days_between # 导入交易日工具 # <-- REMOVE
 from ...tools.batch_utils import (  # 导入交易日批次生成工具函数
@@ -72,18 +72,18 @@ class TushareStockDailyTask(TushareTask):
     column_mapping = {"vol": "volume"}  # 将vol映射为volume
 
     # 6.表结构定义
-    schema = {
-        "ts_code": {"type": "VARCHAR(10)", "constraints": "NOT NULL"},
+    schema_def = {
+        "ts_code": {"type": "VARCHAR(15)", "constraints": "NOT NULL"},
         "trade_date": {"type": "DATE", "constraints": "NOT NULL"},
-        "open": {"type": "NUMERIC(10,4)"},
-        "high": {"type": "NUMERIC(10,4)"},
-        "low": {"type": "NUMERIC(10,4)"},
-        "close": {"type": "NUMERIC(10,4)"},
-        "pre_close": {"type": "NUMERIC(10,4)"},
-        "change": {"type": "NUMERIC(10,4)"},
-        "pct_chg": {"type": "NUMERIC(10,4)"},
-        "volume": {"type": "NUMERIC(20,4)"},  # 目标字段名
-        "amount": {"type": "NUMERIC(20,4)"},
+        "open": {"type": "FLOAT"},
+        "high": {"type": "FLOAT"},
+        "low": {"type": "FLOAT"},
+        "close": {"type": "FLOAT"},
+        "pre_close": {"type": "FLOAT"},
+        "change": {"type": "FLOAT"},
+        "pct_chg": {"type": "FLOAT"},
+        "volume": {"type": "FLOAT"},  # 目标字段名
+        "amount": {"type": "FLOAT"},
     }
 
     # 7.数据验证规则 (使用目标字段名 volume)

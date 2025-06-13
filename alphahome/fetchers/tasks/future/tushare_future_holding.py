@@ -15,7 +15,7 @@ import pandas as pd
 
 # 确认导入路径正确 (相对于当前文件)
 from ...sources.tushare.tushare_task import TushareTask
-from ...task_decorator import task_register
+from alphahome.common.task_system.task_decorator import task_register
 
 # 导入单交易日批次生成工具函数
 from ...tools.batch_utils import generate_single_date_batches
@@ -76,7 +76,7 @@ class TushareFutureHoldingTask(TushareTask):
     }
 
     # 5. 数据库表结构
-    schema = {
+    schema_def = {
         "trade_date": {"type": "DATE", "constraints": "NOT NULL"},
         "symbol": {
             "type": "VARCHAR(30)",

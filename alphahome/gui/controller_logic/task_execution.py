@@ -97,6 +97,20 @@ async def get_all_task_status(db_manager: DBManager):
         status_list = [dict(record) for record in records] if records else []
         for status in status_list:
             status["status_display"] = format_status_chinese(status.get("status"))
+            # 格式化更新时间，只显示到秒
+            if status.get("update_time"):
+                try:
+                    if isinstance(status["update_time"], str):
+                        # 如果是字符串，尝试解析为datetime
+                        from datetime import datetime
+                        dt = datetime.fromisoformat(status["update_time"].replace('Z', '+00:00'))
+                        status["update_time"] = dt.strftime("%Y-%m-%d %H:%M:%S")
+                    else:
+                        # 如果已经是datetime对象，直接格式化
+                        status["update_time"] = status["update_time"].strftime("%Y-%m-%d %H:%M:%S")
+                except Exception as e:
+                    logger.warning(f"格式化时间失败: {e}")
+                    # 如果格式化失败，保持原值
         
         if _send_response_callback:
             _send_response_callback("TASK_STATUS_UPDATE", status_list)

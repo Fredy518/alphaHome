@@ -21,7 +21,7 @@ from typing import Any, Dict, List, Optional
 import pandas as pd
 
 from ...sources.tushare.tushare_task import TushareTask
-from ...task_decorator import task_register
+from alphahome.common.task_system.task_decorator import task_register
 from ...tools.batch_utils import (
     generate_single_date_batches,
     generate_stock_code_batches,
@@ -85,9 +85,9 @@ class TushareStockDividendTask(TushareTask):
     }
 
     # 5. 数据库表结构
-    schema = {
+    schema_def = {
         "ts_code": {"type": "VARCHAR(15)", "constraints": "NOT NULL"},
-        "end_date": {"type": "DATE"},
+        "end_date": {"type": "DATE", "constraints": "NOT NULL"},
         "ann_date": {"type": "DATE"},
         "div_proc": {"type": "VARCHAR(10)"},
         "stk_div": {"type": "NUMERIC(10,4)"},
@@ -156,7 +156,7 @@ class TushareStockDividendTask(TushareTask):
         """
         try:
             # 全量模式下添加fields参数，显式传递所有输出字段
-            additional_params = {"fields": ",".join(self.schema.keys())}
+            additional_params = {"fields": ",".join(self.schema_def.keys())}
 
             # 使用通用工具函数生成单个股票代码批次
             batch_list = await generate_stock_code_batches(
@@ -196,7 +196,7 @@ class TushareStockDividendTask(TushareTask):
             self.logger.info(f"按日期分批: {start_date} 到 {end_date}")
 
             # 准备额外参数，添加fields字段
-            additional_params = {"fields": ",".join(self.schema.keys())}
+            additional_params = {"fields": ",".join(self.schema_def.keys())}
 
             # 使用batch_utils中的generate_single_date_batches方法
             batch_list = await generate_single_date_batches(

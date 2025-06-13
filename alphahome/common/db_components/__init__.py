@@ -8,6 +8,7 @@ from .data_operations_mixin import DataOperationsMixin
 from .db_manager_core import DBManagerCore
 from .schema_management_mixin import SchemaManagementMixin
 from .sql_operations_mixin import SQLOperationsMixin
+from .table_name_resolver import TableNameResolver
 from .utility_mixin import UtilityMixin
 
 __all__ = [
@@ -16,4 +17,5 @@ __all__ = [
     "DataOperationsMixin",
     "SchemaManagementMixin",
     "UtilityMixin",
+    "TableNameResolver",
 ]

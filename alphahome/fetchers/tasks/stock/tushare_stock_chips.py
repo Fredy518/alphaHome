@@ -15,7 +15,7 @@ from typing import Any, Dict, List, Optional
 import pandas as pd
 
 from ...sources.tushare.tushare_task import TushareTask
-from ...task_decorator import task_register
+from alphahome.common.task_system.task_decorator import task_register
 from ...tools.batch_utils import (  # 改回使用 generate_single_date_batches
     generate_single_date_batches,
 )
@@ -76,7 +76,7 @@ class TushareStockChipsTask(TushareTask):
     column_mapping = {}
 
     # 6. 表结构定义 (包含注释)
-    schema = {
+    schema_def = {
         "ts_code": {
             "type": "VARCHAR(10)",
             "constraints": "NOT NULL",

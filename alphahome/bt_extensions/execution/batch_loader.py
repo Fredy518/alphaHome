@@ -113,7 +113,7 @@ class BatchDataLoader:
         placeholders = ",".join(["%s" for _ in range(len(stock_codes))])
         sql = f"""
         SELECT ts_code, trade_date, open, high, low, close, volume, amount
-        FROM {table_name} 
+        FROM "tushare"."{table_name}" 
         WHERE ts_code IN ({placeholders})
           AND trade_date BETWEEN %s AND %s
         ORDER BY ts_code, trade_date

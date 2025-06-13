@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Optional, Union
+from typing import Optional, Union, List, Any
 
 
 class UtilityMixin:
@@ -21,87 +21,84 @@ class UtilityMixin:
             self.logger.error(f"数据库连接测试失败: {e}")
             return False
 
-    async def get_latest_date(
-        self, table_name: str, date_column: str, return_raw_object: bool = False
-    ) -> Optional[Union[str, datetime]]:
-        """获取表中指定日期/时间戳列的最大值。
+    async def get_latest_date(self, target: Any, date_column: str) -> Optional[datetime.date]:
+        """获取指定表中指定日期列的最新日期
 
         Args:
-            table_name (str): 表名。
-            date_column (str): 日期或时间戳列名。
-            return_raw_object (bool): 如果为 True，返回原始的 datetime 对象 (如果适用)；
-                                     否则，尝试返回 YYYYMMDD 格式的字符串。默认为 False。
+            target (Any): 表名字符串或任务对象
+            date_column (str): 日期列名
 
         Returns:
-            Optional[Union[str, datetime]]: 该列的最大值 (datetime 对象或 YYYYMMDD 字符串)，
-                                           如果列为空或查询失败，则返回 None。
+            Optional[datetime.date]: 最新日期，如果表为空或不存在则返回None
         """
-        if self.mode == "sync":
-            # 同步模式：使用同步方法
-            query = f"""
-            SELECT MAX("{date_column}") FROM "{table_name}";
-            """
-            try:
-                result = self.fetch_val_sync(query)
-            except Exception as e:
-                self.logger.warning(
-                    f"查询表 {table_name} 列 {date_column} 的最大值时出错: {e}"
-                )
-                return None
-        else:
-            # 异步模式：确保连接池存在并使用原生异步方法
-            if self.pool is None:
-                await self.connect()
-
-            query = f"""
-            SELECT MAX("{date_column}") FROM "{table_name}";
-            """
-            try:
-                async with self.pool.acquire() as conn:
-                    result = await conn.fetchval(query)
-            except Exception as e:
-                self.logger.warning(
-                    f"查询表 {table_name} 列 {date_column} 的最大值时出错: {e}"
-                )
-                return None
-
-        if result is not None:
-            self.logger.debug(
-                f"get_latest_date (表: {table_name}, 列: {date_column}) 返回类型: {type(result)}"
+        resolved_table_name = self.resolver.get_full_name(target)
+        
+        # 首先检查表是否存在，如果不存在则直接返回None
+        exists = await self.table_exists(resolved_table_name)
+        if not exists:
+            self.logger.warning(
+                f"尝试从不存在的表 '{resolved_table_name}' 获取最新日期，返回 None。"
             )
-        else:
-            self.logger.debug(
-                f"get_latest_date (表: {table_name}, 列: {date_column}) 返回 None"
-            )
+            return None
 
-        # --- 为了向后兼容性的条件格式化 ---
-        if result is not None and not return_raw_object:
-            # 默认行为：格式化为 YYYYMMDD 字符串
-            formatted_result = None
-            if isinstance(result, str):
-                # 处理来自数据库的潜在字符串输入 (尽管对于asyncpg不太可能)
-                if "-" in result:  # 尝试 YYYY-MM-DD
-                    try:
-                        formatted_result = datetime.strptime(
-                            result, "%Y-%m-%d"
-                        ).strftime("%Y%m%d")
-                    except ValueError:
-                        self.logger.warning(
-                            f"无法将日期字符串 '{result}' 解析为 YYYY-MM-DD 格式。"
-                        )
-                elif len(result) == 8 and result.isdigit():  # 已经是 YYYYMMDD
-                    formatted_result = result
-                else:  # 其他未知字符串格式
-                    self.logger.warning(f"接收到意外的日期字符串格式 '{result}'。")
-            elif isinstance(
-                result, datetime
-            ):  # 包括 datetime.date (因为它是datetime的子类)
-                # 将 datetime/date 对象转换为 YYYYMMDD 字符串
-                formatted_result = result.strftime("%Y%m%d")
-            else:  # 其他未知类型
-                self.logger.warning(f"接收到意外的日期类型 '{type(result)}'。")
+        # 构建查询语句
+        query = f'SELECT MAX("{date_column}") FROM {resolved_table_name};'
 
-            return formatted_result  # 返回格式化后的字符串，如果格式化失败则为 None
-        else:
-            # return_raw_object 为 True 或 result 为 None
-            return result  # 返回原始 datetime 对象或 None
+        try:
+            latest_date_val = await self.fetch_val(query)
+            if latest_date_val is None:
+                self.logger.info(f"表 '{resolved_table_name}' 为空，无最新日期。")
+                return None
+            
+            # 确保返回的是 date 对象
+            if isinstance(latest_date_val, datetime):
+                return latest_date_val.date()
+            if isinstance(latest_date_val, date):
+                return latest_date_val
+            # 如果是其他类型，尝试解析
+            if isinstance(latest_date_val, str):
+                try:
+                    return datetime.strptime(latest_date_val, "%Y-%m-%d").date()
+                except ValueError:
+                    self.logger.error(f"无法将字符串 '{latest_date_val}' 解析为日期。")
+                    return None
+            
+            self.logger.warning(f"获取的最新日期类型未知: {type(latest_date_val)}")
+            return latest_date_val
+
+        except Exception as e:
+            self.logger.error(f"获取表 '{resolved_table_name}' 最新日期时出错: {e}", exc_info=True)
+            return None
+
+    async def get_column_names(self, target: Any) -> List[str]:
+        """获取数据表的所有列名"""
+        resolved_table_name = self.resolver.get_full_name(target)
+        schema, simple_name = resolved_table_name.split('.')
+        schema = schema.strip('"')
+        simple_name = simple_name.strip('"')
+
+        query = """
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_schema = $1 AND table_name = $2
+        ORDER BY ordinal_position;
+        """
+        rows = await self.fetch(query, schema, simple_name)
+        return [row['column_name'] for row in rows] if rows else []
+
+    async def get_distinct_values(self, target: Any, column_name: str) -> List[Any]:
+        """获取指定表中指定列的唯一值列表"""
+        resolved_table_name = self.resolver.get_full_name(target)
+        
+        # 检查表是否存在
+        if not await self.table_exists(resolved_table_name):
+            self.logger.warning(f"表 '{resolved_table_name}' 不存在，无法获取唯一值。")
+            return []
+
+        query = f'SELECT DISTINCT "{column_name}" FROM {resolved_table_name};'
+        try:
+            rows = await self.fetch(query)
+            return [row[0] for row in rows] if rows else []
+        except Exception as e:
+            self.logger.error(f"从表 '{resolved_table_name}' 获取列 '{column_name}' 唯一值时出错: {e}", exc_info=True)
+            return []

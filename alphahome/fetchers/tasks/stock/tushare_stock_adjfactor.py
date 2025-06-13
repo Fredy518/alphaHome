@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional
 import pandas as pd
 
 from ...sources.tushare import TushareTask
-from ...task_decorator import task_register
+from alphahome.common.task_system.task_decorator import task_register
 
 # from ...tools.calendar import get_trade_days_between # <-- REMOVE
 from ...tools.batch_utils import generate_trade_day_batches
@@ -48,10 +48,10 @@ class TushareStockAdjFactorTask(TushareTask):
     column_mapping = {}
 
     # 6.表结构定义
-    schema = {
-        "ts_code": {"type": "VARCHAR(10)", "constraints": "NOT NULL"},
+    schema_def = {
+        "ts_code": {"type": "VARCHAR(15)", "constraints": "NOT NULL"},
         "trade_date": {"type": "DATE", "constraints": "NOT NULL"},
-        "adj_factor": {"type": "NUMERIC(18,6)"},  # 复权因子通常需要较高的精度
+        "adj_factor": {"type": "FLOAT"},
     }
 
     # 7.数据验证规则

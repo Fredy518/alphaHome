@@ -14,7 +14,7 @@ import pandas as pd
 
 # 导入基础类和装饰器
 from ...sources.tushare.tushare_task import TushareTask
-from ...task_decorator import task_register
+from alphahome.common.task_system.task_decorator import task_register
 
 # 导入批处理工具
 from ...tools.batch_utils import generate_single_date_batches
@@ -72,7 +72,7 @@ class TushareFundNavTask(TushareTask):
     }
 
     # 5. 数据库表结构
-    schema = {
+    schema_def = {
         "ts_code": {"type": "VARCHAR(15)", "constraints": "NOT NULL"},
         "ann_date": {"type": "DATE"},
         "nav_date": {"type": "DATE", "constraints": "NOT NULL"},

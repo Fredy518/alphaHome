@@ -19,6 +19,8 @@ class SQLOperationsMixin:
         Returns:
             Any: 执行结果
         """
+        # Note: This method is low-level and does not automatically resolve table names.
+        # It's intended for raw SQL execution. Higher-level methods should handle resolution.
         if self.pool is None:
             await self.connect()
 
@@ -108,6 +110,7 @@ class SQLOperationsMixin:
 
     def execute_sync(self, query: str, params: tuple = None):
         """同步执行SQL语句"""
+        # Note: Low-level method, no table name resolution.
         if self.mode == "async":
             # 异步模式：包装异步方法
             if params:

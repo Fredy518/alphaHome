@@ -15,7 +15,7 @@ import pandas as pd
 
 # 导入基础类和装饰器
 from ...sources.tushare.tushare_task import TushareTask
-from ...task_decorator import task_register
+from alphahome.common.task_system.task_decorator import task_register
 
 # 导入批处理工具
 from ...tools.batch_utils import (
@@ -87,8 +87,8 @@ class TushareFundDailyTask(TushareTask):
         "amount": lambda x: pd.to_numeric(x, errors="coerce"),  # 原始列
     }
 
-    # 5. 数据库表结构 (使用映射后的列名)
-    schema = {
+    # 5. 数据库表结构
+    schema_def = {
         "ts_code": {"type": "VARCHAR(15)", "constraints": "NOT NULL"},
         "trade_date": {"type": "DATE", "constraints": "NOT NULL"},
         "open": {"type": "FLOAT"},

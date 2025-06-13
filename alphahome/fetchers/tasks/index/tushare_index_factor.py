@@ -14,7 +14,7 @@ import pandas as pd
 
 # 导入基础类和装饰器
 from ...sources.tushare.tushare_task import TushareTask
-from ...task_decorator import task_register
+from alphahome.common.task_system.task_decorator import task_register
 
 # 导入批处理工具
 from ...tools.batch_utils import generate_single_date_batches
@@ -146,10 +146,11 @@ class TushareIndexFactorProTask(TushareTask):
         {"name": "idx_factorpro_update_time", "columns": "update_time"},
     ]
 
-    # 5. 表结构定义 (所有因子字段使用 NUMERIC)
-    schema = {
-        "ts_code": {"type": "VARCHAR(30)", "constraints": "NOT NULL"},
+    # 5. 数据库表结构
+    schema_def = {
+        "ts_code": {"type": "VARCHAR(20)", "constraints": "NOT NULL"},
         "trade_date": {"type": "DATE", "constraints": "NOT NULL"},
+        "est_peg": {"type": "FLOAT"},
         # 先定义基础行情字段
         "open": {"type": "NUMERIC(18,6)"},
         "high": {"type": "NUMERIC(18,6)"},

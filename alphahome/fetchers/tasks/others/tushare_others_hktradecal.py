@@ -14,7 +14,7 @@ from typing import Any, Dict, List, Optional
 import pandas as pd
 
 from ...sources.tushare.tushare_task import TushareTask
-from ...task_decorator import task_register
+from alphahome.common.task_system.task_decorator import task_register
 from ...tools.batch_utils import generate_natural_day_batches
 
 # logger 实例将由 TushareTask 基类提供 (self.logger)
@@ -48,8 +48,8 @@ class TushareOthersHktradecalTask(TushareTask):
         )  # 'Series' object has no attribute 'as_type'
     }
 
-    # 数据库表结构定义 (与大陆任务共享，定义应一致)
-    schema: Dict[str, Dict[str, Any]] = {
+    # 数据库表结构定义 (与大陆日历任务共享，定义应一致)
+    schema_def: Dict[str, Dict[str, Any]] = {
         "exchange": {"type": "VARCHAR(10)", "constraints": "NOT NULL"},
         "cal_date": {"type": "DATE", "constraints": "NOT NULL"},
         "is_open": {"type": "INTEGER"},

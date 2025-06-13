@@ -13,7 +13,7 @@ from typing import Any, Dict, List
 import pandas as pd
 
 from ...sources.tushare.tushare_task import TushareTask
-from ...task_decorator import task_register
+from alphahome.common.task_system.task_decorator import task_register
 from ...tools.batch_utils import generate_trade_day_batches
 
 
@@ -68,7 +68,7 @@ class TushareHKDailyTask(TushareTask):
     }
 
     # 5. 数据库表结构
-    schema = {
+    schema_def = {
         "ts_code": {"type": "VARCHAR(15)", "constraints": "NOT NULL"},
         "trade_date": {"type": "DATE", "constraints": "NOT NULL"},
         "open": {"type": "NUMERIC(12,4)"},

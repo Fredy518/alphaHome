@@ -15,7 +15,7 @@ import pandas as pd
 
 # 导入基础类和装饰器
 from ...sources.tushare.tushare_task import TushareTask
-from ...task_decorator import task_register
+from alphahome.common.task_system.task_decorator import task_register
 
 # 导入批处理工具
 from ...tools.batch_utils import generate_single_date_batches
@@ -319,24 +319,11 @@ class TushareStockFactorProTask(TushareTask):
         {"name": "idx_stkfactor_update_time", "columns": "update_time"},
     ]
 
-    # 5. 表结构定义 (所有数值型字段使用 NUMERIC)
-    # 准备需要排除的非数值字段或已特殊处理的字段
-    schema = {
-        "ts_code": {
-            "type": "VARCHAR(10)",
-            "constraints": "NOT NULL",
-        },  # 股票代码通常较短
+    # 5. 数据库表结构
+    schema_def = {
+        "ts_code": {"type": "VARCHAR(15)", "constraints": "NOT NULL"},
         "trade_date": {"type": "DATE", "constraints": "NOT NULL"},
-        "open": {"type": "NUMERIC(18, 6)"},
-        "high": {"type": "NUMERIC(18, 6)"},
-        "low": {"type": "NUMERIC(18, 6)"},
-        "close": {"type": "NUMERIC(18, 6)"},
-        "volume": {
-            "type": "NUMERIC(20, 2)"
-        },  # 显式定义映射后的 volume，使用较大范围和2位小数
-        "amount": {
-            "type": "NUMERIC(20, 2)"
-        },  # 显式定义映射后的 amount，使用较大范围和2位小数
+        "pe": {"type": "FLOAT"},
         # 动态生成其他所有数值字段的 schema
         **{
             col: {"type": "NUMERIC(18, 6)"}

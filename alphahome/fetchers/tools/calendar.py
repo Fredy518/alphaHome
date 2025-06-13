@@ -199,7 +199,7 @@ async def get_trade_cal(
 
     sql_query = """
     SELECT exchange, cal_date, is_open, pretrade_date
-    FROM tushare_others_calendar
+    FROM "tushare"."tushare_others_calendar"
     WHERE exchange = $1 
       AND cal_date >= TO_DATE($2, 'YYYYMMDD')
       AND cal_date <= TO_DATE($3, 'YYYYMMDD')

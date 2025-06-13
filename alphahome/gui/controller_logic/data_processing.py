@@ -133,17 +133,31 @@ async def _update_tasks_with_latest_timestamp():
                 task_detail["latest_update_time"] = "N/A (DB Error)"
             return
 
-        tasks_to_query = [(i, t['table_name']) for i, t in enumerate(_processing_task_cache) if t.get('table_name')]
+        tasks_to_query = [(i, t['name']) for i, t in enumerate(_processing_task_cache) if t.get('table_name')]
         
         if not tasks_to_query:
             return
 
-        query_coroutines = [db_manager.get_latest_date(tn, "update_time", return_raw_object=True) for _, tn in tasks_to_query]
+        # 获取任务对象
+        task_objects = []
+        for i, task_name in tasks_to_query:
+            try:
+                task_obj = await UnifiedTaskFactory.get_task(task_name)
+                task_objects.append((i, task_obj))
+            except Exception as e:
+                logger.warning(f"获取任务对象 {task_name} 失败: {e}")
+                # 如果获取任务对象失败，设置错误状态
+                _processing_task_cache[i]["latest_update_time"] = "N/A (Task Error)"
+
+        if not task_objects:
+            return
+
+        query_coroutines = [db_manager.get_latest_date(task_obj, "update_time") for _, task_obj in task_objects]
         
         results = await asyncio.gather(*query_coroutines, return_exceptions=True)
 
         for i, result in enumerate(results):
-            task_index, _ = tasks_to_query[i]
+            task_index, _ = task_objects[i]
             
             if isinstance(result, Exception):
                 timestamp_str = "N/A (Query Error)"

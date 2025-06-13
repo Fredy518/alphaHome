@@ -4,7 +4,7 @@ from typing import Dict, List
 import pandas as pd
 
 from ...sources.tushare import TushareTask
-from ...task_decorator import task_register
+from alphahome.common.task_system.task_decorator import task_register
 from ...tools.batch_utils import generate_natural_day_batches
 
 
@@ -84,14 +84,14 @@ class TushareStockReportRcTask(TushareTask):
     column_mapping = {}
 
     # 6.表结构定义
-    schema = {
-        # Primary Keys
-        "ts_code": {"type": "VARCHAR(10)", "constraints": "NOT NULL"},
+    schema_def = {
+        "ts_code": {"type": "VARCHAR(15)", "constraints": "NOT NULL"},
+        "ann_date": {"type": "DATE"},
+        "end_date": {"type": "DATE"},
         "report_date": {"type": "DATE", "constraints": "NOT NULL"},
         "org_name": {"type": "VARCHAR(100)", "constraints": "NOT NULL"},
         "author_name": {"type": "VARCHAR(255)", "constraints": "NOT NULL"},
         "quarter": {"type": "VARCHAR(10)", "constraints": "NOT NULL"},
-        # Other Fields
         "name": {"type": "VARCHAR(50)"},
         "report_title": {"type": "TEXT"},  # Titles can be long
         "report_type": {"type": "VARCHAR(50)"},
