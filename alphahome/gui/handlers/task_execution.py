@@ -91,8 +91,9 @@ def handle_stop_tasks(widgets: Dict[str, tk.Widget]):
     logger.info("Stop tasks button clicked")
     # Add log entry to show that stop was requested
     add_log_entry(widgets, "停止任务请求已发送", "warning")
-    # Here you could call controller.stop_tasks() or similar
-    # For now, this is a placeholder
+    # 调用控制器停止任务
+    import asyncio
+    asyncio.create_task(controller.handle_request("STOP_TASKS"))
 
 
 def update_task_run_status(widgets: Dict[str, tk.Widget], status_list: List[Dict[str, Any]]):

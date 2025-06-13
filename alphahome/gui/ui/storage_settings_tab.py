@@ -6,6 +6,8 @@
 import tkinter as tk
 from tkinter import ttk
 from typing import Dict
+from ..utils.dpi_manager import get_dpi_manager, DisplayMode
+from ..utils.dpi_aware_ui import get_ui_factory
 
 
 def create_storage_settings_tab(parent: ttk.Frame) -> Dict[str, tk.Widget]:
@@ -43,6 +45,82 @@ def create_storage_settings_tab(parent: ttk.Frame) -> Dict[str, tk.Widget]:
     widgets["tushare_token"] = ts_entry
 
     ts_frame.grid_columnconfigure(1, weight=1)
+
+    # --- 显示设置框架 ---
+    display_frame = ttk.LabelFrame(parent, text="显示设置", padding="10")
+    display_frame.pack(side=tk.TOP, fill=tk.X, pady=5)
+    
+    # 获取DPI管理器和UI工厂
+    dpi_manager = get_dpi_manager()
+    ui_factory = get_ui_factory()
+    
+    # 当前显示信息
+    info_text = f"当前分辨率: {dpi_manager.dpi_info.logical_resolution[0]}x{dpi_manager.dpi_info.logical_resolution[1]}\n"
+    info_text += f"DPI缩放: {dpi_manager.dpi_info.scale_factor:.0%}\n"
+    info_text += f"高DPI环境: {'是' if dpi_manager.dpi_info.is_high_dpi else '否'}"
+    
+    display_info_label = ui_factory.create_label(display_frame, text=info_text, justify=tk.LEFT)
+    display_info_label.grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 10))
+    widgets["display_info_label"] = display_info_label
+    
+    # 显示模式选择
+    mode_label = ui_factory.create_label(display_frame, text="显示模式:", width=12, anchor=tk.W)
+    mode_label.grid(row=1, column=0, padx=5, pady=2, sticky=tk.W)
+    
+    mode_values = [
+        ("自动检测", DisplayMode.AUTO.value),
+        ("标准模式", DisplayMode.STANDARD.value),
+        ("高DPI模式", DisplayMode.HIGH_DPI.value),
+        ("4K优化模式", DisplayMode.UHD_4K.value)
+    ]
+    
+    mode_combo = ui_factory.create_combobox(
+        display_frame, 
+        values=[item[0] for item in mode_values],
+        state="readonly",
+        width=20
+    )
+    mode_combo.grid(row=1, column=1, padx=5, pady=2, sticky=tk.W)
+    
+    # 设置当前值
+    current_mode = dpi_manager.current_mode.value
+    for display_name, mode_value in mode_values:
+        if mode_value == current_mode:
+            mode_combo.set(display_name)
+            break
+    
+    widgets["display_mode_combo"] = mode_combo
+    widgets["display_mode_values"] = mode_values  # 保存映射关系
+    
+    # 推荐模式提示
+    recommended_mode = dpi_manager.recommend_display_mode()
+    recommended_text = f"推荐模式: "
+    for display_name, mode_value in mode_values:
+        if mode_value == recommended_mode.value:
+            recommended_text += display_name
+            break
+    
+    recommend_label = ui_factory.create_label(display_frame, text=recommended_text, foreground="blue")
+    recommend_label.grid(row=2, column=0, columnspan=2, sticky="w", pady=(5, 0))
+    widgets["display_recommend_label"] = recommend_label
+    
+    # 应用按钮和重启按钮
+    button_subframe = ui_factory.create_frame(display_frame)
+    button_subframe.grid(row=3, column=0, columnspan=2, pady=(10, 0), sticky="w")
+    
+    apply_display_button = ui_factory.create_button(
+        button_subframe,
+        text="应用显示设置"
+    )
+    apply_display_button.pack(side=tk.LEFT, padx=(0, 10))
+    widgets["apply_display_button"] = apply_display_button
+    
+    restart_app_button = ui_factory.create_button(
+        button_subframe,
+        text="重启应用"
+    )
+    restart_app_button.pack(side=tk.LEFT)
+    widgets["restart_app_button"] = restart_app_button
 
     # --- 底部按钮框架 ---
     button_frame = ttk.Frame(parent, padding=(0, 10))

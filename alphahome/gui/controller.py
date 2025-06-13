@@ -90,6 +90,12 @@ async def handle_run_tasks(
             _response_callback("LOG", {"level": "error", "message": "数据库未连接，无法执行任务。"})
 
 
+def handle_stop_tasks():
+    """Handles request to stop running tasks."""
+    logger.info("Request to stop tasks received")
+    task_execution.stop_tasks()
+
+
 async def handle_get_collection_tasks():
     """Handles request to get data collection tasks."""
     await data_collection.handle_get_collection_tasks()
@@ -118,6 +124,8 @@ async def handle_request(command: str, data: Optional[Dict[str, Any]] = None):
                 end_date=data.get("end_date"),
                 exec_mode=data.get("exec_mode", "serial"),
             )
+        elif command == "STOP_TASKS":
+            handle_stop_tasks()
         elif command == "GET_COLLECTION_TASKS":
             await handle_get_collection_tasks()
         elif command == "TOGGLE_COLLECTION_SELECT":
@@ -158,3 +166,7 @@ def request_processing_tasks():
 def request_all_task_status():
     """请求获取所有任务状态。"""
     asyncio.create_task(handle_request("GET_ALL_TASK_STATUS"))
+
+def toggle_processing_task_selection(task_name: str):
+    """切换数据处理任务的选择状态。"""
+    data_processing.toggle_processing_task_selection(task_name)

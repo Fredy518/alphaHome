@@ -26,6 +26,10 @@ _send_response_callback = None
 _session_start_time = None
 _show_history_mode = False  # False: 只显示当前会话, True: 显示所有历史
 
+# 任务停止控制
+_global_stop_event = None
+_current_running_tasks = []  # 跟踪当前运行的任务
+
 def set_response_callback(callback):
     """设置响应回调函数。"""
     global _send_response_callback
@@ -113,98 +117,190 @@ async def run_tasks(
     exec_mode: str,
 ):
     """Runs a list of selected tasks with the given parameters."""
+    global _global_stop_event, _current_running_tasks
+    
     if not db_manager:
         logger.error("DB Manager not initialized in run_tasks.")
         if _send_response_callback:
             _send_response_callback("LOG", {"level": "error", "message": "数据库未连接，无法执行任务。"})
         return
 
+    # 创建新的停止事件
+    _global_stop_event = asyncio.Event()
+    _current_running_tasks = []
+    
     # 首先确保task_status表存在
     await _ensure_task_status_table_exists(db_manager)
 
     total_tasks = len(tasks_to_run)
-    for i, task_info in enumerate(tasks_to_run):
-        task_name = task_info.get("task_name")
-        if not task_name:
-            continue
+    
+    try:
+        for i, task_info in enumerate(tasks_to_run):
+            task_name = task_info.get("task_name")
+            if not task_name:
+                continue
 
-        log_msg = f"({i+1}/{total_tasks}) 正在准备任务: {task_name}"
+            # 检查是否收到停止信号
+            if _global_stop_event and _global_stop_event.is_set():
+                log_msg = f"收到停止信号，跳过剩余任务"
+                logger.info(log_msg)
+                if _send_response_callback:
+                    _send_response_callback("LOG", {"level": "warning", "message": log_msg})
+                break
+
+            log_msg = f"({i+1}/{total_tasks}) 正在准备任务: {task_name}"
+            logger.info(log_msg)
+            if _send_response_callback:
+                _send_response_callback("LOG", {"level": "info", "message": log_msg})
+
+            # 记录任务开始状态
+            await _record_task_status(db_manager, task_name, "running", f"开始执行 ({i+1}/{total_tasks})")
+            # 立即刷新任务状态显示
+            await get_all_task_status(db_manager)
+
+            task_instance = await UnifiedTaskFactory.get_task(task_name)
+
+            if not task_instance:
+                log_msg = f"任务 {task_name} 创建失败，跳过。"
+                logger.error(log_msg)
+                if _send_response_callback:
+                    _send_response_callback("LOG", {"level": "error", "message": log_msg})
+                # 记录任务失败状态
+                await _record_task_status(db_manager, task_name, "error", "任务实例创建失败")
+                # 立即刷新任务状态显示
+                await get_all_task_status(db_manager)
+                continue
+
+            # 将任务添加到运行列表
+            _current_running_tasks.append(task_name)
+
+            try:
+                log_msg = f"开始执行任务: {task_name}"
+                logger.info(log_msg)
+                if _send_response_callback:
+                    _send_response_callback("LOG", {"level": "info", "message": log_msg})
+
+                # 准备任务执行参数，包含stop_event
+                run_kwargs = {"stop_event": _global_stop_event}
+                if start_date:
+                    run_kwargs["start_date"] = start_date
+                if end_date:
+                    run_kwargs["end_date"] = end_date
+                
+                # 根据执行模式设置参数
+                if exec_mode == "智能增量":
+                    # 智能增量模式，让任务自己决定日期范围
+                    result = await task_instance.smart_incremental_update(**run_kwargs)
+                else:
+                    # 其他模式，直接执行
+                    result = await task_instance.run(**run_kwargs)
+
+                # 检查任务结果是否为取消状态
+                if isinstance(result, dict) and result.get("status") == "cancelled":
+                    log_msg = f"任务 {task_name} 被用户取消。"
+                    logger.info(log_msg)
+                    if _send_response_callback:
+                        _send_response_callback("LOG", {"level": "warning", "message": log_msg})
+                    
+                    # 记录任务取消状态
+                    await _record_task_status(db_manager, task_name, "cancelled", "任务被用户取消")
+                else:
+                    log_msg = f"任务 {task_name} 执行成功。"
+                    logger.info(log_msg)
+                    if _send_response_callback:
+                        _send_response_callback("LOG", {"level": "info", "message": log_msg})
+                    
+                    # 记录任务成功状态
+                    success_details = ""
+                    if isinstance(result, dict):
+                        rows = result.get("rows", 0)
+                        status = result.get("status", "success")
+                        success_details = f"处理了 {rows} 行数据, 状态: {status}"
+                    await _record_task_status(db_manager, task_name, "success", success_details)
+                
+                # 立即刷新任务状态显示
+                await get_all_task_status(db_manager)
+
+            except asyncio.CancelledError:
+                log_msg = f"任务 {task_name} 被取消。"
+                logger.info(log_msg)
+                if _send_response_callback:
+                    _send_response_callback("LOG", {"level": "warning", "message": log_msg})
+                
+                # 记录任务取消状态
+                await _record_task_status(db_manager, task_name, "cancelled", "任务被用户取消")
+                # 立即刷新任务状态显示
+                await get_all_task_status(db_manager)
+                
+            except Exception as e:
+                log_msg = f"任务 {task_name} 执行失败: {e}"
+                logger.error(log_msg, exc_info=True)
+                if _send_response_callback:
+                    _send_response_callback("LOG", {"level": "error", "message": log_msg})
+                
+                # 记录任务失败状态
+                await _record_task_status(db_manager, task_name, "error", str(e))
+                # 立即刷新任务状态显示
+                await get_all_task_status(db_manager)
+            
+            finally:
+                # 从运行列表中移除任务
+                if task_name in _current_running_tasks:
+                    _current_running_tasks.remove(task_name)
+
+        # 检查是否所有任务都完成或被停止
+        if _global_stop_event and _global_stop_event.is_set():
+            final_message = "任务执行被用户停止。"
+        else:
+            final_message = "所有选定任务已执行完毕。"
+        
+        logger.info(final_message)
+        if _send_response_callback:
+            _send_response_callback("LOG", {"level": "info", "message": final_message})
+        
+        # Refresh task status after execution
+        await get_all_task_status(db_manager)
+        
+    except Exception as e:
+        error_msg = f"任务执行过程中发生错误: {e}"
+        logger.error(error_msg, exc_info=True)
+        if _send_response_callback:
+            _send_response_callback("LOG", {"level": "error", "message": error_msg})
+    
+    finally:
+        # 清理全局状态
+        _global_stop_event = None
+        _current_running_tasks.clear()
+
+
+def stop_tasks():
+    """停止当前运行的任务"""
+    global _global_stop_event, _current_running_tasks
+    
+    if _global_stop_event is None:
+        logger.info("当前没有运行的任务可以停止")
+        if _send_response_callback:
+            _send_response_callback("LOG", {"level": "info", "message": "当前没有运行的任务"})
+        return
+    
+    if _current_running_tasks:
+        running_tasks_str = ", ".join(_current_running_tasks)
+        log_msg = f"正在停止任务: {running_tasks_str}"
         logger.info(log_msg)
         if _send_response_callback:
-            _send_response_callback("LOG", {"level": "info", "message": log_msg})
-
-        # 记录任务开始状态
-        await _record_task_status(db_manager, task_name, "running", f"开始执行 ({i+1}/{total_tasks})")
-        # 立即刷新任务状态显示
-        await get_all_task_status(db_manager)
-
-        task_instance = await UnifiedTaskFactory.get_task(task_name)
-
-        if not task_instance:
-            log_msg = f"任务 {task_name} 创建失败，跳过。"
-            logger.error(log_msg)
-            if _send_response_callback:
-                _send_response_callback("LOG", {"level": "error", "message": log_msg})
-            # 记录任务失败状态
-            await _record_task_status(db_manager, task_name, "error", "任务实例创建失败")
-            # 立即刷新任务状态显示
-            await get_all_task_status(db_manager)
-            continue
-
-        try:
-            log_msg = f"开始执行任务: {task_name}"
-            logger.info(log_msg)
-            if _send_response_callback:
-                _send_response_callback("LOG", {"level": "info", "message": log_msg})
-
-            # 准备任务执行参数
-            run_kwargs = {}
-            if start_date:
-                run_kwargs["start_date"] = start_date
-            if end_date:
-                run_kwargs["end_date"] = end_date
-            
-            # 根据执行模式设置参数
-            if exec_mode == "智能增量":
-                # 智能增量模式，让任务自己决定日期范围
-                result = await task_instance.smart_incremental_update(**run_kwargs)
-            else:
-                # 其他模式，直接执行
-                result = await task_instance.run(**run_kwargs)
-
-            log_msg = f"任务 {task_name} 执行成功。"
-            logger.info(log_msg)
-            if _send_response_callback:
-                _send_response_callback("LOG", {"level": "info", "message": log_msg})
-            
-            # 记录任务成功状态
-            success_details = ""
-            if isinstance(result, dict):
-                rows = result.get("rows", 0)
-                status = result.get("status", "success")
-                success_details = f"处理了 {rows} 行数据, 状态: {status}"
-            await _record_task_status(db_manager, task_name, "success", success_details)
-            # 立即刷新任务状态显示
-            await get_all_task_status(db_manager)
-
-        except Exception as e:
-            log_msg = f"任务 {task_name} 执行失败: {e}"
-            logger.error(log_msg, exc_info=True)
-            if _send_response_callback:
-                _send_response_callback("LOG", {"level": "error", "message": log_msg})
-            
-            # 记录任务失败状态
-            await _record_task_status(db_manager, task_name, "error", str(e))
-            # 立即刷新任务状态显示
-            await get_all_task_status(db_manager)
-
-    final_message = "所有选定任务已执行完毕。"
-    logger.info(final_message)
-    if _send_response_callback:
-        _send_response_callback("LOG", {"level": "info", "message": final_message})
+            _send_response_callback("LOG", {"level": "warning", "message": log_msg})
+    else:
+        log_msg = "正在发送停止信号..."
+        logger.info(log_msg)
+        if _send_response_callback:
+            _send_response_callback("LOG", {"level": "warning", "message": log_msg})
     
-    # Refresh task status after execution
-    await get_all_task_status(db_manager)
+    # 设置停止事件
+    _global_stop_event.set()
+    
+    logger.info("停止信号已发送")
+    if _send_response_callback:
+        _send_response_callback("LOG", {"level": "warning", "message": "停止信号已发送，任务将在安全点停止"})
 
 
 async def _ensure_task_status_table_exists(db_manager: DBManager):

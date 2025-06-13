@@ -44,6 +44,18 @@ def toggle_processing_select(row_index: int):
             _send_response_callback("PROCESSING_TASK_LIST_UPDATE", _processing_task_cache)
 
 
+def toggle_processing_task_selection(task_name: str):
+    """根据任务名称切换任务的选中状态。"""
+    for task in _processing_task_cache:
+        if task["name"] == task_name:
+            task["selected"] = not task.get("selected", False)
+            logger.debug(f"切换数据处理任务 '{task_name}' 的选择状态为: {task['selected']}")
+            if _send_response_callback:
+                _send_response_callback("PROCESSING_TASK_LIST_UPDATE", _processing_task_cache)
+            return
+    logger.warning(f"未找到名为 '{task_name}' 的数据处理任务")
+
+
 async def handle_get_processing_tasks():
     """处理获取'processor'类型任务列表的请求。"""
     global _processing_task_cache

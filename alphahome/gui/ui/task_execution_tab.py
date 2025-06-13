@@ -6,6 +6,8 @@
 import tkinter as tk
 from tkinter import ttk
 from typing import Dict, Any
+from ..utils.layout_manager import create_task_status_column_manager
+from ..utils.dpi_aware_ui import get_ui_factory
 
 # 尝试导入 tkcalendar
 try:
@@ -132,17 +134,25 @@ def create_task_execution_tab(
     widgets["status_mode_label"] = status_mode_label
 
     status_columns = ("name", "status", "update_time", "details")
-    task_status_tree = ttk.Treeview(status_frame, columns=status_columns, show="headings")
+    
+    # 使用DPI感知的UI工厂创建Treeview
+    ui_factory = get_ui_factory()
+    task_status_tree = ui_factory.create_treeview(status_frame, columns=status_columns, show="headings")
     
     task_status_tree.heading("name", text="任务名称")
     task_status_tree.heading("status", text="最后状态")
     task_status_tree.heading("update_time", text="更新时间")
     task_status_tree.heading("details", text="详情")
     
-    task_status_tree.column("name", width=200, stretch=True)
-    task_status_tree.column("status", width=80, anchor=tk.CENTER)
-    task_status_tree.column("update_time", width=140, anchor=tk.CENTER)
-    task_status_tree.column("details", width=300, stretch=True)
+    # 初始化动态列宽管理器
+    status_column_manager = create_task_status_column_manager(task_status_tree)
+    task_status_tree._column_manager = status_column_manager  # 保存引用以便后续使用
+    
+    # 注释掉静态列宽配置，完全由动态管理器控制
+    # task_status_tree.column("name", width=200, stretch=True)
+    # task_status_tree.column("status", width=80, anchor=tk.CENTER)
+    # task_status_tree.column("update_time", width=140, anchor=tk.CENTER)
+    # task_status_tree.column("details", width=300, stretch=True)
 
     vsb_status = ttk.Scrollbar(status_frame, orient="vertical", command=task_status_tree.yview)
     hsb_status = ttk.Scrollbar(status_frame, orient="horizontal", command=task_status_tree.xview)
@@ -154,12 +164,18 @@ def create_task_execution_tab(
     status_frame.grid_rowconfigure(1, weight=1)
     status_frame.grid_columnconfigure(0, weight=1)
     widgets["task_status_tree"] = task_status_tree
+    
+    # 启用动态列宽管理器
+    status_column_manager.bind_resize_event()
+    # 延迟配置列宽以确保父容器已完全初始化
+    task_status_tree.after_idle(status_column_manager.configure_columns)
 
     # 下部分：日志视图
     log_frame = ttk.LabelFrame(paned_window, text="运行日志", padding=10)
     paned_window.add(log_frame, weight=1)
     
-    log_view = tk.Text(log_frame, wrap=tk.WORD, state=tk.DISABLED, height=10)
+    # 使用DPI感知的Text widget
+    log_view = ui_factory.create_text(log_frame, wrap=tk.WORD, state=tk.DISABLED, height=10)
     vsb_log = ttk.Scrollbar(log_frame, orient="vertical", command=log_view.yview)
     log_view.configure(yscrollcommand=vsb_log.set)
     
