@@ -150,6 +150,9 @@ async def _update_tasks_with_latest_timestamp():
             timestamp_str = "N/A (Query Error)"
             logger.warning(f"查询 {_collection_task_cache[task_index]['table_name']} 最新时间失败: {result}")
         elif isinstance(result, datetime):
+            # 如果有时区信息，转换为本地时区
+            if hasattr(result, 'tzinfo') and result.tzinfo is not None:
+                result = result.astimezone()  # 转换为本地时区
             timestamp_str = result.strftime("%Y-%m-%d %H:%M:%S")
         else:
             timestamp_str = "无数据" if result is None else str(result)

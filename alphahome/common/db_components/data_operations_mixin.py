@@ -9,6 +9,66 @@ import pandas as pd
 class DataOperationsMixin:
     """数据操作Mixin - 提供复杂的数据操作功能，如批量导入、UPSERT等"""
 
+    def _parse_date_string(self, date_str: str) -> Optional[date]:
+        """解析日期字符串为Python date对象
+        
+        支持的格式：
+        - YYYYMMDD (如: 20240101)
+        - YYYY-MM-DD (如: 2024-01-01)
+        - 其他pandas能识别的格式
+        
+        Args:
+            date_str: 日期字符串
+            
+        Returns:
+            date对象或None（如果解析失败）
+        """
+        if not date_str or pd.isna(date_str):
+            return None
+            
+        try:
+            # 尝试YYYYMMDD格式
+            if len(date_str) == 8 and date_str.isdigit():
+                return datetime.strptime(date_str, "%Y%m%d").date()
+            
+            # 尝试YYYY-MM-DD格式
+            if len(date_str) == 10 and date_str.count('-') == 2:
+                return datetime.strptime(date_str, "%Y-%m-%d").date()
+            
+            # 使用pandas的通用日期解析
+            parsed_date = pd.to_datetime(date_str, errors='coerce')
+            if pd.notna(parsed_date):
+                return parsed_date.date()
+                
+        except Exception as e:
+            self.logger.warning(f"无法解析日期字符串 '{date_str}': {e}")
+            
+        return None
+
+    def _get_date_columns_from_target(self, target: Any) -> set:
+        """从目标对象获取日期列名集合
+        
+        Args:
+            target: 目标表对象或表名
+            
+        Returns:
+            包含日期列名的集合
+        """
+        date_columns = set()
+        
+        # 如果target有schema_def属性，从中提取日期列
+        if hasattr(target, 'schema_def') and target.schema_def:
+            for col_name, col_def in target.schema_def.items():
+                col_type = (
+                    col_def.get("type", "").upper()
+                    if isinstance(col_def, dict)
+                    else str(col_def).upper()
+                )
+                if "DATE" in col_type or "TIMESTAMP" in col_type:
+                    date_columns.add(col_name)
+        
+        return date_columns
+
     async def copy_from_dataframe(
         self,
         df: pd.DataFrame,
@@ -46,42 +106,23 @@ class DataOperationsMixin:
 
         if df.empty:
             self.logger.info(
-                f"copy_from_dataframe: 表 '{resolved_table_name}' 的DataFrame为空，跳过操作。"
+                f"COPY_FROM_DATAFRAME (表: {resolved_table_name}): DataFrame为空，跳过操作。"
             )
             return 0
 
-        if conflict_columns and not isinstance(conflict_columns, list):
-            raise ValueError("conflict_columns 必须是一个列表或None。")
-        if conflict_columns is not None and not conflict_columns:
-            raise ValueError("如果提供了 conflict_columns，则它不能为空列表。")
-
-        # 获取DataFrame的列名 - 这些将用于COPY命令
         df_columns = list(df.columns)
 
-        # --- 针对timestamp_column的防御性检查和添加 ---
-        if timestamp_column and timestamp_column not in df.columns:
+        # 检查时间戳列是否存在于DataFrame中
+        if timestamp_column and timestamp_column not in df_columns:
             self.logger.info(
                 f"COPY_FROM_DATAFRAME (表: {resolved_table_name}): 时间戳列 '{timestamp_column}' 未在DataFrame列中找到，自动添加当前时间。"
             )
+            df = df.copy()
             df[timestamp_column] = datetime.now()
             df_columns = list(df.columns)
 
-        # --- 验证列名 ---
-        if conflict_columns:
-            for col in conflict_columns:
-                if col not in df_columns:
-                    raise ValueError(f"冲突列 '{col}' 在DataFrame的列中未找到。")
-        if update_columns:
-            if not isinstance(update_columns, list):
-                raise ValueError("update_columns必须是一个列表或None。")
-            for col in update_columns:
-                if col not in df_columns:
-                    raise ValueError(f"更新列 '{col}' 在DataFrame的列中未找到。")
-        if timestamp_column and timestamp_column not in df_columns:
-            self.logger.warning(
-                f"时间戳列 '{timestamp_column}' 未在DataFrame中找到，"
-                f"如果在UPDATE时需要会被添加，但如果表结构要求此列，初始INSERT可能会失败。"
-            )
+        # 获取目标表的日期列信息
+        date_columns = self._get_date_columns_from_target(target)
 
         # 创建一个唯一的临时表名
         timestamp_ms = int(datetime.now().timestamp() * 1000)
@@ -97,19 +138,27 @@ class DataOperationsMixin:
         async def _df_to_records_generator(df_internal: pd.DataFrame):
             for row_tuple in df_internal.itertuples(index=False, name=None):
                 processed_values = []
-                for val in row_tuple:
+                for i, val in enumerate(row_tuple):
+                    col_name = df_columns[i]
+                    
                     if pd.isna(val):
                         processed_values.append(None)
                     elif isinstance(val, str):
-                        # 仅清理真正有问题的字符，保留正常的空格
-                        cleaned_val = val.replace('\x00', '')  # 移除NULL字符
-                        cleaned_val = cleaned_val.replace('\r', '')  # 移除回车符
-                        cleaned_val = cleaned_val.replace('\n', '')  # 移除换行符
-                        cleaned_val = cleaned_val.replace('\t', ' ')  # 制表符替换为空格
-                        # 不要替换双引号，让asyncpg自己处理
-                        processed_values.append(cleaned_val if cleaned_val else None)
+                        # 检查是否是日期列
+                        if col_name in date_columns:
+                            # 尝试解析日期字符串
+                            parsed_date = self._parse_date_string(val)
+                            processed_values.append(parsed_date)
+                        else:
+                            # 仅清理真正有问题的字符，保留正常的空格
+                            cleaned_val = val.replace('\x00', '')  # 移除NULL字符
+                            cleaned_val = cleaned_val.replace('\r', '')  # 移除回车符
+                            cleaned_val = cleaned_val.replace('\n', '')  # 移除换行符
+                            cleaned_val = cleaned_val.replace('\t', ' ')  # 制表符替换为空格
+                            # 不要替换双引号，让asyncpg自己处理
+                            processed_values.append(cleaned_val if cleaned_val else None)
                     elif pd.api.types.is_datetime64_any_dtype(pd.Series([val])):
-                        # 处理pandas datetime对象 - 这是关键修复！
+                        # 处理pandas datetime对象
                         if pd.isnull(val):
                             processed_values.append(None)
                         else:
@@ -144,67 +193,44 @@ class DataOperationsMixin:
 
                     if conflict_columns:
                         # --- UPSERT 逻辑 ---
-                        conflict_col_str = ", ".join(
-                            [f'"{col}"' for col in conflict_columns]
-                        )
+                        conflict_col_str = ", ".join([f'"{col}"' for col in conflict_columns])
 
                         # 确定要更新的列
-                        actual_update_columns = []
                         if update_columns is None:
+                            # 如果未指定更新列，则更新所有非冲突列
                             actual_update_columns = [
                                 col for col in df_columns if col not in conflict_columns
                             ]
                         else:
-                            actual_update_columns = update_columns
-
-                        # 构建SET子句
-                        if actual_update_columns:
-                            set_clauses = [
-                                f'"{col}" = EXCLUDED."{col}"'
-                                for col in actual_update_columns
+                            # 使用指定的更新列，但排除不在DataFrame中的列
+                            actual_update_columns = [
+                                col for col in update_columns if col in df_columns
                             ]
 
-                            if timestamp_column and timestamp_column in df_columns:
-                                if timestamp_column not in conflict_columns:
-                                    # 从set_clauses中移除任何"EXCLUDED"版本的时间戳列
-                                    excluded_timestamp_clause = f'"{timestamp_column}" = EXCLUDED."{timestamp_column}"'
-                                    if excluded_timestamp_clause in set_clauses:
-                                        set_clauses.remove(excluded_timestamp_clause)
+                        # 构建 ON CONFLICT 子句
+                        if actual_update_columns:
+                            # 有列需要更新
+                            set_clauses = []
+                            for col in actual_update_columns:
+                                if col == timestamp_column:
+                                    # 时间戳列总是更新为当前时间
+                                    set_clauses.append(f'"{col}" = NOW()')
+                                else:
+                                    # 其他列从EXCLUDED更新
+                                    set_clauses.append(f'"{col}" = EXCLUDED."{col}"')
 
-                                    # 确定用于比较的内容列（排除冲突列和时间戳列）
-                                    content_columns_to_compare = [
-                                        col
-                                        for col in df_columns
-                                        if col not in conflict_columns
-                                        and col != timestamp_column
-                                    ]
+                            # 如果有时间戳列但不在actual_update_columns中，也要更新
+                            if (
+                                timestamp_column
+                                and timestamp_column in df_columns
+                                and timestamp_column not in actual_update_columns
+                                and timestamp_column not in conflict_columns
+                            ):
+                                set_clauses.append(f'"{timestamp_column}" = NOW()')
 
-                                    if not content_columns_to_compare:
-                                        set_clauses.append(
-                                            f'"{timestamp_column}" = NOW()'
-                                        )
-                                    else:
-                                        # 构建时间戳列的条件更新
-                                        conditions = [
-                                            f'{resolved_table_name}."{col}" IS DISTINCT FROM EXCLUDED."{col}"'
-                                            for col in content_columns_to_compare
-                                        ]
-                                        condition_str = " OR ".join(conditions)
-                                        timestamp_update_clause = (
-                                            f'"{timestamp_column}" = CASE '
-                                            f"WHEN {condition_str} THEN NOW() "
-                                            f'ELSE {resolved_table_name}."{timestamp_column}" END'
-                                        )
-                                        set_clauses.append(timestamp_update_clause)
+                            update_clause = ", ".join(set_clauses)
+                            action_sql = f"DO UPDATE SET {update_clause}"
 
-                            if set_clauses:
-                                update_clause = ", ".join(set_clauses)
-                                action_sql = f"DO UPDATE SET {update_clause}"
-                            else:
-                                self.logger.warning(
-                                    f"UPSERT (表: {resolved_table_name}): set_clauses变为空。默认为DO NOTHING。"
-                                )
-                                action_sql = "DO NOTHING"
                         else:
                             # actual_update_columns 为空
                             if (

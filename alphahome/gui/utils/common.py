@@ -26,9 +26,14 @@ def format_status_chinese(status: str) -> str:
 
 
 def format_datetime_for_display(dt: datetime) -> str:
-    """格式化日期时间用于界面显示"""
+    """格式化日期时间用于界面显示，正确处理时区转换"""
     if dt is None:
         return ""
+    
+    # 如果datetime对象有时区信息，转换为本地时区
+    if hasattr(dt, 'tzinfo') and dt.tzinfo is not None:
+        dt = dt.astimezone()  # 转换为本地时区
+    
     return dt.strftime("%Y-%m-%d %H:%M:%S")
 
 

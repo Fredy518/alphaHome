@@ -110,7 +110,8 @@ class TushareIndexCiMemberTask(TushareTask):
         """
         验证从 Tushare API 获取的指数成分数据。
         - 检查 DataFrame 是否为空。
-        - 检查关键标识字段 (ts_code, l2_code, in_date) 是否全部为空。
+        - 检查关键标识字段 (ts_code, l3_code, in_date) 是否全部为空。
+        - 过滤掉 l3_code 为空的记录（因为它是 NOT NULL 字段）。
         """
         if df.empty:
             self.logger.warning(
@@ -118,8 +119,9 @@ class TushareIndexCiMemberTask(TushareTask):
             )
             return df
 
+        original_count = len(df)
+
         # 1. 检查关键字段是否存在 (映射后的字段名)
-        # 注意: column_mapping 将 index_code 映射为 ts_code
         critical_cols = ["ts_code", "l3_code", "in_date"]
         missing_cols = [col for col in critical_cols if col not in df.columns]
         if missing_cols:
@@ -127,7 +129,27 @@ class TushareIndexCiMemberTask(TushareTask):
             self.logger.error(error_msg)
             raise ValueError(error_msg)
 
-        # 2. 检查关键字段是否在所有行中都为空值
+        # 2. 过滤掉 l3_code 为空的记录
+        before_filter = len(df)
+        # 检查 l3_code 是否为空（包括 None、NaN、空字符串）
+        l3_code_mask = df['l3_code'].notna() & (df['l3_code'] != '') & (df['l3_code'] != 'null')
+        df = df[l3_code_mask].copy()
+        after_filter = len(df)
+        
+        if before_filter > after_filter:
+            filtered_count = before_filter - after_filter
+            self.logger.warning(
+                f"任务 {self.name}: 过滤掉 {filtered_count} 条 l3_code 为空的记录。"
+            )
+
+        # 3. 检查过滤后是否还有数据
+        if df.empty:
+            self.logger.warning(
+                f"任务 {self.name}: 过滤后没有有效数据。"
+            )
+            return df
+
+        # 4. 检查关键字段是否在所有行中都为空值
         df_check = df[critical_cols].replace("", pd.NA)
         if df_check.isnull().all(axis=1).all():
             error_msg = f"任务 {self.name}: 数据验证失败 - 所有行的关键字段 ({', '.join(critical_cols)}) 均为空值。可能数据源返回异常数据。"
@@ -135,7 +157,7 @@ class TushareIndexCiMemberTask(TushareTask):
             raise ValueError(error_msg)
 
         self.logger.info(
-            f"任务 {self.name}: 数据验证通过，获取了 {len(df)} 条有效成分记录。"
+            f"任务 {self.name}: 数据验证通过，从原始 {original_count} 条记录中获取了 {len(df)} 条有效成分记录。"
         )
         return df
 
