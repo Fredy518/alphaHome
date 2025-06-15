@@ -506,8 +506,13 @@ class BaseTask(ABC):
                         return {"status": "error", "error": f"交易日计算失败: {str(e)}"}
                 elif latest_date:
                     try:
-                        start_date = await get_next_trade_day(latest_date)
-                        self.logger.info(f"数据库最新日期: {latest_date}，下一个交易日: {start_date}")
+                        if self.date_column:
+                            # 对于有date_column的任务，回溯15个交易日作为安全余量
+                            start_date = await get_last_trade_day(latest_date, n=15)
+                            self.logger.info(f"数据库最新日期: {latest_date}，回溯15个交易日作为起始日期: {start_date}")
+                        else:
+                            start_date = await get_next_trade_day(latest_date)
+                            self.logger.info(f"数据库最新日期: {latest_date}，下一个交易日: {start_date}")
                     except Exception as e:
                         self.logger.error(f"计算下一个交易日失败: {str(e)}")
                         return {"status": "error", "error": f"交易日计算失败: {str(e)}"}
@@ -527,9 +532,14 @@ class BaseTask(ABC):
                 self.logger.info(f"按回溯 {lookback_days} 天计算（含安全天数 {safety_days}），起始日期为: {start_date}")
             elif latest_date:
                 latest_date_obj = datetime.strptime(latest_date, "%Y%m%d")
-                start_date_obj = latest_date_obj + timedelta(days=1) - timedelta(days=safety_days)
+                # 对于有date_column的任务，增加15天的安全余量
+                if self.date_column:
+                    start_date_obj = latest_date_obj + timedelta(days=1) - timedelta(days=15)
+                    self.logger.info(f"数据库最新日期: {latest_date}，增量起始日期（含15天安全余量）: {start_date_obj.strftime('%Y%m%d')}")
+                else:
+                    start_date_obj = latest_date_obj + timedelta(days=1) - timedelta(days=safety_days)
+                    self.logger.info(f"数据库最新日期: {latest_date}，增量起始日期（含安全天数）: {start_date_obj.strftime('%Y%m%d')}")
                 start_date = start_date_obj.strftime("%Y%m%d")
-                self.logger.info(f"数据库最新日期: {latest_date}，增量起始日期（含安全天数）: {start_date}")
             else:
                 start_date = self.default_start_date if hasattr(self, 'default_start_date') else "20200101"
                 self.logger.info(f"无历史数据，使用默认起始日期: {start_date}")
