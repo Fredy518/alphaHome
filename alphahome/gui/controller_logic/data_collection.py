@@ -25,6 +25,7 @@ _update_callback = None
 def initialize_data_collection(response_callback: Callable):
     """初始化数据采集处理器，设置回调函数。"""
     global _send_response_callback
+    # 初始化数据采集任务缓存
     _send_response_callback = response_callback
     logger.info("数据采集处理器已初始化。")
 

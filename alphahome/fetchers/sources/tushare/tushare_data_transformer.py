@@ -1,5 +1,5 @@
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import numpy as np
 import pandas as pd
@@ -430,4 +430,4 @@ class TushareDataTransformer:
                 f"数据验证: 过滤掉 {original_count - filtered_count} 行不符合规则的数据"
             )
 
-        return filtered_data
+        return cast(pd.DataFrame, filtered_data)

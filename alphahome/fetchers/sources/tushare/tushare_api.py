@@ -142,9 +142,9 @@ class TushareAPI:
     async def query(
         self,
         api_name: str,
-        params: Dict = None,
-        fields: List[str] = None,
-        page_size: int = None,
+        params: Dict = {},
+        fields: List[str] = [],
+        page_size: int = 5000,
     ) -> pd.DataFrame:
         """向 Tushare 发送异步 HTTP 请求，支持自动分页、并发控制和速率限制。
         每个实际的HTTP POST请求都会受到速率和并发控制。

@@ -17,10 +17,10 @@ class UnifiedTaskFactory:
     """
 
     # 类变量
-    _db_manager = None
-    _task_instances = {}
-    _task_registry = {}
-    _initialized = False
+    _db_manager: Optional[DBManager] = None
+    _task_instances: Dict[str, BaseTask] = {}
+    _task_registry: Dict[str, Type[BaseTask]] = {}
+    _initialized: bool = False
 
     @classmethod
     def register_task(cls, task_name, task_class):
@@ -149,7 +149,7 @@ class UnifiedTaskFactory:
         return all_tasks
 
     @classmethod
-    def get_tasks_by_type(cls, task_type: str = None) -> Dict[str, Type]:
+    def get_tasks_by_type(cls, task_type: Optional[str] = None) -> Dict[str, Type[BaseTask]]:
         """新增：按任务类型获取任务字典"""
         if not cls._initialized:
             raise RuntimeError("UnifiedTaskFactory 尚未初始化，请先调用 initialize() 方法")
@@ -166,7 +166,7 @@ class UnifiedTaskFactory:
         return filtered_tasks
 
     @classmethod
-    def get_task_names_by_type(cls, task_type: str = None) -> List[str]:
+    def get_task_names_by_type(cls, task_type: Optional[str] = None) -> List[str]:
         """新增：按任务类型获取任务名称列表"""
         if not cls._initialized:
             raise RuntimeError("UnifiedTaskFactory 尚未初始化，请先调用 initialize() 方法")
@@ -238,19 +238,15 @@ class UnifiedTaskFactory:
 
             # 检查任务类构造函数是否接受api_token参数
             init_params = inspect.signature(task_class.__init__).parameters
+            constructor_kwargs = {}
             if "api_token" in init_params:
                 # 如果接受api_token，则传递它
-                task_instance = task_class(
-                    cls._db_manager, api_token=get_tushare_token()
-                )
-            else:
-                # 如果不接受api_token，则只传递db_manager
-                task_instance = task_class(cls._db_manager)
+                constructor_kwargs["api_token"] = get_tushare_token()
+            
+            task_instance = task_class(cls._db_manager, **constructor_kwargs)
 
             # 设置任务特定配置（如果任务类支持）
-            if hasattr(task_instance, "set_config") and callable(
-                getattr(task_instance, "set_config")
-            ):
+            if hasattr(task_instance, "set_config") and callable(task_instance.set_config):
                 task_instance.set_config(task_config)
                 logger.debug(f"应用任务特定配置: {task_name}")
 
@@ -287,25 +283,23 @@ async def get_task(task_name: str) -> BaseTask:
     return await UnifiedTaskFactory.get_task(task_name)
 
 
-def get_tasks_by_type(task_type: str = None) -> Dict[str, Type]:
+def get_tasks_by_type(task_type: Optional[str] = None) -> Dict[str, Type[BaseTask]]:
     """便捷函数，按类型获取任务字典"""
     # 如果UnifiedTaskFactory未初始化，从装饰器注册表获取
     if not UnifiedTaskFactory._initialized:
-        from .task_decorator import _task_registry
-        if task_type is None:
-            return _task_registry.copy()
-        
-        filtered_tasks = {}
-        for name, task_class in _task_registry.items():
-            if hasattr(task_class, 'task_type') and task_class.task_type == task_type:
-                filtered_tasks[name] = task_class
-        return filtered_tasks
-    
+        from .task_decorator import get_registered_tasks_by_type
+        # 如果 get_registered_tasks_by_type 返回的不是精确的 BaseTask 类型，Mypy 在这里可能会报错。
+        # 这里假设 get_registered_tasks_by_type 返回 Dict[str, Type[BaseTask]] 或兼容类型。
+        return get_registered_tasks_by_type(task_type) # type: ignore
     return UnifiedTaskFactory.get_tasks_by_type(task_type)
 
 
-def get_task_names_by_type(task_type: str = None) -> List[str]:
+def get_task_names_by_type(task_type: Optional[str] = None) -> List[str]:
     """便捷函数，按类型获取任务名称列表"""
+    # 如果UnifiedTaskFactory未初始化，从装饰器注册表获取
+    if not UnifiedTaskFactory._initialized:
+        from .task_decorator import get_registered_tasks_by_type
+        return sorted(list(get_registered_tasks_by_type(task_type).keys()))
     return UnifiedTaskFactory.get_task_names_by_type(task_type)
 
 
@@ -313,9 +307,9 @@ def get_task_types() -> List[str]:
     """便捷函数，获取所有任务类型"""
     # 如果UnifiedTaskFactory未初始化，从装饰器注册表获取
     if not UnifiedTaskFactory._initialized:
-        from .task_decorator import _task_registry
+        from .task_decorator import get_registered_tasks_by_type
         types = set()
-        for task_class in _task_registry.values():
+        for task_class in get_registered_tasks_by_type(None).values():
             if hasattr(task_class, 'task_type'):
                 types.add(task_class.task_type)
         return sorted(list(types))

@@ -373,7 +373,7 @@ class TushareStockFactorProTask(TushareTask):
             end_date_overall = datetime.now().strftime("%Y%m%d")
             self.logger.info(f"未提供 end_date，使用当前日期: {end_date_overall}")
 
-        if pd.to_datetime(start_date_overall) > pd.to_datetime(end_date_overall):
+        if pd.to_datetime(start_date_overall) > pd.to_datetime(end_date_overall):  # type: ignore
             self.logger.info(
                 f"起始日期 ({start_date_overall}) 晚于结束日期 ({end_date_overall})，无需执行任务。"
             )
@@ -385,7 +385,7 @@ class TushareStockFactorProTask(TushareTask):
 
         try:
             batch_list = await generate_single_date_batches(
-                start_date=start_date_overall,
+                start_date=start_date_overall, # type: ignore
                 end_date=end_date_overall,
                 date_field="trade_date",  # API 使用 trade_date 参数
                 ts_code=ts_code,  # 可选的股票代码
@@ -402,12 +402,71 @@ class TushareStockFactorProTask(TushareTask):
 
     # 重写 specific_transform 以处理可能的无穷大值
     async def specific_transform(self, df: pd.DataFrame) -> pd.DataFrame:
-        """处理 DataFrame 中的无穷大值"""
+        """处理 DataFrame 中的无穷大值和数据质量检查"""
+        self.logger.info(f"开始数据质量检查和转换，原始数据形状: {df.shape}")
+        
         # 选择所有数值类型的列进行处理
         numeric_cols = df.select_dtypes(include=np.number).columns
-        # 将无穷大值替换为 NaN
+        self.logger.debug(f"识别到 {len(numeric_cols)} 个数值列: {list(numeric_cols)}")
+        
+        # 1. 检查无穷大值
+        inf_counts = {}
+        neg_inf_counts = {}
+        for col in numeric_cols:
+            inf_count = np.isinf(df[col]).sum()
+            pos_inf_count = (df[col] == np.inf).sum()
+            neg_inf_count = (df[col] == -np.inf).sum()
+            if inf_count > 0:
+                inf_counts[col] = inf_count
+                if pos_inf_count > 0:
+                    self.logger.warning(f"列 {col} 包含 {pos_inf_count} 个正无穷大值")
+                if neg_inf_count > 0:
+                    neg_inf_counts[col] = neg_inf_count
+                    self.logger.warning(f"列 {col} 包含 {neg_inf_count} 个负无穷大值")
+        
+        # 2. 检查极值（超出NUMERIC(18,6)范围的值）
+        max_value = 999999999999.999999  # NUMERIC(18,6)的最大值
+        min_value = -999999999999.999999  # NUMERIC(18,6)的最小值
+        extreme_value_counts = {}
+        for col in numeric_cols:
+            extreme_mask = (df[col] > max_value) | (df[col] < min_value)
+            extreme_count = extreme_mask.sum()
+            if extreme_count > 0:
+                extreme_value_counts[col] = extreme_count
+                self.logger.warning(f"列 {col} 包含 {extreme_count} 个超出NUMERIC(18,6)范围的极值")
+                # 记录一些样本极值
+                extreme_values = df.loc[extreme_mask, col].head(3).tolist()
+                self.logger.warning(f"列 {col} 的极值样本: {extreme_values}")
+        
+        # 3. 将无穷大值替换为 NaN
         df[numeric_cols] = df[numeric_cols].replace([np.inf, -np.inf], np.nan)
-        self.logger.debug(
-            f"执行特定转换: 将 {len(numeric_cols)} 个数值列中的 inf/-inf 替换为 NaN"
-        )
+        
+        # 4. 将超出范围的极值也替换为 NaN
+        for col in numeric_cols:
+            extreme_mask = (df[col] > max_value) | (df[col] < min_value)
+            if extreme_mask.any():
+                df.loc[extreme_mask, col] = np.nan
+        
+        # 5. 检查NaN值
+        nan_counts = {}
+        for col in numeric_cols:
+            nan_count = df[col].isna().sum()
+            if nan_count > 0:
+                nan_counts[col] = nan_count
+        
+        # 6. 记录统计信息
+        if inf_counts:
+            self.logger.info(f"处理了无穷大值的列: {inf_counts}")
+        if extreme_value_counts:
+            self.logger.info(f"处理了极值的列: {extreme_value_counts}")
+        if nan_counts:
+            self.logger.info(f"包含NaN值的列: {dict(list(nan_counts.items())[:10])}")  # 只显示前10个
+        
+        # 7. 记录一些基本统计信息
+        if len(numeric_cols) > 0:
+            self.logger.debug(f"数值列的基本统计信息:")
+            stats = df[numeric_cols].describe()
+            self.logger.debug(f"统计摘要:\n{stats}")
+        
+        self.logger.info(f"数据质量检查完成，最终数据形状: {df.shape}")
         return df

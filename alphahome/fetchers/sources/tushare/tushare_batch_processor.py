@@ -35,9 +35,9 @@ class TushareBatchProcessor:
         self, batch_params: Dict, batch_log_prefix: str
     ) -> Optional[pd.DataFrame]:
         """获取单个原始批次数据，包含重试逻辑。"""
-        # Ensure default_max_retries and default_retry_delay are accessible from task instance
-        max_retries = getattr(self.task, "max_retries", 3)  # Default to 3 if not found
-        retry_delay = getattr(self.task, "retry_delay", 2)  # Default to 2 if not found
+        # 确保可以从任务实例中访问 default_max_retries 和 default_retry_delay
+        max_retries = getattr(self.task, "max_retries", 3)  # 如果未找到则默认为 3
+        retry_delay = getattr(self.task, "retry_delay", 2)  # 如果未找到则默认为 2
 
         for attempt in range(max_retries + 1):
             try:
@@ -132,14 +132,12 @@ class TushareBatchProcessor:
                 )
                 return validated_data
 
-            # 主键去重逻辑现在应该在 TushareDataTransformer.validate_data 或 TushareDataTransformer.process_data 内部处理
-            # 或者 TushareTask 应该提供一个方法给 Transformer 调用
-            # For now, assuming primary_keys are accessible via self.task if still needed here, but ideally it's part of transformer logic.
+            # 目前，假设如果此处仍需要 primary_keys，可以通过 self.task 访问，但理想情况下它应该属于转换器逻辑的一部分。
+            # 通常，最好是 TushareDataTransformer.validate_data 返回已经去重的数据
+            # 或者由 TushareDataTransformer.process_data 处理。
+            # 如果 TushareTask 需要在助手转换和验证后强制执行：
             if hasattr(self.task, "primary_keys") and self.task.primary_keys:
                 original_count = len(validated_data)
-                # It's generally better if TushareDataTransformer.validate_data returns data already de-duplicated
-                # or TushareDataTransformer.process_data handles this.
-                # If TushareTask needs to enforce it after transformation and validation by the helper:
                 validated_data.drop_duplicates(
                     subset=self.task.primary_keys, keep="last", inplace=True
                 )
@@ -292,7 +290,7 @@ class TushareBatchProcessor:
             )
             if (
                 processed_rows_count == 0 and not validated_data.empty
-            ):  # Check if save failed despite having data
+            ):  # 检查即使有数据但保存是否失败
                 self.logger.error(f"{batch_log_prefix}: 保存数据最终失败。")
 
         except asyncio.CancelledError as ce:

@@ -15,11 +15,11 @@ class SchemaManagementMixin:
         Returns:
             bool: 如果表存在则返回True，否则返回False
         """
-        if self.pool is None:
-            await self.connect()
+        if self.pool is None: # type: ignore
+            await self.connect() # type: ignore
 
         # 解析表名以支持schema
-        resolved_table_name = self.resolver.get_full_name(target)
+        resolved_table_name = self.resolver.get_full_name(target) # type: ignore
         schema, simple_name = resolved_table_name.split('.')
         schema = schema.strip('"')
         simple_name = simple_name.strip('"')
@@ -30,7 +30,7 @@ class SchemaManagementMixin:
             WHERE table_schema = $1 AND table_name = $2
         );
         """
-        async with self.pool.acquire() as conn:
+        async with self.pool.acquire() as conn: # type: ignore
             result = await conn.fetchval(query, schema, simple_name)
         return result if result is not None else False
 
@@ -44,7 +44,7 @@ class SchemaManagementMixin:
             List[Dict[str, Any]]: 表结构信息列表，每个元素是一个字典，
                                  包含列名、数据类型、是否可为空、默认值等信息。
         """
-        resolved_table_name = self.resolver.get_full_name(target)
+        resolved_table_name = self.resolver.get_full_name(target) # type: ignore
         schema, simple_name = resolved_table_name.split('.')
         schema = schema.strip('"')
         simple_name = simple_name.strip('"')
@@ -62,7 +62,7 @@ class SchemaManagementMixin:
         ORDER BY 
             ordinal_position;
         """
-        result = await self.fetch(query, schema, simple_name)
+        result = await self.fetch(query, schema, simple_name) # type: ignore
 
         # 转换为字典列表
         schema_info = []
@@ -81,8 +81,8 @@ class SchemaManagementMixin:
 
     async def create_table_from_schema(self, target: Any):
         """根据任务对象定义的 schema (结构) 创建数据库表和相关索引。"""
-        if self.pool is None:
-            await self.connect()
+        if self.pool is None: # type: ignore
+            await self.connect() # type: ignore
 
         # 从任务对象中提取属性
         schema_def = getattr(target, "schema_def", None)
@@ -91,7 +91,7 @@ class SchemaManagementMixin:
         indexes = getattr(target, "indexes", None)
         auto_add_update_time = getattr(target, "auto_add_update_time", True)
 
-        resolved_table_name = self.resolver.get_full_name(target)
+        resolved_table_name = self.resolver.get_full_name(target) # type: ignore
 
         if not schema_def:  # schema 定义不能为空
             raise ValueError(
@@ -101,7 +101,7 @@ class SchemaManagementMixin:
         schema, simple_name = resolved_table_name.split('.')
         schema = schema.strip('"')
 
-        async with self.pool.acquire() as conn:
+        async with self.pool.acquire() as conn: # type: ignore
             async with conn.transaction():  # 为DDL（数据定义语言）操作使用事务
                 try:
                     # --- 0. 确保 schema 存在 ---
@@ -150,11 +150,11 @@ class SchemaManagementMixin:
                     );
                     """
 
-                    self.logger.info(
+                    self.logger.info( # type: ignore
                         f"准备为表 '{resolved_table_name}' 执行建表语句:\\n{create_table_sql}"
                     )
-                    await conn.execute(create_table_sql)
-                    self.logger.info(f"表 '{resolved_table_name}' 创建成功或已存在。")
+                    await conn.execute(create_table_sql) # type: ignore
+                    self.logger.info(f"表 '{resolved_table_name}' 创建成功或已存在。") # type: ignore
 
                     # --- 1.1 添加列注释 ---
                     for col_name, col_def_item in schema_def.items():
@@ -166,11 +166,11 @@ class SchemaManagementMixin:
                                     "'", "''"
                                 )
                                 comment_sql = f"COMMENT ON COLUMN {resolved_table_name}.\"{col_name}\" IS '{escaped_comment_text}';"
-                                self.logger.info(
+                                self.logger.info( # type: ignore
                                     f"准备为列 '{resolved_table_name}.{col_name}' 添加注释: {comment_sql}"
                                 )
-                                await conn.execute(comment_sql)
-                                self.logger.debug(
+                                await conn.execute(comment_sql) # type: ignore
+                                self.logger.debug( # type: ignore
                                     f"为列 '{resolved_table_name}.{col_name}' 添加注释成功。"
                                 )
 
@@ -179,11 +179,11 @@ class SchemaManagementMixin:
                     if date_column and date_column not in (primary_keys or []):
                         index_name_date = f"idx_{simple_name}_{date_column}"
                         create_index_sql_date = f'CREATE INDEX IF NOT EXISTS "{index_name_date}" ON {resolved_table_name} ("{date_column}");'
-                        self.logger.info(
+                        self.logger.info( # type: ignore
                             f"准备为 '{resolved_table_name}.{date_column}' 创建索引: {index_name_date}"
                         )
-                        await conn.execute(create_index_sql_date)
-                        self.logger.info(f"索引 '{index_name_date}' 创建成功或已存在。")
+                        await conn.execute(create_index_sql_date) # type: ignore
+                        self.logger.info(f"索引 '{index_name_date}' 创建成功或已存在。") # type: ignore
 
                     # 创建 schema 中定义的其他索引
                     if indexes and isinstance(indexes, list):
@@ -195,7 +195,7 @@ class SchemaManagementMixin:
                             if isinstance(index_def, dict):  # 索引定义是字典
                                 index_columns_list = index_def.get("columns")
                                 if not index_columns_list:
-                                    self.logger.warning(
+                                    self.logger.warning( # type: ignore
                                         f"跳过无效的索引定义 (缺少 columns): {index_def}"
                                     )
                                     continue
@@ -207,7 +207,7 @@ class SchemaManagementMixin:
                                         [f'"{col}"' for col in index_columns_list]
                                     )
                                 else:
-                                    self.logger.warning(
+                                    self.logger.warning( # type: ignore 
                                         f"索引定义中的 'columns' 类型无效: {index_columns_list}"
                                     )
                                     continue
@@ -231,21 +231,21 @@ class SchemaManagementMixin:
                                 index_columns_str = f'"{index_def}"'
                                 index_name = f"idx_{simple_name}_{index_def}"
                             else:  # 未知格式
-                                self.logger.warning(
+                                self.logger.warning( # type: ignore
                                     f"跳过未知格式的索引定义: {index_def}"
                                 )
                                 continue
 
                             unique_str = "UNIQUE " if unique else ""
                             create_index_sql = f'CREATE {unique_str}INDEX IF NOT EXISTS "{index_name}" ON {resolved_table_name} ({index_columns_str});'
-                            self.logger.info(
+                            self.logger.info( # type: ignore
                                 f"准备创建索引 '{index_name}' 于 '{resolved_table_name}({index_columns_str})': {unique_str.strip()}"
                             )
-                            await conn.execute(create_index_sql)
-                            self.logger.info(f"索引 '{index_name}' 创建成功或已存在。")
+                            await conn.execute(create_index_sql) # type: ignore
+                            self.logger.info(f"索引 '{index_name}' 创建成功或已存在。") # type: ignore
 
                 except Exception as e:
-                    self.logger.error(
+                    self.logger.error( # type: ignore
                         f"创建表或索引 '{resolved_table_name}' 时失败: {e}", exc_info=True
                     )
                     raise
@@ -257,13 +257,13 @@ class SchemaManagementMixin:
             schema_name (str): 需要确保其存在的 schema 的名称。
         """
         if not schema_name or not isinstance(schema_name, str) or "." in schema_name:
-            self.logger.error(f"无效的 schema 名称: '{schema_name}'")
+            self.logger.error(f"无效的 schema 名称: '{schema_name}'") # type: ignore
             return
 
         try:
             # 使用参数化查询来防止SQL注入，尽管这里风险较低
-            await self.execute(f'CREATE SCHEMA IF NOT EXISTS "{schema_name}"')
-            self.logger.info(f"Schema '{schema_name}' 创建成功或已存在。")
+            await self.execute(f'CREATE SCHEMA IF NOT EXISTS "{schema_name}"') # type: ignore
+            self.logger.info(f"Schema '{schema_name}' 创建成功或已存在。") # type: ignore
         except Exception as e:
-            self.logger.error(f"创建 schema '{schema_name}' 时失败: {e}", exc_info=True)
+            self.logger.error(f"创建 schema '{schema_name}' 时失败: {e}", exc_info=True) # type: ignore
             raise

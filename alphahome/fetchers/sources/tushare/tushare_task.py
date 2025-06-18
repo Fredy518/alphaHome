@@ -34,7 +34,7 @@ import logging  # 确保导入 logging
 import math  # 引入 math 用于 ceil 计算
 import os
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 from typing import Any, Callable, Dict, List, Optional
 
 import aiohttp
@@ -87,12 +87,19 @@ class TushareTask(Task):
     default_max_retries = 3  # 默认最大重试次数
     default_retry_delay = 2  # 默认重试延迟（秒）
 
-    api_name = None  # Tushare API名称，子类必须定义
-    fields = None  # 需要获取的字段列表，子类必须定义
+    api_name: Optional[str] = None  # Tushare API名称，子类必须定义
+    fields: Optional[List[str]] = None  # 需要获取的字段列表，子类必须定义
     timestamp_column_name: Optional[str] = (
         "update_time"  # 时间戳列名，默认为 'update_time'，None表示不使用
     )
     single_batch = False  # 单批次处理模式，适用于数据量小的任务，例如宏观数据
+    
+    # 列名映射，子类可定义
+    column_mapping: Optional[Dict[str, str]] = None
+
+    # 抽象属性，子类必须定义
+    schema_def: Optional[Any] = None  # 表结构定义
+    default_start_date: Optional[str] = None  # 默认开始日期
 
     def __init__(self, db_connection, api_token=None, api=None):
         """初始化 TushareTask
@@ -182,7 +189,7 @@ class TushareTask(Task):
             self.retry_delay = task_config["retry_delay"]
             self.logger.debug(f"设置重试延迟: {self.retry_delay}s")
 
-    async def get_latest_date(self) -> Optional[datetime.date]:
+    async def get_latest_date(self) -> Optional[date]:
         """获取当前任务对应表中的最新日期。
 
         Returns:
@@ -236,8 +243,8 @@ class TushareTask(Task):
             # Specific check for asyncpg.exceptions.UndefinedTableError
             if isinstance(
                 e,
-                getattr(
-                    __import__("asyncpg.exceptions", fromlist=["UndefinedTableError"]),
+                getattr(  # type: ignore
+                    __import__("asyncpg.exceptions", fromlist=["UndefinedTableError"]),  # type: ignore
                     "UndefinedTableError",
                     None,
                 ),
@@ -410,6 +417,13 @@ class TushareTask(Task):
             )
 
         return final_start_date, final_end_date, should_skip, skip_message
+
+    async def run(self, **kwargs):
+        """手动增量模式执行任务
+        
+        提供与基类兼容的run方法接口，内部调用execute方法
+        """
+        return await self.execute(**kwargs)
 
     async def execute(self, **kwargs):
         """执行任务的完整生命周期 (已重构日期逻辑, 批处理聚合, 最终结果构造)"""
@@ -729,10 +743,10 @@ class TushareTask(Task):
 
                 # 调用 TushareAPI 的 query 方法
                 df = await self.api.query(
-                    api_name=self.api_name,
-                    fields=self.fields,
+                    api_name=self.api_name,  # type: ignore
+                    fields=self.fields,  # type: ignore
                     params=api_params,  # 使用处理后的参数
-                    page_size=self.page_size,  # <<< 将任务配置的 page_size 传递给 API 查询 >>>
+                    page_size=self.page_size,  # type: ignore
                 )
 
                 if (
@@ -860,30 +874,30 @@ class TushareTask(Task):
         )
 
         # 获取批处理参数列表
-        batch_list = self.get_batch_list(**kwargs)
+        batch_list = await self.get_batch_list(**kwargs)  # type: ignore
         if not batch_list:
             self.logger.warning("批处理参数列表为空，无法获取数据")
             return pd.DataFrame()
 
-        self.logger.info(f"生成了 {len(batch_list)} 个批处理任务")
+        self.logger.info(f"生成了 {len(batch_list)} 个批处理任务")  # type: ignore
 
         # 存储所有批次的数据
         all_data = []
 
         # 处理每个批次
-        for i, batch_params in enumerate(batch_list):
+        for i, batch_params in enumerate(batch_list):  # type: ignore
             try:
                 result = await self.fetch_batch(batch_params)
-                if not result.empty:
+                if result is not None and not result.empty:  # type: ignore
                     self.logger.info(
-                        f"批次 {i+1}/{len(batch_list)}: 获取到 {len(result)} 行数据"
+                        f"批次 {i+1}/{len(batch_list)}: 获取到 {len(result)} 行数据"  # type: ignore
                     )
                     all_data.append(result)
                 else:
-                    self.logger.warning(f"批次 {i+1}/{len(batch_list)}: 未获取到数据")
+                    self.logger.warning(f"批次 {i+1}/{len(batch_list)}: 未获取到数据")  # type: ignore
             except Exception as e:
                 self.logger.error(
-                    f"批次 {i+1}/{len(batch_list)} 获取数据失败: {str(e)}"
+                    f"批次 {i+1}/{len(batch_list)} 获取数据失败: {str(e)}"  # type: ignore
                 )
                 # 继续处理下一个批次，而不是直接失败
                 continue

@@ -2,7 +2,7 @@ import asyncio
 import inspect
 import logging
 from abc import ABC, abstractmethod
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 from typing import Any, Callable, Dict, List, Optional, Union
 
 import numpy as np
@@ -17,7 +17,7 @@ class BaseTask(ABC):
     为所有任务提供基础功能，包括数据获取、处理、验证和保存。
     """
 
-    # 任务类型标识 ('fetch', 'processor', 'derivative', etc.)
+    # 任务类型标识 (例如 'fetch', 'processor', 'derivative' 等)
     task_type: str = "base"
 
     # 必须由子类定义的属性
@@ -30,12 +30,17 @@ class BaseTask(ABC):
     description = ""
     auto_add_update_time = True  # 是否自动添加更新时间
     data_source: Optional[str] = None  # 数据源标识（如'tushare', 'wind', 'jqdata'等）
+    default_start_date: str = "20200101" # 默认起始日期
+    transformations: Optional[Dict[str, Callable]] = None # 数据转换函数字典
+    validations: Optional[List[Callable]] = None # 数据验证函数列表
+    schema_def: Optional[Dict[str, Any]] = None # 表结构定义
+    set_config: Optional[Callable[[Dict[str, Any]], None]] = None # 可选的任务配置方法
     
     # 新增：支持processor任务的属性
     source_tables = []        # 源数据表列表（processor任务使用）
     dependencies = []         # 依赖的其他任务（processor任务使用）
 
-    def __init__(self, db_connection):
+    def __init__(self, db_connection, **kwargs):
         """初始化任务"""
         if self.name is None or self.table_name is None:
             raise ValueError("必须定义name和table_name属性")
@@ -167,10 +172,19 @@ class BaseTask(ABC):
             return {"status": "cancelled", "error": str(error), "task": self.name}
         return {"status": "error", "error": str(error), "task": self.name}
 
-    @abstractmethod
     async def fetch_data(self, stop_event: Optional[asyncio.Event] = None, **kwargs):
         """获取原始数据（子类必须实现）"""
         raise NotImplementedError
+
+    async def get_batch_list(self, stop_event: Optional[asyncio.Event] = None, **kwargs) -> List[Dict]:
+        """获取批处理任务列表（子类必须实现）"""
+        self.logger.warning(f"任务 {self.name} (类型: {self.task_type}) 未实现 get_batch_list 方法。")
+        raise NotImplementedError(f"任务 {self.name} 不支持批处理列表生成。")
+
+    async def fetch_batch(self, batch_params: Dict, stop_event: Optional[asyncio.Event] = None, **kwargs) -> Optional[pd.DataFrame]:
+        """获取单个批次的数据（子类必须实现）"""
+        self.logger.warning(f"任务 {self.name} (类型: {self.task_type}) 未实现 fetch_batch 方法。")
+        raise NotImplementedError(f"任务 {self.name} 不支持批处理数据获取。")
 
     def process_data(self, data, stop_event: Optional[asyncio.Event] = None, **kwargs):
         """处理原始数据"""
@@ -185,9 +199,8 @@ class BaseTask(ABC):
                             data[column] = data[column].fillna(np.nan)
                             
                             # 检查列是否包含nan值
-                            has_nan = data[column].isna().any()
-
-                            if has_nan:
+                            explicit_boolean_for_nan_check: bool = (data[column].isna().any() == True)
+                            if explicit_boolean_for_nan_check:
                                 self.logger.debug(f"列 {column} 包含缺失值(NaN)，将使用安全转换")
 
                                 # 定义一个安全的转换函数，处理np.nan值
@@ -335,7 +348,7 @@ class BaseTask(ABC):
             raise
 
     # --- 新增和重构的辅助方法 ---
-    async def get_latest_date_for_task(self) -> Optional[datetime.date]:
+    async def get_latest_date_for_task(self) -> Optional[date]:
         """获取当前任务的最新数据日期。"""
         if not self.date_column:
             self.logger.warning(
@@ -388,7 +401,21 @@ class BaseTask(ABC):
 
         # 对于Basic类型任务（date_column=None），直接执行全量更新，避免日期逻辑
         if self.date_column is None:
-            self.logger.info(f"任务 {self.name} 为Basic类型任务（date_column=None），将直接执行全量更新")
+            # 此路径适用于通过批处理获取数据来进行全量更新的"Basic"任务。
+            # 通常不适用于 "processor" 类型的任务。
+            if self.task_type == "processor": # 可以根据需要扩展这里的类型检查
+                self.logger.warning(
+                    f"任务 {self.name} (类型: {self.task_type}) "
+                    f"在 date_column 为 None 时，其类型不适合执行 smart_incremental_update 的全量批处理更新路径。"
+                )
+                return {
+                    "status": "not_applicable",
+                    "task": self.name,
+                    "rows": 0,
+                    "message": "任务类型不适用于此全量更新模式。",
+                }
+            
+            self.logger.info(f"任务 {self.name} (类型: {self.task_type}) 为Basic类型任务（date_column=None），将直接执行全量更新")
             
             try:
                 # 确保表存在

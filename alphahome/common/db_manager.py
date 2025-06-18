@@ -33,8 +33,12 @@ class DBManager(
     - async: 使用 asyncpg，适用于异步环境（如 fetchers）
     - sync: 使用 psycopg2，适用于同步环境（如 Backtrader）
     """
-    
-    pass  # 所有功能都通过Mix-in继承获得
+    def __init__(self, connection_string: str, mode: str = "async", **kwargs):
+        """
+        初始化 DBManager 实例。
+        参数会透传给继承链中的父类（特别是 DBManagerCore）。
+        """
+        super().__init__(connection_string, mode=mode, **kwargs)  # type: ignore
 
     
 # === 工厂函数 ===
@@ -49,7 +53,7 @@ def create_async_manager(connection_string: str) -> DBManager:
     Returns:
         DBManager: 异步模式的数据库管理器实例
     """
-    return DBManager(connection_string, mode="async")
+    return DBManager(connection_string, mode="async")  # type: ignore
 
 
 def create_sync_manager(connection_string: str) -> DBManager:
@@ -63,7 +67,7 @@ def create_sync_manager(connection_string: str) -> DBManager:
     Returns:
         DBManager: 同步模式的数据库管理器实例
     """
-    return DBManager(connection_string, mode="sync")
+    return DBManager(connection_string, mode="sync")  # type: ignore
 
 
 # === 向后兼容别名 ===

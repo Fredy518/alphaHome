@@ -21,15 +21,15 @@ class SQLOperationsMixin:
         """
         # Note: This method is low-level and does not automatically resolve table names.
         # It's intended for raw SQL execution. Higher-level methods should handle resolution.
-        if self.pool is None:
-            await self.connect()
+        if self.pool is None:  # type: ignore
+            await self.connect()  # type: ignore
 
-        async with self.pool.acquire() as conn:
+        async with self.pool.acquire() as conn:  # type: ignore
             try:
                 result = await conn.execute(query, *args, **kwargs)
                 return result
             except Exception as e:
-                self.logger.error(
+                self.logger.error(  # type: ignore
                     f"SQL执行失败: {str(e)}\nSQL: {query}\n位置参数: {args}\n关键字参数: {kwargs}"
                 )
                 raise
@@ -45,15 +45,15 @@ class SQLOperationsMixin:
         Returns:
             List[asyncpg.Record]: 查询结果记录列表
         """
-        if self.pool is None:
-            await self.connect()
+        if self.pool is None:  # type: ignore
+            await self.connect()  # type: ignore
 
-        async with self.pool.acquire() as conn:
+        async with self.pool.acquire() as conn:  # type: ignore
             try:
                 result = await conn.fetch(query, *args, **kwargs)
                 return result
             except Exception as e:
-                self.logger.error(
+                self.logger.error(  # type: ignore
                     f"SQL查询失败: {str(e)}\nSQL: {query}\n位置参数: {args}\n关键字参数: {kwargs}"
                 )
                 raise
@@ -69,15 +69,15 @@ class SQLOperationsMixin:
         Returns:
             Optional[asyncpg.Record]: 查询结果的第一行记录，如果没有结果则返回None
         """
-        if self.pool is None:
-            await self.connect()
+        if self.pool is None:  # type: ignore
+            await self.connect()  # type: ignore
 
-        async with self.pool.acquire() as conn:
+        async with self.pool.acquire() as conn:  # type: ignore
             try:
                 result = await conn.fetchrow(query, *args, **kwargs)
                 return result
             except Exception as e:
-                self.logger.error(
+                self.logger.error(  # type: ignore
                     f"SQL查询失败: {str(e)}\nSQL: {query}\n位置参数: {args}\n关键字参数: {kwargs}"
                 )
                 raise
@@ -93,54 +93,54 @@ class SQLOperationsMixin:
         Returns:
             Any: 查询结果的第一行第一列的值，如果没有结果则返回None
         """
-        if self.pool is None:
-            await self.connect()
+        if self.pool is None:  # type: ignore
+            await self.connect()  # type: ignore
 
-        async with self.pool.acquire() as conn:
+        async with self.pool.acquire() as conn:  # type: ignore
             try:
                 result = await conn.fetchval(query, *args, **kwargs)
                 return result
             except Exception as e:
-                self.logger.error(
+                self.logger.error(  # type: ignore
                     f"SQL查询失败: {str(e)}\nSQL: {query}\n位置参数: {args}\n关键字参数: {kwargs}"
                 )
                 raise
 
     # === 统一同步方法接口 ===
 
-    def execute_sync(self, query: str, params: tuple = None):
+    def execute_sync(self, query: str, params: Optional[tuple] = None):
         """同步执行SQL语句"""
         # Note: Low-level method, no table name resolution.
-        if self.mode == "async":
+        if self.mode == "async":  # type: ignore
             # 异步模式：包装异步方法
             if params:
-                return self._run_sync(self.execute(query, *params))
+                return self._run_sync(self.execute(query, *params))  # type: ignore
             else:
-                return self._run_sync(self.execute(query))
-        elif self.mode == "sync":
+                return self._run_sync(self.execute(query))  # type: ignore
+        elif self.mode == "sync":  # type: ignore
             # 同步模式：直接使用 psycopg2
-            connection = self._get_sync_connection()
+            connection = self._get_sync_connection()  # type: ignore
             try:
                 with connection.cursor() as cursor:
                     cursor.execute(query, params)
                     connection.commit()
                     return cursor.rowcount
             except Exception as e:
-                self.logger.error(f"同步SQL执行失败: {e}\nSQL: {query}\n参数: {params}")
+                self.logger.error(f"同步SQL执行失败: {e}\nSQL: {query}\n参数: {params}")  # type: ignore
                 connection.rollback()
                 raise
 
-    def fetch_sync(self, query: str, params: tuple = None):
+    def fetch_sync(self, query: str, params: Optional[tuple] = None):
         """同步执行查询并返回所有结果"""
-        if self.mode == "async":
+        if self.mode == "async":  # type: ignore
             # 异步模式：包装异步方法
             if params:
-                return self._run_sync(self.fetch(query, *params))
+                return self._run_sync(self.fetch(query, *params))  # type: ignore
             else:
-                return self._run_sync(self.fetch(query))
-        elif self.mode == "sync":
+                return self._run_sync(self.fetch(query))  # type: ignore
+        elif self.mode == "sync":  # type: ignore
             # 同步模式：直接使用 psycopg2
-            connection = self._get_sync_connection()
+            connection = self._get_sync_connection()  # type: ignore
             try:
                 with connection.cursor(
                     cursor_factory=psycopg2.extras.RealDictCursor
@@ -149,21 +149,21 @@ class SQLOperationsMixin:
                     rows = cursor.fetchall()
                     return [dict(row) for row in rows]
             except Exception as e:
-                self.logger.error(f"同步SQL查询失败: {e}\nSQL: {query}\n参数: {params}")
+                self.logger.error(f"同步SQL查询失败: {e}\nSQL: {query}\n参数: {params}")  # type: ignore
                 connection.rollback()
                 raise
 
-    def fetch_one_sync(self, query: str, params: tuple = None):
+    def fetch_one_sync(self, query: str, params: Optional[tuple] = None):
         """同步执行查询并返回第一行结果"""
-        if self.mode == "async":
+        if self.mode == "async":  # type: ignore
             # 异步模式：包装异步方法
             if params:
-                return self._run_sync(self.fetch_one(query, *params))
+                return self._run_sync(self.fetch_one(query, *params))  # type: ignore
             else:
-                return self._run_sync(self.fetch_one(query))
-        elif self.mode == "sync":
+                return self._run_sync(self.fetch_one(query))  # type: ignore
+        elif self.mode == "sync":  # type: ignore
             # 同步模式：直接使用 psycopg2
-            connection = self._get_sync_connection()
+            connection = self._get_sync_connection()  # type: ignore
             try:
                 with connection.cursor(
                     cursor_factory=psycopg2.extras.RealDictCursor
@@ -172,28 +172,28 @@ class SQLOperationsMixin:
                     row = cursor.fetchone()
                     return dict(row) if row else None
             except Exception as e:
-                self.logger.error(f"同步SQL查询失败: {e}\nSQL: {query}\n参数: {params}")
+                self.logger.error(f"同步SQL查询失败: {e}\nSQL: {query}\n参数: {params}")  # type: ignore
                 connection.rollback()
                 raise
 
-    def fetch_val_sync(self, query: str, params: tuple = None):
+    def fetch_val_sync(self, query: str, params: Optional[tuple] = None):
         """同步执行查询并返回第一行第一列的值"""
-        if self.mode == "async":
+        if self.mode == "async":  # type: ignore
             # 异步模式：包装异步方法
             if params:
-                return self._run_sync(self.fetch_val(query, *params))
+                return self._run_sync(self.fetch_val(query, *params))  # type: ignore
             else:
-                return self._run_sync(self.fetch_val(query))
-        elif self.mode == "sync":
+                return self._run_sync(self.fetch_val(query))  # type: ignore
+        elif self.mode == "sync":  # type: ignore
             # 同步模式：直接使用 psycopg2
-            connection = self._get_sync_connection()
+            connection = self._get_sync_connection()  # type: ignore
             try:
                 with connection.cursor() as cursor:
                     cursor.execute(query, params)
                     row = cursor.fetchone()
                     return row[0] if row else None
             except Exception as e:
-                self.logger.error(f"同步SQL查询失败: {e}\nSQL: {query}\n参数: {params}")
+                self.logger.error(f"同步SQL查询失败: {e}\nSQL: {query}\n参数: {params}")  # type: ignore
                 connection.rollback()
                 raise
 
@@ -213,10 +213,10 @@ class SQLOperationsMixin:
         Returns:
             int: 影响的行数
         """
-        if self.pool is None:
-            await self.connect()
+        if self.pool is None:  # type: ignore
+            await self.connect()  # type: ignore
 
-        async with self.pool.acquire() as conn:
+        async with self.pool.acquire() as conn:  # type: ignore
             try:
                 # 开始事务
                 async with conn.transaction():
@@ -239,5 +239,5 @@ class SQLOperationsMixin:
 
                     return count  # 如果循环完成，返回完整计数
             except Exception as e:
-                self.logger.error(f"批量SQL执行失败: {str(e)}\nSQL: {query}")
+                self.logger.error(f"批量SQL执行失败: {str(e)}\nSQL: {query}")  # type: ignore
                 raise

@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta
 from typing import Dict, List
 
+import numpy as np  # 添加numpy用于处理无穷大值
 import pandas as pd
 
 from ...sources.tushare import TushareTask
@@ -152,8 +153,8 @@ class TushareStockReportRcTask(TushareTask):
             # The TushareTask base class should correctly pass these as start_date/end_date
             # parameters to the Tushare API, which filters on 'report_date'.
             batch_list = await generate_natural_day_batches(
-                start_date=start_date,
-                end_date=end_date,
+                start_date=start_date,  # type: ignore
+                end_date=end_date,  # type: ignore
                 batch_size=batch_size_days,
                 ts_code=ts_code,  # Pass ts_code to batch generator if provided
                 logger=self.logger,
@@ -170,12 +171,65 @@ class TushareStockReportRcTask(TushareTask):
         异步处理从API获取的原始数据。
         此方法可以被子类覆盖以实现特定的数据转换逻辑。
         """
+        self.logger.info(f"开始处理 report_rc 数据，原始数据形状: {df.shape}")
+        
         # 假设父类的 process_data 是同步的
         df = super().process_data(df)
 
         # 如果df为空或者不是DataFrame，则直接返回
         if not isinstance(df, pd.DataFrame) or df.empty:
             return df
+
+        # 数据质量检查和清理
+        numeric_cols = [col for col in df.columns if col in [
+            "op_rt", "op_pr", "tp", "np", "eps", "pe", "rd", "roe", 
+            "ev_ebitda", "max_price", "min_price"
+        ]]
+        
+        if numeric_cols:
+            self.logger.debug(f"检查 {len(numeric_cols)} 个数值列: {numeric_cols}")
+            
+            # 1. 检查无穷大值
+            inf_counts = {}
+            for col in numeric_cols:
+                if col in df.columns:
+                    inf_count = np.isinf(df[col]).sum()
+                    if inf_count > 0:
+                        inf_counts[col] = inf_count
+                        self.logger.warning(f"列 {col} 包含 {inf_count} 个无穷大值")
+            
+            # 2. 检查超出NUMERIC(20,4)范围的值
+            # NUMERIC(20,4): 总共20位数字，4位小数，所以整数部分最多16位
+            max_value = 9999999999999999.9999  # 16位整数 + 4位小数
+            min_value = -9999999999999999.9999
+            extreme_counts = {}
+            
+            for col in numeric_cols:
+                if col in df.columns:
+                    extreme_mask = (df[col] > max_value) | (df[col] < min_value)
+                    extreme_count = extreme_mask.sum()
+                    if extreme_count > 0:
+                        extreme_counts[col] = extreme_count
+                        self.logger.warning(f"列 {col} 包含 {extreme_count} 个超出NUMERIC(20,4)范围的值")
+                        # 记录样本
+                        extreme_samples = df.loc[extreme_mask, col].head(3).tolist()
+                        self.logger.warning(f"列 {col} 的极值样本: {extreme_samples}")
+            
+            # 3. 清理数据：将无穷大值和极值替换为NaN
+            for col in numeric_cols:
+                if col in df.columns:
+                    # 替换无穷大值
+                    df[col] = df[col].replace([np.inf, -np.inf], np.nan)
+                    # 替换超出范围的极值
+                    extreme_mask = (df[col] > max_value) | (df[col] < min_value)
+                    if extreme_mask.any():
+                        df.loc[extreme_mask, col] = np.nan
+            
+            # 4. 记录清理结果
+            if inf_counts:
+                self.logger.info(f"已清理无穷大值的列: {inf_counts}")
+            if extreme_counts:
+                self.logger.info(f"已清理极值的列: {extreme_counts}")
 
         # 2. 填充特定列的空值
         if "org_name" in df.columns:
@@ -185,4 +239,19 @@ class TushareStockReportRcTask(TushareTask):
         if "author_name" in df.columns:
             df["author_name"] = df["author_name"].fillna("无").replace("", "无")
 
+                # 3. 过滤掉quarter字段为NULL的记录
+        if "quarter" in df.columns:
+            quarter_null_mask = df["quarter"].isnull() | (df["quarter"] == "")
+            quarter_null_count = quarter_null_mask.sum()
+            
+            if quarter_null_count > 0:
+                self.logger.warning(f"发现 {quarter_null_count} 行的quarter字段为空，将过滤掉这些记录")
+                
+                # 过滤掉quarter为NULL的记录
+                df = df[~quarter_null_mask].copy()  # type: ignore
+                df = df.reset_index(drop=True)  # 重置索引
+                
+                self.logger.info(f"quarter字段过滤完成: 过滤掉 {quarter_null_count} 行，剩余 {len(df)} 行")
+
+        self.logger.info(f"数据处理完成，最终数据形状: {df.shape}")
         return df

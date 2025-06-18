@@ -41,7 +41,7 @@ class DataOperationsMixin:
                 return parsed_date.date()
                 
         except Exception as e:
-            self.logger.warning(f"无法解析日期字符串 '{date_str}': {e}")
+            self.logger.warning(f"无法解析日期字符串 '{date_str}': {e}") # type: ignore
             
         return None
 
@@ -98,14 +98,14 @@ class DataOperationsMixin:
             ValueError: 如果参数无效或DataFrame为空。
             Exception: 如果发生数据库操作错误。
         """
-        if self.pool is None:
-            await self.connect()
+        if self.pool is None: # type: ignore
+            await self.connect() # type: ignore
 
-        schema, table_name = self.resolver.get_schema_and_table(target)
+        schema, table_name = self.resolver.get_schema_and_table(target) # type: ignore
         resolved_table_name = f'"{schema}"."{table_name}"'
 
         if df.empty:
-            self.logger.info(
+            self.logger.info( # type: ignore
                 f"COPY_FROM_DATAFRAME (表: {resolved_table_name}): DataFrame为空，跳过操作。"
             )
             return 0
@@ -114,7 +114,7 @@ class DataOperationsMixin:
 
         # 检查时间戳列是否存在于DataFrame中
         if timestamp_column and timestamp_column not in df_columns:
-            self.logger.info(
+            self.logger.info( # type: ignore
                 f"COPY_FROM_DATAFRAME (表: {resolved_table_name}): 时间戳列 '{timestamp_column}' 未在DataFrame列中找到，自动添加当前时间。"
             )
             df = df.copy()
@@ -172,12 +172,12 @@ class DataOperationsMixin:
 
         records_iterable = _df_to_records_generator(df)
 
-        async with self.pool.acquire() as conn:
+        async with self.pool.acquire() as conn: # type: ignore
             async with conn.transaction():
                 try:
                     # 1. 创建临时表
                     await conn.execute(create_temp_table_sql)
-                    self.logger.debug(f"已创建临时表 {temp_table}")
+                    self.logger.debug(f"已创建临时表 {temp_table}") # type: ignore
 
                     # 2. 使用 COPY 高效加载数据到临时表
                     copy_count = await conn.copy_records_to_table(
@@ -186,7 +186,7 @@ class DataOperationsMixin:
                         columns=df_columns,
                         timeout=300,
                     )
-                    self.logger.debug(f"已复制 {copy_count} 条记录到 {temp_table}")
+                    self.logger.debug(f"已复制 {copy_count} 条记录到 {temp_table}") # type: ignore
 
                     # 3. 从临时表插入/更新到目标表
                     target_col_str = ", ".join([f'"{col}"' for col in df_columns])
@@ -251,10 +251,10 @@ class DataOperationsMixin:
                         ON CONFLICT ({conflict_col_str}) {action_sql};
                         '''
 
-                        self.logger.debug(
+                        self.logger.debug( # type: ignore
                             f"UPSERT (表: {resolved_table_name}): DataFrame头部 (前3行, 用于EXCLUDED上下文):\n{df.head(3).to_string()}"
                         )
-                        self.logger.debug(
+                        self.logger.debug( # type: ignore
                             f"为表 {resolved_table_name} 执行最终UPSERT SQL:\n{insert_sql}"
                         )
 
@@ -268,7 +268,7 @@ class DataOperationsMixin:
 
                     # 执行最终传输
                     status = await conn.execute(insert_sql)
-                    self.logger.debug(f"最终插入/更新命令状态: {status}")
+                    self.logger.debug(f"最终插入/更新命令状态: {status}") # type: ignore
 
                     # --- 从状态字符串中解析整数 ---
                     rows_copied = 0
@@ -280,41 +280,41 @@ class DataOperationsMixin:
                                 # 处理INSERT状态格式: "INSERT 0 {count}"
                                 rows_copied = int(copy_count.split()[-1])
                             else:
-                                self.logger.warning(
+                                self.logger.warning( # type: ignore
                                     f"未知的状态格式: {copy_count}。假设复制了0行。"
                                 )
                         elif isinstance(copy_count, int):
                             # 如果直接返回整数
                             rows_copied = copy_count
                         else:
-                            self.logger.warning(
-                                f"意外的copy_count类型: {type(copy_count)}，值: {copy_count}。假设复制了0行。"
+                            self.logger.warning( # type: ignore
+                                f"意外的copy_count类型: {type(copy_count)}，值: {copy_count}。假设复制了0行。" 
                             )
                     except (ValueError, IndexError) as parse_err:
-                        self.logger.error(
+                        self.logger.error( # type: ignore
                             f"从copy_count '{copy_count}' 解析行数失败: {parse_err}。假设复制了0行。"
                         )
 
                     return rows_copied
 
                 except asyncpg.exceptions.UndefinedTableError as e:
-                    self.logger.error(
+                    self.logger.error( # type: ignore
                         f"创建临时表失败 (LIKE '{resolved_table_name}')。目标表可能不存在。错误: {e}"
                     )
                     raise ValueError(f"目标表 '{resolved_table_name}' 未找到。") from e
                 except asyncpg.exceptions.UndefinedColumnError as e:
-                    self.logger.error(
+                    self.logger.error( # type: ignore
                         f"表 '{resolved_table_name}' 的复制/插入过程中发生列不匹配错误。错误: {e}"
                     )
-                    self.logger.error(f"DataFrame 列: {df_columns}")
+                    self.logger.error(f"DataFrame 列: {df_columns}") # type: ignore
                     raise ValueError(
                         f"DataFrame和表 '{resolved_table_name}' 之间列不匹配。请检查DataFrame列和表结构。"
                     ) from e
                 except Exception as e:
-                    self.logger.error(
+                    self.logger.error( # type: ignore
                         f"高效复制/UPSERT操作失败 (表: {resolved_table_name}): {str(e)}"
                     )
-                    self.logger.error(f"临时表曾是: {temp_table}")
+                    self.logger.error(f"临时表曾是: {temp_table}") # type: ignore
                     raise
 
     async def _fallback_insert_to_temp_table(
@@ -346,7 +346,7 @@ class DataOperationsMixin:
             record = []
             for col in df_columns:
                 val = row[col]
-                if pd.isna(val):
+                if pd.isna(val): # type: ignore
                     record.append(None)
                 elif isinstance(val, str):
                     # 清理字符串数据以避免 COPY 操作的格式问题
@@ -360,11 +360,11 @@ class DataOperationsMixin:
                     record.append(cleaned_val if cleaned_val else None)
                 elif pd.api.types.is_datetime64_any_dtype(pd.Series([val])):
                     # 处理pandas datetime对象 - 这是关键修复！
-                    if pd.isnull(val):
+                    if pd.isnull(val): # type: ignore
                         record.append(None)
                     else:
                         # 将pandas timestamp转换为Python date对象
-                        record.append(val.date() if hasattr(val, 'date') else val)
+                        record.append(val.date() if hasattr(val, 'date') else val) # type: ignore
                 else:
                     record.append(val)
             records.append(record)
@@ -378,16 +378,16 @@ class DataOperationsMixin:
             try:
                 await conn.executemany(insert_sql, batch)
                 total_inserted += len(batch)
-                self.logger.debug(f"批量INSERT: 已插入 {len(batch)} 条记录到 {temp_table}")
+                self.logger.debug(f"批量INSERT: 已插入 {len(batch)} 条记录到 {temp_table}") # type: ignore
             except Exception as e:
-                self.logger.error(f"批量INSERT失败: {e}")
+                self.logger.error(f"批量INSERT失败: {e}") # type: ignore
                 # 如果批量失败，尝试逐行插入
                 for record in batch:
                     try:
                         await conn.execute(insert_sql, *record)
                         total_inserted += 1
                     except Exception as row_error:
-                        self.logger.warning(f"跳过有问题的行: {row_error}")
+                        self.logger.warning(f"跳过有问题的行: {row_error}") # type: ignore
                         continue
         
         return f"INSERT 0 {total_inserted}"
