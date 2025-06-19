@@ -27,7 +27,7 @@ class TushareFundShareTask(TushareTask):
     # 1. 核心属性
     name = "tushare_fund_share"
     description = "获取基金规模数据 (含ETF)"
-    table_name = "tushare_fund_share"
+    table_name = "fund_share"
     primary_keys = ["ts_code", "trade_date"]
     date_column = "trade_date"
     default_start_date = "20000101"  # 根据实际情况调整

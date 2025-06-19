@@ -3,6 +3,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 from urllib.parse import urlparse
+from contextlib import asynccontextmanager
 
 import asyncpg
 import psycopg2
@@ -111,6 +112,36 @@ class DBManagerCore:
             self._parse_connection_string()
             self._local = threading.local()
             self.pool = None  # 兼容性属性
+
+    @asynccontextmanager
+    async def transaction(self):
+        """提供一个异步事务上下文管理器。"""
+        if self.mode != 'async':
+            raise RuntimeError("事务上下文管理器仅在异步模式下可用。")
+        if self.pool is None:
+            await self.connect()
+
+        # 从连接池获取一个连接
+        conn = await self.pool.acquire()
+        # 开始一个事务
+        tr = conn.transaction()
+        await tr.start()
+        self.logger.debug("数据库事务已开始。")
+        try:
+            # 将连接对象传递给 with 块
+            yield conn
+            # 如果没有异常，提交事务
+            await tr.commit()
+            self.logger.debug("数据库事务已成功提交。")
+        except Exception as e:
+            # 如果发生任何异常，回滚事务
+            self.logger.error(f"数据库事务发生错误，正在回滚: {e}", exc_info=True)
+            await tr.rollback()
+            # 重新抛出异常，以便上层代码可以捕获它
+            raise
+        finally:
+            # 确保连接被释放回连接池
+            await self.pool.release(conn)
 
     def _parse_connection_string(self):
         """解析连接字符串为psycopg2连接参数（仅同步模式）

@@ -30,10 +30,11 @@ class TushareFundNavTask(TushareTask):
     # 1. 核心属性
     name = "tushare_fund_nav"
     description = "获取公募基金净值数据"
-    table_name = "tushare_fund_nav"
+    table_name = "fund_nav"
     primary_keys = ["ts_code", "nav_date"]  # 使用净值日期作为主键之一
     date_column = "nav_date"  # 主要日期列用于增量更新
     default_start_date = "20000101"  # 设定一个较早的默认开始日期
+    data_source = "tushare"
 
     # --- 代码级默认配置 (会被 config.json 覆盖) --- #
     default_concurrent_limit = 10

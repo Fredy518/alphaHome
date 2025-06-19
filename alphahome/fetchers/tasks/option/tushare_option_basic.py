@@ -27,7 +27,7 @@ class TushareOptionBasicTask(TushareTask):
     # 1. 核心属性
     name = "tushare_option_basic"
     description = "获取期货及股票期权合约基础信息"
-    table_name = "tushare_option_basic"
+    table_name = "option_basic"
     primary_keys = ["ts_code"]  # 期权代码是唯一主键
     date_column = None  # 该任务不以日期为主，全量更新
     default_start_date = None  # 全量任务不需要起始日期

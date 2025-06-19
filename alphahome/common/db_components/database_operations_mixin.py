@@ -320,16 +320,17 @@ class DatabaseOperationsMixin:
             
         return None
 
-    def _get_date_columns_from_target(self, target: Any) -> set:
-        """从目标对象获取日期列名集合
+    def _get_date_and_timestamp_columns_from_target(self, target: Any) -> tuple[set, set]:
+        """从目标对象获取日期和时间戳列名集合
         
         Args:
             target: 目标表对象或表名
             
         Returns:
-            包含日期列名的集合
+            一个元组，包含两个集合: (日期列名, 时间戳列名)
         """
         date_columns = set()
+        timestamp_columns = set()
         
         # 如果target有schema_def属性，从中提取日期列
         if hasattr(target, 'schema_def') and target.schema_def:
@@ -339,10 +340,12 @@ class DatabaseOperationsMixin:
                     if isinstance(col_def, dict)
                     else str(col_def).upper()
                 )
-                if "DATE" in col_type or "TIMESTAMP" in col_type:
+                if "TIMESTAMP" in col_type:
+                    timestamp_columns.add(col_name)
+                elif "DATE" in col_type:
                     date_columns.add(col_name)
         
-        return date_columns
+        return date_columns, timestamp_columns
 
     async def copy_from_dataframe(
         self,
@@ -397,7 +400,7 @@ class DatabaseOperationsMixin:
             df_columns = list(df.columns)
 
         # 获取目标表的日期列信息
-        date_columns = self._get_date_columns_from_target(target)
+        date_columns, timestamp_columns = self._get_date_and_timestamp_columns_from_target(target)
 
         # 创建一个唯一的临时表名
         timestamp_ms = int(datetime.now().timestamp() * 1000)
@@ -420,7 +423,7 @@ class DatabaseOperationsMixin:
                         processed_values.append(None)
                     elif isinstance(val, str):
                         # 检查是否是日期列
-                        if col_name in date_columns:
+                        if col_name in date_columns.union(timestamp_columns):
                             # 尝试解析日期字符串
                             parsed_date = self._parse_date_string(val)
                             processed_values.append(parsed_date)
@@ -437,8 +440,12 @@ class DatabaseOperationsMixin:
                         if pd.isnull(val): # type: ignore
                             processed_values.append(None)
                         else:
-                            # 将pandas timestamp转换为Python date对象
-                            processed_values.append(val.date() if hasattr(val, 'date') else val)
+                            # 如果是纯日期列，则截断时间
+                            if col_name in date_columns:
+                                processed_values.append(val.date() if hasattr(val, 'date') else val)
+                            else:
+                                # 对于时间戳列，保留完整的 datetime 对象 (asyncpg会处理)
+                                processed_values.append(val)
                     else:
                         processed_values.append(val)
                 
@@ -455,12 +462,17 @@ class DatabaseOperationsMixin:
                     self.logger.debug(f"已创建临时表 {temp_table}") # type: ignore
 
                     # 2. 使用 COPY 高效加载数据到临时表
-                    copy_count = await conn.copy_records_to_table(
+                    copy_result = await conn.copy_records_to_table(
                         temp_table,
                         records=records_iterable,
                         columns=df_columns,
                         timeout=300,
                     )
+                    # 解析 COPY 命令的返回值 (格式: "COPY 123")
+                    if isinstance(copy_result, str) and copy_result.startswith('COPY '):
+                        copy_count = int(copy_result.split()[1])
+                    else:
+                        copy_count = copy_result if isinstance(copy_result, int) else len(df)
                     self.logger.debug(f"已复制 {copy_count} 条记录到 {temp_table}") # type: ignore
 
                     # 3. 从临时表插入/更新到目标表
@@ -485,19 +497,19 @@ class DatabaseOperationsMixin:
                                     if non_ts_columns:
                                         # 检查非时间戳列是否有变化
                                         change_conditions = [
-                                            f'{resolved_table_name}."{col}" IS DISTINCT FROM "{temp_table}"."{col}"'
+                                            f'{resolved_table_name}."{col}" IS DISTINCT FROM EXCLUDED."{col}"'
                                             for col in non_ts_columns
                                         ]
                                         change_condition = " OR ".join(change_conditions)
                                         update_clauses.append(
-                                            f'"{col}" = CASE WHEN ({change_condition}) THEN CURRENT_TIMESTAMP ELSE "{col}" END'
+                                            f'"{col}" = CASE WHEN ({change_condition}) THEN CURRENT_TIMESTAMP ELSE {resolved_table_name}."{col}" END'
                                         )
                                     else:
                                         # 只有时间戳列需要更新，保持原值
-                                        update_clauses.append(f'"{col}" = "{col}"')
+                                        update_clauses.append(f'"{col}" = {resolved_table_name}."{col}"')
                                 else:
                                     # 普通列：直接更新
-                                    update_clauses.append(f'"{col}" = "{temp_table}"."{col}"')
+                                    update_clauses.append(f'"{col}" = EXCLUDED."{col}"')
 
                             update_clause_str = ", ".join(update_clauses)
 
@@ -535,60 +547,9 @@ class DatabaseOperationsMixin:
                     self.logger.error( # type: ignore
                         f"COPY_FROM_DATAFRAME (表: {resolved_table_name}) 失败: {str(e)}"
                     )
-                    # 尝试降级到逐行插入
-                    fallback_result = await self._fallback_insert_to_temp_table(
-                        conn, temp_table, df, df_columns
-                    )
-                    if "成功" in fallback_result:
-                        return len(df)
-                    else:
-                        raise Exception(f"COPY和降级插入都失败: {str(e)}")
+                    raise
 
-    async def _fallback_insert_to_temp_table(
-        self, conn, temp_table: str, df: pd.DataFrame, df_columns: List[str]
-    ) -> str:
-        """降级到逐行插入的备用策略"""
-        try:
-            self.logger.warning( # type: ignore
-                f"COPY操作失败，尝试降级到逐行INSERT到临时表 {temp_table}"
-            )
-            
-            # 构建INSERT语句
-            placeholders = ", ".join(["$" + str(i+1) for i in range(len(df_columns))])
-            columns_str = ", ".join([f'"{col}"' for col in df_columns])
-            insert_sql = f'INSERT INTO "{temp_table}" ({columns_str}) VALUES ({placeholders});'
-            
-            # 逐行插入
-            success_count = 0
-            for _, row in df.iterrows():
-                try:
-                    values = []
-                    for col in df_columns:
-                        val = row[col]
-                        if pd.isna(val): # type: ignore
-                            values.append(None)
-                        elif isinstance(val, str):
-                            # 清理字符串
-                            cleaned_val = val.replace('\x00', '').replace('\r', '').replace('\n', '')
-                            values.append(cleaned_val if cleaned_val else None)
-                        else:
-                            values.append(val)
-                    
-                    await conn.execute(insert_sql, *values)
-                    success_count += 1
-                except Exception as row_error:
-                    self.logger.warning(f"单行插入失败，跳过: {str(row_error)[:100]}") # type: ignore
-                    continue
-            
-            if success_count > 0:
-                self.logger.info(f"降级插入成功: {success_count}/{len(df)} 行") # type: ignore
-                return f"降级插入成功: {success_count} 行"
-            else:
-                return "降级插入失败: 所有行都插入失败"
-                
-        except Exception as fallback_error:
-            self.logger.error(f"降级插入策略也失败: {str(fallback_error)}") # type: ignore
-            return f"降级插入失败: {str(fallback_error)}"
+
 
     async def upsert(
         self,
@@ -627,3 +588,17 @@ class DatabaseOperationsMixin:
             update_columns=update_columns,
             timestamp_column=timestamp_column,
         ) 
+
+    async def get_all_physical_tables(self, schema_name: str) -> List[str]:
+        """获取指定 schema 下的所有物理表名称。"""
+        query = """
+            SELECT tablename
+            FROM pg_tables
+            WHERE schemaname = $1
+        """
+        try:
+            records = await self.fetch(query, schema_name)
+            return [record['tablename'] for record in records] if records else []
+        except Exception as e:
+            self.logger.error(f"获取 schema '{schema_name}' 的所有表时出错: {e}", exc_info=True)
+            return [] 

@@ -24,7 +24,7 @@ class TushareHKDailyTask(TushareTask):
     # 1. 核心属性
     name = "tushare_hk_daily"
     description = "获取港股日线行情数据"
-    table_name = "tushare_hk_daily"
+    table_name = "hk_daily"
     primary_keys = ["ts_code", "trade_date"]
     date_column = "trade_date"  # 日期列名，用于确认最新数据日期
     default_start_date = (

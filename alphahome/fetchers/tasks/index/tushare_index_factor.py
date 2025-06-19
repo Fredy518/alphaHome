@@ -27,7 +27,7 @@ class TushareIndexFactorProTask(TushareTask):
     # 1. 核心属性
     name = "tushare_index_factor_pro"
     description = "获取指数技术面因子数据 (专业版)"
-    table_name = "tushare_index_factor_pro"
+    table_name = "index_factor_pro"
     primary_keys = ["ts_code", "trade_date"]
     date_column = "trade_date"
     default_start_date = "20050101"  # 指数因子需要较长历史数据

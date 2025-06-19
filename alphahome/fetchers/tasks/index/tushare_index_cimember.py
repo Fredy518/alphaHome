@@ -24,9 +24,10 @@ class TushareIndexCiMemberTask(TushareTask):
     # 1. 核心属性
     name = "tushare_index_cimember"
     description = "获取中信(CITIC)行业成分数据 (含历史, UPSERT)"
-    table_name = "tushare_index_cimember"
+    table_name = "index_cimember"
     primary_keys = ["ts_code", "l3_code", "in_date"]  # <-- 修改主键为 l3_code
     date_column = None  # <-- 明确一下没有主日期列用于增量
+    data_source = "tushare"
 
     # --- 代码级默认配置 (会被 config.json 覆盖) --- #
     default_concurrent_limit = 2

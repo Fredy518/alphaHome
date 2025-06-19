@@ -31,7 +31,7 @@ class TushareFutureDailyTask(TushareTask):
     # 1. 核心属性
     name = "tushare_future_daily"
     description = "获取期货及期权日线行情数据"
-    table_name = "tushare_future_daily"
+    table_name = "future_daily"
     primary_keys = ["ts_code", "trade_date"]  # 合约代码和交易日期组合是主键
     date_column = "trade_date"  # 日期列名，用于确认最新数据日期
     default_start_date = "19950401"  # 中国期货市场较早的交易日期，可根据实际情况调整

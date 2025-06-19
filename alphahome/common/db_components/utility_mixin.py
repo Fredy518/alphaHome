@@ -80,6 +80,27 @@ class UtilityMixin:
             )
             raise
 
+    async def get_latest_update_time(self, target: Any) -> Optional[datetime]:
+        """获取指定表中'update_time'列的最新时间，是get_latest_date的特例。
+
+        Args:
+            target (Any): 目标表，可以是表名字符串或任务对象
+
+        Returns:
+            Optional[datetime]: 最新时间的datetime对象，如果表为空则返回None
+        """
+        try:
+            # 直接调用 get_latest_date，并硬编码列名为 "update_time"
+            return await self.get_latest_date(target, "update_time")
+        except asyncpg.exceptions.UndefinedColumnError:
+            # 如果 'update_time' 列不存在，则返回 None 而不是抛出异常
+            self.logger.warning(f"表 '{target}' 中没有找到 'update_time' 列。")
+            return None
+        except Exception as e:
+            # 捕获其他可能的异常，如表不存在
+            self.logger.error(f"为表 '{target}' 获取最新更新时间时失败: {e}")
+            return None
+
     async def get_distinct_values(
         self, target: Any, column_name: str, limit: Optional[int] = None
     ) -> List[Any]:

@@ -31,7 +31,7 @@ class TushareOptionDailyTask(TushareTask):
     # 1. 核心属性
     name = "tushare_option_daily"
     description = "获取期货及股票期权日线行情数据"
-    table_name = "tushare_option_daily"
+    table_name = "option_daily"
     primary_keys = ["ts_code", "trade_date"]  # 合约代码和交易日期组合是主键
     date_column = "trade_date"  # 日期列名，用于确认最新数据日期
     default_start_date = "20150209"  # 上海50ETF期权上市日期

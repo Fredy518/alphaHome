@@ -19,8 +19,8 @@ class TushareFinaBalancesheetTask(TushareTask):
 
     # 1.核心属性
     name = "tushare_fina_balancesheet"
-    description = "获取股票资产负债表数据"
-    table_name = "tushare_fina_balancesheet"
+    description = "获取上市公司资产负债表数据"
+    table_name = "fina_balancesheet"
     primary_keys = ["ts_code", "end_date", "f_ann_date"]
     date_column = "end_date"
     default_start_date = "19901231"  # 最早的财报日期
@@ -35,7 +35,7 @@ class TushareFinaBalancesheetTask(TushareTask):
     ]
 
     # 3.Tushare特有属性
-    api_name = "balancesheet_vip"
+    api_name = "balancesheet"
     fields = [
         "ts_code",
         "ann_date",

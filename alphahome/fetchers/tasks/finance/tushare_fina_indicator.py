@@ -19,10 +19,11 @@ class TushareFinaIndicatorTask(TushareTask):
     # 1.核心属性
     name = "tushare_fina_indicator"
     description = "获取上市公司财务指标数据"
-    table_name = "tushare_fina_indicator"
+    table_name = "fina_indicator"
     primary_keys = ["ts_code", "end_date", "ann_date"]
     date_column = "end_date"
     default_start_date = "19900101"
+    data_source = "tushare"
 
     # --- 代码级默认配置 (会被 config.json 覆盖) --- #
     default_concurrent_limit = 5

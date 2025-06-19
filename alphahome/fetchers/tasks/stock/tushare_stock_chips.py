@@ -28,7 +28,7 @@ class TushareStockChipsTask(TushareTask):
     # 1. 核心属性
     name = "tushare_stock_chips"
     description = "获取A股每日筹码平均成本和胜率情况"
-    table_name = "tushare_stock_chips"
+    table_name = "stock_chips"
     primary_keys = ["ts_code", "trade_date"]
     date_column = "trade_date"
     default_start_date = "20180101"  # 数据从2018年开始

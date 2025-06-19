@@ -193,7 +193,7 @@ class TushareAPI:
                         page_params["offset"] = offset
 
                     if offset > 0:
-                        self.logger.info(
+                        self.logger.debug(
                             f"分页请求 ({api_name}): offset={offset}, limit={page_params['limit']}, params={params}"
                         )
                     else:
@@ -248,7 +248,7 @@ class TushareAPI:
                                 if (
                                     not all_data and consecutive_empty_pages >= 1
                                 ):  # 如果一开始就没数据，且已尝试1次以上空页
-                                    self.logger.info(
+                                    self.logger.debug(
                                         f"({api_name}) 首次/早期分页即连续 {consecutive_empty_pages} 次返回空数据，提前结束分页。Params: {params}"
                                     )
                                     has_more = False  # 强制结束
@@ -256,7 +256,7 @@ class TushareAPI:
                                     consecutive_empty_pages
                                     >= max_consecutive_empty_before_stop
                                 ):
-                                    self.logger.info(
+                                    self.logger.debug(
                                         f"({api_name}) 连续 {consecutive_empty_pages} 次分页返回空数据，提前结束分页。Offset: {offset}, Params: {params}"
                                     )
                                     has_more = False  # 强制结束
@@ -295,7 +295,7 @@ class TushareAPI:
         if not all_data:
             return pd.DataFrame()
         combined_data = pd.concat(all_data, ignore_index=True)
-        self.logger.info(
+        self.logger.debug(
             f"API {api_name} (参数: {params}) 通过分页共获取 {len(combined_data)} 条记录。"
         )
         return combined_data

@@ -17,6 +17,42 @@ _TRADE_CAL_CACHE: Dict[Tuple[str, str, str], pd.DataFrame] = {}
 _DB_POOL: Optional[asyncpg.Pool] = None
 
 
+def _normalize_date_to_yyyymmdd(
+    date: Union[str, datetime.datetime, datetime.date]
+) -> Optional[str]:
+    """将多种格式的日期输入标准化为 'YYYYMMDD' 格式的字符串。
+
+    支持的格式:
+    - datetime.datetime 或 datetime.date 对象
+    - 'YYYYMMDD'
+    - 'YYYY-MM-DD'
+    - 'YYYY-M-D' (例如 '2023-5-1')
+    - 'YYYY/MM/DD'
+    - 'YYYY/M/D'
+
+    Args:
+        date: 日期输入。
+
+    Returns:
+        Optional[str]: 'YYYYMMDD' 格式的日期字符串，如果无法转换则返回 None。
+    """
+    if isinstance(date, (datetime.datetime, datetime.date)):
+        return date.strftime("%Y%m%d")
+    if isinstance(date, str):
+        # 优先处理 YYYYMMDD 格式，避免不必要的解析
+        if len(date) == 8 and date.isdigit():
+            return date
+        # 尝试解析多种带分隔符的格式
+        for fmt in ("%Y-%m-%d", "%Y/%m/%d"):
+            try:
+                return datetime.datetime.strptime(date, fmt).strftime("%Y%m%d")
+            except ValueError:
+                continue
+    # 如果所有尝试都失败
+    logger.warning(f"无法将日期 '{date}' 标准化为 YYYYMMDD 格式。")
+    return None
+
+
 # 新的辅助函数：加载数据库配置
 def _load_db_config() -> Optional[Dict[str, Any]]:
     """从用户 AppData 或项目示例文件加载数据库配置。
@@ -197,14 +233,14 @@ async def get_trade_cal(
         logger.error("数据库连接池不可用，无法获取交易日历。")
         return pd.DataFrame()
 
-    sql_query = """
+    sql_query = '''
     SELECT exchange, cal_date, is_open, pretrade_date
-    FROM "tushare"."tushare_others_calendar"
+    FROM "tushare"."others_calendar"
     WHERE exchange = $1 
       AND cal_date >= TO_DATE($2, 'YYYYMMDD')
       AND cal_date <= TO_DATE($3, 'YYYYMMDD')
     ORDER BY cal_date ASC;
-    """
+    '''
 
     final_df = pd.DataFrame()
 
@@ -271,42 +307,31 @@ async def get_trade_cal(
 async def is_trade_day(
     date: Union[str, datetime.datetime, datetime.date], exchange: str = "SSE"
 ) -> bool:
-    """判断指定日期是否为交易日
+    """检查指定日期是否为交易日。
 
     Args:
-        date (Union[str, datetime.datetime, datetime.date]):
-            指定日期，可以是字符串（格式：YYYYMMDD）或datetime对象
-        exchange (str, optional): 交易所代码，默认为 'SSE'
+        date (Union[str, datetime.datetime, datetime.date]): 要检查的日期 (格式 YYYYMMDD 或兼容格式)。
+        exchange (str, optional): 交易所代码，默认为 'SSE'。
 
     Returns:
-        bool: 如果是交易日返回True，否则返回False
+        bool: 如果是交易日则返回 True，否则返回 False。
     """
-    if exchange == "":
-        logger.warning(
-            f"函数 {__name__}.{inspect.currentframe().f_code.co_name} 收到空的 'exchange' 参数，已自动修正为 'SSE'。"
-        )
-        exchange = "SSE"
-
-    if isinstance(date, (datetime.datetime, datetime.date)):
-        date_str = date.strftime("%Y%m%d")
-    else:
-        date_str = date
-
-    calendar_df = await get_trade_cal(
-        start_date=date_str, end_date=date_str, exchange=exchange
-    )
-
-    if calendar_df.empty:
+    date_str = _normalize_date_to_yyyymmdd(date)
+    if not date_str:
+        logger.error(f"is_trade_day 收到无效日期格式: {date}")
         return False
 
-    # 检查日期是否存在且 is_open 为 1
-    day_info = calendar_df[calendar_df["cal_date"] == date_str]
-    if not day_info.empty:
-        # return day_info['is_open'].iloc[0] == 1
-        is_open_val = day_info["is_open"].iloc[0]
-        if pd.isna(is_open_val):  # 处理来自 Int64 类型的 pd.NA
-            return False
-        return bool(is_open_val == 1)  # 比较后显式转换为 bool 类型
+    # 优化：直接使用 get_trade_cal 并检查结果
+    # 这样可以利用缓存，并且只查询一次数据库
+    df = await get_trade_cal(start_date=date_str, end_date=date_str, exchange=exchange)
+
+    if not df.empty:
+        # 确保查询结果包含当天
+        day_info = df[df["cal_date"] == date_str]
+        if not day_info.empty:
+            return day_info.iloc[0]["is_open"] == 1
+
+    logger.warning(f"无法获取日期 {date_str} 的交易日历信息。")
     return False
 
 
@@ -315,94 +340,53 @@ async def get_last_trade_day(
     n: int = 1,
     exchange: str = "SSE",
 ) -> Optional[str]:
-    """获取指定日期前n个交易日
+    """获取指定日期（或当前日期）之前的第 n 个交易日。
 
     Args:
         date (Union[str, datetime.datetime, datetime.date], optional):
-            指定日期，可以是字符串（格式：YYYYMMDD）或datetime对象，默认为当前日期
-        n (int, optional): 向前获取的交易日数量，默认为1，即上一个交易日
-        exchange (str, optional): 交易所代码，默认为 'SSE'
+            基准日期 (格式 YYYYMMDD 或兼容格式)。如果为 None，则使用当前日期。
+        n (int, optional): 向前推移的交易日数。默认为 1。
+        exchange (str, optional): 交易所代码，默认为 'SSE'。
 
     Returns:
-        Optional[str]: 前n个交易日的日期（格式：YYYYMMDD），如果找不到则返回None
+        Optional[str]: YYYYMMDD 格式的交易日字符串，如果找不到则返回 None。
     """
-    if exchange == "":
-        logger.warning(
-            f"函数 {__name__}.{inspect.currentframe().f_code.co_name} 收到空的 'exchange' 参数，已自动修正为 'SSE'。"
-        )
-        exchange = "SSE"
-
-    if date is None:
-        date_obj = datetime.datetime.now().date()
-    elif isinstance(date, str):
-        try:
-            date_obj = datetime.datetime.strptime(date, "%Y%m%d").date()
-        except ValueError:
-            logger.error(f"get_last_trade_day 的日期格式无效: {date}. 需要 YYYYMMDD.")
-            return None
-    else:  # datetime.datetime 或 datetime.date 类型
-        date_obj = date if isinstance(date, datetime.date) else date.date()
-
-    # 获取包含目标日期及之前一段时间的交易日历
-    # 为了找到前n个交易日，可能需要回溯较长时间，这里使用 n * 7 (大约 n 周) + 30 天的缓冲区
-    start_search_dt = date_obj - timedelta(days=(n * 7 + 30))
-    start_search_str = start_search_dt.strftime("%Y%m%d")
-    date_str = date_obj.strftime("%Y%m%d")
-
-    calendar_df = await get_trade_cal(
-        start_date=start_search_str, end_date=date_str, exchange=exchange
-    )
-
-    if calendar_df.empty:
-        logger.warning(
-            f"在 {start_search_str} 和 {date_str} 之间未找到 {exchange} 的交易日历数据."
-        )
-        return None
-
     if n <= 0:
-        logger.warning(f"参数 n 必须为正数以便查找过去的交易日，但收到: {n}")
+        logger.warning("get_last_trade_day 的 n 必须为正整数。")
         return None
 
-    # 获取在 date_str 当天或之前的所有唯一交易日，按日期从新到旧排序。
-    trade_days_at_or_before = sorted(
-        calendar_df[
-            (calendar_df["is_open"] == 1) & (calendar_df["cal_date"] <= date_str)
-        ]["cal_date"]
-        .unique()
-        .tolist(),
-        reverse=True,
+    base_date_str = _normalize_date_to_yyyymmdd(date or datetime.date.today())
+    if not base_date_str:
+        logger.error(f"get_last_trade_day 收到无效日期格式: {date}")
+        return None
+
+    # 为了安全起见，向前查询一段较长的时间范围
+    # 估算查询范围：n个交易日大约需要 n * 1.5 个日历日
+    start_date_dt = datetime.datetime.strptime(
+        base_date_str, "%Y%m%d"
+    ) - timedelta(days=int(n * 1.5) + 15)
+    start_date_str_query = start_date_dt.strftime("%Y%m%d")
+
+    df = await get_trade_cal(
+        start_date=start_date_str_query, end_date=base_date_str, exchange=exchange
     )
 
-    if not trade_days_at_or_before:
+    if df.empty:
         logger.warning(
-            f"在 {date_str} 或之前未找到 {exchange} 的交易日 (在搜索范围 {start_search_str} 内)."
+            f"在 {start_date_str_query} 和 {base_date_str} 之间未找到交易日历数据。"
         )
         return None
 
-    # 判断 date_str 本身是否是列表中最近的交易日
-    # 这意味着 date_str 是一个交易日。
-    is_input_date_the_head_trade_day = trade_days_at_or_before[0] == date_str
+    # 筛选出实际的交易日
+    trade_days = df[(df["is_open"] == 1) & (df["cal_date"] < base_date_str)][
+        "cal_date"
+    ].sort_values(ascending=False)
 
-    target_idx = -1
-    if is_input_date_the_head_trade_day:
-        # 如果 date_str 是一个交易日并且是找到的最新一个,
-        # 则前第 n 个交易日在此 (0索引, 降序排列) 列表中的索引为 n。
-        # 例如, 列表: ['20230104', '20230103', '20230102'] (date_str='20230104')
-        # n=1 (严格的前1个) -> 索引 1 ('20230103')
-        # n=2 (严格的前2个) -> 索引 2 ('20230102')
-        target_idx = n
-    else:
-        # 如果 date_str 不是交易日, 或者它不是列表中最近的一个
-        # (例如，对于 date_str='20230104'，列表是 ['20230103', '20230102'])
-        # 那么 trade_days_at_or_before[0] 已经是严格在 date_str 之前的第一个交易日。
-        # 从此算起，前第 n 个交易日的索引是 n-1。
-        target_idx = n - 1
-
-    if target_idx >= 0 and target_idx < len(trade_days_at_or_before):
-        return trade_days_at_or_before[target_idx]
+    if len(trade_days) >= n:
+        return trade_days.iloc[n - 1]
     else:
         logger.warning(
-            f"没有足够的历史交易日来找到 {date_str} 前的满足条件的第 {n} 个交易日 ({exchange}). 可用: {len(trade_days_at_or_before)}, 目标索引: {target_idx}"
+            f"在日期 {base_date_str} 之前没有足够的 {n} 个交易日 (只找到 {len(trade_days)} 个)。"
         )
         return None
 
@@ -412,96 +396,52 @@ async def get_next_trade_day(
     n: int = 1,
     exchange: str = "SSE",
 ) -> Optional[str]:
-    """获取指定日期后n个交易日
+    """获取指定日期（或当前日期）之后的第 n 个交易日。
 
     Args:
         date (Union[str, datetime.datetime, datetime.date], optional):
-            指定日期，可以是字符串（格式：YYYYMMDD）或datetime对象，默认为当前日期
-        n (int, optional): 向后获取的交易日数量，默认为1，即下一个交易日
-        exchange (str, optional): 交易所代码，默认为 'SSE'
+            基准日期 (格式 YYYYMMDD 或兼容格式)。如果为 None，则使用当前日期。
+        n (int, optional): 向后推移的交易日数。默认为 1。
+        exchange (str, optional): 交易所代码，默认为 'SSE'。
 
     Returns:
-        Optional[str]: 后n个交易日的日期（格式：YYYYMMDD），如果找不到则返回None
+        Optional[str]: YYYYMMDD 格式的交易日字符串，如果找不到则返回 None。
     """
-    if exchange == "":
-        logger.warning(
-            f"函数 {__name__}.{inspect.currentframe().f_code.co_name} 收到空的 'exchange' 参数，已自动修正为 'SSE'。"
-        )
-        exchange = "SSE"
-
-    if date is None:
-        date_obj = datetime.datetime.now().date()
-    elif isinstance(date, str):
-        try:
-            date_obj = datetime.datetime.strptime(date, "%Y%m%d").date()
-        except ValueError:
-            logger.error(f"get_next_trade_day 的日期格式无效: {date}. 需要 YYYYMMDD.")
-            return None
-    else:  # datetime.datetime 或 datetime.date 类型
-        date_obj = date if isinstance(date, datetime.date) else date.date()
-
-    # 获取包含目标日期及之后一段时间的交易日历
-    # 类似于 get_last_trade_day，获取一个缓冲期
-    end_search_dt = date_obj + timedelta(days=(n * 7 + 30))
-    start_search_str = date_obj.strftime("%Y%m%d")
-    end_search_str = end_search_dt.strftime("%Y%m%d")
-
-    calendar_df = await get_trade_cal(
-        start_date=start_search_str, end_date=end_search_str, exchange=exchange
-    )
-
-    if calendar_df.empty:
-        logger.warning(
-            f"在 {start_search_str} 和 {end_search_str} 之间未找到 {exchange} 的交易日历数据."
-        )
-        return None
-
     if n <= 0:
-        logger.warning(f"参数 n 必须为正数以便查找未来的交易日，但收到: {n}")
+        logger.warning("get_next_trade_day 的 n 必须为正整数。")
         return None
 
-    # 筛选出在 date_obj (即 start_search_str) 当天或之后，且 is_open 为 1 的交易日，并升序排序
-    trade_days_on_or_after = sorted(
-        calendar_df[
-            (calendar_df["is_open"] == 1)
-            & (
-                calendar_df["cal_date"] >= start_search_str
-            )  # 修正：这里之前错误地使用了 date_str，应为 start_search_str
-        ]["cal_date"]
-        .unique()
-        .tolist()
+    base_date_str = _normalize_date_to_yyyymmdd(date or datetime.date.today())
+    if not base_date_str:
+        logger.error(f"get_next_trade_day 收到无效日期格式: {date}")
+        return None
+
+    # 为了安全起见，向后查询一段较长的时间范围
+    end_date_dt = datetime.datetime.strptime(base_date_str, "%Y%m%d") + timedelta(
+        days=int(n * 1.5) + 15
+    )
+    end_date_str_query = end_date_dt.strftime("%Y%m%d")
+
+    df = await get_trade_cal(
+        start_date=base_date_str, end_date=end_date_str_query, exchange=exchange
     )
 
-    if not trade_days_on_or_after:
+    if df.empty:
         logger.warning(
-            f"在 {start_search_str} 或之后未找到 {exchange} 的交易日 (在搜索范围直到 {end_search_str} 内)."
+            f"在 {base_date_str} 和 {end_date_str_query} 之间未找到交易日历数据。"
         )
         return None
 
-    # 判断 start_search_str 本身是否是列表中第一个交易日
-    is_input_date_the_head_trade_day = trade_days_on_or_after[0] == start_search_str
+    # 筛选出实际的交易日
+    trade_days = df[(df["is_open"] == 1) & (df["cal_date"] > base_date_str)][
+        "cal_date"
+    ].sort_values(ascending=True)
 
-    target_idx = -1
-    if is_input_date_the_head_trade_day:
-        # 如果 start_search_str 是一个交易日并且是找到的最早一个 (在它当天或之后),
-        # 则严格的后第 n 个交易日在此 (0索引, 升序排列) 列表中的索引为 n。
-        # 例如, 列表: ['20230103', '20230104', '20230106'] (start_search_str='20230103')
-        # n=1 (严格的后1个) -> 索引 1 ('20230104')
-        # n=2 (严格的后2个) -> 索引 2 ('20230106')
-        target_idx = n
-    else:
-        # 如果 start_search_str 不是交易日 (那么 trade_days_on_or_after[0] 严格在 start_search_str 之后)
-        # 那么 trade_days_on_or_after[0] 已经是严格在 start_search_str 之后的第一个交易日。
-        # 从此算起，后第 n 个交易日的索引是 n-1。
-        # 例如 start_search_str='20230105', 列表: ['20230106', '20230109']
-        # n=1 -> 索引 0 ('20230106')
-        target_idx = n - 1
-
-    if target_idx >= 0 and target_idx < len(trade_days_on_or_after):
-        return trade_days_on_or_after[target_idx]
+    if len(trade_days) >= n:
+        return trade_days.iloc[n - 1]
     else:
         logger.warning(
-            f"没有足够的未来交易日来找到 {start_search_str} 后的满足条件的第 {n} 个交易日 ({exchange}). 可用: {len(trade_days_on_or_after)}, 目标索引: {target_idx}"
+            f"在日期 {base_date_str} 之后没有足够的 {n} 个交易日 (只找到 {len(trade_days)} 个)。"
         )
         return None
 
@@ -511,61 +451,47 @@ async def get_trade_days_between(
     end_date: Union[str, datetime.datetime, datetime.date],
     exchange: str = "SSE",
 ) -> List[str]:
-    """获取两个日期之间的所有交易日
+    """获取两个日期之间的所有交易日列表。
 
     Args:
-        start_date (Union[str, datetime.datetime, datetime.date]):
-            开始日期，可以是字符串（格式：YYYYMMDD）或datetime对象
-        end_date (Union[str, datetime.datetime, datetime.date]):
-            结束日期，可以是字符串（格式：YYYYMMDD）或datetime对象
-        exchange (str, optional): 交易所代码，默认为 'SSE'
+        start_date (Union[str, datetime.datetime, datetime.date]): 开始日期 (含)，格式 YYYYMMDD 或兼容格式。
+        end_date (Union[str, datetime.datetime, datetime.date]): 结束日期 (含)，格式 YYYYMMDD 或兼容格式。
+        exchange (str, optional): 交易所代码，默认为 'SSE'。
 
     Returns:
-        List[str]: 交易日列表，格式：YYYYMMDD
+        List[str]: 交易日列表 (格式 YYYYMMDD)。
     """
-    if exchange == "":
-        logger.warning(
-            f"函数 {__name__}.{inspect.currentframe().f_code.co_name} 收到空的 'exchange' 参数，已自动修正为 'SSE'。"
-        )
-        exchange = "SSE"
+    start_date_str = _normalize_date_to_yyyymmdd(start_date)
+    end_date_str = _normalize_date_to_yyyymmdd(end_date)
 
-    if isinstance(start_date, (datetime.datetime, datetime.date)):
-        start_date_str = start_date.strftime("%Y%m%d")
-    else:
-        start_date_str = start_date
-
-    if isinstance(end_date, (datetime.datetime, datetime.date)):
-        end_date_str = end_date.strftime("%Y%m%d")
-    else:
-        end_date_str = end_date
-
-    # 验证日期字符串
-    try:
-        datetime.datetime.strptime(start_date_str, "%Y%m%d")
-        datetime.datetime.strptime(end_date_str, "%Y%m%d")
-    except ValueError:
+    if not start_date_str or not end_date_str:
         logger.error(
-            f"get_trade_days_between 的日期格式无效: {start_date_str} 或 {end_date_str}. 需要 YYYYMMDD."
+            f"get_trade_days_between 的日期格式无效或无法转换: {start_date} 或 {end_date}."
         )
         return []
 
-    if start_date_str > end_date_str:
-        logger.warning(
-            f"开始日期 {start_date_str} 在结束日期 {end_date_str} 之后，将返回空列表。"
-        )
-        return []
-
-    calendar_df = await get_trade_cal(
+    df = await get_trade_cal(
         start_date=start_date_str, end_date=end_date_str, exchange=exchange
     )
+    if not df.empty and "is_open" in df.columns:
+        # 筛选出 is_open 为 1 的交易日
+        trade_days_df = df[df["is_open"] == 1]
+        # 返回 cal_date 列表
+        return trade_days_df["cal_date"].tolist()
+    return []
 
-    if calendar_df.empty:
-        return []
 
-    trade_days = calendar_df[
-        (calendar_df["is_open"] == 1)
-        & (calendar_df["cal_date"] >= start_date_str)
-        & (calendar_df["cal_date"] <= end_date_str)
-    ]["cal_date"].tolist()
+async def get_month_ends(start_date, end_date, re_trade_day=True) -> list:
+    """
+    获取指定日期区间内的所有月末（自然日或交易日）
 
-    return sorted(list(set(trade_days)))  # 确保排序和唯一性
+    Args:
+        start_date: 开始日期
+        end_date: 结束日期
+        re_trade_day: 是否返回交易日
+
+    Returns:
+        list: 月末日期列表
+    """
+    # 实现获取月末日期的逻辑
+    pass

@@ -22,10 +22,11 @@ class TushareStockDailyBasicTask(TushareTask):
     # 1.核心属性
     name = "tushare_stock_dailybasic"
     description = "获取股票每日基本面指标"
-    table_name = "tushare_stock_dailybasic"
+    table_name = "stock_dailybasic"
     primary_keys = ["ts_code", "trade_date"]
     date_column = "trade_date"
     default_start_date = "19910101"  # Tushare 股票日基本指标大致起始日期
+    data_source = "tushare"
 
     # --- 代码级默认配置 (会被 config.json 覆盖) --- #
     default_concurrent_limit = 10

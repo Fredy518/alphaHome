@@ -21,7 +21,7 @@ class TushareStockAdjFactorTask(TushareTask):
     # 1.核心属性
     name = "tushare_stock_adjfactor"
     description = "获取股票复权因子"
-    table_name = "tushare_stock_adjfactor"
+    table_name = "stock_adjfactor"
     primary_keys = ["ts_code", "trade_date"]
     date_column = "trade_date"
     default_start_date = "19901219"  # Tushare最早的日期

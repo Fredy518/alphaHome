@@ -19,8 +19,9 @@ class TushareFinaExpressTask(TushareTask):
 
     # 1.核心属性
     name = "tushare_fina_express"
-    description = "获取上市公司业绩快报数据"
-    table_name = "tushare_fina_express"
+    description = "获取上市公司业绩快报"
+    table_name = "fina_express"
+    data_source = "tushare"
     primary_keys = ["ts_code", "end_date", "ann_date"]
     date_column = "end_date"
     default_start_date = "19900101"

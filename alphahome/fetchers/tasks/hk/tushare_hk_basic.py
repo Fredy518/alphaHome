@@ -25,8 +25,8 @@ class TushareHKBasicTask(TushareTask):
 
     # 1. 核心属性
     name = "tushare_hk_basic"
-    description = "获取港股上市公司基础信息"
-    table_name = "tushare_hk_basic"
+    description = "获取港股上市公司基本信息"
+    table_name = "hk_basic"
     primary_keys = ["ts_code"]
     date_column = None  # 该任务不以日期为主，全量更新
     default_start_date = "19700101"  # 全量任务，此日期仅为满足基类全量模式的日期要求，实际API调用不使用此日期

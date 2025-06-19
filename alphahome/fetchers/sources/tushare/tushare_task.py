@@ -299,131 +299,123 @@ class TushareTask(Task):
                 exc_info=True,
             )
 
-    async def _determine_execution_dates(
-        self, **kwargs
-    ) -> tuple[Optional[str], Optional[str], bool, str]:
-        """根据输入参数和数据库状态确定最终的执行日期范围。
 
-        Args:
-            **kwargs: 包含 'start_date', 'end_date', 'force_full' 的可选参数。
-
-        Returns:
-            tuple: (final_start_date, final_end_date, should_skip, skip_message)
-                   - final_start_date: YYYYMMDD 格式或 None
-                   - final_end_date: YYYYMMDD 格式或 None
-                   - should_skip: 是否应跳过执行
-                   - skip_message: 跳过原因
-        """
-        original_start_date = kwargs.get("start_date")
-        original_end_date = kwargs.get("end_date")
-        force_full = kwargs.get("force_full", False)
-
-        final_start_date = None
-        final_end_date = None
-        should_skip = False
-        skip_message = ""
-
-        if original_start_date is None and original_end_date is None and not force_full:
-            # 智能增量模式
-            self.logger.info(
-                f"任务 {self.name}: 未提供 start_date 和 end_date，进入智能增量模式。"
-            )
-            latest_date = await self.get_latest_date()
-            self.logger.info(f"任务 {self.name}: 数据库中最新日期为: {latest_date}")
-            default_start = getattr(self, "default_start_date", None)
-            if not default_start:
-                self.logger.error(
-                    f"任务 {self.name}: 未定义 default_start_date，无法执行智能增量。"
-                )
-                should_skip = True
-                skip_message = "任务未定义默认开始日期"
-                return final_start_date, final_end_date, should_skip, skip_message
-
-            if latest_date:
-                start_date_dt = latest_date + timedelta(days=1)
-            else:
-                try:
-                    start_date_dt = datetime.strptime(default_start, "%Y%m%d").date()
-                    self.logger.info(
-                        f"任务 {self.name}: 表为空或不存在，使用默认开始日期: {default_start}"
-                    )
-                except ValueError:
-                    self.logger.error(
-                        f"任务 {self.name}: 默认开始日期格式错误 ('{default_start}')，应为 YYYYMMDD。"
-                    )
-                    should_skip = True
-                    skip_message = "默认开始日期格式错误"
-                    return final_start_date, final_end_date, should_skip, skip_message
-
-            end_date_dt = datetime.now().date()
-
-            if start_date_dt > end_date_dt:
-                self.logger.info(
-                    f"任务 {self.name}: 计算出的开始日期 ({start_date_dt}) 晚于结束日期 ({end_date_dt})，数据已是最新。"
-                )
-                should_skip = True
-                skip_message = "数据已是最新"
-                return final_start_date, final_end_date, should_skip, skip_message
-
-            final_start_date = start_date_dt.strftime("%Y%m%d")
-            final_end_date = end_date_dt.strftime("%Y%m%d")
-            self.logger.info(
-                f"任务 {self.name}: 智能增量计算出的日期范围: {final_start_date} 到 {final_end_date}"
-            )
-
-        elif force_full:
-            # 强制全量模式
-            self.logger.info(
-                f"任务 {self.name}: 强制执行全量模式。将使用默认开始日期 {getattr(self, 'default_start_date', 'N/A')} 到今天。"
-            )
-            final_start_date = (
-                original_start_date
-                if original_start_date is not None
-                else getattr(self, "default_start_date", None)
-            )
-            final_end_date = (
-                original_end_date
-                if original_end_date is not None
-                else datetime.now().strftime("%Y%m%d")
-            )
-
-            if final_start_date is None:
-                self.logger.error(
-                    f"任务 {self.name}: 全量模式需要 default_start_date 或手动提供 start_date，但两者均未提供。"
-                )
-                should_skip = True
-                skip_message = "全量模式缺少开始日期"
-                return final_start_date, final_end_date, should_skip, skip_message
-            # 可选：添加对日期格式的验证
-            self.logger.info(
-                f"任务 {self.name}: 全量模式实际日期范围: {final_start_date} 到 {final_end_date}"
-            )
-
-        else:
-            # 手动指定日期模式
-            # 可选：添加对手动提供的日期格式和有效性的验证
-            if not original_start_date or not original_end_date:
-                self.logger.error(
-                    f"任务 {self.name}: 手动模式需要提供 start_date 和 end_date。"
-                )
-                should_skip = True
-                skip_message = "手动模式缺少 start_date 或 end_date"
-                return final_start_date, final_end_date, should_skip, skip_message
-
-            final_start_date = original_start_date
-            final_end_date = original_end_date
-            self.logger.info(
-                f"任务 {self.name}: 使用提供的日期范围: {final_start_date} 到 {final_end_date}"
-            )
-
-        return final_start_date, final_end_date, should_skip, skip_message
 
     async def run(self, **kwargs):
-        """手动增量模式执行任务
-        
-        提供与基类兼容的run方法接口，内部调用execute方法
-        """
+        """运行任务的入口点，兼容旧的调用方式"""
+        self.logger.info(f"通过兼容性 'run' 方法启动任务: {self.name} with params: {kwargs}")
         return await self.execute(**kwargs)
+
+    async def smart_incremental_update(
+        self,
+        stop_event: Optional[asyncio.Event] = None,
+        lookback_days=None,
+        end_date=None,
+        use_trade_days=False,
+        safety_days=1,
+        **kwargs,
+    ):
+        """
+        智能增量更新策略层。
+        
+        这个方法负责计算正确的日期范围，然后调用 execute 方法执行具体任务。
+        适用于 TushareTask 的智能增量更新逻辑。
+        """
+        self.logger.info(f"开始执行 {self.name} 的智能增量更新")
+
+        if stop_event and stop_event.is_set():
+            self.logger.warning(f"智能增量更新 {self.name} 在开始前被取消。")
+            raise asyncio.CancelledError("智能增量更新在开始前被取消")
+
+        # 对于没有日期列的任务（Basic类型），直接执行全量更新
+        if self.date_column is None:
+            self.logger.info(f"任务 {self.name} 为Basic类型任务（date_column=None），将直接执行全量更新")
+            kwargs.update({"force_full": True})
+            return await self.execute(stop_event=stop_event, **kwargs)
+
+        # 确定结束日期
+        if end_date is None:
+            current_time = datetime.now()
+            if current_time.hour >= 18:
+                end_date = current_time.strftime("%Y%m%d")
+                self.logger.info(f"未指定结束日期，当前时间晚于18:00，使用当前日期: {end_date}")
+            else:
+                yesterday = current_time - timedelta(days=1)
+                end_date = yesterday.strftime("%Y%m%d")
+                self.logger.info(f"未指定结束日期，当前时间早于18:00，使用昨天日期: {end_date}")
+
+        # 获取数据库中最新的数据日期
+        latest_date = await self.get_latest_date()
+        start_date = None
+
+        if use_trade_days:
+            # 使用交易日模式
+            try:
+                from ...tools.calendar import get_last_trade_day, get_next_trade_day
+
+                if lookback_days is not None and lookback_days > 0:
+                    try:
+                        start_date = await get_last_trade_day(end_date, n=lookback_days)
+                        self.logger.info(f"按回溯 {lookback_days} 个交易日计算，起始日期为: {start_date}")
+                    except Exception as e:
+                        self.logger.error(f"计算交易日回溯失败: {str(e)}")
+                        return {"status": "error", "error": f"交易日计算失败: {str(e)}"}
+                elif latest_date:
+                    try:
+                        # 回溯15个交易日作为安全余量
+                        start_date_obj = latest_date + timedelta(days=1)
+                        start_date = await get_last_trade_day(start_date_obj.strftime("%Y%m%d"), n=15)
+                        self.logger.info(f"数据库最新日期: {latest_date}，回溯15个交易日作为起始日期: {start_date}")
+                    except Exception as e:
+                        self.logger.error(f"计算下一个交易日失败: {str(e)}")
+                        return {"status": "error", "error": f"交易日计算失败: {str(e)}"}
+                else:
+                    start_date = self.default_start_date if self.default_start_date else "20200101"
+                    self.logger.info(f"无历史数据，使用默认起始日期: {start_date}")
+            except ImportError:
+                self.logger.error("无法导入交易日历工具，回退到自然日模式")
+                use_trade_days = False
+
+        if not use_trade_days:
+            # 使用自然日模式
+            if lookback_days is not None and lookback_days > 0:
+                end_date_obj = datetime.strptime(end_date, "%Y%m%d")
+                start_date_obj = end_date_obj - timedelta(days=lookback_days + safety_days)
+                start_date = start_date_obj.strftime("%Y%m%d")
+                self.logger.info(f"按回溯 {lookback_days} 天计算（含安全天数 {safety_days}），起始日期为: {start_date}")
+            elif latest_date:
+                # 增加15天的安全余量
+                start_date_obj = latest_date + timedelta(days=1) - timedelta(days=15)
+                start_date = start_date_obj.strftime("%Y%m%d")
+                self.logger.info(f"数据库最新日期: {latest_date}，增量起始日期（含15天安全余量）: {start_date}")
+            else:
+                start_date = self.default_start_date if self.default_start_date else "20200101"
+                self.logger.info(f"无历史数据，使用默认起始日期: {start_date}")
+
+        # 执行更新
+        if start_date and end_date:
+            # 检查日期有效性
+            if start_date > end_date:
+                self.logger.info(f"起始日期 {start_date} 晚于结束日期 {end_date}，无需更新")
+                return {"status": "no_update", "message": "无需更新，数据已是最新"}
+            
+            # 执行增量更新
+            self.logger.info(f"最终执行更新范围: {start_date} 到 {end_date}")
+            kwargs.update({"start_date": start_date, "end_date": end_date})
+            
+            result = await self.execute(stop_event=stop_event, **kwargs)
+            
+            if result.get("status") == "no_data":
+                self.logger.info("没有新数据需要更新")
+            elif result.get("status") == "cancelled":
+                self.logger.warning(f"增量更新被取消: {result.get('error')}")
+            else:
+                self.logger.info(f"增量更新完成: 新增/更新 {result.get('rows', 0)} 行数据")
+            
+            return result
+        else:
+            self.logger.warning("未能确定有效的更新日期范围，任务未执行")
+            return {"status": "no_range", "rows": 0, "message": "无法确定有效的日期范围"}
 
     async def execute(self, **kwargs):
         """执行任务的完整生命周期 (已重构日期逻辑, 批处理聚合, 最终结果构造)"""
@@ -445,25 +437,11 @@ class TushareTask(Task):
             await self.pre_execute(stop_event=stop_event)
             await self._ensure_table_exists()
 
-            final_start_date, final_end_date, should_skip, skip_message = (
-                await self._determine_execution_dates(**kwargs)
-            )
-
-            if should_skip:
-                self.logger.warning(f"任务 {self.name}: 跳过执行，原因: {skip_message}")
-                skip_status = (
-                    "failed"
-                    if "错误" in skip_message
-                    or "未定义" in skip_message
-                    or "缺少" in skip_message
-                    else "skipped"
-                )
-                # 使用 _build_final_result 生成跳过结果
-                final_result_dict = self._build_final_result(
-                    skip_status, skip_message, 0, 0
-                )
-                await self.post_execute(result=final_result_dict, stop_event=stop_event)
-                return final_result_dict
+            # 直接使用传入的参数，不再调用 _determine_execution_dates
+            final_start_date = kwargs.get("start_date")
+            final_end_date = kwargs.get("end_date")
+            
+            self.logger.info(f"任务 {self.name}: 使用执行参数 start_date={final_start_date}, end_date={final_end_date}")
 
             # 对于单批次处理模式，直接执行单次获取
             if self.single_batch:

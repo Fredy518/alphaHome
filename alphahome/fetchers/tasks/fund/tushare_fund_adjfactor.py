@@ -27,10 +27,11 @@ class TushareFundAdjFactorTask(TushareTask):
     # 1. 核心属性
     name = "tushare_fund_adjfactor"
     description = "获取公募基金复权因子"
-    table_name = "tushare_fund_adjfactor"  # 使用独立的表存储基金复权因子
+    table_name = "fund_adjfactor"
     primary_keys = ["ts_code", "trade_date"]
     date_column = "trade_date"
     default_start_date = "20000101"  # 与基金净值/日线保持一致
+    data_source = "tushare"
 
     # --- 代码级默认配置 (会被 config.json 覆盖) --- #
     default_concurrent_limit = 5

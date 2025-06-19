@@ -100,6 +100,13 @@ class TableNameResolver:
             schema = getattr(target, 'data_source', 'public') or 'public' 
             return schema, table
             
+        elif isinstance(target, dict) and "table_name" in target:
+            # 支持字典格式的任务定义，如GUI服务中使用的格式
+            table = target["table_name"]
+            # 使用get方法获取data_source，如果不存在或为None则使用"public"
+            schema = target.get("data_source", "public") or "public"
+            return schema, table
+            
         else:
             raise TypeError(
                 f"不支持的解析目标类型: {type(target)}。必须是 str 或拥有 'table_name' 属性的对象。"
@@ -168,10 +175,20 @@ class TableNameResolver:
                     f"任务对象 '{task_name_attr}' 未定义data_source，默认指向 -> {full_name}"
                 )
                 return full_name
+
+        # --- 输入是字典 ---
+        elif isinstance(target, dict) and "table_name" in target:
+            schema_name = target.get('data_source', 'public') or 'public'
+            table_name = target["table_name"]
+            full_name = f'{schema_name}.{table_name}'
+            
+            task_name = target.get('name', '未知任务')
+            logger.debug(f"解析任务字典 '{task_name}' -> {full_name}")
+            return full_name
         
         else:
             # --- 输入类型不支持 ---
             raise TypeError(
                 f"不支持的解析目标类型: {type(target)}。必须是 str 或拥有 "
-                "'table_name' 和 'data_source' 属性的对象。"
+                "'table_name' 和 'data_source' 属性的对象，或包含这些键的字典。"
             ) 

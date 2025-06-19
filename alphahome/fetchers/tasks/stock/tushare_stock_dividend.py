@@ -40,10 +40,11 @@ class TushareStockDividendTask(TushareTask):
     # 1. 核心属性
     name = "tushare_stock_dividend"
     description = "获取股票分红送股数据"
-    table_name = "tushare_stock_dividend"
+    table_name = "stock_dividend"
     primary_keys = ["ts_code", "ex_date"]
     date_column = "ex_date"  # 除权除息日
     default_start_date = "20050101"  # 默认开始日期
+    data_source = "tushare"
 
     # --- 代码级默认配置 (会被 config.json 覆盖) --- #
     default_concurrent_limit = 5  # 降低并发，避免频率限制

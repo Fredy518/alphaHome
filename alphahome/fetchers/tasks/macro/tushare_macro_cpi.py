@@ -27,11 +27,12 @@ class TushareMacroCpiTask(TushareTask):
 
     # 1. 核心属性
     name = "tushare_macro_cpi"
-    description = "获取中国居民消费价格指数(CPI)数据"
-    table_name = "tushare_macro_cpi"
+    description = "获取中国居民消费价格指数(CPI)"
+    table_name = "macro_cpi"
     primary_keys = ["month_end_date"]  # 修改: 使用 month_end_date 作为主键
     date_column = "month_end_date"  # 修改: 使用 month_end_date 作为主要日期列
     default_start_date = "19960101"  # API 支持YYYYMM，但为与 month_end_date 保持一致性
+    data_source = "tushare"
 
     # --- 代码级默认配置 (会被 config.json 覆盖) --- #
     default_concurrent_limit = 5  # 默认并发限制

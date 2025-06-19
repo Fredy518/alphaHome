@@ -27,7 +27,7 @@ class TushareOthersHktradecalTask(TushareTask):
     # 核心任务属性
     name: str = "tushare_others_hktradecal"
     description: str = "获取港股交易日历 (hk_tradecal)"
-    table_name: str = "tushare_others_calendar"  # 与大陆任务共享同一个表
+    table_name: str = "others_calendar"
     primary_keys: List[str] = ["exchange", "cal_date"]
     date_column: Optional[str] = "cal_date"
     default_start_date: Optional[str] = "19900101"

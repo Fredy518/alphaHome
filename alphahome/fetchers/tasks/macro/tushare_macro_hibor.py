@@ -28,10 +28,11 @@ class TushareMacroHiborTask(TushareTask):
     # 1. 核心属性
     name = "tushare_macro_hibor"
     description = "获取香港银行同业拆借利率HIBOR数据"
-    table_name = "tushare_macro_hibor"
+    table_name = "macro_hibor"
     primary_keys = ["date"]  # 日期是主键
     date_column = "date"  # 日期列名，用于确认最新数据日期
     default_start_date = "20061231"  # 数据最早可获取日期，根据Tushare文档设置
+    data_source = "tushare"
 
     # --- 代码级默认配置 (会被 config.json 覆盖) --- #
     default_concurrent_limit = 3  # 默认并发限制

@@ -23,7 +23,7 @@ class TushareStockDailyTask(TushareTask):
     # 1.核心属性
     name = "tushare_stock_daily"
     description = "获取A股股票日线行情数据"
-    table_name = "tushare_stock_daily"
+    table_name = "stock_daily"
     primary_keys = ["ts_code", "trade_date"]
     date_column = "trade_date"  # 日期列名，用于确认最新数据日期
     default_start_date = "19901219"  # A股最早交易日

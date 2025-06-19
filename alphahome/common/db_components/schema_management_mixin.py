@@ -89,6 +89,29 @@ class SchemaManagementMixin:
             result = await conn.fetchval(query, schema, simple_name)
         return result if result is not None else False
 
+    async def is_physical_table(self, schema: str, table_name: str) -> bool:
+        """检查一个给定的名称是否是物理表（而不是视图）。
+
+        Args:
+            schema (str): Schema名称。
+            table_name (str): 表名。
+
+        Returns:
+            bool: 如果是物理表则返回True，否则返回False。
+        """
+        if self.pool is None: # type: ignore
+            await self.connect() # type: ignore
+
+        query = """
+        SELECT EXISTS (
+            SELECT FROM information_schema.tables 
+            WHERE table_schema = $1 AND table_name = $2 AND table_type = 'BASE TABLE'
+        );
+        """
+        async with self.pool.acquire() as conn: # type: ignore
+            result = await conn.fetchval(query, schema, table_name)
+        return result if result is not None else False
+
     async def get_table_schema(self, target: Any) -> List[Dict[str, Any]]:
         """获取表结构
 
@@ -321,4 +344,37 @@ class SchemaManagementMixin:
             self.logger.info(f"Schema '{schema_name}' 创建成功或已存在。") # type: ignore
         except Exception as e:
             self.logger.error(f"创建 schema '{schema_name}' 时失败: {e}", exc_info=True) # type: ignore
+            raise
+
+    async def rename_table(self, old_table_name: str, new_table_name: str, schema: str = "public"):
+        """重命名数据库中的表。"""
+        query = f'ALTER TABLE "{schema}"."{old_table_name}" RENAME TO "{new_table_name}";'
+        try:
+            await self.execute(query)
+            self.logger.info(f"成功将表 '{schema}.{old_table_name}' 重命名为 '{new_table_name}'。")
+        except Exception as e:
+            self.logger.error(f"重命名表 '{schema}.{old_table_name}' 失败: {e}", exc_info=True)
+            raise
+
+    async def view_exists(self, view_name: str, schema: str = "public") -> bool:
+        """检查指定的视图是否存在于数据库中。"""
+        query = """
+        SELECT 1 FROM information_schema.views 
+        WHERE table_schema = $1 AND table_name = $2;
+        """
+        try:
+            result = await self.fetch_one(query, schema, view_name)
+            return result is not None
+        except Exception as e:
+            self.logger.error(f"检查视图 '{schema}.{view_name}' 是否存在时失败: {e}", exc_info=True)
+            return False
+
+    async def create_view(self, view_name: str, target_table_name: str, schema: str = "public"):
+        """创建一个指向目标表的视图。"""
+        query = f'CREATE OR REPLACE VIEW "{schema}"."{view_name}" AS SELECT * FROM "{schema}"."{target_table_name}";'
+        try:
+            await self.execute(query)
+            self.logger.info(f"成功创建或更新视图 '{schema}.{view_name}' 以指向 '{target_table_name}'。")
+        except Exception as e:
+            self.logger.error(f"创建视图 '{schema}.{view_name}' 失败: {e}", exc_info=True)
             raise

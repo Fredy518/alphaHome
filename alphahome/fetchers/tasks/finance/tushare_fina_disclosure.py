@@ -25,7 +25,7 @@ class TushareFinaDisclosureTask(TushareTask):
     # 1. 核心属性
     name = "tushare_fina_disclosure"
     description = "获取上市公司财报披露计划数据"
-    table_name = "tushare_fina_disclosure"
+    table_name = "fina_disclosure"
     primary_keys = [
         "ts_code",
         "ann_date",

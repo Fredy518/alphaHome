@@ -251,41 +251,30 @@ async def _update_tasks_with_latest_timestamp(task_cache: List[Dict[str, Any]]):
             task_detail["latest_update_time"] = "N/A (DB Error)"
         return
 
-    tasks_to_query = [(i, t['name']) for i, t in enumerate(task_cache) if t.get('table_name')]
-    
-    if not tasks_to_query:
-        return
-
-    # 获取任务对象
-    task_objects = []
-    for i, task_name in tasks_to_query:
-        try:
-            task_obj = await UnifiedTaskFactory.get_task(task_name)
-            task_objects.append((i, task_obj))
-        except Exception as e:
-            logger.warning(f"获取任务对象 {task_name} 失败: {e}")
-            # 如果获取任务对象失败，设置错误状态
-            task_cache[i]["latest_update_time"] = "N/A (Task Error)"
-
-    if not task_objects:
-        return
-
-    query_coroutines = [db_manager.get_latest_date(task_obj, "update_time") for _, task_obj in task_objects]
-    
-    results = await asyncio.gather(*query_coroutines, return_exceptions=True)
-
-    for i, result in enumerate(results):
-        task_index, _ = task_objects[i]
-        
-        if isinstance(result, Exception):
-            timestamp_str = "N/A (Query Error)"
-            logger.warning(f"查询 {task_cache[task_index]['table_name']} 最新时间失败: {result}")
-        elif isinstance(result, datetime):
-            timestamp_str = format_datetime_for_display(result)
+    async def update_single_task(task_detail: Dict[str, Any]):
+        table_name = task_detail.get("table_name")
+        if table_name:
+            try:
+                # 修复: 传递整个task_detail字典，而不是只有name
+                # TableNameResolver可以从字典中正确解析出data_source和table_name
+                latest_time = await db_manager.get_latest_update_time(
+                    task_detail
+                )
+                if latest_time:
+                    task_detail["latest_update_time"] = format_datetime_for_display(latest_time)
+                else:
+                    task_detail["latest_update_time"] = "无数据"
+            except Exception as e:
+                logger.warning(
+                    f"查询 {table_name} 最新时间失败: {e}"
+                )
+                task_detail["latest_update_time"] = "查询失败"
         else:
-            timestamp_str = "无数据" if result is None else str(result)
-        
-        task_cache[task_index]["latest_update_time"] = timestamp_str
+            task_detail["latest_update_time"] = "无对应表"
+
+    # 使用 asyncio.gather 并发更新所有任务
+    tasks = [update_single_task(task) for task in task_cache]
+    await asyncio.gather(*tasks)
 
 
 # --- 用于向后兼容的函数别名 ---

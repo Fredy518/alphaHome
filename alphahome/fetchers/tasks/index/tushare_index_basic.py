@@ -29,11 +29,12 @@ class TushareIndexBasicTask(TushareTask):
 
     # 1. 核心属性
     name = "tushare_index_basic"
-    description = "获取指数基础信息"
-    table_name = "tushare_index_basic"
+    description = "获取指数基本信息"
+    table_name = "index_basic"
     primary_keys = ["ts_code"]
     date_column = None  # 全量任务
     default_start_date = "19900101"  # 全量任务，设置一个早期默认起始日期
+    data_source = "tushare"
 
     # --- 代码级默认配置 (会被 config.json 覆盖) --- #
     default_concurrent_limit = 1

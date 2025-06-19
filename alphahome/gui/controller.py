@@ -61,7 +61,7 @@ from typing import Any, Callable, Dict, List, Optional
 from ..common.config_manager import _config_manager as config_manager
 from ..common.db_manager import DBManager  # 添加 DBManager 导入
 from ..common.logging_utils import get_logger, setup_logging
-from ..common.schema_migrator import run_migration_check
+from ..common.schema_migrator import run_migration_check, run_refactoring_check
 from ..common.task_system import UnifiedTaskFactory
 from .services import (
     task_registry_service,
@@ -100,7 +100,10 @@ async def reinitialize_db_and_reload_data():
                 if all_tasks_dict:
                     # 从字典中提取类对象列表
                     task_classes = list(all_tasks_dict.values())
+                    # 1. 首先运行旧的迁移检查
                     await run_migration_check(db_manager, task_classes)
+                    # 2. 然后运行新的重构检查
+                    await run_refactoring_check(db_manager, task_classes)
                 else:
                     logger.warning("Controller: No tasks found in registry for migration check.")
                 # --- END MIGRATION CHECK ---

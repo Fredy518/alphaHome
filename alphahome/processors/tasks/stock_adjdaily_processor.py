@@ -6,7 +6,7 @@
 
 数据源:
 - tushare_stock_factor_pro: 提供股票复权因子、后复权行情(OHLCVA_hfq)、换手率、股本等数据。
-- tushare_others_calendar: 提供交易所交易日历。
+- others_calendar: 提供交易所交易日历。
 
 主要处理逻辑:
 1. 获取指定股票列表的后复权行情及其他因子数据。
@@ -46,7 +46,7 @@ class StockAdjdailyProcessorTask(ProcessorTask):
     name = "stock_adjdaily_processor"
     table_name = "stock_daily_adjusted_hfq"
     description = "处理股票后复权日线并补全交易日"
-    source_tables = ["tushare_stock_factor_pro", "tushare_others_calendar"]
+    source_tables = ["tushare_stock_factor_pro", "others_calendar"]
     date_column = "trade_date"
     code_column = "ts_code"
 
@@ -71,7 +71,7 @@ class StockAdjdailyProcessorTask(ProcessorTask):
             "source_table_stock_factor", "tushare_stock_factor_pro"
         )
         self.source_table_calendar = resolved_config.get(
-            "source_table_calendar", "tushare_others_calendar"
+            "source_table_calendar", "others_calendar"
         )
         self.result_table = resolved_config.get(
             "result_table", "stock_daily_adjusted_hfq"

@@ -26,11 +26,12 @@ class TushareFutureBasicTask(TushareTask):
 
     # 1. 核心属性
     name = "tushare_future_basic"
-    description = "获取期货及期权合约基础信息"
-    table_name = "tushare_future_basic"
+    description = "获取期货合约基础信息"
+    table_name = "future_basic"
     primary_keys = ["ts_code"]  # 合约代码是唯一主键
     date_column = None  # 该任务不以日期为主，全量更新
     default_start_date = None  # 全量任务不需要起始日期
+    data_source = "tushare"
 
     # --- 代码级默认配置 (会被 config.json 覆盖) --- #
     # 考虑到需要按交易所分批，可以适当增加并发限制

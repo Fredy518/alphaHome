@@ -27,8 +27,8 @@ class TushareMacroShiborTask(TushareTask):
 
     # 1. 核心属性
     name = "tushare_macro_shibor"
-    description = "获取上海银行同业拆借利率SHIBOR数据"
-    table_name = "tushare_macro_shibor"
+    description = "获取上海银行间同业拆放利率Shibor"
+    table_name = "macro_shibor"
     primary_keys = ["date"]  # 日期是主键
     date_column = "date"  # 日期列名，用于确认最新数据日期
     default_start_date = "20061008"  # 数据最早可获取日期，根据Tushare文档设置

@@ -31,8 +31,8 @@ class TushareFutureHoldingTask(TushareTask):
 
     # 1. 核心属性
     name = "tushare_future_holding"
-    description = "获取期货每日成交及持仓排名"
-    table_name = "tushare_future_holding"
+    description = "获取期货持仓数据"
+    table_name = "future_holding"
     primary_keys = ["trade_date", "symbol", "broker", "exchange"]
     date_column = "trade_date"
     default_start_date = (

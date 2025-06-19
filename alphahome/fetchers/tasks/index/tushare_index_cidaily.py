@@ -29,7 +29,7 @@ class TushareIndexCiDailyTask(TushareTask):
     # 1. 核心属性
     name = "tushare_index_cidaily"
     description = "获取中信行业指数日线行情数据"
-    table_name = "tushare_index_cidaily"
+    table_name = "index_cidaily"
     primary_keys = ["ts_code", "trade_date"]
     date_column = "trade_date"
     # 中信指数发布日期可能也较早，暂定与申万一致
@@ -37,6 +37,7 @@ class TushareIndexCiDailyTask(TushareTask):
     # --- 代码级默认配置 (会被 config.json 覆盖) --- #
     default_concurrent_limit = 5
     default_page_size = 4000
+    data_source = "tushare"
 
     # 2. TushareTask 特有属性
     api_name = "ci_daily"  # Tushare API 名称
