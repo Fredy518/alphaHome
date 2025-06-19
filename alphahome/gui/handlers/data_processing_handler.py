@@ -1,3 +1,8 @@
+"""
+数据处理任务UI事件处理器
+
+负责处理"数据处理"标签页上的用户交互事件。
+"""
 import tkinter as tk
 from tkinter import ttk
 from typing import Any, Dict, List
@@ -58,8 +63,19 @@ def handle_deselect_all_processing(widgets: Dict[str, tk.Widget]):
     controller.request_deselect_specific_processing(task_names, select=False)
 
 
-def handle_processing_task_tree_click(event: tk.Event, tree: ttk.Treeview):
-    """Handles clicks on the processing task Treeview to toggle selection."""
+def handle_processing_task_tree_click(event: tk.Event, widgets: Dict[str, tk.Widget]):
+    """
+    处理数据处理任务树的点击事件以切换选择
+    
+    Args:
+        event: 鼠标点击事件
+        widgets (Dict[str, tk.Widget]): UI组件字典
+    """
+    tree = widgets.get("processing_task_tree")
+    if not tree or not isinstance(tree, ttk.Treeview):
+        logger.error("Processing task tree widget not found or is wrong type.")
+        return
+        
     region = tree.identify("region", event.x, event.y)
     if region == "cell":
         item_id = tree.identify_row(event.y)

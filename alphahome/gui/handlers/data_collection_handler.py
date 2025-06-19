@@ -4,12 +4,9 @@
 负责处理"数据采集"标签页上的所有用户交互事件。
 """
 import tkinter as tk
-from tkinter import messagebox, ttk
-import operator
 from typing import Dict, Any, List
 
 from .. import controller
-from ..controller_logic import data_collection
 
 _ALL_TYPES_OPTION = "所有类型"
 
@@ -55,18 +52,31 @@ def handle_deselect_all_collection(widgets: Dict[str, tk.Widget]):
         _set_task_selection_state(task_name, False)
     _update_collection_task_display(widgets)
 
-def handle_collection_task_tree_click(event, tree):
-    """处理数据采集任务树的点击事件以切换选择。"""
-    if tree.identify_region(event.x, event.y) != "cell": return
+def handle_collection_task_tree_click(event, widgets: Dict[str, tk.Widget]):
+    """
+    处理数据采集任务树的点击事件以切换选择
+    
+    Args:
+        event: 鼠标点击事件
+        widgets (Dict[str, tk.Widget]): UI组件字典，包含所有必要的组件
+    """
+    tree = widgets.get("collection_task_tree")
+    if not tree:
+        return
+        
+    if tree.identify_region(event.x, event.y) != "cell": 
+        return
     item_id = tree.identify_row(event.y)
-    if not item_id: return
+    if not item_id: 
+        return
 
     if tree.identify_column(event.x) == "#1":  # "选择"列
         task_name = tree.item(item_id, "values")[3]
         task = next((t for t in _full_task_list_data if t["name"] == task_name), None)
         if task:
             task["selected"] = not task.get("selected", False)
-            _update_collection_task_display({"collection_task_tree": tree}) # 仅更新树
+            # 使用完整的widgets字典更新显示，保持过滤器状态
+            _update_collection_task_display(widgets)
 
 def handle_collection_sort_column(widgets: Dict[str, tk.Widget], col: str):
     """处理数据采集任务列表的排序。"""
@@ -199,12 +209,10 @@ def get_selected_collection_tasks() -> List[Dict[str, Any]]:
     selected_tasks = []
     for task in _full_task_list_data:
         if task.get("selected", False):
-            # 将name字段映射为task_name以符合执行器的期望格式
-            task_info = {
-                "task_name": task.get("name"),
-                "type": task.get("type"),
-                "description": task.get("description"),
-                "latest_update_time": task.get("latest_update_time")
-            }
-            selected_tasks.append(task_info)
+            selected_tasks.append({
+                "task_name": task["name"],
+                "task_type": task["type"],
+                "description": task.get("description", ""),
+                "data_source": task.get("data_source", "unknown")
+            })
     return selected_tasks 

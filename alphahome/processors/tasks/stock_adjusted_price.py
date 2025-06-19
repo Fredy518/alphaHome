@@ -12,21 +12,15 @@ import pandas as pd
 import numpy as np
 from ..processor_task import ProcessorTask
 from ...common.task_system import task_register
+from typing import Optional
 
 
 @task_register()
 class StockAdjustedPriceTask(ProcessorTask):
-    """股票后复权价格计算任务
-    
-    计算公式：
-    后复权价格 = 原始价格 * 累积复权因子
-    
-    输入数据表：
-    - tushare_stock_daily: 不复权的日线行情数据  
-    - tushare_stock_adj_factor: 复权因子数据
-    
-    输出数据表：
-    - stock_adjusted_daily: 后复权的日线行情数据
+    """
+    股票后复权价格计算任务 (非分块处理器示例)
+
+    计算公式：后复权价格 = 原始价格 * 累积复权因子
     """
     
     name = "stock_adjusted_price"
@@ -60,8 +54,40 @@ class StockAdjustedPriceTask(ProcessorTask):
         "adj_factor": {"type": "DECIMAL(15,8)"},      # 保留复权因子
     }
 
+    # 标记为非分块任务
+    is_block_processor = False
+
+    async def process(self, **kwargs) -> Optional[pd.DataFrame]:
+        """
+        非分块任务的核心处理逻辑。
+        它将一次性获取所有需要的数据，并进行计算。
+        """
+        self.logger.info(f"任务 '{self.name}' 开始执行 (非分块模式)...")
+        
+        # 1. 获取数据
+        # _fetch_multiple_tables 方法现在是 process 逻辑的一部分
+        data = await self._fetch_multiple_tables(**kwargs)
+        if data.empty:
+            self.logger.warning("未能获取到任何数据，任务终止。")
+            return None
+
+        # 2. 计算数据
+        # _calculate_from_multiple_sources 方法现在也是 process 逻辑的一部分
+        processed_data = self._calculate_from_multiple_sources(data, **kwargs)
+
+        # 3. (可选) 保存数据
+        # 在实际应用中，这里可以调用 self.db.save_dataframe(processed_data, self.table_name)
+        if not processed_data.empty:
+            self.logger.info(f"计算完成，生成 {len(processed_data)} 条后复权数据。")
+            # 示例：此处可以添加保存逻辑
+        else:
+            self.logger.info("计算完成，但没有生成任何数据。")
+
+        self.logger.info(f"任务 '{self.name}' 执行完毕。")
+        return processed_data
+
     async def _fetch_multiple_tables(self, **kwargs):
-        """重写多表查询，实现行情数据和复权因子的联合查询"""
+        """辅助方法：实现行情数据和复权因子的联合查询"""
         
         # 构建联合查询SQL，一次性获取所需数据
         query = """
@@ -111,14 +137,7 @@ class StockAdjustedPriceTask(ProcessorTask):
             raise
 
     def _calculate_from_multiple_sources(self, data: pd.DataFrame, **kwargs) -> pd.DataFrame:
-        """计算后复权价格
-        
-        Args:
-            data: 联合查询得到的DataFrame，包含行情数据和复权因子
-            
-        Returns:
-            pd.DataFrame: 计算后的后复权价格数据
-        """
+        """辅助方法：计算后复权价格"""
         if data.empty:
             self.logger.warning("输入数据为空")
             return pd.DataFrame()

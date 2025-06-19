@@ -22,27 +22,23 @@ __version__ = "1.0.0"
 __author__ = "alphaHome Team"
 
 # 导入核心组件
-from .base_task import BaseTask, Task
-from .task_factory import UnifiedTaskFactory, TaskFactory, get_task, get_tasks_by_type, get_task_types
-from .task_decorator import task_register, get_registered_tasks, get_registered_tasks_by_type, register_tasks_to_factory
+from .base_task import BaseTask
+from .task_decorator import task_register
+from .task_factory import (
+    UnifiedTaskFactory,
+    get_task,
+    get_tasks_by_type,
+    get_task_names_by_type,
+    get_task_types,
+)
 
+# 统一导出接口
 __all__ = [
-    # 基础任务类
     "BaseTask",
-    "Task",  # 向后兼容别名
-    
-    # 任务工厂
-    "UnifiedTaskFactory", 
-    "TaskFactory",  # 向后兼容别名
-    
-    # 工厂便捷函数
-    "get_task",
-    "get_tasks_by_type", 
-    "get_task_types",
-    
-    # 任务装饰器
+    "UnifiedTaskFactory",
     "task_register",
-    "get_registered_tasks",
-    "get_registered_tasks_by_type",
-    "register_tasks_to_factory",
-] 
+    "get_task",
+    "get_tasks_by_type",
+    "get_task_names_by_type",
+    "get_task_types",
+]

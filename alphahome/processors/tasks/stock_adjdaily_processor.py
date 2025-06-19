@@ -30,16 +30,25 @@ import pandas as pd
 
 from ...common.db_manager import DBManager
 from ...common.logging_utils import get_logger
+from ..processor_task import ProcessorTask
+from ...common.task_system import task_register
 
 # 实际项目中，你需要确保这些导入路径是正确的
-from ..base.block_processor import BlockProcessor
+# from ..base.block_processor import BlockProcessor
 from ..utils.query_builder import QueryBuilder
 
 
-class StockAdjDailyProcessor(BlockProcessor):
+@task_register()
+class StockAdjdailyProcessorTask(ProcessorTask):
     """
     股票日线后复权调整与交易日补全处理器
     """
+    name = "stock_adjdaily_processor"
+    table_name = "stock_daily_adjusted_hfq"
+    description = "处理股票后复权日线并补全交易日"
+    source_tables = ["tushare_stock_factor_pro", "tushare_others_calendar"]
+    date_column = "trade_date"
+    code_column = "ts_code"
 
     def __init__(self, db_connection, config: Optional[Dict[str, Any]] = None):
         """
@@ -55,16 +64,9 @@ class StockAdjDailyProcessor(BlockProcessor):
                 - default_calendar_start_date: 日历数据获取的默认起始日期 (默认: '19900101')
                 - default_calendar_end_date: 日历数据获取的默认结束日期 (默认: '20991231')
         """
-        resolved_config = config or {}
-        super().__init__(
-            db_connection=db_connection,
-            date_column="trade_date",
-            code_column="ts_code",
-            block_type="code",
-            block_size=resolved_config.get("block_size_codes", 20),
-            config=resolved_config,
-        )
+        super().__init__(db_connection=db_connection)
 
+        resolved_config = config or {}
         self.source_table_stock_factor = resolved_config.get(
             "source_table_stock_factor", "tushare_stock_factor_pro"
         )
@@ -248,7 +250,7 @@ class StockAdjDailyProcessor(BlockProcessor):
 
         return {"stock_data": stock_df, "calendar_data": calendar_df}
 
-    async def process_block(
+    async def process_data_logic(
         self, data_dict: Dict[str, pd.DataFrame], **kwargs
     ) -> pd.DataFrame:
         stock_df_original = data_dict.get("stock_data")
@@ -367,14 +369,15 @@ class StockAdjDailyProcessor(BlockProcessor):
             "end_date": end_date_str,
         }
 
-        query = f"DELETE FROM {self.result_table} WHERE " + " AND ".join(
-            delete_conditions
+        query, params = QueryBuilder(self.result_table).build_delete(
+            delete_conditions, delete_params
         )
-        self.logger.info(
-            f"清除旧结果 (表: {self.result_table}): codes {codes_in_block}, dates {start_date_str}-{end_date_str}"
-        )
+
         try:
-            await self.db.execute(query, delete_params)
-            self.logger.info(f"成功清除旧结果。")
+            await self.db.execute(query, **params)
+            self.logger.info(
+                f"成功清除了表 {self.result_table} 中代码 {codes_in_block} 在日期范围 {start_date_str}-{end_date_str} 的旧数据。"
+            )
         except Exception as e:
-            self.logger.error(f"清除旧结果时发生错误: {e}", exc_info=True)
+            self.logger.error(f"清除旧结果失败: {e}", exc_info=True)
+            raise

@@ -34,8 +34,8 @@ from ..common.task_system import (
 # 导入所有具体的processor任务（这会触发@task_register装饰器）
 from . import tasks
 
-# 确保processor任务注册到UnifiedTaskFactory（放在任务导入之后）
-from ..common.task_system.task_decorator import register_tasks_to_factory
-register_tasks_to_factory()
+# 确保processor任务注册到UnifiedTaskFactory（放在任务导入之后） (此步骤已不再需要)
+# from ..common.task_system.task_decorator import register_tasks_to_factory
+# register_tasks_to_factory()
 
 __all__ = ["ProcessorTask", "BaseTask"]

@@ -4,12 +4,11 @@
 负责为"存储设置"标签页提供UI更新和数据提取的辅助函数。
 """
 import tkinter as tk
-from tkinter import messagebox, ttk
+from tkinter import messagebox
 import urllib.parse
 from typing import Dict, Any
 
-from async_tkinter_loop import async_handler
-from ..controller_logic import storage_settings as storage_logic
+from ..services import configuration_service as storage_logic
 
 # This module no longer sends requests directly to the controller.
 # It provides helper functions for the main_window to call.

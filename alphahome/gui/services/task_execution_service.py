@@ -15,7 +15,7 @@ from typing import Any, Callable, Dict, List, Optional
 from ...common.db_manager import DBManager, create_async_manager
 from ...common.logging_utils import get_logger
 from ...common.task_system import UnifiedTaskFactory, base_task
-from ..utils.common import format_status_chinese
+from ..utils.common import format_status_chinese, format_datetime_for_display
 
 logger = get_logger(__name__)
 
@@ -96,29 +96,19 @@ async def get_all_task_status(db_manager: DBManager):
             
         status_list = [dict(record) for record in records] if records else []
         for status in status_list:
-            status["status_display"] = format_status_chinese(status.get("status"))
-            # 格式化更新时间，只显示到秒，并正确处理时区转换
-            if status.get("update_time"):
+            status["status_display"] = format_status_chinese(status.get("status") or "")
+            # 格式化更新时间
+            update_time_obj = status.get("update_time")
+            if isinstance(update_time_obj, datetime):
+                status["update_time"] = format_datetime_for_display(update_time_obj)
+            elif isinstance(update_time_obj, str):
                 try:
-                    if isinstance(status["update_time"], str):
-                        # 如果是字符串，尝试解析为datetime
-                        from datetime import datetime, timezone
-                        dt = datetime.fromisoformat(status["update_time"].replace('Z', '+00:00'))
-                        # 如果是UTC时间，转换为本地时区
-                        if dt.tzinfo is not None:
-                            dt = dt.astimezone()  # 转换为本地时区
-                        status["update_time"] = dt.strftime("%Y-%m-%d %H:%M:%S")
-                    else:
-                        # 如果已经是datetime对象，检查时区信息
-                        from datetime import timezone
-                        dt = status["update_time"]
-                        # 如果有时区信息，转换为本地时区
-                        if hasattr(dt, 'tzinfo') and dt.tzinfo is not None:
-                            dt = dt.astimezone()  # 转换为本地时区
-                        status["update_time"] = dt.strftime("%Y-%m-%d %H:%M:%S")
+                    # 如果是字符串，先解析再格式化
+                    dt = datetime.fromisoformat(update_time_obj.replace('Z', '+00:00'))
+                    status["update_time"] = format_datetime_for_display(dt)
                 except Exception as e:
-                    logger.warning(f"格式化时间失败: {e}")
-                    # 如果格式化失败，保持原值
+                    logger.warning(f"解析时间字符串失败: {e}, 值: {update_time_obj}")
+                    # 解析失败则保持原样
         
         if _send_response_callback:
             _send_response_callback("TASK_STATUS_UPDATE", status_list)
@@ -203,7 +193,7 @@ async def run_tasks(
                     _send_response_callback("LOG", {"level": "info", "message": log_msg})
 
                 # 准备任务执行参数，包含stop_event
-                run_kwargs = {"stop_event": _global_stop_event}
+                run_kwargs: Dict[str, Any] = {"stop_event": _global_stop_event}
                 if start_date:
                     run_kwargs["start_date"] = start_date
                 if end_date:
@@ -215,7 +205,7 @@ async def run_tasks(
                     result = await task_instance.smart_incremental_update(**run_kwargs)
                 else:
                     # 其他模式，直接执行
-                    result = await task_instance.run(**run_kwargs)
+                    result = await task_instance.execute(**run_kwargs)
 
                 # 检查任务结果是否为取消状态
                 if isinstance(result, dict) and result.get("status") == "cancelled":

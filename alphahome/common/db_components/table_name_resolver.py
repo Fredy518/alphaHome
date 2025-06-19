@@ -11,11 +11,66 @@ logger = logging.getLogger(__name__)
 
 
 class TableNameResolver:
-    """
-    一个用于解析数据库表名的类。
-
-    它可以根据输入的类型（任务对象或字符串）来确定最终的、
-    包含schema的完整表名，如 'tushare.stock_basic' 或 'public.legacy_table'。
+    """数据库表名解析器
+    
+    职责：
+    ----
+    专门负责将任务对象或表名字符串解析为数据库中完整的、带schema的表名。
+    这是数据库操作中的关键组件，确保所有表操作都能正确定位到目标表。
+    
+    主要功能：
+    1. 任务对象到表名的转换
+    2. Schema和表名的智能分离
+    3. 默认schema的自动应用
+    4. 表名格式的标准化
+    5. 跨数据源的表名映射
+    
+    解析规则：
+    --------
+    **字符串输入**:
+    - 包含"."：解析为 schema.table_name
+    - 不包含"."：默认为 public.table_name
+    
+    **任务对象输入**:
+    - 使用 data_source 属性作为 schema
+    - 使用 table_name 属性作为表名
+    - data_source为空时默认使用 public schema
+    
+    设计特点：
+    --------
+    1. **Duck Typing**: 支持任何具有table_name属性的对象
+    2. **向后兼容**: 支持传统的字符串表名
+    3. **Schema隔离**: 基于data_source实现多数据源隔离
+    4. **默认处理**: 智能应用默认schema，减少配置复杂度
+    5. **格式统一**: 确保所有表名输出格式一致
+    
+    Schema映射策略：
+    --------------
+    - tushare数据源 → tushare schema
+    - wind数据源 → wind schema  
+    - 自定义数据源 → 对应schema
+    - 未指定/空值 → public schema
+    
+    使用示例：
+    --------
+    ```python
+    resolver = TableNameResolver()
+    
+    # 任务对象解析
+    task = TushareStockBasic()  # data_source='tushare', table_name='stock_basic'
+    full_name = resolver.get_full_name(task)  # 'tushare.stock_basic'
+    
+    # 字符串解析
+    full_name = resolver.get_full_name('public.user_data')  # 'public.user_data'
+    full_name = resolver.get_full_name('temp_table')  # 'public.temp_table'
+    ```
+    
+    与其他组件关系：
+    -------------
+    - 被所有数据库Mixin组件使用
+    - 为SQL构建提供标准化表名
+    - 支持多数据源的schema隔离策略
+    - 确保表操作的准确性和一致性
     """
 
     def get_schema_and_table(self, target: Any) -> tuple[str, str]:

@@ -1,6 +1,11 @@
+"""
+任务日志UI事件处理器
+
+负责处理"任务日志"标签页上的用户交互事件。
+"""
 import tkinter as tk
 from tkinter import scrolledtext
-from typing import Any, Dict, Union
+from typing import Dict, Union
 from datetime import datetime
 
 from ...common.logging_utils import get_logger

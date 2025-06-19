@@ -16,14 +16,13 @@ from ..common.task_system import (
     get_task,
     get_tasks_by_type,
     get_task_types,
-    register_tasks_to_factory
 )
 
 # 导入所有具体的数据采集任务（这会触发任务注册）
 from . import tasks
 
-# 注册所有任务到统一工厂
-register_tasks_to_factory()
+# 注册所有任务到统一工厂 (此步骤已不再需要，因为注册是即时的)
+# register_tasks_to_factory()
 
 # 主要导出
 __all__ = [

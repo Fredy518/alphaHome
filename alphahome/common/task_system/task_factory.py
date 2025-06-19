@@ -285,33 +285,17 @@ async def get_task(task_name: str) -> BaseTask:
 
 def get_tasks_by_type(task_type: Optional[str] = None) -> Dict[str, Type[BaseTask]]:
     """便捷函数，按类型获取任务字典"""
-    # 如果UnifiedTaskFactory未初始化，从装饰器注册表获取
-    if not UnifiedTaskFactory._initialized:
-        from .task_decorator import get_registered_tasks_by_type
-        # 如果 get_registered_tasks_by_type 返回的不是精确的 BaseTask 类型，Mypy 在这里可能会报错。
-        # 这里假设 get_registered_tasks_by_type 返回 Dict[str, Type[BaseTask]] 或兼容类型。
-        return get_registered_tasks_by_type(task_type) # type: ignore
+    # 移除Fallback逻辑，直接调用工厂方法
     return UnifiedTaskFactory.get_tasks_by_type(task_type)
 
 
 def get_task_names_by_type(task_type: Optional[str] = None) -> List[str]:
     """便捷函数，按类型获取任务名称列表"""
-    # 如果UnifiedTaskFactory未初始化，从装饰器注册表获取
-    if not UnifiedTaskFactory._initialized:
-        from .task_decorator import get_registered_tasks_by_type
-        return sorted(list(get_registered_tasks_by_type(task_type).keys()))
+    # 移除Fallback逻辑，直接调用工厂方法
     return UnifiedTaskFactory.get_task_names_by_type(task_type)
 
 
 def get_task_types() -> List[str]:
     """便捷函数，获取所有任务类型"""
-    # 如果UnifiedTaskFactory未初始化，从装饰器注册表获取
-    if not UnifiedTaskFactory._initialized:
-        from .task_decorator import get_registered_tasks_by_type
-        types = set()
-        for task_class in get_registered_tasks_by_type(None).values():
-            if hasattr(task_class, 'task_type'):
-                types.add(task_class.task_type)
-        return sorted(list(types))
-    
+    # 移除Fallback逻辑，直接调用工厂方法
     return UnifiedTaskFactory.get_task_types() 

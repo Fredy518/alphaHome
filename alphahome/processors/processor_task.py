@@ -9,16 +9,25 @@
 """
 
 import pandas as pd
-from typing import Dict, List, Any, Union
+from typing import Dict, List, Any, Union, Optional
 from ..common.task_system.base_task import BaseTask
+from abc import abstractmethod
+from ..common.task_system import BaseTask
+from .base.block_processor import BlockProcessorMixin
+import asyncio
 
 
-class ProcessorTask(BaseTask):
-    """数据处理任务基类
-    
-    专门用于处理已存储在数据库中的数据，生成新的派生数据。
-    相比通用的BaseTask，ProcessorTask专注于数据处理的特定需求，
-    如多表联合查询、数据计算、指标生成等。
+class ProcessorTask(BaseTask, BlockProcessorMixin):
+    """
+    数据处理任务的统一基类。
+
+    它整合了 BlockProcessorMixin，为所有处理器任务提供了可选的分块处理能力。
+    一个处理器任务必须实现以下两种执行逻辑之一：
+    1. 对于非分块任务：实现 `process` 方法。
+    2. 对于分块任务：
+        a. 设置 `is_block_processor = True`。
+        b. 实现 `get_data_blocks` 方法来定义如何分块。
+        c. 实现 `process_block` 方法来处理单个块。
     """
     
     # 设置任务类型为processor
@@ -253,4 +262,47 @@ class ProcessorTask(BaseTask):
             "dependencies": self.dependencies,
             "calculation_method": self.calculation_method,
             "description": self.description,
-        } 
+        }
+
+    async def run(self, **kwargs: Any) -> None:
+        """
+        任务执行的统一入口点。
+        根据 `is_block_processor` 属性，决定是按块执行还是整体执行。
+        """
+        if self.is_block_processor:
+            # 对于分块任务，调用分块处理驱动方法
+            # 注意：run_all_blocks 是同步的，如果需要异步块处理，未来需要调整
+            self.run_all_blocks(**kwargs)
+        else:
+            # 对于非分块任务，调用 process 方法
+            # 注意：process 方法可以是异步的
+            if asyncio.iscoroutinefunction(self.process):
+                await self.process(**kwargs)
+            else:
+                self.process(**kwargs)
+
+    # --- 标准（非分块）处理接口 ---
+    @abstractmethod
+    def process(self, **kwargs: Any) -> Optional[pd.DataFrame]:
+        """
+        处理非分块任务的核心逻辑。
+        如果任务不是分块任务，则必须实现此方法。
+        """
+        raise NotImplementedError("非分块处理器必须实现 process 方法。")
+
+    # --- Mixin 方法的占位符实现 ---
+    # ProcessorTask 本身不是一个具体的分块任务，
+    # 所以它提供了 Mixin 抽象方法的基础实现，以满足 ABC 的要求。
+    # 需要分块的子类必须重写这些方法。
+
+    def get_data_blocks(self, **kwargs) -> pd.DataFrame:
+        if self.is_block_processor:
+            raise NotImplementedError("分块处理器必须重写 get_data_blocks 方法。")
+        # 非分块任务不需要实现此方法，返回一个空列表
+        return []
+
+    def process_block(self, block_params: Dict[str, Any]) -> Optional[pd.DataFrame]:
+        if self.is_block_processor:
+            raise NotImplementedError("分块处理器必须重写 process_block 方法。")
+        # 非分块任务不需要实现此方法
+        return None 

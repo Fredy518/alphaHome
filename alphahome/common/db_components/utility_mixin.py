@@ -1,104 +1,224 @@
-from datetime import datetime, date
-from typing import Optional, Union, List, Any
+"""
+数据库实用工具Mixin
+
+该模块提供数据库的实用工具功能，为上层应用提供便捷的查询和分析接口。
+"""
+
+import asyncio
+from datetime import datetime
+from typing import Any, Dict, List, Optional, Union
+
+import asyncpg
 
 
 class UtilityMixin:
-    """实用工具Mixin - 提供各种实用工具方法"""
+    """数据库实用工具Mixin
+    
+    职责：
+    ----
+    提供数据库操作的实用工具方法，为应用层提供便捷的数据查询和分析功能。
+    主要包括：
+    1. 数据查询工具（最新日期、唯一值、列信息等）
+    2. 连接测试和状态检查
+    3. 数据统计和分析工具
+    4. 便捷的数据访问接口
+    
+    核心方法：
+    --------
+    - **get_latest_date**: 获取指定表和列的最新日期
+    - **get_distinct_values**: 获取指定列的所有唯一值
+    - **get_column_names**: 获取表的所有列名
+    - **test_connection**: 测试数据库连接状态
+    - **get_database_stats**: 获取数据库统计信息
+    
+    设计特点：
+    --------
+    1. **高级抽象**: 封装常用的查询模式，简化业务代码
+    2. **性能优化**: 使用适当的查询策略，避免全表扫描
+    3. **表名解析**: 自动处理schema和表名的解析
+    4. **错误处理**: 提供友好的错误信息和异常处理
+    5. **类型安全**: 适当的类型提示和数据验证
+    
+    使用场景：
+    --------
+    - 获取数据更新状态和统计信息
+    - 数据质量检查和验证
+    - 应用健康状态监控
+    - 数据探索和分析支持
+    
+    依赖关系：
+    --------
+    - 使用DatabaseOperationsMixin进行底层查询
+    - 使用TableNameResolver进行表名解析
+    - 与其他Mixin协同提供完整的数据库功能
+    """
 
-    def test_connection(self):
-        """测试数据库连接"""
-        try:
-            if self.mode == "sync": # type: ignore
-                result = self.fetch_val_sync("SELECT 1") # type: ignore
-            else:
-                # 异步模式下不能在此方法中直接测试，需要异步调用
-                self.logger.warning( # type: ignore
-                    "异步模式下test_connection方法不可用，请使用异步测试方法"
-                )
-                return False
-            return result == 1
-        except Exception as e:
-            self.logger.error(f"数据库连接测试失败: {e}") # type: ignore
-            return False
-
-    async def get_latest_date(self, target: Any, date_column: str) -> Optional[date]:
-        """获取指定表中指定日期列的最新日期
+    async def get_latest_date(self, target: Any, date_column: str) -> Optional[datetime]:
+        """获取指定表中日期列的最新日期
 
         Args:
-            target (Any): 表名字符串或任务对象 (任何拥有 table_name 和 data_source 属性的对象)
+            target (Any): 目标表，可以是表名字符串或任务对象
             date_column (str): 日期列名
 
         Returns:
-            Optional[datetime.date]: 最新日期，如果表为空或不存在则返回None
+            Optional[datetime]: 最新日期的datetime对象，如果表为空则返回None
         """
-        resolved_table_name = self.resolver.get_full_name(target) # type: ignore
-        
-        # 首先检查表是否存在，如果不存在则直接返回None
-        exists = await self.table_exists(resolved_table_name) # type: ignore
-        if not exists:
-            self.logger.warning( # type: ignore
-                f"尝试从不存在的表 '{resolved_table_name}' 获取最新日期，返回 None。"
-            )
-            return None
+        schema, table_name = self.resolver.get_schema_and_table(target)  # type: ignore
+        resolved_table_name = f'"{schema}"."{table_name}"'
 
-        # 构建查询语句
-        query = f'SELECT MAX("{date_column}") FROM {resolved_table_name};'
+        query = f'''
+        SELECT MAX("{date_column}") 
+        FROM {resolved_table_name}
+        '''
 
         try:
-            latest_date_val = await self.fetch_val(query) # type: ignore
-            if latest_date_val is None:
-                self.logger.info(f"表 '{resolved_table_name}' 为空，无最新日期。") # type: ignore
-                return None
-            
-            # 确保返回的是 date 对象
-            if isinstance(latest_date_val, datetime):
-                return latest_date_val.date()
-            if isinstance(latest_date_val, date):
-                return latest_date_val
-            # 如果是其他类型，尝试解析
-            if isinstance(latest_date_val, str):
-                try:
-                    return datetime.strptime(latest_date_val, "%Y-%m-%d").date()
-                except ValueError:
-                    self.logger.error(f"无法将字符串 '{latest_date_val}' 解析为日期。") # type: ignore
-                    return None
-            
-            self.logger.warning(f"获取的最新日期类型未知: {type(latest_date_val)}") # type: ignore
-            return latest_date_val
-
+            result = await self.fetch_val(query)  # type: ignore
+            return result if result is not None else None
         except Exception as e:
-            self.logger.error(f"获取表 '{resolved_table_name}' 最新日期时出错: {e}", exc_info=True) # type: ignore
-            return None
+            self.logger.error(  # type: ignore
+                f"获取最新日期失败 (表: {resolved_table_name}, 列: {date_column}): {e}"
+            )
+            raise
+
+    async def get_distinct_values(
+        self, target: Any, column_name: str, limit: Optional[int] = None
+    ) -> List[Any]:
+        """获取指定列的所有唯一值
+
+        Args:
+            target (Any): 目标表，可以是表名字符串或任务对象
+            column_name (str): 列名
+            limit (Optional[int]): 限制返回的记录数，默认无限制
+
+        Returns:
+            List[Any]: 唯一值列表
+        """
+        schema, table_name = self.resolver.get_schema_and_table(target)  # type: ignore
+        resolved_table_name = f'"{schema}"."{table_name}"'
+
+        limit_clause = f"LIMIT {limit}" if limit else ""
+        query = f'''
+        SELECT DISTINCT "{column_name}"
+        FROM {resolved_table_name}
+        ORDER BY "{column_name}"
+        {limit_clause}
+        '''
+
+        try:
+            records = await self.fetch(query)  # type: ignore
+            return [record[column_name] for record in records]
+        except Exception as e:
+            self.logger.error(  # type: ignore
+                f"获取唯一值失败 (表: {resolved_table_name}, 列: {column_name}): {e}"
+            )
+            raise
 
     async def get_column_names(self, target: Any) -> List[str]:
-        """获取数据表的所有列名"""
-        resolved_table_name = self.resolver.get_full_name(target) # type: ignore
-        schema, simple_name = resolved_table_name.split('.')
-        schema = schema.strip('"')
-        simple_name = simple_name.strip('"')
+        """获取表的所有列名
 
-        query = """
+        Args:
+            target (Any): 目标表，可以是表名字符串或任务对象
+
+        Returns:
+            List[str]: 列名列表
+        """
+        schema, table_name = self.resolver.get_schema_and_table(target)  # type: ignore
+
+        query = f'''
         SELECT column_name
         FROM information_schema.columns
         WHERE table_schema = $1 AND table_name = $2
-        ORDER BY ordinal_position;
-        """
-        rows = await self.fetch(query, schema, simple_name) # type: ignore
-        return [row['column_name'] for row in rows] if rows else []
+        ORDER BY ordinal_position
+        '''
 
-    async def get_distinct_values(self, target: Any, column_name: str) -> List[Any]:
-        """获取指定表中指定列的唯一值列表"""
-        resolved_table_name = self.resolver.get_full_name(target) # type: ignore
-        
-        # 检查表是否存在
-        if not await self.table_exists(resolved_table_name): # type: ignore
-            self.logger.warning(f"表 '{resolved_table_name}' 不存在，无法获取唯一值。") # type: ignore
-            return []
-
-        query = f'SELECT DISTINCT "{column_name}" FROM {resolved_table_name};'
         try:
-            rows = await self.fetch(query) # type: ignore
-            return [row[0] for row in rows] if rows else []
+            records = await self.fetch(query, schema, table_name)  # type: ignore
+            return [record["column_name"] for record in records]
         except Exception as e:
-            self.logger.error(f"从表 '{resolved_table_name}' 获取列 '{column_name}' 唯一值时出错: {e}", exc_info=True) # type: ignore
-            return []
+            self.logger.error(  # type: ignore
+                f"获取列名失败 (schema: {schema}, table: {table_name}): {e}"
+            )
+            raise
+
+    async def test_connection(self) -> bool:
+        """测试数据库连接
+
+        Returns:
+            bool: 连接状态，True表示连接正常
+        """
+        try:
+            result = await self.fetch_val("SELECT 1")  # type: ignore
+            return result == 1
+        except Exception as e:
+            self.logger.error(f"数据库连接测试失败: {e}")  # type: ignore
+            return False
+
+    async def get_database_stats(self) -> Dict[str, Any]:
+        """获取数据库统计信息
+
+        Returns:
+            Dict[str, Any]: 包含数据库统计信息的字典
+        """
+        stats = {}
+
+        try:
+            # 获取数据库版本
+            version = await self.fetch_val("SELECT version()")  # type: ignore
+            stats["version"] = str(version) if version else "Unknown"
+
+            # 获取当前时间
+            current_time = await self.fetch_val("SELECT NOW()")  # type: ignore
+            stats["current_time"] = str(current_time) if current_time else "Unknown"
+
+            # 获取活动连接数
+            connections = await self.fetch_val(  # type: ignore
+                "SELECT count(*) FROM pg_stat_activity"
+            )
+            stats["active_connections"] = connections if connections else 0
+
+            return stats
+
+        except Exception as e:
+            self.logger.error(f"获取数据库统计信息失败: {e}")  # type: ignore
+            return {"error": str(e)}
+
+    async def analyze_table_performance(self, target: Any) -> Dict[str, Any]:
+        """分析表的性能统计信息
+
+        Args:
+            target (Any): 目标表，可以是表名字符串或任务对象
+
+        Returns:
+            Dict[str, Any]: 包含表性能统计的字典
+        """
+        schema, table_name = self.resolver.get_schema_and_table(target)  # type: ignore
+        stats = {}
+
+        try:
+            # 获取表大小
+            size_query = '''
+            SELECT pg_size_pretty(pg_total_relation_size($1::regclass)) as table_size,
+                   pg_size_pretty(pg_relation_size($1::regclass)) as data_size
+            '''
+            size_result = await self.fetch_one(  # type: ignore
+                size_query, f'"{schema}"."{table_name}"'
+            )
+            if size_result:
+                stats.update(dict(size_result))
+
+            # 获取行数估计
+            count_query = f'''
+            SELECT reltuples::bigint as estimated_rows
+            FROM pg_class
+            WHERE oid = '"{schema}"."{table_name}"'::regclass
+            '''
+            count_result = await self.fetch_val(count_query)  # type: ignore
+            stats["estimated_rows"] = count_result if count_result else 0
+
+            return stats
+
+        except Exception as e:
+            self.logger.error(  # type: ignore
+                f"分析表性能失败 (schema: {schema}, table: {table_name}): {e}"
+            )
+            return {"error": str(e)}
