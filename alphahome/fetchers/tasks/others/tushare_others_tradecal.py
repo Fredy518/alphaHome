@@ -77,15 +77,15 @@ class TushareOthersTradecalTask(TushareTask):
         {"name": "idx_shared_cal_update", "columns": ["update_time"]},
     ]
 
-    def __init__(
-        self, db_connection, api_token: Optional[str] = None, api: Optional[Any] = None
-    ):
-        """初始化 TushareOthersTradecalTask."""  # 更新类名
-        super().__init__(db_connection, api_token=api_token, api=api)
-        # self.name 会自动使用更新后的类属性name
-        self.logger.info(
-            f"任务 {self.name} 初始化完成。将从 {self.default_start_date} 开始获取数据。"
-        )
+    # def __init__(
+    #     self, db_connection, api_token: Optional[str] = None, api: Optional[Any] = None
+    # ):
+    #     """初始化 TushareOthersTradecalTask."""  # 更新类名
+    #     super().__init__(db_connection, api_token=api_token, api=api, **kwargs)
+    #     # self.name 会自动使用更新后的类属性name
+    #     self.logger.info(
+    #         f"任务 {self.name} 初始化完成。将从 {self.default_start_date} 开始获取数据。"
+    #     )
 
     async def get_batch_list(
         self, start_date: str, end_date: str, **kwargs: Any

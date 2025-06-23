@@ -16,6 +16,7 @@ from ...common.db_manager import DBManager, create_async_manager
 from ...common.logging_utils import get_logger
 from ...common.task_system import UnifiedTaskFactory, base_task
 from ..utils.common import format_status_chinese, format_datetime_for_display
+from ...common.constants import UpdateTypes
 
 logger = get_logger(__name__)
 
@@ -170,7 +171,33 @@ async def run_tasks(
             # 立即刷新任务状态显示
             await get_all_task_status(db_manager)
 
-            task_instance = await UnifiedTaskFactory.get_task(task_name)
+            # --- 核心重构：使用新的 create_task_instance 工厂方法 ---
+            task_init_params = {}
+            if exec_mode == "智能增量":
+                task_init_params['update_type'] = UpdateTypes.SMART
+            elif exec_mode == "全量更新":
+                task_init_params['update_type'] = UpdateTypes.FULL
+            elif exec_mode == "手动增量":
+                task_init_params['update_type'] = UpdateTypes.MANUAL
+                task_init_params['start_date'] = start_date
+                task_init_params['end_date'] = end_date
+            else:
+                logger.warning(f"未知的执行模式: {exec_mode}，将使用默认的 '{UpdateTypes.SMART}' 模式。")
+                task_init_params['update_type'] = UpdateTypes.SMART
+
+            try:
+                task_instance = await UnifiedTaskFactory.create_task_instance(
+                    task_name, **task_init_params
+                )
+            except Exception as factory_e:
+                log_msg = f"任务 {task_name} 实例创建失败: {factory_e}"
+                logger.error(log_msg, exc_info=True)
+                if _send_response_callback:
+                    _send_response_callback("LOG", {"level": "error", "message": log_msg})
+                await _record_task_status(db_manager, task_name, "error", "任务实例创建失败")
+                await get_all_task_status(db_manager)
+                continue
+            # --- 重构结束 ---
 
             if not task_instance:
                 log_msg = f"任务 {task_name} 创建失败，跳过。"
@@ -192,20 +219,10 @@ async def run_tasks(
                 if _send_response_callback:
                     _send_response_callback("LOG", {"level": "info", "message": log_msg})
 
-                # 准备任务执行参数，包含stop_event
-                run_kwargs: Dict[str, Any] = {"stop_event": _global_stop_event}
-                if start_date:
-                    run_kwargs["start_date"] = start_date
-                if end_date:
-                    run_kwargs["end_date"] = end_date
-                
-                # 根据执行模式设置参数
-                if exec_mode == "智能增量":
-                    # 智能增量模式，让任务自己决定日期范围
-                    result = await task_instance.smart_incremental_update(**run_kwargs)
-                else:
-                    # 其他模式，直接执行
-                    result = await task_instance.execute(**run_kwargs)
+                # --- 核心重构：统一调用 execute ---
+                # 所有参数已在初始化时注入，这里只传递 stop_event
+                result = await task_instance.execute(stop_event=_global_stop_event)
+                # --- 重构结束 ---
 
                 # 检查任务结果是否为取消状态
                 if isinstance(result, dict) and result.get("status") == "cancelled":

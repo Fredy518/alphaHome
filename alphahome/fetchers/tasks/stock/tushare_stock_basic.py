@@ -30,10 +30,10 @@ class TushareStockBasicTask(TushareTask):
     table_name = "stock_basic"
     primary_keys = ["ts_code"]
     date_column = None  # 该任务不以日期为主，全量更新
-    default_start_date = None  # 全量任务不需要起始日期
+    default_start_date = None  # 全量任务不需要起始日期 # type: ignore
 
     # --- 代码级默认配置 (会被 config.json 覆盖) --- #
-    default_concurrent_limit = 1
+    default_concurrent_limit = 1 # 全量更新，设置为串行执行以简化
     default_page_size = 8000
 
     # 2. TushareTask 特有属性
@@ -98,13 +98,6 @@ class TushareStockBasicTask(TushareTask):
         {"name": "idx_stock_basic_update_time", "columns": "update_time"},
     ]
 
-    def __init__(self, db_connection, api_token=None, api=None):
-        """初始化任务"""
-        super().__init__(db_connection, api_token=api_token, api=api)
-        # 全量更新，设置为串行执行以简化
-        self.concurrent_limit = 1
-        self.logger.info(f"任务 {self.name} 已配置为串行执行 (concurrent_limit=1)")
-
     async def get_batch_list(self, **kwargs: Any) -> List[Dict]:
         """
         生成批处理参数列表。对于 stock_basic 全量获取，返回空参数字典列表。
@@ -132,7 +125,7 @@ class TushareStockBasicTask(TushareTask):
         data = self.data_transformer._apply_column_mapping(data)
 
         # 2. 处理主要的 date_column (如果定义)
-        data = self.data_transformer._process_date_column(data)
+        data = self.data_transformer._process_date_column(data) # type: ignore
 
         # 3. 应用通用数据类型转换
         data = self.data_transformer._apply_transformations(data)
@@ -198,7 +191,7 @@ class TushareStockBasicTask(TushareTask):
                         continue
 
         # 5. 对数据进行排序
-        data = self.data_transformer._sort_data(data)
+        data = self.data_transformer._sort_data(data) # type: ignore
 
         self.logger.info(
             f"任务 {self.name}: process_data 处理完成，返回 DataFrame (行数: {len(data)})."
@@ -226,7 +219,7 @@ class TushareStockBasicTask(TushareTask):
 
         # 替换空字符串为 NA 以便 isnull() 检测
         df_check = df[critical_cols].replace("", pd.NA)
-        if df_check.isnull().all(axis=1).all():
+        if df_check.isnull().all(axis=1).all(): # type: ignore
             error_msg = f"任务 {self.name}: 数据验证失败 - 所有行的关键业务字段 ({', '.join(critical_cols)}) 均为空值。"
             self.logger.critical(error_msg)
             raise ValueError(error_msg)

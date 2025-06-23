@@ -102,12 +102,12 @@ class TushareFutureHoldingTask(TushareTask):
         {"name": "idx_fut_hold_upd", "columns": "update_time"},
     ]
 
-    def __init__(
-        self, db_connection, api_token: Optional[str] = None, api: Optional[Any] = None
-    ):
-        """初始化任务"""
-        super().__init__(db_connection, api_token=api_token, api=api)
-        self.logger.info(f"任务 {self.name} 已配置初始化。")
+    # def __init__(
+    #     self, db_connection, api_token: Optional[str] = None, api: Optional[Any] = None
+    # ):
+    #     """初始化任务"""
+    #     super().__init__(db_connection, api_token=api_token, api=api, **kwargs)
+    #     self.logger.info(f"任务 {self.name} 已配置初始化。")
 
     async def get_batch_list(self, **kwargs: Any) -> List[Dict]:
         """

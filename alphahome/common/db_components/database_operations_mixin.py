@@ -466,7 +466,7 @@ class DatabaseOperationsMixin:
                         temp_table,
                         records=records_iterable,
                         columns=df_columns,
-                        timeout=300,
+                        timeout=600, # 将超时时间增加到 600 秒 (10 分钟)
                     )
                     # 解析 COPY 命令的返回值 (格式: "COPY 123")
                     if isinstance(copy_result, str) and copy_result.startswith('COPY '):

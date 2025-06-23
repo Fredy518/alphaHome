@@ -103,11 +103,6 @@ class TushareMacroCpiTask(TushareTask):
     # 批次大小，每次获取12个月的数据（1年）
     batch_month_size = 12
 
-    def __init__(self, db_connection, api_token=None, api=None):
-        """初始化任务"""
-        super().__init__(db_connection, api_token=api_token, api=api)
-        self.logger.info(f"任务 {self.name} 已配置初始化。")
-
     async def get_batch_list(self, **kwargs: Any) -> List[Dict]:
         """
         生成批处理参数列表，使用月份批次。
@@ -204,7 +199,7 @@ class TushareMacroCpiTask(TushareTask):
 
         # 替换空字符串为 NA 以便 isnull() 检测
         df_check = df[critical_cols].replace("", pd.NA)
-        if df_check.isnull().all(axis=1).all():
+        if df_check.isnull().all(axis=1).all(): # type: ignore
             error_msg = f"任务 {self.name}: 数据验证失败 - 所有行的关键业务字段 ({', '.join(critical_cols)}) 均为空值。"
             self.logger.critical(error_msg)
             raise ValueError(error_msg)

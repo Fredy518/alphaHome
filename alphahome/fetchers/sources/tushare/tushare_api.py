@@ -7,6 +7,9 @@ from typing import Any, Dict, List, Optional, Union
 
 import aiohttp
 import pandas as pd
+from aiolimiter import AsyncLimiter
+
+from alphahome.fetchers.exceptions import TushareAuthError
 
 
 class TushareAPI:
@@ -38,21 +41,35 @@ class TushareAPI:
     # --- 运行时实例存储 ---
     _api_semaphores: Dict[str, asyncio.Semaphore] = {}  # 并发信号量实例
     _api_request_timestamps: Dict[str, collections.deque] = {}  # 滑动窗口时间戳记录
+    _api_rate_limit_locks: Dict[str, asyncio.Lock] = {}  # 新增：用于速率控制的锁
 
     # 旧的配置 (将被上面的新配置取代或整合)
     # _api_rate_limits = { ... } # 将被 _api_max_requests_per_minute 和 _api_concurrency_limits 取代
     # _default_limit = 50        # 将被 _default_max_requests_per_minute 和 _default_concurrency_limit 取代
 
-    def __init__(self, token=None, logger=None):
-        """初始化 TushareAPI 客户端"""
-        self.token = token or os.environ.get("TUSHARE_TOKEN")
-        if not self.token:
-            raise ValueError(
-                "必须提供Tushare API令牌，可以通过参数传入或设置TUSHARE_TOKEN环境变量"
-            )
+    def __init__(
+        self,
+        token: str,
+        logger: Optional[logging.Logger] = None,
+        rate_limit_delay: int = 65,
+    ):
+        """
+        初始化 TushareAPI 客户端。
 
-        self.url = "http://api.tushare.pro"
+        Args:
+            token (str): 你的 Tushare token。
+            logger (Optional[logging.Logger]): 日志记录器实例。
+            rate_limit_delay (int): 触发速率限制后的等待时间（秒）。
+        """
+        self.token = token
+        self.http_url = "http://api.tushare.pro"
         self.logger = logger or logging.getLogger(__name__)
+        self._session = None  # aiohttp.ClientSession
+        self._rate_limiter = AsyncLimiter(
+            120, 60
+        )  # Tushare pro版限制，每分钟120次
+        self._api_rate_limits = {}  # 用于存储特定API的限制
+        self.rate_limit_delay = rate_limit_delay
 
         # 为所有预定义的API初始化信号量和时间戳队列 (类级别共享，但在此确保实例创建)
         # 合并已知API列表，避免重复
@@ -72,6 +89,12 @@ class TushareAPI:
                         f"为 API {api_name} 创建并发信号量，限制: {limit}"
                     )
 
+            # 初始化速率限制锁
+            if api_name not in TushareAPI._api_rate_limit_locks:
+                TushareAPI._api_rate_limit_locks[api_name] = asyncio.Lock()
+                if self.logger:
+                    self.logger.debug(f"为 API {api_name} 创建速率控制锁")
+
             # 初始化时间戳队列
             if api_name not in TushareAPI._api_request_timestamps:
                 TushareAPI._api_request_timestamps[api_name] = collections.deque()
@@ -82,47 +105,61 @@ class TushareAPI:
     # 例如: set_api_max_requests(api_name, count_per_minute) 和 set_api_concurrency(api_name, count)
 
     async def _wait_for_rate_limit_slot(self, api_name: str):
-        """使用滑动窗口日志算法等待速率限制的空位"""
-        if api_name not in TushareAPI._api_request_timestamps:
-            # 对于动态遇到的、未在预定义列表中的API，也需要初始化
-            TushareAPI._api_request_timestamps[api_name] = collections.deque()
-            if self.logger:
-                self.logger.debug(
-                    f"动态为 API {api_name} 创建速率控制时间戳队列 (使用默认速率)"
-                )
-
-        timestamps_deque = TushareAPI._api_request_timestamps[api_name]
-        limit_per_window = self._api_max_requests_per_minute.get(
-            api_name, self._default_max_requests_per_minute
-        )
+        """使用滑动窗口日志算法等待速率限制的空位，并使用锁确保原子性。"""
+        lock = self._get_rate_limit_lock_for_api(api_name)
 
         while True:
-            current_time = time.monotonic()
+            time_to_wait = 0
+            # 在循环的每次迭代开始时，进入一个受锁保护的临界区
+            async with lock:
+                # 动态创建时间戳队列（如果需要）
+                if api_name not in TushareAPI._api_request_timestamps:
+                    TushareAPI._api_request_timestamps[api_name] = collections.deque()
+                    if self.logger:
+                        self.logger.debug(
+                            f"动态为 API {api_name} 创建速率控制时间戳队列 (使用默认速率)"
+                        )
 
-            while (
-                timestamps_deque
-                and timestamps_deque[0]
-                <= current_time - self._rate_limit_window_seconds
-            ):
-                timestamps_deque.popleft()
-
-            if len(timestamps_deque) < limit_per_window:
-                timestamps_deque.append(current_time)
-                self.logger.debug(
-                    f"速率控制 ({api_name}): 允许请求。窗口内 {self._rate_limit_window_seconds}s 请求数: {len(timestamps_deque)}/{limit_per_window}"
+                timestamps_deque = TushareAPI._api_request_timestamps[api_name]
+                limit_per_window = self._api_max_requests_per_minute.get(
+                    api_name, self._default_max_requests_per_minute
                 )
-                break
-            else:
-                time_to_wait = (
-                    (timestamps_deque[0] + self._rate_limit_window_seconds)
-                    - current_time
-                    + 0.01
-                )
-                if time_to_wait <= 0:
-                    time_to_wait = 0.05  # 最小等待时间，避免潜在的CPU空转
 
+                current_time = time.monotonic()
+
+                # 清理窗口外的旧时间戳
+                while (
+                    timestamps_deque
+                    and timestamps_deque[0]
+                    <= current_time - self._rate_limit_window_seconds
+                ):
+                    timestamps_deque.popleft()
+
+                # 检查是否还有空位
+                if len(timestamps_deque) < limit_per_window:
+                    timestamps_deque.append(current_time)
+                    self.logger.debug(
+                        f"速率控制 ({api_name}): 允许请求。窗口内 {self._rate_limit_window_seconds}s 请求数: {len(timestamps_deque)}/{limit_per_window}"
+                    )
+                    # 成功获取槽位，可以退出循环并执行请求
+                    break
+                else:
+                    # 没有空位，计算需要等待的时间
+                    # 这个计算在锁内完成是安全的
+                    time_to_wait = (
+                        (timestamps_deque[0] + self._rate_limit_window_seconds)
+                        - current_time
+                        + 0.01  # 添加一个微小的时间以确保我们等待到槽位释放之后
+                    )
+                    if time_to_wait <= 0:
+                        # 最小等待时间，避免潜在的CPU空转或时间计算不精确导致负数
+                        time_to_wait = 0.05
+
+            # **重要**: 在锁之外执行等待
+            # 这样，当一个协程在等待时，其他协程可以获取锁并检查队列
+            if time_to_wait > 0:
                 self.logger.debug(
-                    f"速率控制 ({api_name}): 超出限制 ({len(timestamps_deque)}/{limit_per_window})。等待 {time_to_wait:.2f} 秒... (队列首位时间戳: {timestamps_deque[0] if timestamps_deque else 'N/A'})"
+                    f"速率控制 ({api_name}): 超出限制 ({len(timestamps_deque) if api_name in TushareAPI._api_request_timestamps else 'N/A'}/{limit_per_window})。将在锁外等待 {time_to_wait:.2f} 秒..."
                 )
                 await asyncio.sleep(time_to_wait)
 
@@ -139,23 +176,51 @@ class TushareAPI:
                 )
         return TushareAPI._api_semaphores[api_name]
 
+    def _get_rate_limit_lock_for_api(self, api_name: str) -> asyncio.Lock:
+        """获取或创建指定API的速率限制锁"""
+        if api_name not in TushareAPI._api_rate_limit_locks:
+            TushareAPI._api_rate_limit_locks[api_name] = asyncio.Lock()
+            if self.logger:
+                self.logger.debug(f"动态为 API {api_name} 创建速率控制锁")
+        return TushareAPI._api_rate_limit_locks[api_name]
+
     async def query(
         self,
         api_name: str,
-        params: Dict = {},
-        fields: List[str] = [],
-        page_size: int = 5000,
-    ) -> pd.DataFrame:
-        """向 Tushare 发送异步 HTTP 请求，支持自动分页、并发控制和速率限制。
-        每个实际的HTTP POST请求都会受到速率和并发控制。
+        fields: Optional[List[str]] = None,
+        max_retries: int = 3,
+        stop_event: Optional[asyncio.Event] = None,
+        **params,
+    ) -> Optional[pd.DataFrame]:
         """
-        params = params or {}
+        执行查询，自动处理分页。这是外部调用的主要方法。
+        """
+        return await self._fetch_with_pagination(
+            api_name=api_name,
+            fields=fields,
+            max_retries=max_retries,
+            stop_event=stop_event,
+            **params,
+        )
+
+    async def _fetch_with_pagination(
+        self,
+        api_name: str,
+        fields: Optional[List[str]],
+        max_retries: int,
+        stop_event: Optional[asyncio.Event] = None,
+        **params,
+    ) -> Optional[pd.DataFrame]:
+        """
+        包含重试逻辑的底层API请求方法。
+        """
         all_data = []
         offset = 0
 
         # 确保 page_size 有一个值
+        limit = params.get("limit")
         effective_page_size = (
-            page_size if page_size is not None and page_size > 0 else 5000
+            limit if limit is not None and limit > 0 else 5000
         )
 
         has_more = True
@@ -209,11 +274,11 @@ class TushareAPI:
                     }
 
                     async with aiohttp.ClientSession() as session:
-                        async with session.post(self.url, json=payload) as response:
+                        async with session.post(self.http_url, json=payload) as response:
                             if response.status != 200:
                                 error_text = await response.text()
                                 self.logger.error(
-                                    f"Tushare API 请求失败 ({api_name}): 状态码: {response.status}, URL: {self.url}, Payload: {payload}, 响应: {error_text}"
+                                    f"Tushare API 请求失败 ({api_name}): 状态码: {response.status}, URL: {self.http_url}, Payload: {payload}, 响应: {error_text}"
                                 )
                                 raise ValueError(
                                     f"Tushare API 请求失败({api_name})，状态码: {response.status}, 响应: {error_text}"
@@ -225,6 +290,18 @@ class TushareAPI:
                                 self.logger.error(
                                     f"Tushare API 返回错误 ({api_name}): Code: {result.get('code')}, Msg: {error_msg}, Payload: {payload}"
                                 )
+                                if result.get("code") == 40203:
+                                    self.logger.warning(
+                                        f"Tushare API 返回速率限制错误 ({api_name}): {error_msg}。"
+                                        f"将等待 {self.rate_limit_delay} 秒后重试当前页面的请求。"
+                                    )
+                                    # 使用循环来优雅地处理取消
+                                    for _ in range(self.rate_limit_delay):
+                                        if stop_event and stop_event.is_set():
+                                            self.logger.warning(f"'{api_name}' - 在速率限制等待期间检测到停止信号。正在取消...")
+                                            raise asyncio.CancelledError
+                                        await asyncio.sleep(1)
+                                    continue  # 继续外层循环以重试
                                 raise ValueError(
                                     f"Tushare API 返回错误 ({api_name}): Code: {result.get('code')}, Msg: {error_msg}"
                                 )

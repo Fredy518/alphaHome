@@ -29,13 +29,17 @@ class BaseTask(ABC):
     date_column = None
     description = ""
     auto_add_update_time = True  # 是否自动添加更新时间
+    timestamp_column_name: Optional[str] = "update_time" # 时间戳列名，None表示不使用
     data_source: Optional[str] = None  # 数据源标识（如'tushare', 'wind', 'jqdata'等）
     default_start_date: str = "20200101" # 默认起始日期
     transformations: Optional[Dict[str, Callable]] = None # 数据转换函数字典
     validations: Optional[List[Callable]] = None # 数据验证函数列表
     schema_def: Optional[Dict[str, Any]] = None # 表结构定义
     set_config: Optional[Callable[[Dict[str, Any]], None]] = None # 可选的任务配置方法
-    
+
+    # 新增：数据保存批次大小
+    default_save_batch_size: int = 10000  # 默认每次保存 10000 行
+
     # 新增：支持processor任务的属性
     source_tables = []        # 源数据表列表（processor任务使用）
     dependencies = []         # 依赖的其他任务（processor任务使用）
@@ -51,7 +55,12 @@ class BaseTask(ABC):
     async def execute(
         self, stop_event: Optional[asyncio.Event] = None, **kwargs
     ):
-        """执行任务的完整生命周期"""
+        """
+        执行任务的完整生命周期 (模板方法)。
+
+        这是一个 final 方法，子类不应重写。
+        子类应通过实现 _fetch_data, _process_data 等钩子方法来定义具体行为。
+        """
         self.logger.info(f"开始执行任务: {self.name} (类型: {self.task_type})")
 
         try:
@@ -59,17 +68,17 @@ class BaseTask(ABC):
                 self.logger.warning(f"任务 {self.name} 在开始前被取消。")
                 raise asyncio.CancelledError("任务在开始前被取消")
 
-            await self.pre_execute(stop_event=stop_event)
+            await self._pre_execute(stop_event=stop_event, **kwargs)
 
             if stop_event and stop_event.is_set():
-                raise asyncio.CancelledError("任务在 pre_execute 后被取消")
+                raise asyncio.CancelledError("任务在 _pre_execute 后被取消")
 
             # 获取数据
             self.logger.info(f"获取数据，参数: {kwargs}")
-            data = await self.fetch_data(stop_event=stop_event, **kwargs)
+            data = await self._fetch_data(stop_event=stop_event, **kwargs)
 
             if stop_event and stop_event.is_set():
-                raise asyncio.CancelledError("任务在 fetch_data 后被取消")
+                raise asyncio.CancelledError("任务在 _fetch_data 后被取消")
 
             if data is None or (isinstance(data, pd.DataFrame) and data.empty):
                 self.logger.info("没有获取到数据")
@@ -77,54 +86,44 @@ class BaseTask(ABC):
 
             # 处理数据
             self.logger.info(f"处理数据，共 {len(data) if isinstance(data, pd.DataFrame) else '多源'} 行")
-            data = self.process_data(data, stop_event=stop_event, **kwargs)
+            processed_data = self._process_data(data, stop_event=stop_event, **kwargs)
 
             if stop_event and stop_event.is_set():
-                raise asyncio.CancelledError("任务在 process_data 后被取消")
+                raise asyncio.CancelledError("任务在 _process_data 后被取消")
 
             # 再次检查处理后的数据是否为空
-            if data is None or (isinstance(data, pd.DataFrame) and data.empty):
+            if processed_data is None or (isinstance(processed_data, pd.DataFrame) and processed_data.empty):
                 self.logger.warning("数据处理后为空")
                 return {"status": "no_data", "rows": 0}
 
-            # 验证数据
-            self.logger.info("验证数据")
-            validation_passed = self.validate_data(data)
-            if not validation_passed:
-                self.logger.warning("数据验证未通过，但将继续保存")
-
             # 保存数据
             self.logger.info(f"保存数据到表 {self.table_name}")
-            result = await self.save_data(data, stop_event=stop_event)
-
-            if not validation_passed and result.get("status") == "success":
-                result["status"] = "partial_success"
-                result["validation"] = False
+            result = await self._save_data(processed_data, stop_event=stop_event)
 
             if stop_event and stop_event.is_set():
-                raise asyncio.CancelledError("任务在 save_data 后被取消")
+                raise asyncio.CancelledError("任务在 _save_data 后被取消")
 
             # 后处理
-            await self.post_execute(result, stop_event=stop_event)
+            await self._post_execute(result, stop_event=stop_event)
 
             self.logger.info(f"任务执行完成: {result}")
             return result
             
         except asyncio.CancelledError:
             self.logger.warning(f"任务 {self.name} 被取消。")
-            return self.handle_error(asyncio.CancelledError("任务被用户取消"))
+            return self._handle_error(asyncio.CancelledError("任务被用户取消"))
         except Exception as e:
             self.logger.error(
                 f"任务执行失败: 类型={type(e).__name__}, 错误={str(e)}", exc_info=True
             )
-            return self.handle_error(e)
+            return self._handle_error(e)
 
     # 新增：多表数据获取支持
     async def fetch_multiple_sources(self, source_configs, **kwargs):
         """支持从多个表获取数据，为processor任务提供"""
         if len(source_configs) == 1:
             # 单源，使用现有逻辑
-            return await self.fetch_data(**kwargs)
+            return await self._fetch_data(**kwargs)
         else:
             # 多源，调用子类实现
             return await self._fetch_from_multiple_tables(source_configs, **kwargs)
@@ -135,35 +134,26 @@ class BaseTask(ABC):
 
 
 
-    async def pre_execute(self, stop_event: Optional[asyncio.Event] = None, **kwargs):
+    async def _pre_execute(self, stop_event: Optional[asyncio.Event] = None, **kwargs):
         """任务执行前的准备工作"""
         pass
 
-    async def post_execute(self, result, stop_event: Optional[asyncio.Event] = None, **kwargs):
+    async def _post_execute(self, result, stop_event: Optional[asyncio.Event] = None, **kwargs):
         """任务执行后的清理工作"""
         pass
 
-    def handle_error(self, error):
+    def _handle_error(self, error):
         """处理任务执行过程中的错误"""
         if isinstance(error, asyncio.CancelledError):
             return {"status": "cancelled", "error": str(error), "task": self.name}
         return {"status": "error", "error": str(error), "task": self.name}
 
-    async def fetch_data(self, stop_event: Optional[asyncio.Event] = None, **kwargs):
+    @abstractmethod
+    async def _fetch_data(self, stop_event: Optional[asyncio.Event] = None, **kwargs):
         """获取原始数据（子类必须实现）"""
         raise NotImplementedError
 
-    async def get_batch_list(self, stop_event: Optional[asyncio.Event] = None, **kwargs) -> List[Dict]:
-        """获取批处理任务列表（子类必须实现）"""
-        self.logger.warning(f"任务 {self.name} (类型: {self.task_type}) 未实现 get_batch_list 方法。")
-        raise NotImplementedError(f"任务 {self.name} 不支持批处理列表生成。")
-
-    async def fetch_batch(self, batch_params: Dict, stop_event: Optional[asyncio.Event] = None, **kwargs) -> Optional[pd.DataFrame]:
-        """获取单个批次的数据（子类必须实现）"""
-        self.logger.warning(f"任务 {self.name} (类型: {self.task_type}) 未实现 fetch_batch 方法。")
-        raise NotImplementedError(f"任务 {self.name} 不支持批处理数据获取。")
-
-    def process_data(self, data, stop_event: Optional[asyncio.Event] = None, **kwargs):
+    def _process_data(self, data, stop_event: Optional[asyncio.Event] = None, **kwargs):
         """处理原始数据"""
         # 支持数据转换
         if hasattr(self, "transformations") and self.transformations:
@@ -205,7 +195,7 @@ class BaseTask(ABC):
 
         return data
 
-    def validate_data(self, data):
+    def _validate_data(self, data, stop_event: Optional[asyncio.Event] = None):
         """验证数据有效性
         
         如果验证失败，会返回False，但不会抛出异常，以允许数据处理继续进行。
@@ -232,6 +222,10 @@ class BaseTask(ABC):
                 )
                 self.logger.debug(f"执行验证器: {validator_name}")
                 
+                if stop_event and stop_event.is_set():
+                    self.logger.warning("验证在执行期间被取消")
+                    raise asyncio.CancelledError("验证取消")
+                    
                 validation_result = validator(data)
                 if isinstance(validation_result, bool) and not validation_result:
                     self.logger.warning(f"数据验证失败: {validator_name}")
@@ -252,11 +246,66 @@ class BaseTask(ABC):
         
         return validation_passed
 
-    async def save_data(self, data, stop_event: Optional[asyncio.Event] = None, **kwargs):
+    async def _save_data(self, data: pd.DataFrame, stop_event: Optional[asyncio.Event] = None) -> Dict[str, Any]:
         """将处理后的数据保存到数据库"""
         await self._ensure_table_exists()
         if stop_event and stop_event.is_set():
             raise asyncio.CancelledError("任务在 _ensure_table_exists 后被取消")
+
+        # 验证数据
+        self.logger.info("验证数据")
+        validation_passed = self._validate_data(data, stop_event=stop_event)
+        if not validation_passed:
+            self.logger.warning("数据验证未通过，但将继续保存")
+
+        # 新增：在保存前根据主键去重
+        if self.primary_keys and not data.empty:
+            initial_rows = len(data)
+            # 确保主键列存在
+            valid_primary_keys = [pk for pk in self.primary_keys if pk in data.columns]
+            if valid_primary_keys:
+                data.drop_duplicates(subset=valid_primary_keys, keep='last', inplace=True)
+                dropped_rows = initial_rows - len(data)
+                if dropped_rows > 0:
+                    self.logger.warning(f"数据中发现并移除了 {dropped_rows} 条基于主键 {valid_primary_keys} 的重复记录。")
+            else:
+                self.logger.warning("任务定义了主键，但在数据中未找到相应列，无法去重。")
+
+        # 新增：主键字段空值检查和过滤
+        if self.primary_keys and not data.empty:
+            initial_rows = len(data)
+            # 检查每个主键字段的空值情况
+            null_mask = pd.Series(False, index=data.index)
+            filtered_details = []
+            
+            for pk_col in self.primary_keys:
+                if pk_col in data.columns:
+                    # 检查NaN、None、空字符串
+                    col_null_mask = (
+                        data[pk_col].isna() | 
+                        data[pk_col].isnull() | 
+                        (data[pk_col] == '') |
+                        (data[pk_col].astype(str).str.strip() == '')
+                    )
+                    col_null_count = col_null_mask.sum()
+                    if col_null_count > 0:
+                        null_mask |= col_null_mask
+                        filtered_details.append(f"'{pk_col}': {col_null_count} 条")
+                        self.logger.debug(f"主键字段 '{pk_col}' 发现 {col_null_count} 条空值记录")
+            
+            # 如果发现需要过滤的记录，执行过滤
+            if null_mask.any():
+                filtered_count = null_mask.sum()
+                data = data[~null_mask].copy()
+                data = data.reset_index(drop=True)
+                
+                self.logger.warning(
+                    f"主键字段空值过滤: 移除了 {filtered_count} 条记录 "
+                    f"(共 {initial_rows} 条)，详情: {', '.join(filtered_details)}"
+                )
+                self.logger.info(f"主键字段空值过滤完成: 剩余 {len(data)} 条有效记录")
+            else:
+                self.logger.debug("主键字段空值检查: 未发现需要过滤的记录")
 
         # 检查数据中的NaN值
         if isinstance(data, pd.DataFrame):
@@ -270,15 +319,40 @@ class BaseTask(ABC):
                 if cols_with_nan:
                     self.logger.debug(f"包含NaN值的列: {', '.join(cols_with_nan)}")
 
-        # 将数据保存到数据库
-        affected_rows = await self._save_to_database(data, stop_event=stop_event)
+        total_affected_rows = 0
+        # 获取实际的保存批次大小
+        save_batch_size = getattr(self, "save_batch_size", self.default_save_batch_size)
+
+        if not data.empty and save_batch_size > 0 and len(data) > save_batch_size:
+            self.logger.info(f"数据量较大 ({len(data)} 行)，将分批保存，每批 {save_batch_size} 行。")
+            num_batches = (len(data) + save_batch_size - 1) // save_batch_size
+            for i in range(num_batches):
+                if stop_event and stop_event.is_set():
+                    raise asyncio.CancelledError("任务在分批保存期间被取消")
+
+                start_idx = i * save_batch_size
+                end_idx = min((i + 1) * save_batch_size, len(data))
+                batch_data = data.iloc[start_idx:end_idx].copy()
+                
+                self.logger.info(f"正在保存批次 {i + 1}/{num_batches} (行范围: {start_idx}-{end_idx-1})")
+                affected_rows = await self._save_to_database(batch_data, stop_event=stop_event)
+                total_affected_rows += affected_rows
+        else:
+            self.logger.info(f"数据量 ({len(data)} 行) 小于等于批次大小 ({save_batch_size} 行)，将一次性保存。")
+            total_affected_rows = await self._save_to_database(data, stop_event=stop_event)
+
         if stop_event and stop_event.is_set():
             raise asyncio.CancelledError("任务在 _save_to_database 后被取消")
 
-        return {"status": "success", "table": self.table_name, "rows": affected_rows}
+        result = {"status": "success", "table": self.table_name, "rows": total_affected_rows}
+        if not validation_passed:
+            result["status"] = "partial_success"
+            result["validation"] = False
+            
+        return result
 
     async def _ensure_table_exists(self, stop_event: Optional[asyncio.Event] = None, **kwargs):
-        """确保表存在，如果不存在则创建"""
+        """确保数据库表存在，如果不存在则创建"""
         table_exists = await self.db.table_exists(self)
         
         if stop_event and stop_event.is_set():

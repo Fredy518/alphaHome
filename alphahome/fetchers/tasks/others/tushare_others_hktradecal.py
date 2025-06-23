@@ -69,14 +69,14 @@ class TushareOthersHktradecalTask(TushareTask):
         {"name": "idx_shared_cal_update", "columns": ["update_time"]},
     ]
 
-    def __init__(
-        self, db_connection, api_token: Optional[str] = None, api: Optional[Any] = None
-    ):
-        """初始化 TushareOthersHktradecalTask."""
-        super().__init__(db_connection, api_token=api_token, api=api)
-        self.logger.info(
-            f"任务 {self.name} 初始化完成。将从 {self.default_start_date} 开始获取数据。"
-        )
+    # def __init__(
+    #     self, db_connection, api_token: Optional[str] = None, api: Optional[Any] = None
+    # ):
+    #     """初始化 TushareOthersHktradecalTask."""
+    #     super().__init__(db_connection, api_token=api_token, api=api, **kwargs)
+    #     self.logger.info(
+    #         f"任务 {self.name} 初始化完成。将从 {self.default_start_date} 开始获取数据。"
+    #     )
 
     async def get_batch_list(
         self, start_date: str, end_date: str, **kwargs: Any

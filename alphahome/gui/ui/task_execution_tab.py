@@ -8,6 +8,7 @@ from tkinter import ttk
 from typing import Dict, Any
 from ..utils.layout_manager import create_task_status_column_manager
 from ..utils.dpi_aware_ui import get_ui_factory
+from alphahome.common.constants import UpdateTypes
 
 # 尝试导入 tkcalendar
 try:
@@ -32,33 +33,33 @@ def create_task_execution_tab(
     mode_frame = ttk.LabelFrame(left_panel, text="执行模式", padding=10)
     mode_frame.pack(side=tk.TOP, fill=tk.X, pady=(0, 10))
 
-    exec_mode = tk.StringVar(value="智能增量")
+    exec_mode = tk.StringVar(value=UpdateTypes.SMART_DISPLAY)
     widgets["exec_mode"] = exec_mode
 
     # 事件现在由 main_window.py 绑定
     rb1 = ttk.Radiobutton(
         mode_frame,
-        text="智能增量",
+        text=UpdateTypes.SMART_DISPLAY,
         variable=exec_mode,
-        value="智能增量",
+        value=UpdateTypes.SMART_DISPLAY,
     )
     rb1.pack(anchor=tk.W)
     widgets["exec_mode_rb1"] = rb1
 
     rb2 = ttk.Radiobutton(
         mode_frame,
-        text="手动增量",
+        text=UpdateTypes.MANUAL_DISPLAY,
         variable=exec_mode,
-        value="手动增量",
+        value=UpdateTypes.MANUAL_DISPLAY,
     )
     rb2.pack(anchor=tk.W)
     widgets["exec_mode_rb2"] = rb2
 
     rb3 = ttk.Radiobutton(
         mode_frame,
-        text="全量导入",
+        text=UpdateTypes.FULL_DISPLAY,
         variable=exec_mode,
-        value="全量导入",
+        value=UpdateTypes.FULL_DISPLAY,
     )
     rb3.pack(anchor=tk.W)
     widgets["exec_mode_rb3"] = rb3

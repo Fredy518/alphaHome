@@ -114,13 +114,14 @@ class TushareFutureDailyTask(TushareTask):
 
     # 7. 分批配置
     # 自然日按月分批，一个月大约30天
-    batch_natural_days_month = 30
-
-    def __init__(self, db_connection, api_token=None, api=None):
-        """初始化任务"""
-        super().__init__(db_connection, api_token=api_token, api=api)
-        self.logger.info(f"任务 {self.name} 已配置初始化。")
-
+    batch_natural_days_month = 30# --- This __init__ was commented out for code simplification. ---
+# 
+# 
+# def __init__(self, db_connection, api_token=None, api=None, **kwargs):
+# """初始化任务"""
+# super().__init__(db_connection, api_token=api_token, api=api, **kwargs)
+# self.logger.info(f"任务 {self.name} 已配置初始化。")
+# 
     async def get_batch_list(self, **kwargs: Any) -> List[Dict]:
         """
         生成批处理参数列表，使用自然日按月分批。

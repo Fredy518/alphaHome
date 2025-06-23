@@ -218,6 +218,59 @@ class UnifiedTaskFactory:
         }
 
     @classmethod
+    async def create_task_instance(cls, task_name: str, **task_init_kwargs: Any) -> BaseTask:
+        """
+        创建一个新的一次性任务实例，不使用缓存。
+        允许在运行时传递特定参数来初始化任务。
+
+        Args:
+            task_name (str): 要创建的任务的名称。
+            **task_init_kwargs: 传递给任务构造函数的关键字参数
+                                 (例如: update_type, start_date, end_date)。
+
+        Returns:
+            BaseTask: 一个新创建和配置的任务实例。
+        """
+        if not cls._initialized:
+            logger.warning("Factory not initialized. Attempting to initialize now.")
+            await cls.initialize()
+            if not cls._initialized:
+                raise RuntimeError("UnifiedTaskFactory ailed to initialize.")
+
+        if task_name not in cls._task_registry:
+            raise ValueError(
+                f"未注册的任务类型: {task_name}，请先调用 register_task 方法注册"
+            )
+
+        task_class = cls._task_registry[task_name]
+        
+        # 准备构造函数所需的所有参数
+        constructor_kwargs = task_init_kwargs.copy()
+        
+        # 注入固定的依赖项
+        constructor_kwargs['db_connection'] = cls._db_manager
+
+        # 如果是 Tushare 任务，注入 API Token
+        init_params = inspect.signature(task_class.__init__).parameters
+        if "api_token" in init_params:
+            constructor_kwargs["api_token"] = get_tushare_token()
+
+        # 注入任务特定配置
+        task_config = get_task_config(task_name)
+        if "task_config" not in constructor_kwargs:
+            constructor_kwargs["task_config"] = task_config
+        else:
+            # 合并传入的配置和文件中的配置
+            constructor_kwargs["task_config"] = {**task_config, **constructor_kwargs["task_config"]}
+
+        logger.debug(f"Creating instance of '{task_name}' with kwargs: {constructor_kwargs}")
+        
+        # 创建新实例
+        task_instance = task_class(**constructor_kwargs)
+        
+        return task_instance
+
+    @classmethod
     async def get_task(cls, task_name: str):
         """获取任务实例"""
         if not cls._initialized:

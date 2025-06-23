@@ -64,9 +64,15 @@ class TushareStockAdjFactorTask(TushareTask):
 
     # 8. 分批配置
     batch_trade_days_single_code = 240  # 单代码查询时，每个批次的交易日数量 (约1年)
-    batch_trade_days_all_codes = 5  # 全市场查询时，每个批次的交易日数量 (1周)
-
-    async def get_batch_list(self, **kwargs) -> List[Dict]:
+    batch_trade_days_all_codes = 5  # 全市场查询时，每个批次的交易日数量 (1周)# --- This __init__ was commented out for code simplification. ---
+# 
+# 
+# def __init__(self, db_connection, api_token=None, api=None, **kwargs):
+# """初始化任务"""
+# super().__init__(db_connection, api_token=api_token, api=api, **kwargs)
+# self.logger.info(f"任务 {self.name} 已配置初始化。")
+# 
+    async def get_batch_list(self, **kwargs: Any) -> List[Dict]:
         """生成批处理参数列表 (使用专用交易日批次工具)
 
         Args:

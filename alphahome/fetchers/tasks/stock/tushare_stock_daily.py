@@ -6,10 +6,8 @@ import pandas as pd
 from ...sources.tushare import TushareTask
 from alphahome.common.task_system.task_decorator import task_register
 
-# from ...tools.calendar import get_trade_days_between # 导入交易日工具 # <-- REMOVE
-from ...tools.batch_utils import (  # 导入交易日批次生成工具函数
-    generate_trade_day_batches,
-)
+# BatchPlanner 导入
+from alphahome.common.planning.batch_planner import BatchPlanner, Source, Partition, Map
 
 
 @task_register()
@@ -98,7 +96,10 @@ class TushareStockDailyTask(TushareTask):
     batch_trade_days_all_codes = 5  # 全市场查询时，每个批次的交易日数量 (1周)
 
     async def get_batch_list(self, **kwargs) -> List[Dict]:
-        """生成批处理参数列表 (使用专用交易日批次工具)
+        """使用 BatchPlanner 生成批处理参数列表
+
+        BatchPlanner 提供了声明式、可组合的批处理规划方式，
+        将数据源、分区策略和参数映射分离，提高了代码的可读性和可维护性。
 
         Args:
             **kwargs: 查询参数，包括start_date、end_date、ts_code等
@@ -106,38 +107,60 @@ class TushareStockDailyTask(TushareTask):
         Returns:
             List[Dict]: 批处理参数列表
         """
-        from ...tools.calendar import get_trade_days_between
-
         start_date = kwargs.get("start_date")
         end_date = kwargs.get("end_date")
-        ts_code = kwargs.get("ts_code")  # 获取可能的ts_code
-        exchange = kwargs.get("exchange", "SSE")  # 获取可能的交易所参数
+        ts_code = kwargs.get("ts_code")
+        exchange = kwargs.get("exchange", "SSE")
 
         if not start_date or not end_date:
             self.logger.error(f"任务 {self.name}: 必须提供 start_date 和 end_date 参数")
             return []
 
         self.logger.info(
-            f"任务 {self.name}: 使用交易日批次工具生成批处理列表，范围: {start_date} 到 {end_date}"
+            f"任务 {self.name}: 使用 BatchPlanner 生成批处理列表，范围: {start_date} 到 {end_date}"
         )
 
         try:
-            # 使用简化的专用函数
-            batch_list = await generate_trade_day_batches(
-                start_date=start_date,
-                end_date=end_date,
-                batch_size=(
-                    self.batch_trade_days_single_code
-                    if ts_code
-                    else self.batch_trade_days_all_codes
-                ),
-                ts_code=ts_code,
-                exchange=exchange,
-                logger=self.logger,
+            # 1. 定义数据源：获取交易日列表
+            from ...tools.calendar import get_trade_days_between
+            
+            async def get_trade_days():
+                return await get_trade_days_between(start_date, end_date, exchange=exchange)
+            
+            trade_days_source = Source.from_callable(get_trade_days)
+
+            # 2. 定义分区策略：根据是否有指定股票代码选择不同的批次大小
+            batch_size = (
+                self.batch_trade_days_single_code
+                if ts_code
+                else self.batch_trade_days_all_codes
             )
+            partition_strategy = Partition.by_size(batch_size)
+
+            # 3. 定义映射策略：将每个批次映射为开始和结束日期
+            map_strategy = Map.to_date_range("start_date", "end_date")
+
+            # 4. 创建 BatchPlanner 实例
+            planner = BatchPlanner(
+                source=trade_days_source,
+                partition_strategy=partition_strategy,
+                map_strategy=map_strategy
+            )
+
+            # 5. 生成批次列表，如果有 ts_code 则添加到每个批次中
+            additional_params = {}
+            if ts_code:
+                additional_params["ts_code"] = ts_code
+
+            batch_list = await planner.generate(additional_params=additional_params)
+            
+            self.logger.info(f"任务 {self.name}: BatchPlanner 成功生成 {len(batch_list)} 个批次")
             return batch_list
+
         except Exception as e:
             self.logger.error(
-                f"任务 {self.name}: 生成交易日批次时出错: {e}", exc_info=True
+                f"任务 {self.name}: BatchPlanner 生成批次时出错: {e}", exc_info=True
             )
             return []
+
+

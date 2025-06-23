@@ -118,7 +118,7 @@ class TushareFundDailyTask(TushareTask):
     # 每次请求后的等待时间（秒），避免请求过于密集
     request_delay = 0.2
 
-    def __init__(self, db_connection, api_token=None, api=None):
+    def __init__(self, db_connection, api_token=None, api=None, **kwargs):
         """初始化任务，并设置特定的API调用限制"""
         super().__init__(db_connection, api_token, api)
 

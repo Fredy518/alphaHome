@@ -71,8 +71,8 @@ class TushareFundShareTask(TushareTask):
     batch_trade_days_all_codes = 5  # 全市场查询时，每个批次的交易日数量 (1周)
 
     # 8. 初始化 (如果需要特殊逻辑)
-    # def __init__(self, db_connection, api_token=None, api=None):
-    #     super().__init__(db_connection, api_token=api_token, api=api)
+    # def __init__(self, db_connection, api_token=None, api=None, **kwargs):
+    #     super().__init__(db_connection, api_token=api_token, api=api, **kwargs)
     #     # 可在此处添加特定初始化逻辑
 
     async def get_batch_list(self, **kwargs: Any) -> List[Dict]:

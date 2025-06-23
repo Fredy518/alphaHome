@@ -109,11 +109,6 @@ class TushareOptionDailyTask(TushareTask):
         {"name": "idx_option_daily_update_time", "columns": "update_time"},
     ]
 
-    def __init__(self, db_connection, api_token=None, api=None):
-        """初始化任务"""
-        super().__init__(db_connection, api_token=api_token, api=api)
-        self.logger.info(f"任务 {self.name} 已配置初始化。")
-
     async def get_batch_list(self, **kwargs: Any) -> List[Dict]:
         """
         生成批处理参数列表，按指定交易所和自然日分批。

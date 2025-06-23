@@ -124,9 +124,9 @@ class TushareFundBasicTask(TushareTask):
         },  # 新增 update_time 索引
     ]
 
-    def __init__(self, db_connection, api_token=None, api=None):
+    def __init__(self, db_connection, api_token=None, api=None, **kwargs):
         """初始化任务"""
-        super().__init__(db_connection, api_token=api_token, api=api)
+        super().__init__(db_connection, api_token=api_token, api=api, **kwargs)
         # 全量更新，设置为串行执行以简化
         self.concurrent_limit = 1
         self.logger.info(f"任务 {self.name} 已配置为串行执行 (concurrent_limit=1)")

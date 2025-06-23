@@ -12,7 +12,7 @@ if TYPE_CHECKING:
 class TushareDataTransformer:
     """负责 Tushare 数据的转换、处理和验证逻辑。
 
-    该类提供了基础的数据处理功能，包括列名映射、日期处理、数据排序和数据转换等。
+    该类提供了基础的数据处理功能，包括列名映射、数据转换和验证等。
     它同时支持 Task 子类（如 TushareFinaIndicatorTask）重写的 process_data 方法，
     确保子类可以添加特定的数据处理逻辑，而不会被基础处理流程忽略。
 
@@ -25,7 +25,7 @@ class TushareDataTransformer:
     系统会自动检测方法类型并适当调用。推荐使用同步方法，符合基类实现。
     """
 
-    def __init__(self, task_instance: "TushareTask"):
+    def __init__(self, task_instance: "TushareTask") -> None:
         """初始化 Transformer。
 
         Args:
@@ -72,114 +72,6 @@ class TushareDataTransformer:
         if rename_map:
             data.rename(columns=rename_map, inplace=True)
             self.logger.info(f"已应用列名映射: {rename_map}")
-
-        return data
-
-    def _process_date_column(self, data: pd.DataFrame) -> pd.DataFrame:
-        """处理日期列
-
-        将日期列转换为标准的日期时间格式，并移除无效日期的行。
-        支持YYYYMMDD和YYYYMM格式的日期。
-
-        Args:
-            data (DataFrame): 原始数据
-
-        Returns:
-            DataFrame: 处理日期后的数据，如果日期列不存在则返回原始数据
-        """
-        # 检查 self.task 是否具有 date_column 属性
-        if (
-            not hasattr(self.task, "date_column")
-            or not self.task.date_column
-            or self.task.date_column not in data.columns
-        ):
-            if hasattr(self.task, "date_column") and self.task.date_column:
-                self.logger.warning(
-                    f"指定的日期列 '{self.task.date_column}' 不在数据中，无法进行日期格式转换。"
-                )
-            return data
-
-        try:
-            # 根据日期列值的长度自动识别格式
-            sample_value = (
-                str(data[self.task.date_column].iloc[0]) if len(data) > 0 else ""
-            )
-
-            if len(sample_value) == 6:  # YYYYMM 格式
-                self.logger.info(f"检测到 '{self.task.date_column}' 列使用 YYYYMM 格式")
-                date_format = "%Y%m"
-            else:  # 默认使用 YYYYMMDD 格式
-                self.logger.info(
-                    f"检测到 '{self.task.date_column}' 列使用 YYYYMMDD 格式"
-                )
-                date_format = "%Y%m%d"
-
-            # 使用检测到的格式转换日期列
-            data[self.task.date_column] = pd.to_datetime(
-                data[self.task.date_column], format=date_format, errors="coerce"
-            )
-
-            # 删除转换失败的行 (NaT)
-            original_count = len(data)
-            data.dropna(subset=[self.task.date_column], inplace=True)
-            if len(data) < original_count:
-                self.logger.warning(
-                    f"移除了 {original_count - len(data)} 行，因为日期列 '{self.task.date_column}' 格式无效。"
-                )
-        except Exception as e:
-            self.logger.warning(
-                f"日期列 {self.task.date_column} 格式转换时发生错误: {str(e)}"
-            )
-
-        return data
-
-    def _sort_data(self, data: pd.DataFrame) -> pd.DataFrame:
-        """对数据进行排序
-
-        根据日期列和主键列对数据进行排序。
-
-        Args:
-            data (DataFrame): 原始数据
-
-        Returns:
-            DataFrame: 排序后的数据
-        """
-        # 构建排序键列表
-        sort_keys = []
-        if (
-            hasattr(self.task, "date_column")
-            and self.task.date_column
-            and self.task.date_column in data.columns
-        ):
-            sort_keys.append(self.task.date_column)
-
-        if hasattr(self.task, "primary_keys") and self.task.primary_keys:
-            other_keys = [
-                pk
-                for pk in self.task.primary_keys
-                if pk != getattr(self.task, "date_column", None) and pk in data.columns
-            ]
-            sort_keys.extend(other_keys)
-
-        # 如果没有有效的排序键，则返回原始数据
-        if not sort_keys:
-            return data
-
-        # 检查所有排序键是否都在数据中
-        missing_keys = [key for key in sort_keys if key not in data.columns]
-        if missing_keys:
-            self.logger.warning(f"排序失败：数据中缺少以下排序键: {missing_keys}")
-            # 从排序键列表中移除缺失的键
-            sort_keys = [key for key in sort_keys if key not in missing_keys]
-            if not sort_keys:
-                return data
-
-        try:
-            # 执行排序
-            data = data.sort_values(by=sort_keys)
-            self.logger.info(f"数据已按以下键排序: {sort_keys}")
-        except Exception as e:
-            self.logger.warning(f"排序时发生错误: {str(e)}")
 
         return data
 
@@ -245,141 +137,29 @@ class TushareDataTransformer:
     async def process_data(self, data: pd.DataFrame) -> pd.DataFrame:
         """处理从Tushare获取的数据
 
-        包括列名映射、日期处理、数据排序和数据转换。
+        包括列名映射和数据转换。
         """
         if data is None or data.empty:
-            self.logger.warning("没有数据需要处理")
+            self.logger.info("process_data: 输入数据为空，跳过处理。")
             return pd.DataFrame()
 
         # 1. 应用列名映射
         data = self._apply_column_mapping(data)
 
-        # 2. 处理主要的 date_column (如果定义)
-        data = self._process_date_column(data)
-
-        # 3. 应用通用数据类型转换 (from transformations dict)
+        # 2. 应用通用数据类型转换 (from transformations dict)
         data = self._apply_transformations(data)
 
-        # 4. 显式处理 schema_def 中定义的其他 DATE/TIMESTAMP 列
-        # 检查 self.task 是否具有 schema_def 属性
-        if hasattr(self.task, "schema_def") and self.task.schema_def:
-            date_columns_to_process = []
-            # 识别需要处理的日期列
-            for col_name, col_def in self.task.schema_def.items():
-                col_type = (
-                    col_def.get("type", "").upper()
-                    if isinstance(col_def, dict)
-                    else str(col_def).upper()
-                )
-                if (
-                    ("DATE" in col_type or "TIMESTAMP" in col_type)
-                    and col_name in data.columns
-                    and col_name != getattr(self.task, "date_column", None)
-                ):
-                    # 仅处理尚未是日期时间类型的列
-                    if data[col_name].dtype == "object" or pd.api.types.is_string_dtype(
-                        data[col_name]
-                    ):
-                        date_columns_to_process.append(col_name)
-
-            # 批量处理识别出的日期列
-            if date_columns_to_process:
-                self.logger.info(
-                    f"转换以下列为日期时间格式: {', '.join(date_columns_to_process)}"
-                )
-                
-                for col_name in date_columns_to_process:
-                    self.logger.debug(f"处理日期列: {col_name}")
-                    original_dtype = data[col_name].dtype
-                    
-                    try:
-                        # 首先尝试直接转换（适用于已经是正确格式的日期）
-                        converted_col = pd.to_datetime(data[col_name], errors="coerce")
-                        
-                        # 检查是否大部分转换成功
-                        success_rate = converted_col.notna().sum() / len(converted_col)
-                        
-                        if success_rate < 0.5:  # 如果成功率低于50%，尝试其他格式
-                            self.logger.info(f"列 {col_name} 直接转换成功率较低 ({success_rate:.2%})，尝试YYYYMMDD格式")
-                            # 尝试 YYYYMMDD 格式
-                            converted_col = pd.to_datetime(
-                                data[col_name], format="%Y%m%d", errors="coerce"
-                            )
-                            
-                        # 检查最终转换结果
-                        final_success_rate = converted_col.notna().sum() / len(converted_col)
-                        invalid_count = converted_col.isna().sum()
-                        
-                        if invalid_count > 0:
-                            self.logger.warning(
-                                f"列 {col_name}: {invalid_count} 个值无法转换为日期，将设为NaT"
-                            )
-                        
-                        # 将转换后的列赋值回原数据
-                        data[col_name] = converted_col
-                        
-                        # 验证转换结果
-                        if not pd.api.types.is_datetime64_any_dtype(data[col_name]):
-                            self.logger.error(f"列 {col_name} 转换后仍不是datetime类型: {data[col_name].dtype}")
-                        else:
-                            self.logger.info(f"列 {col_name} 成功转换为datetime类型，成功率: {final_success_rate:.2%}")
-                            
-                    except Exception as e:
-                        self.logger.error(f"转换列 {col_name} 时发生错误: {e}")
-                        # 保持原始数据不变
-                        continue
-
-        # 5. 对数据进行排序 (应该在所有转换后进行)
-        data = self._sort_data(data)
-
-        # 6. 调用子类可能重写的 process_data 方法进行额外处理
-        try:
-            # 检查self.task是否有自定义的process_data方法（与基类实现不同）
-            task_class = self.task.__class__
-            base_task_class = task_class.__bases__[0]  # 通常是TushareTask
-
-            # 检查task_class是否重写了process_data方法
-            # 这里使用inspect模块检查方法来源
-            import inspect
-
-            # 获取方法并检查其所属类
-            task_process_data = getattr(self.task, "process_data", None)
-            if (
-                task_process_data
-                and task_process_data.__qualname__.split(".")[0]
-                != base_task_class.__name__
-            ):
-                self.logger.info(
-                    f"检测到 {task_class.__name__} 重写了 process_data 方法，调用它进行额外处理"
-                )
-
-                # 检查方法是同步的还是异步的
-                is_async_method = inspect.iscoroutinefunction(task_process_data)
-
-                if is_async_method:
-                    # 如果是异步方法，使用 await 调用
-                    processed_data = await task_process_data(data)
-                else:
-                    # 如果是同步方法，直接调用
-                    processed_data = task_process_data(data)
-
-                # 安全检查：确保返回的是DataFrame
-                if processed_data is None or not isinstance(
-                    processed_data, pd.DataFrame
-                ):
-                    self.logger.warning(
-                        f"{task_class.__name__}.process_data 返回了非DataFrame结果 ({type(processed_data)})"
-                    )
-                    # 保持原数据不变
-                else:
-                    # 使用子类处理后的数据
-                    data = processed_data
-                    self.logger.info(f"子类处理后数据行数: {len(data)}")
-        except Exception as e:
-            self.logger.error(
-                f"调用子类的 process_data 方法时发生错误: {str(e)}", exc_info=True
-            )
-            # 保持原数据不变，不中断处理流程
+        # 3. 调用子类可能重写的 process_data 方法进行额外处理
+        # if hasattr(self.task, "_task_specific_process_data") and callable(
+        #     self.task._task_specific_process_data
+        # ):
+        #     self.logger.debug("调用Task子类特定的数据处理方法...")
+        #     # 检查是否为异步方法
+        #     import inspect
+        #     if inspect.iscoroutinefunction(self.task._task_specific_process_data):
+        #         data = await self.task._task_specific_process_data(data)
+        #     else:
+        #         data = self.task._task_specific_process_data(data)
 
         return data
 

@@ -10,16 +10,17 @@ Classifier: Topic :: Office/Business :: Financial :: Investment
 Classifier: Framework :: Tkinter
 Requires-Python: >=3.9
 Description-Content-Type: text/markdown
-Requires-Dist: aiohttp>=3.11.11
+Requires-Dist: aiohttp>=3.12.13
 Requires-Dist: asyncpg>=0.30.0
-Requires-Dist: matplotlib>=3.10.1
-Requires-Dist: numpy>=2.2.3
-Requires-Dist: pandas>=2.2.3
-Requires-Dist: python-dotenv>=1.1.0
-Requires-Dist: tkcalendar>=1.6.1
-Requires-Dist: tqdm>=4.67.1
+Requires-Dist: matplotlib>=3.9.0
+Requires-Dist: numpy>=1.26.0
+Requires-Dist: pandas>=2.2.0
+Requires-Dist: python-dotenv>=1.0.0
+Requires-Dist: tkcalendar>=1.6.0
+Requires-Dist: tqdm>=4.66.0
 Requires-Dist: appdirs>=1.4.4
-Requires-Dist: zipline-reloaded>=3.0.4
+Requires-Dist: zipline-reloaded>=3.0.0
+Requires-Dist: tushare>=1.4.0
 
 # AlphaHome - 智能量化投研系统
 
@@ -69,10 +70,54 @@ graph TD
 - **配置中心**: 动态调整系统参数，无需修改代码。
 - **日志追踪**: 实时查看系统运行状态，快速定位问题。
 
+### **重构后的模块化架构**
+
+GUI采用重构后的模块化架构，通过功能域分离实现了清晰的职责划分：
+
+```
+alphahome/gui/
+├── controller.py          # 简化的协调器 - 委托具体业务逻辑
+├── main_window.py        # Tkinter应用入口和主窗口管理
+├── controller_logic/     # 后台逻辑层 - 异步业务逻辑处理器
+│   ├── task_execution.py    # 任务执行逻辑
+│   ├── storage_settings.py  # 配置管理
+│   ├── data_collection.py   # 数据收集逻辑
+│   └── data_processing.py   # 数据处理逻辑
+├── handlers/            # UI事件处理层 - UI事件响应逻辑
+│   ├── task_execution.py   # 任务执行UI事件
+│   ├── storage_settings.py # 设置界面事件
+│   ├── data_collection.py  # 数据收集事件
+│   ├── data_processing.py  # 数据处理事件
+│   └── task_log.py         # 日志界面事件
+├── ui/                  # UI组件层 - 纯UI组件创建逻辑
+│   ├── task_execution_tab.py
+│   ├── storage_settings_tab.py
+│   ├── data_collection_tab.py
+│   ├── data_processing_tab.py
+│   └── task_log_tab.py
+└── utils/               # 通用工具 - 共享的工具函数
+    └── common.py
+```
+
+### **架构优势**
+
+**核心特性：**
+- **单一职责**: 每个模块职责明确，便于维护和测试
+- **职责分离**: UI创建、事件处理、业务逻辑完全分离
+- **异步通信**: 通过 `asyncio` 和回调机制实现前后端通信
+- **事件驱动**: UI事件通过专门的处理器响应，业务逻辑在后台异步执行
+
+**通信机制：**
+- **异步消息传递**: 前端UI与后台逻辑通过异步消息队列通信
+- **事件驱动**: UI操作触发事件，由专门的处理器响应
+- **回调机制**: 后台任务完成后通过回调更新UI状态
+
 ### **界面概览**
-- **主控台**: 显示系统核心指标和任务状态。
-- **数据管理**: 浏览和管理本地数据库中的数据。
-- **回测分析**: 查看详细的回测报告和性能图表。
+- **数据收集**: 管理和执行各类数据获取任务
+- **数据处理**: 控制数据清洗和转换流程
+- **任务执行**: 监控任务运行状态和进度
+- **存储设置**: 配置数据库连接和API密钥
+- **任务日志**: 实时查看系统运行日志和错误信息
 
 ## 🚀 **BT Extensions - 专业回测引擎**
 

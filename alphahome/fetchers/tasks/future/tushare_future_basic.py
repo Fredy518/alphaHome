@@ -35,7 +35,7 @@ class TushareFutureBasicTask(TushareTask):
 
     # --- 代码级默认配置 (会被 config.json 覆盖) --- #
     # 考虑到需要按交易所分批，可以适当增加并发限制
-    default_concurrent_limit = 3
+    default_concurrent_limit = 5
     default_page_size = (
         8000  # Tushare 文档未明确给出 fut_basic 的分页限制，沿用 stock_basic 设置
     )
@@ -99,13 +99,14 @@ class TushareFutureBasicTask(TushareTask):
         {"name": "idx_future_basic_exchange", "columns": "exchange"},
         {"name": "idx_future_basic_fut_code", "columns": "fut_code"},
         {"name": "idx_future_basic_update_time", "columns": "update_time"},
-    ]
-
-    def __init__(self, db_connection, api_token=None, api=None):
-        """初始化任务"""
-        super().__init__(db_connection, api_token=api_token, api=api)
-        self.logger.info(f"任务 {self.name} 已配置初始化。")
-
+    ]# --- This __init__ was commented out for code simplification. ---
+# 
+# 
+# def __init__(self, db_connection, api_token=None, api=None, **kwargs):
+# """初始化任务"""
+# super().__init__(db_connection, api_token=api_token, api=api, **kwargs)
+# self.logger.info(f"任务 {self.name} 已配置初始化。")
+# 
     async def get_batch_list(self, **kwargs: Any) -> List[Dict]:
         """
         生成批处理参数列表。对于 fut_basic，按交易所分批获取。

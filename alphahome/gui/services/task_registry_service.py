@@ -11,6 +11,7 @@
 import asyncio
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional
+import inspect
 
 from ...common.logging_utils import get_logger
 from ...common.task_system import UnifiedTaskFactory, get_tasks_by_type
@@ -202,49 +203,66 @@ async def get_task_details_by_type(task_type: str) -> List[Dict[str, Any]]:
     return details_list
 
 
-async def _get_single_task_details(task_name: str) -> Dict[str, Any]:
+async def _get_single_task_details(task_name: str) -> Optional[Dict[str, Any]]:
     """
-    获取单个任务的详细信息。
-    这是一个辅助方法，用于创建任务实例并从中提取信息。
+    获取单个任务的详细信息，能安全地处理抽象类。
     """
     try:
-        # 使用工厂获取（或创建）任务实例
+        # 正确地从工厂的注册表中获取任务类
+        task_class = UnifiedTaskFactory._task_registry.get(task_name)
+        if not task_class:
+            logger.warning(f"无法在工厂注册表中找到名为 '{task_name}' 的任务类。")
+            return None
+
+        # --- 默认从类属性中获取基础信息 ---
+        details = {
+            "name": task_name,
+            "description": getattr(task_class, "description", ""),
+            "task_type": getattr(task_class, "task_type", "base"),
+            "data_source": getattr(task_class, "data_source", "未知"),
+            "dependencies": ", ".join(getattr(task_class, "dependencies", []) or []),
+            "table_name": getattr(task_class, "table_name", "未知"),
+            "selected": False,
+            "error": None
+        }
+
+        # --- 检查是否为抽象类 ---
+        if inspect.isabstract(task_class):
+            details["error"] = "抽象任务无法直接执行"
+            logger.info(f"任务 '{task_name}' 是抽象类，仅加载基础信息。")
+            return details
+
+        # --- 如果是具体类，则实例化以获取更多信息 ---
         task_instance = await UnifiedTaskFactory.get_task(task_name)
+        if not task_instance:
+            details["error"] = "任务实例创建失败"
+            return details
+            
+        # 使用实例更新/覆盖信息
+        details["primary_keys"] = getattr(task_instance, "primary_keys", [])
+        details["date_column"] = getattr(task_instance, "date_column", None)
         
-        # 提取信息
-        dependencies = getattr(task_instance, 'dependencies', [])
-        dependencies_str = ", ".join(dependencies) if dependencies else "无"
-        
-        task_type_inferred = getattr(task_instance, 'task_type', 'unknown')
-        
-        # 特别为 'fetch' 任务推断更具体的子类型
-        if task_type_inferred == 'fetch':
+        # 为 'fetch' 任务推断更具体的子类型
+        if details["task_type"] == 'fetch':
             parts = task_name.split('_')
             if parts[0] == "tushare" and len(parts) > 1:
-                task_type_inferred = parts[1]
+                details["task_type"] = parts[1]
             elif parts[0] != "tushare":
-                task_type_inferred = parts[0]
+                details["task_type"] = parts[0]
 
-        # 推断数据源
-        data_source = getattr(task_instance, 'data_source', 'unknown')
+        return details
 
-        return {
-            "name": task_name,
-            "type": task_type_inferred,
-            "data_source": data_source,
-            "description": getattr(task_instance, "description", ""),
-            "dependencies": dependencies_str,
-            "selected": False, # 默认不选中
-            "table_name": getattr(task_instance, "table_name", None),
-        }
     except Exception as e:
-        logger.error(f"获取任务 '{task_name}' 详情失败: {e}", exc_info=True)
-        # 重新抛出异常，以便 asyncio.gather 可以捕获它
-        raise
+        logger.error(f"获取任务 '{task_name}' 详情时发生严重错误: {e}", exc_info=True)
+        return {
+            "name": task_name, "description": "获取详情时出错", "error": str(e),
+            "task_type": "error", "data_source": "error", "dependencies": "error",
+            "table_name": "error", "selected": False
+        }
 
 
 async def _update_tasks_with_latest_timestamp(task_cache: List[Dict[str, Any]]):
-    """使用最新的数据库更新时间来更新任务缓存。"""
+    """使用每个任务的最新数据时间戳更新任务缓存列表。"""
     db_manager = UnifiedTaskFactory.get_db_manager()
     if not db_manager:
         for task_detail in task_cache:
