@@ -17,7 +17,7 @@ from ...sources.tushare.tushare_task import TushareTask
 from alphahome.common.task_system.task_decorator import task_register
 
 # 导入批处理工具
-from ...tools.batch_utils import generate_single_date_batches
+from ...sources.tushare.batch_utils import generate_single_date_batches
 
 # 导入日历工具
 from ...tools.calendar import get_trade_days_between
@@ -35,6 +35,7 @@ class TushareFundNavTask(TushareTask):
     date_column = "nav_date"  # 主要日期列用于增量更新
     default_start_date = "20000101"  # 设定一个较早的默认开始日期
     data_source = "tushare"
+    smart_lookback_days = 3 # 智能增量模式下，回看3天
 
     # --- 代码级默认配置 (会被 config.json 覆盖) --- #
     default_concurrent_limit = 10
@@ -144,7 +145,7 @@ class TushareFundNavTask(TushareTask):
             batch_list = await generate_single_date_batches(
                 start_date=start_date,
                 end_date=end_date,
-                date_field="nav_date",  # 使用 nav_date 作为日期字段
+                date_field="nav_date",
                 ts_code=ts_code,
                 additional_params=additional_params,
                 logger=self.logger,
@@ -155,7 +156,7 @@ class TushareFundNavTask(TushareTask):
             self.logger.error(f"任务 {self.name}: 生成批次时出错: {e}", exc_info=True)
             return []
 
-    def prepare_params(self, batch_params: Dict) -> Dict:
+    async def prepare_params(self, batch_params: Dict) -> Dict:
         """
         准备 API 调用参数。
         将批次中的 nav_date 直接映射到 API 参数中。

@@ -88,16 +88,6 @@ class TushareIndexCiMemberTask(TushareTask):
         },  # 新增 update_time 索引
     ]
 
-    def __init__(self, db_connection, api_token=None):
-        """初始化任务，使用默认并发"""
-        super().__init__(db_connection, api_token=api_token)
-        # 移除 self.concurrent_limit = 1
-        # self.logger.info(f"任务 {self.name} 使用默认并发设置")
-
-    # 移除 pre_execute 方法
-    # async def pre_execute(self, **kwargs: Any) -> None:
-    #     ...
-
     async def get_batch_list(self, **kwargs: Any) -> List[Dict]:
         """
         生成批处理参数列表。

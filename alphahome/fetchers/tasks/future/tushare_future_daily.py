@@ -15,10 +15,10 @@ import pandas as pd
 
 # 确认导入路径正确 (相对于当前文件)
 from ...sources.tushare.tushare_task import TushareTask
-from alphahome.common.task_system.task_decorator import task_register
+from ....common.task_system.task_decorator import task_register
 
 # 导入自然日批次生成工具函数
-from ...tools.batch_utils import generate_natural_day_batches
+from ...sources.tushare.batch_utils import generate_natural_day_batches
 
 # logger 由 Task 基类提供
 # logger = logging.getLogger(__name__)
@@ -129,9 +129,14 @@ class TushareFutureDailyTask(TushareTask):
         start_date = kwargs.get("start_date")
         end_date = kwargs.get("end_date")
 
-        if not start_date or not end_date:
-            self.logger.error(f"任务 {self.name}: 必须提供 start_date 和 end_date 参数")
-            return []
+        # 支持基类的全量更新机制：如果没有提供日期范围，使用默认范围
+        if not start_date:
+            start_date = self.default_start_date
+            self.logger.info(f"任务 {self.name}: 未提供 start_date，使用默认起始日期: {start_date}")
+        if not end_date:
+            from datetime import datetime
+            end_date = datetime.now().strftime("%Y%m%d")
+            self.logger.info(f"任务 {self.name}: 未提供 end_date，使用当前日期: {end_date}")
 
         self.logger.info(
             f"任务 {self.name}: 使用自然日按月生成批处理列表，范围: {start_date} 到 {end_date}"
@@ -157,28 +162,6 @@ class TushareFutureDailyTask(TushareTask):
             )
             # 抛出异常以便上层调用者感知
             raise RuntimeError(f"任务 {self.name}: 生成自然日批次失败") from e
-
-    async def process_data(self, df: pd.DataFrame, **kwargs) -> pd.DataFrame:
-        """
-        异步处理从API获取的原始数据。
-        调用基类方法完成通用处理（日期转换、transformations 应用）。
-        """
-        # 如果df为空或者不是DataFrame，则直接返回
-        if not isinstance(df, pd.DataFrame) or df.empty:
-            self.logger.info(
-                f"任务 {self.name}: process_data 接收到空 DataFrame，跳过处理。"
-            )
-            return df
-
-        # 调用基类方法完成 transformations 应用、日期转换等
-        # df = super().process_data(df, **kwargs)
-        # 基类已经处理了 transformations 和日期转换。
-        # 此处可以添加 fut_daily 特有的额外处理，如果需要的话。
-
-        self.logger.info(
-            f"任务 {self.name}: process_data 被调用，返回 DataFrame (行数: {len(df)}). 基类处理已完成。"
-        )
-        return df
 
     async def validate_data(self, df: pd.DataFrame, **kwargs: Any) -> pd.DataFrame:
         """

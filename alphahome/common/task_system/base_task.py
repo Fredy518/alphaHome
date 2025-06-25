@@ -39,7 +39,7 @@ class BaseTask(ABC):
 
     # 新增：数据保存批次大小
     default_save_batch_size: int = 10000  # 默认每次保存 10000 行
-
+    
     # 新增：支持processor任务的属性
     source_tables = []        # 源数据表列表（processor任务使用）
     dependencies = []         # 依赖的其他任务（processor任务使用）

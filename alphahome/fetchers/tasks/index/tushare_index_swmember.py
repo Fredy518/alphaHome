@@ -15,7 +15,7 @@ import pandas as pd
 
 # 确认导入路径正确
 from ...sources.tushare.tushare_task import TushareTask
-from alphahome.common.task_system.task_decorator import task_register
+from ....common.task_system.task_decorator import task_register
 
 
 @task_register()
@@ -28,7 +28,7 @@ class TushareIndexSwmemberTask(TushareTask):  # <-- 类名改回
     table_name = "index_swmember"  # <-- 改回
     primary_keys = ["ts_code", "l3_code", "in_date"]  # <-- 增加 in_date
     date_column = None  # 全量任务
-    default_start_date = None  # 全量任务
+    default_start_date = "19700101"  # 全量任务
 
     # --- 代码级默认配置 (会被 config.json 覆盖) --- #
     default_concurrent_limit = 2
@@ -81,10 +81,6 @@ class TushareIndexSwmemberTask(TushareTask):  # <-- 类名改回
             "columns": "update_time",
         },  # 新增 update_time 索引
     ]
-
-    def __init__(self, db_connection, api_token=None):
-        """初始化任务，使用父类默认并发设置"""
-        super().__init__(db_connection, api_token=api_token)
 
     async def get_batch_list(self, **kwargs: Any) -> List[Dict]:
         """

@@ -8,6 +8,7 @@
 """
 
 import asyncio
+import time
 from datetime import datetime, date
 from typing import Any, Dict, List, Optional, Union
 
@@ -16,14 +17,109 @@ import pandas as pd
 import psycopg2.extras
 
 
+class BatchPerformanceMonitor:
+    """批量操作性能监控器
+
+    用于监控和记录数据库批量操作的性能指标，包括：
+    - 批次大小和处理时间
+    - 吞吐量计算
+    - 性能趋势分析
+    - 最优批次大小建议
+    """
+
+    def __init__(self, max_history: int = 100):
+        """初始化性能监控器
+
+        Args:
+            max_history: 保留的历史记录最大数量
+        """
+        self.max_history = max_history
+        self.performance_history = []
+        self.total_operations = 0
+        self.total_rows_processed = 0
+        self.total_processing_time = 0.0
+
+    def record_batch_performance(self, batch_size: int, processing_time: float,
+                               operation_type: str = "copy_from_dataframe"):
+        """记录批次性能数据
+
+        Args:
+            batch_size: 批次大小（行数）
+            processing_time: 处理时间（秒）
+            operation_type: 操作类型
+        """
+        if processing_time <= 0:
+            return  # 避免除零错误
+
+        throughput = batch_size / processing_time
+
+        performance_record = {
+            'timestamp': time.time(),
+            'batch_size': batch_size,
+            'processing_time': processing_time,
+            'throughput': throughput,
+            'operation_type': operation_type
+        }
+
+        self.performance_history.append(performance_record)
+
+        # 限制历史记录数量
+        if len(self.performance_history) > self.max_history:
+            self.performance_history.pop(0)
+
+        # 更新总计数据
+        self.total_operations += 1
+        self.total_rows_processed += batch_size
+        self.total_processing_time += processing_time
+
+    def get_performance_summary(self) -> Dict[str, Any]:
+        """获取性能摘要统计
+
+        Returns:
+            包含性能统计信息的字典
+        """
+        if not self.performance_history:
+            return {
+                'total_operations': 0,
+                'total_rows_processed': 0,
+                'average_throughput': 0,
+                'recent_average_throughput': 0,
+                'optimal_batch_size': 5000
+            }
+
+        recent_records = self.performance_history[-10:]  # 最近10次操作
+        recent_throughput = sum(r['throughput'] for r in recent_records) / len(recent_records)
+
+        overall_throughput = (
+            self.total_rows_processed / self.total_processing_time
+            if self.total_processing_time > 0 else 0
+        )
+
+        # 找到吞吐量最高的批次大小
+        if len(recent_records) > 0:
+            best_record = max(recent_records, key=lambda x: x['throughput'])
+            optimal_batch_size = best_record['batch_size']
+        else:
+            optimal_batch_size = 5000
+
+        return {
+            'total_operations': self.total_operations,
+            'total_rows_processed': self.total_rows_processed,
+            'average_throughput': overall_throughput,
+            'recent_average_throughput': recent_throughput,
+            'optimal_batch_size': optimal_batch_size,
+            'recent_performance': recent_records
+        }
+
+
 class DatabaseOperationsMixin:
     """整合数据库操作Mixin
-    
+
     职责：
     ----
     整合了基础SQL操作和高级数据操作功能，提供完整的数据库操作接口。
     这是原SQLOperationsMixin和DataOperationsMixin的整合版本，保留了所有原有功能。
-    
+
     功能分层：
     --------
     **基础SQL操作层**（原SQLOperationsMixin功能）：
@@ -31,13 +127,18 @@ class DatabaseOperationsMixin:
     - fetch系列: 执行查询，返回结果集（全部/单行/单值）
     - executemany: 批量执行相同SQL的多组参数
     - 同步模式接口: 支持同步环境的操作
-    
+
     **高级数据操作层**（原DataOperationsMixin功能）：
     - copy_from_dataframe: 利用PostgreSQL COPY命令实现高速数据导入
     - upsert: 基于冲突检测的智能插入或更新操作
     - 数据预处理: 自动处理空值、特殊字符、日期格式转换
     - 临时表策略: 使用临时表提高批量操作的安全性和性能
-    
+
+    **性能监控层**（新增功能）：
+    - 批量操作性能监控: 记录批次大小、处理时间、吞吐量
+    - 性能趋势分析: 分析历史性能数据，提供优化建议
+    - 智能日志记录: 详细记录关键性能指标
+
     设计特点：
     --------
     1. **功能完整**: 包含所有原有功能，确保向后兼容
@@ -45,15 +146,29 @@ class DatabaseOperationsMixin:
     3. **数据安全**: 通过临时表和事务确保数据一致性
     4. **模式适配**: 同时支持异步asyncpg和同步psycopg2操作
     5. **类型智能**: 自动识别和转换日期、数值等特殊类型
-    
+    6. **性能监控**: 内置性能监控和分析功能
+
     迁移说明：
     --------
     该组件整合了以下原组件的功能：
     - SQLOperationsMixin: 所有基础SQL操作方法
     - DataOperationsMixin: 所有高级数据操作方法
-    
+
     原组件仍然可用以确保向后兼容，但建议新代码使用此整合组件。
     """
+
+    def __init__(self, *args, **kwargs):
+        """初始化数据库操作Mixin
+
+        初始化性能监控器和其他必要组件
+        """
+        super().__init__(*args, **kwargs)
+
+        # 初始化性能监控器
+        self._performance_monitor = BatchPerformanceMonitor()
+
+        # 性能监控开关（可通过配置控制）
+        self._enable_performance_monitoring = True
 
     # ============================================================================
     # 基础SQL操作部分（原SQLOperationsMixin的所有功能）
@@ -360,6 +475,14 @@ class DatabaseOperationsMixin:
         利用 PostgreSQL 的 COPY 命令和临时表实现高效数据加载。
         如果指定了 conflict_columns，则执行 UPSERT (插入或更新) 操作。
 
+        性能监控：
+        --------
+        该方法内置性能监控功能，会自动记录：
+        - 批次大小（DataFrame行数）
+        - 处理时间（从开始到完成的总时间）
+        - 吞吐量（行数/秒）
+        - 操作类型（copy_from_dataframe 或 upsert）
+
         Args:
             df (pd.DataFrame): 要复制的DataFrame。
             target (Any): 目标表，可以是表名字符串或任务对象。
@@ -376,6 +499,10 @@ class DatabaseOperationsMixin:
             ValueError: 如果参数无效或DataFrame为空。
             Exception: 如果发生数据库操作错误。
         """
+        # 性能监控：记录开始时间
+        start_time = time.time()
+        batch_size = len(df)
+        operation_type = "upsert" if conflict_columns else "copy_from_dataframe"
         if self.pool is None: # type: ignore
             await self.connect() # type: ignore
 
@@ -538,14 +665,54 @@ class DatabaseOperationsMixin:
                         self.logger.debug(f"执行INSERT: {insert_sql[:200]}...") # type: ignore
                         await conn.execute(insert_sql)
 
-                    self.logger.info( # type: ignore
-                        f"COPY_FROM_DATAFRAME (表: {resolved_table_name}): 成功处理 {copy_count} 条记录"
-                    )
+                    # 性能监控：记录成功操作的性能数据
+                    processing_time = time.time() - start_time
+
+                    # 记录性能指标
+                    if hasattr(self, '_performance_monitor') and self._enable_performance_monitoring:
+                        self._performance_monitor.record_batch_performance(
+                            batch_size=batch_size,
+                            processing_time=processing_time,
+                            operation_type=operation_type
+                        )
+
+                        # 计算吞吐量
+                        throughput = batch_size / processing_time if processing_time > 0 else 0
+
+                        # 获取性能摘要（用于优化建议）
+                        perf_summary = self._performance_monitor.get_performance_summary()
+
+                        self.logger.info( # type: ignore
+                            f"COPY_FROM_DATAFRAME (表: {resolved_table_name}): 成功处理 {copy_count} 条记录 "
+                            f"| 耗时: {processing_time:.2f}s | 吞吐量: {throughput:.0f} 行/秒 "
+                            f"| 操作类型: {operation_type} | 总操作数: {perf_summary['total_operations']}"
+                        )
+
+                        # 如果处理时间较长，提供性能建议
+                        if processing_time > 10.0:  # 超过10秒的操作
+                            optimal_size = perf_summary['optimal_batch_size']
+                            self.logger.info( # type: ignore
+                                f"性能建议 (表: {resolved_table_name}): 当前批次 {batch_size} 行耗时较长，"
+                                f"建议批次大小: {optimal_size} 行 "
+                                f"(基于最近平均吞吐量: {perf_summary['recent_average_throughput']:.0f} 行/秒)"
+                            )
+                    else:
+                        # 如果性能监控未启用，使用简单日志
+                        throughput = batch_size / processing_time if processing_time > 0 else 0
+                        self.logger.info( # type: ignore
+                            f"COPY_FROM_DATAFRAME (表: {resolved_table_name}): 成功处理 {copy_count} 条记录 "
+                            f"| 耗时: {processing_time:.2f}s | 吞吐量: {throughput:.0f} 行/秒"
+                        )
+
                     return copy_count
 
                 except Exception as e:
+                    # 性能监控：记录失败操作的时间（用于分析）
+                    processing_time = time.time() - start_time
+
                     self.logger.error( # type: ignore
-                        f"COPY_FROM_DATAFRAME (表: {resolved_table_name}) 失败: {str(e)}"
+                        f"COPY_FROM_DATAFRAME (表: {resolved_table_name}) 失败: {str(e)} "
+                        f"| 失败前耗时: {processing_time:.2f}s | 批次大小: {batch_size} 行"
                     )
                     raise
 
@@ -587,7 +754,61 @@ class DatabaseOperationsMixin:
             conflict_columns=conflict_columns,
             update_columns=update_columns,
             timestamp_column=timestamp_column,
-        ) 
+        )
+
+    def get_performance_statistics(self) -> Dict[str, Any]:
+        """获取数据库操作性能统计信息
+
+        Returns:
+            Dict[str, Any]: 包含性能统计信息的字典，包括：
+                - total_operations: 总操作数
+                - total_rows_processed: 总处理行数
+                - average_throughput: 平均吞吐量（行/秒）
+                - recent_average_throughput: 最近平均吞吐量
+                - optimal_batch_size: 建议的最优批次大小
+                - recent_performance: 最近的性能记录
+
+        Example:
+            >>> db_manager = create_async_manager(connection_string)
+            >>> # ... 执行一些批量操作 ...
+            >>> stats = db_manager.get_performance_statistics()
+            >>> print(f"平均吞吐量: {stats['average_throughput']:.0f} 行/秒")
+            >>> print(f"建议批次大小: {stats['optimal_batch_size']} 行")
+        """
+        if hasattr(self, '_performance_monitor'):
+            return self._performance_monitor.get_performance_summary()
+        else:
+            return {
+                'total_operations': 0,
+                'total_rows_processed': 0,
+                'average_throughput': 0,
+                'recent_average_throughput': 0,
+                'optimal_batch_size': 5000,
+                'recent_performance': [],
+                'monitoring_enabled': False
+            }
+
+    def reset_performance_statistics(self):
+        """重置性能统计信息
+
+        清除所有历史性能数据，重新开始统计。
+        适用于长期运行的应用程序定期清理统计数据。
+        """
+        if hasattr(self, '_performance_monitor'):
+            self._performance_monitor = BatchPerformanceMonitor()
+            if hasattr(self, 'logger'):
+                self.logger.info("数据库操作性能统计信息已重置") # type: ignore
+
+    def set_performance_monitoring(self, enabled: bool):
+        """启用或禁用性能监控
+
+        Args:
+            enabled: True 启用性能监控，False 禁用
+        """
+        self._enable_performance_monitoring = enabled
+        if hasattr(self, 'logger'):
+            status = "启用" if enabled else "禁用"
+            self.logger.info(f"数据库操作性能监控已{status}") # type: ignore
 
     async def get_all_physical_tables(self, schema_name: str) -> List[str]:
         """获取指定 schema 下的所有物理表名称。"""

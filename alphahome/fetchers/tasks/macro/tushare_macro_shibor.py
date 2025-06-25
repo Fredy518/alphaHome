@@ -15,10 +15,10 @@ import pandas as pd
 
 # 确认导入路径正确 (相对于当前文件)
 from ...sources.tushare.tushare_task import TushareTask
-from alphahome.common.task_system.task_decorator import task_register
+from ....common.task_system.task_decorator import task_register
 
 # 导入自然日批次生成工具函数
-from ...tools.batch_utils import generate_natural_day_batches
+from ...sources.tushare.batch_utils import generate_natural_day_batches
 
 
 @task_register()
@@ -96,6 +96,15 @@ class TushareMacroShiborTask(TushareTask):
         """
         start_date = kwargs.get("start_date")
         end_date = kwargs.get("end_date")
+
+        # 支持基类的全量更新机制：如果没有提供日期范围，使用默认范围
+        if not start_date:
+            start_date = self.default_start_date
+            self.logger.info(f"任务 {self.name}: 未提供 start_date，使用默认起始日期: {start_date}")
+        if not end_date:
+            from datetime import datetime
+            end_date = datetime.now().strftime("%Y%m%d")
+            self.logger.info(f"任务 {self.name}: 未提供 end_date，使用当前日期: {end_date}")
 
         if not start_date or not end_date:
             self.logger.error(f"任务 {self.name}: 必须提供 start_date 和 end_date 参数")

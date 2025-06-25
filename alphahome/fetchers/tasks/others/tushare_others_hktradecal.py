@@ -15,7 +15,7 @@ import pandas as pd
 
 from ...sources.tushare.tushare_task import TushareTask
 from alphahome.common.task_system.task_decorator import task_register
-from ...tools.batch_utils import generate_natural_day_batches
+from ...sources.tushare.batch_utils import generate_natural_day_batches
 
 # logger 实例将由 TushareTask 基类提供 (self.logger)
 

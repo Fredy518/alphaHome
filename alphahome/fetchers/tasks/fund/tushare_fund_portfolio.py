@@ -18,7 +18,7 @@ from ...sources.tushare.tushare_task import TushareTask
 from alphahome.common.task_system.task_decorator import task_register
 
 # 导入批处理工具
-from ...tools.batch_utils import generate_natural_day_batches
+from ...sources.tushare.batch_utils import generate_natural_day_batches
 
 
 @task_register()

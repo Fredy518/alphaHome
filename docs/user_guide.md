@@ -527,7 +527,7 @@ from typing import Any, Dict, List
 import pandas as pd
 from alphahome.fetchers.sources.tushare.tushare_task import TushareTask
 from alphahome.common.task_system.task_decorator import task_register
-from alphahome.fetchers.tools.batch_utils import generate_trade_day_batches
+from alphahome.fetchers.sources.tushare.batch_utils import generate_trade_day_batches
 
 # (必须) 使用装饰器注册任务，使其能被系统和GUI发现
 @task_register()

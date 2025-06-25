@@ -4,10 +4,7 @@ from typing import Dict, List
 import pandas as pd
 
 from ...sources.tushare import TushareTask
-from alphahome.common.task_system.task_decorator import task_register
-
-# BatchPlanner 导入
-from alphahome.common.planning.batch_planner import BatchPlanner, Source, Partition, Map
+from ....common.task_system.task_decorator import task_register
 
 
 @task_register()
@@ -25,6 +22,7 @@ class TushareStockDailyTask(TushareTask):
     primary_keys = ["ts_code", "trade_date"]
     date_column = "trade_date"  # 日期列名，用于确认最新数据日期
     default_start_date = "19901219"  # A股最早交易日
+    smart_lookback_days = 3 # 智能增量模式下，回看3天
 
     # --- 代码级默认配置 (会被 config.json 覆盖) --- #
     default_concurrent_limit = 5  # 默认并发限制
@@ -112,54 +110,44 @@ class TushareStockDailyTask(TushareTask):
         ts_code = kwargs.get("ts_code")
         exchange = kwargs.get("exchange", "SSE")
 
-        if not start_date or not end_date:
-            self.logger.error(f"任务 {self.name}: 必须提供 start_date 和 end_date 参数")
-            return []
+        # 支持基类的全量更新机制：如果没有提供日期范围，使用默认范围
+        if not start_date:
+            start_date = self.default_start_date
+            self.logger.info(f"任务 {self.name}: 未提供 start_date，使用默认起始日期: {start_date}")
+        if not end_date:
+            end_date = datetime.now().strftime("%Y%m%d")
+            self.logger.info(f"任务 {self.name}: 未提供 end_date，使用当前日期: {end_date}")
 
         self.logger.info(
             f"任务 {self.name}: 使用 BatchPlanner 生成批处理列表，范围: {start_date} 到 {end_date}"
         )
 
         try:
-            # 1. 定义数据源：获取交易日列表
-            from ...tools.calendar import get_trade_days_between
-            
-            async def get_trade_days():
-                return await get_trade_days_between(start_date, end_date, exchange=exchange)
-            
-            trade_days_source = Source.from_callable(get_trade_days)
+            # 使用标准的交易日批次生成工具
+            from ...sources.tushare.batch_utils import generate_trade_day_batches
 
-            # 2. 定义分区策略：根据是否有指定股票代码选择不同的批次大小
+            # 根据是否有指定股票代码选择不同的批次大小
             batch_size = (
                 self.batch_trade_days_single_code
                 if ts_code
                 else self.batch_trade_days_all_codes
             )
-            partition_strategy = Partition.by_size(batch_size)
 
-            # 3. 定义映射策略：将每个批次映射为开始和结束日期
-            map_strategy = Map.to_date_range("start_date", "end_date")
-
-            # 4. 创建 BatchPlanner 实例
-            planner = BatchPlanner(
-                source=trade_days_source,
-                partition_strategy=partition_strategy,
-                map_strategy=map_strategy
+            batch_list = await generate_trade_day_batches(
+                start_date=start_date,
+                end_date=end_date,
+                batch_size=batch_size,
+                ts_code=ts_code,
+                exchange=exchange,
+                logger=self.logger,
             )
 
-            # 5. 生成批次列表，如果有 ts_code 则添加到每个批次中
-            additional_params = {}
-            if ts_code:
-                additional_params["ts_code"] = ts_code
-
-            batch_list = await planner.generate(additional_params=additional_params)
-            
-            self.logger.info(f"任务 {self.name}: BatchPlanner 成功生成 {len(batch_list)} 个批次")
+            self.logger.info(f"任务 {self.name}: 成功生成 {len(batch_list)} 个批次")
             return batch_list
 
         except Exception as e:
             self.logger.error(
-                f"任务 {self.name}: BatchPlanner 生成批次时出错: {e}", exc_info=True
+                f"任务 {self.name}: 生成批次时出错: {e}", exc_info=True
             )
             return []
 

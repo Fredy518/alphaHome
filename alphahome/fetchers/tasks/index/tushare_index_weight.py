@@ -119,6 +119,12 @@ class TushareIndexWeightTask(TushareTask):
         
         last_date = await self.get_latest_date() # type: ignore
         
+        today = datetime.now().date()
+
+        if last_date and last_date.year == today.year and last_date.month == today.month:
+            self.logger.info(f"任务 {self.name}: 最新数据已是当前月份，跳过本次执行。")
+            return None
+
         if last_date:
             start_date = last_date + timedelta(days=1)
             end_date = datetime.now()
@@ -184,6 +190,3 @@ class TushareIndexWeightTask(TushareTask):
         self.logger.info(f"为 {len(index_codes)} 个指数代码在 {len(month_range)} 个月份内生成了 {len(batches)} 个批次。")
         return batches
     
-    # _decompose_batch_on_offset_limit 方法不再需要，可以删除
-    # async def _decompose_batch_on_offset_limit(...):
-    #     ...

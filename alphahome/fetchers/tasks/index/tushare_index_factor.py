@@ -14,10 +14,10 @@ import pandas as pd
 
 # 导入基础类和装饰器
 from ...sources.tushare.tushare_task import TushareTask
-from alphahome.common.task_system.task_decorator import task_register
+from ....common.task_system.task_decorator import task_register
 
 # 导入批处理工具
-from ...tools.batch_utils import generate_single_date_batches
+from ...sources.tushare.batch_utils import generate_single_date_batches
 
 
 @task_register()
@@ -31,6 +31,7 @@ class TushareIndexFactorProTask(TushareTask):
     primary_keys = ["ts_code", "trade_date"]
     date_column = "trade_date"
     default_start_date = "20050101"  # 指数因子需要较长历史数据
+    smart_lookback_days = 3 # 智能增量模式下，回看3天
 
     # --- 代码级默认配置 (会被 config.json 覆盖) --- #
     default_concurrent_limit = 15  # Tushare Pro 积分限制优先，此为参考并发数
@@ -219,7 +220,6 @@ class TushareIndexFactorProTask(TushareTask):
             batch_list = await generate_single_date_batches(
                 start_date=start_date_overall,
                 end_date=end_date_overall,
-                date_field="trade_date",  # API 使用 trade_date 参数
                 ts_code=ts_code,  # 可选的指数代码
                 exchange="SSE",  # 明确指定使用上交所日历作为A股代表
                 logger=self.logger,

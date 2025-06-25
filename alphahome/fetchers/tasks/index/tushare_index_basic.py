@@ -14,7 +14,7 @@ import pandas as pd
 
 # 确认导入路径正确
 from ...sources.tushare.tushare_task import TushareTask
-from alphahome.common.task_system.task_decorator import task_register
+from ....common.task_system.task_decorator import task_register
 
 # 假设的数据库异常类，可以根据实际使用的库替换，例如 asyncpg.exceptions.PostgresError
 # from asyncpg.exceptions import PostgresError
@@ -99,15 +99,6 @@ class TushareIndexBasicTask(TushareTask):
         },  # 新增 update_time 索引
     ]
 
-    def __init__(self, db_connection, api_token=None):
-        """初始化任务"""
-        # 调用父类 TushareTask 的 __init__ 并传递必要的参数
-        super().__init__(db_connection, api_token=api_token)
-        # 禁用并发执行，因为此任务数据量小且为全量更新
-        self.concurrent_limit = 1
-        self.logger.info(f"任务 {self.name} 已配置为串行执行 (concurrent_limit=1)")
-        # 此处可以添加 TushareIndexBasicTask 特有的其他初始化逻辑（如果需要）
-
     async def get_batch_list(self, **kwargs: Any) -> List[Dict]:
         """
         生成批处理参数列表。
@@ -117,111 +108,6 @@ class TushareIndexBasicTask(TushareTask):
         self.logger.info(f"任务 {self.name}: 全量获取模式，生成单一批次。")
         # 返回包含一个空字典的列表，触发一次不带参数的 API 调用
         return [{}]
-
-    async def process_data(self, df: pd.DataFrame, **kwargs: Any) -> pd.DataFrame:
-        """
-        异步处理从API获取的原始数据。
-        直接实现数据处理逻辑，避免与TushareDataTransformer形成循环调用。
-        """
-        # 如果df为空或者不是DataFrame，则直接返回
-        if not isinstance(df, pd.DataFrame) or df.empty:
-            return df
-
-        # 手动执行TushareDataTransformer的处理步骤，但不调用其process_data方法
-        data = df.copy()
-
-        # 1. 应用列名映射
-        data = self.data_transformer._apply_column_mapping(data)
-
-        # 2. 处理主要的 date_column (如果定义)
-        data = self.data_transformer._process_date_column(data)
-
-        # 3. 应用通用数据类型转换
-        data = self.data_transformer._apply_transformations(data)
-
-        # 4. 手动处理 schema_def 中定义的其他 DATE/TIMESTAMP 列
-        if hasattr(self, "schema_def") and self.schema_def:
-            date_columns_to_process = []
-            # 识别需要处理的日期列
-            for col_name, col_def in self.schema_def.items():
-                col_type = (
-                    col_def.get("type", "").upper()
-                    if isinstance(col_def, dict)
-                    else str(col_def).upper()
-                )
-                if (
-                    ("DATE" in col_type or "TIMESTAMP" in col_type)
-                    and col_name in data.columns
-                    and col_name != getattr(self, "date_column", None)
-                ):
-                    # 仅处理尚未是日期时间类型的列
-                    if data[col_name].dtype == "object" or pd.api.types.is_string_dtype(
-                        data[col_name]
-                    ):
-                        date_columns_to_process.append(col_name)
-
-            # 批量处理识别出的日期列
-            if date_columns_to_process:
-                self.logger.info(
-                    f"转换以下列为日期时间格式: {', '.join(date_columns_to_process)}"
-                )
-                
-                for col_name in date_columns_to_process:
-                    try:
-                        # 首先尝试直接转换
-                        converted_col = pd.to_datetime(data[col_name], errors="coerce")
-                        
-                        # 检查是否大部分转换成功
-                        success_rate = converted_col.notna().sum() / len(converted_col)
-                        
-                        if success_rate < 0.5:  # 如果成功率低于50%，尝试其他格式
-                            self.logger.info(f"列 {col_name} 直接转换成功率较低 ({success_rate:.2%})，尝试YYYYMMDD格式")
-                            # 尝试 YYYYMMDD 格式
-                            converted_col = pd.to_datetime(
-                                data[col_name], format="%Y%m%d", errors="coerce"
-                            )
-                            
-                        # 检查最终转换结果
-                        final_success_rate = converted_col.notna().sum() / len(converted_col)
-                        invalid_count = converted_col.isna().sum()
-                        
-                        if invalid_count > 0:
-                            self.logger.warning(
-                                f"列 {col_name}: {invalid_count} 个值无法转换为日期，将设为NaT"
-                            )
-                        
-                        # 将转换后的列赋值回原数据
-                        data[col_name] = converted_col
-                        
-                        self.logger.info(f"列 {col_name} 成功转换为datetime类型，成功率: {final_success_rate:.2%}")
-                            
-                    except Exception as e:
-                        self.logger.error(f"转换列 {col_name} 时发生错误: {e}")
-                        continue
-
-        # 5. 对数据进行排序
-        data = self.data_transformer._sort_data(data)
-        
-        # 任务特有的额外处理：对list_date进行特殊填充
-        if "list_date" in data.columns:
-            nat_count = data["list_date"].isnull().sum()
-            if nat_count > 0:
-                fill_date = pd.Timestamp("1970-01-01")
-                data["list_date"].fillna(fill_date, inplace=True)
-                self.logger.info(
-                    f"任务 {self.name}: 将 {nat_count} 个无效或缺失的 'list_date' 填充为 {fill_date.date()}"
-                )
-            else:
-                self.logger.info(f"任务 {self.name}: 'list_date' 列无需填充默认日期。")
-        else:
-            self.logger.warning(
-                f"任务 {self.name}: DataFrame 中未找到 'list_date' 列，跳过预处理。"
-            )
-
-        self.logger.info(
-            f"任务 {self.name}: process_data 处理完成，返回 DataFrame (行数: {len(data)})."
-        )
-        return data
 
     async def validate_data(self, df: pd.DataFrame, **kwargs: Any) -> pd.DataFrame:
         """

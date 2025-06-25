@@ -481,6 +481,32 @@ async def get_trade_days_between(
     return []
 
 
+def generate_date_range(start_date: str, end_date: str) -> List[str]:
+    """生成指定日期范围内的所有自然日期列表
+
+    Args:
+        start_date (str): 开始日期，格式为 YYYYMMDD
+        end_date (str): 结束日期，格式为 YYYYMMDD
+
+    Returns:
+        List[str]: 日期列表，格式为 YYYYMMDD
+    """
+    try:
+        # 将字符串日期转换为 datetime 对象
+        start_dt = datetime.datetime.strptime(start_date, "%Y%m%d")
+        end_dt = datetime.datetime.strptime(end_date, "%Y%m%d")
+
+        # 生成日期范围
+        date_range = pd.date_range(start=start_dt, end=end_dt, freq="D")
+
+        # 转换为 YYYYMMDD 格式的字符串列表
+        return [d.strftime("%Y%m%d") for d in date_range]
+
+    except Exception as e:
+        logger.error(f"生成日期范围失败: start_date={start_date}, end_date={end_date}, error={e}")
+        return []
+
+
 async def get_month_ends(start_date, end_date, re_trade_day=True) -> list:
     """
     获取指定日期区间内的所有月末（自然日或交易日）

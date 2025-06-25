@@ -4,11 +4,7 @@ from typing import Any, Dict, List, Optional
 import pandas as pd
 
 from ...sources.tushare import TushareTask
-from alphahome.common.task_system.task_decorator import task_register
-from ...tools.batch_utils import (  # 导入交易日批次生成工具函数
-    generate_trade_day_batches,
-)
-from ...tools.calendar import get_trade_days_between  # 导入交易日工具
+from ....common.task_system.task_decorator import task_register
 
 
 @task_register()
@@ -27,6 +23,7 @@ class TushareStockDailyBasicTask(TushareTask):
     date_column = "trade_date"
     default_start_date = "19910101"  # Tushare 股票日基本指标大致起始日期
     data_source = "tushare"
+    smart_lookback_days = 3 # 智能增量模式下，回看3天
 
     # --- 代码级默认配置 (会被 config.json 覆盖) --- #
     default_concurrent_limit = 10
@@ -126,7 +123,7 @@ class TushareStockDailyBasicTask(TushareTask):
     batch_trade_days_all_codes = 15  # 全市场查询时，每个批次的交易日数量 (3周)
 
     async def get_batch_list(self, **kwargs) -> List[Dict]:
-        """生成批处理参数列表 (使用专用交易日批次工具)
+        """使用 BatchPlanner 生成批处理参数列表
 
         Args:
             **kwargs: 查询参数，包括start_date、end_date、ts_code等
@@ -143,26 +140,38 @@ class TushareStockDailyBasicTask(TushareTask):
         exchange = kwargs.get("exchange", "SSE")  # 获取可能的交易所参数
 
         self.logger.info(
-            f"任务 {self.name}: 使用交易日批次工具生成批处理列表，范围: {start_date} 到 {end_date}"
+            f"任务 {self.name}: 使用 BatchPlanner 生成批处理列表，范围: {start_date} 到 {end_date}"
         )
 
         try:
-            # 使用简化的专用函数
+            # 使用标准的交易日批次生成工具
+            from ...sources.tushare.batch_utils import generate_trade_day_batches
+
+            # 根据是否有指定股票代码选择不同的批次大小
+            batch_size = (
+                self.batch_trade_days_single_code
+                if ts_code
+                else self.batch_trade_days_all_codes
+            )
+
+            # 准备附加参数
+            additional_params = {"fields": ",".join(self.fields or [])}
+
             batch_list = await generate_trade_day_batches(
                 start_date=start_date,
                 end_date=end_date,
-                batch_size=(
-                    self.batch_trade_days_single_code
-                    if ts_code
-                    else self.batch_trade_days_all_codes
-                ),
+                batch_size=batch_size,
                 ts_code=ts_code,
                 exchange=exchange,
+                additional_params=additional_params,
                 logger=self.logger,
             )
+
+            self.logger.info(f"任务 {self.name}: 成功生成 {len(batch_list)} 个批次")
             return batch_list
+
         except Exception as e:
             self.logger.error(
-                f"任务 {self.name}: 生成交易日批次时出错: {e}", exc_info=True
+                f"任务 {self.name}: 生成批次时出错: {e}", exc_info=True
             )
             return []

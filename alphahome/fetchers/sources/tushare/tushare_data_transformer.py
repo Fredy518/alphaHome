@@ -1,5 +1,6 @@
 import logging
-from typing import TYPE_CHECKING, cast
+import inspect
+from typing import TYPE_CHECKING, cast, Any
 
 import numpy as np
 import pandas as pd
@@ -25,7 +26,7 @@ class TushareDataTransformer:
     系统会自动检测方法类型并适当调用。推荐使用同步方法，符合基类实现。
     """
 
-    def __init__(self, task_instance: "TushareTask") -> None:
+    def __init__(self, task_instance: Any) -> None:
         """初始化 Transformer。
 
         Args:
@@ -134,7 +135,7 @@ class TushareDataTransformer:
 
         return data
 
-    async def process_data(self, data: pd.DataFrame) -> pd.DataFrame:
+    async def process_data(self, data: pd.DataFrame, **kwargs) -> pd.DataFrame:
         """处理从Tushare获取的数据
 
         包括列名映射和数据转换。
@@ -150,16 +151,18 @@ class TushareDataTransformer:
         data = self._apply_transformations(data)
 
         # 3. 调用子类可能重写的 process_data 方法进行额外处理
-        # if hasattr(self.task, "_task_specific_process_data") and callable(
-        #     self.task._task_specific_process_data
-        # ):
-        #     self.logger.debug("调用Task子类特定的数据处理方法...")
-        #     # 检查是否为异步方法
-        #     import inspect
-        #     if inspect.iscoroutinefunction(self.task._task_specific_process_data):
-        #         data = await self.task._task_specific_process_data(data)
-        #     else:
-        #         data = self.task._task_specific_process_data(data)
+        if hasattr(cast(Any, self.task), "process_data") and callable(
+            cast(Any, self.task).process_data
+        ):
+            self.logger.debug("调用Task子类特定的数据处理方法...")
+            # 检查是否为异步方法
+            if inspect.iscoroutinefunction(cast(Any, self.task).process_data):
+                data = await cast(Any, self.task).process_data(data, **kwargs)
+            else:
+                data = cast(Any, self.task).process_data(data, **kwargs)
+            
+            # 显式地将返回结果 cast 为 DataFrame
+            data = cast(pd.DataFrame, data)
 
         return data
 

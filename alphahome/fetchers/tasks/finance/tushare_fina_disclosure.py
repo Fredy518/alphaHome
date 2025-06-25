@@ -7,15 +7,16 @@
 继承自 TushareTask，按季度获取数据。
 """
 
-from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional, Tuple
+from datetime import datetime, timedelta, date
+from typing import Any, Dict, List, Optional
 
 import pandas as pd
 from dateutil.relativedelta import relativedelta
 
 from ...sources.tushare.tushare_task import TushareTask
 from alphahome.common.task_system.task_decorator import task_register
-from ...tools.batch_utils import generate_quarter_end_batches
+from alphahome.common.constants import UpdateTypes
+from ...sources.tushare.batch_utils import generate_quarter_end_batches
 
 
 @task_register()
@@ -35,10 +36,8 @@ class TushareFinaDisclosureTask(TushareTask):
     default_start_date = "19901231"  # 开始日期
     commit = True  # 数据插入后自动提交事务
 
-    # New attribute for quarterly lookback
-    quarter_lookback = (
-        3  # Fetch data for the current quarter and the N previous quarters
-    )
+    # 智能增量配置：使用180天回溯覆盖季度数据
+    smart_lookback_days = 180  # 6个月回溯，确保覆盖季度数据更新
 
     # --- 代码级默认配置 (会被 config.json 覆盖) --- #
     default_concurrent_limit = 10
@@ -83,145 +82,61 @@ class TushareFinaDisclosureTask(TushareTask):
         "modify_date": {"type": "DATE", "constraints": ""},
     }
 
-    async def _determine_execution_dates(
-        self, **kwargs
-    ) -> Tuple[Optional[str], Optional[str], bool, str]:
+    async def _determine_date_range(self) -> Optional[Dict[str, str]]:
         """
-        覆盖基类方法，根据不同模式计算执行日期范围。
-        优先级: 1. 智能增量 (季度回溯) -> 2. 全量模式 -> 3. 手动指定日期
+        季度对齐的智能增量更新
 
-        智能增量: 通过smart_incremental标志或根据日期特征推断，使用季度回溯逻辑计算日期范围
-        全量导入: 使用 self.default_start_date 和当前日期
-        手动增量: 使用 kwargs 中的 start_date 和 end_date
+        重写基类方法以实现财报披露数据的季度特定逻辑：
+        - 智能增量：从最新数据的季度开始回溯90天，确保覆盖季度数据更新
+        - 日期对齐到季度边界，符合财报披露的季度特性
         """
-        try:
-            # 获取基本参数
-            user_start_date = kwargs.get("start_date")
-            user_end_date = kwargs.get("end_date")
-            is_force_full = kwargs.get("force_full", False)
-            is_smart_incremental = kwargs.get("smart_incremental", False)
+        self.logger.info(f"任务 {self.name}: 正在确定季度对齐的智能增量日期范围...")
 
-            # 尝试推断是否是智能增量调用（即使没有明确标记）
-            is_likely_smart_incremental = False
+        if self.update_type == UpdateTypes.SMART:
+            latest_date_in_db = await self.get_latest_date_for_task()
 
-            # 检查1：如果有明确的标记
-            if is_smart_incremental:
-                is_likely_smart_incremental = True
-                self.logger.info(
-                    f"任务 {self.name}: 检测到 smart_incremental=True 标志"
-                )
+            if latest_date_in_db:
+                # 从最新日期回溯90天，然后对齐到季度开始
+                lookback_date = latest_date_in_db - timedelta(days=self.smart_lookback_days)
+                start_dt = self._get_quarter_start(lookback_date)
 
-            # 检查2：如果end_date接近当前日期，这可能是智能增量自动设置的
-            if user_end_date and not is_likely_smart_incremental:
-                try:
-                    today = datetime.now()
-                    end_date_dt = datetime.strptime(user_end_date, "%Y%m%d")
-                    days_diff = (today - end_date_dt).days
-
-                    # 如果结束日期是最近7天内，可能是智能增量设置的
-                    if -1 <= days_diff <= 7:
-                        # 进一步验证start_date特征，如果为日历月末或接近值
-                        if user_start_date:
-                            start_date_dt = datetime.strptime(user_start_date, "%Y%m%d")
-                            # 如果开始日期是月底或月初附近的日期
-                            day = start_date_dt.day
-                            if day in [1, 2, 28, 29, 30, 31] or abs(day - 15) <= 2:
-                                is_likely_smart_incremental = True
-                                self.logger.info(
-                                    f"任务 {self.name}: 通过日期特征分析推断为智能增量调用 (start={user_start_date}, end={user_end_date})"
-                                )
-                except Exception as e:
-                    self.logger.debug(f"任务 {self.name}: 日期特征分析失败: {e}")
-
-            # 根据判断结果决定执行路径
-            if (
-                is_smart_incremental or is_likely_smart_incremental
-            ) and not is_force_full:
-                # 智能增量模式: 使用季度回溯逻辑
-                self.logger.info(
-                    f"任务 {self.name}: 执行智能增量季度回溯 (quarter_lookback={self.quarter_lookback}) 日期逻辑。"
-                )
-
-                # 忽略已存在的 start_date 和 end_date，强制执行季度回溯计算
-                current_date = datetime.now()
-
-                # 计算当前季度的结束日期
-                current_quarter_month_end = ((current_date.month - 1) // 3 + 1) * 3
-                final_end_date_dt = (
-                    datetime(current_date.year, current_quarter_month_end, 1)
-                    + relativedelta(months=1)
-                    - relativedelta(days=1)
-                )
-
-                # Add time control: if before 21:00, set end date to yesterday
-                # 如果当前时间在21:00之前，将结束日期设置为前一天
-                if current_date.hour < 21:
-                    final_end_date_dt = final_end_date_dt - timedelta(days=1)
-
-                # 计算回溯季度的起始日期
-                start_lookback_period_dt = final_end_date_dt - relativedelta(
-                    months=3 * (self.quarter_lookback - 1)
-                )
-                first_month_of_start_quarter = (
-                    (start_lookback_period_dt.month - 1) // 3
-                ) * 3 + 1
-                final_start_date_dt = datetime(
-                    start_lookback_period_dt.year, first_month_of_start_quarter, 1
-                )
-
-                final_start_date_str = final_start_date_dt.strftime("%Y%m%d")
-                final_end_date_str = final_end_date_dt.strftime("%Y%m%d")
+                # 确保不早于默认起始日期
+                default_start_dt = datetime.strptime(self.default_start_date, "%Y%m%d").date()
+                start_dt = max(start_dt, default_start_dt)
 
                 self.logger.info(
-                    f"任务 {self.name}: 智能增量季度回溯计算的日期范围: start_date={final_start_date_str}, end_date={final_end_date_str}"
+                    f"任务 {self.name}: 找到最新日期 {latest_date_in_db}，从季度开始日期 {start_dt} 开始更新"
                 )
-                return final_start_date_str, final_end_date_str, False, ""
-
-            elif is_force_full:
-                # 全量导入模式: 使用默认起始日期到当前日期
-                self.logger.info(
-                    f"任务 {self.name}: 检测到 force_full=True，执行全量导入日期逻辑。"
-                )
-                final_start_date_str = self.default_start_date
-                final_end_date_str = datetime.now().strftime("%Y%m%d")
-                self.logger.info(
-                    f"任务 {self.name}: 全量导入日期范围: start_date={final_start_date_str}, end_date={final_end_date_str}"
-                )
-                return final_start_date_str, final_end_date_str, False, ""
-
-            elif user_start_date and user_end_date:
-                # 手动增量模式: 用户明确指定了起止日期
-                self.logger.info(
-                    f"任务 {self.name}: 检测到手动指定的日期范围: start_date={user_start_date}, end_date={user_end_date}"
-                )
-                return user_start_date, user_end_date, False, ""
-
             else:
-                # 兜底情况: 未明确标识模式或未支持的模式
-                self.logger.warning(
-                    f"任务 {self.name}: 无法确定执行模式 (非智能增量/全量导入/手动增量)，使用当前日期作为默认范围。"
-                )
-                current_date_str = datetime.now().strftime("%Y%m%d")
-                return (
-                    current_date_str,
-                    current_date_str,
-                    False,
-                    "无法确定执行模式，使用当前日期作为默认范围",
-                )
+                start_dt = datetime.strptime(self.default_start_date, "%Y%m%d").date()
+                self.logger.info(f"任务 {self.name}: 未找到数据，从默认起始日期 {start_dt} 开始更新")
 
-        except Exception as e:
-            self.logger.error(
-                f"任务 {self.name}: 在 _determine_execution_dates 中计算日期范围失败: {e}",
-                exc_info=True,
-            )
-            current_date_str = datetime.now().strftime("%Y%m%d")
-            # In case of error, fallback to a very narrow range to avoid unintended full fetches if dates are bad
-            return (
-                current_date_str,
-                current_date_str,
-                False,
-                f"Error in date calculation: {e}",
-            )
+            # 结束日期对齐到当前季度末
+            end_dt = self._get_current_quarter_end()
+
+            if start_dt > end_dt:
+                self.logger.info(f"任务 {self.name}: 数据已是最新，无需更新")
+                return None
+
+            return {
+                "start_date": start_dt.strftime("%Y%m%d"),
+                "end_date": end_dt.strftime("%Y%m%d"),
+            }
+        else:
+            # 对于非智能增量模式，使用基类的标准处理
+            return await super()._determine_date_range()
+
+    def _get_quarter_start(self, date_obj: date) -> date:
+        """获取指定日期所在季度的开始日期"""
+        quarter_month = ((date_obj.month - 1) // 3) * 3 + 1
+        return date_obj.replace(month=quarter_month, day=1)
+
+    def _get_current_quarter_end(self) -> date:
+        """获取当前季度的结束日期"""
+        current_date = datetime.now().date()
+        quarter_month_end = ((current_date.month - 1) // 3 + 1) * 3
+        return (datetime(current_date.year, quarter_month_end, 1) +
+                relativedelta(months=1) - relativedelta(days=1)).date()
 
     async def get_batch_list(self, **kwargs) -> List[Dict]:
         """生成按季度的批处理参数列表
@@ -240,9 +155,13 @@ class TushareFinaDisclosureTask(TushareTask):
         end_date = kwargs.get("end_date")
         ts_code = kwargs.get("ts_code")
 
-        if not start_date or not end_date:
-            self.logger.error(f"任务 {self.name}: 必须提供 start_date 和 end_date 参数")
-            return []
+        # 支持基类的全量更新机制：如果没有提供日期范围，使用默认范围
+        if not start_date:
+            start_date = self.default_start_date
+            self.logger.info(f"任务 {self.name}: 未提供 start_date，使用默认起始日期: {start_date}")
+        if not end_date:
+            end_date = datetime.now().strftime("%Y%m%d")
+            self.logger.info(f"任务 {self.name}: 未提供 end_date，使用当前日期: {end_date}")
 
         self.logger.info(
             f"任务 {self.name}: 使用季度批次工具生成批处理列表，范围: {start_date} 到 {end_date}"
@@ -262,11 +181,11 @@ class TushareFinaDisclosureTask(TushareTask):
             batch_list = []
             for batch in quarter_batches:
                 # 提取 'period' 值作为 'end_date'
-                if "period" in batch:
-                    batch_params = {"end_date": batch["period"]}
+                if "end_date" in batch:
+                    batch_params = {"end_date": batch["end_date"]}
                     # 复制其他参数
                     for key, value in batch.items():
-                        if key != "period":
+                        if key != "end_date":
                             batch_params[key] = value
                     batch_list.append(batch_params)
 
@@ -278,14 +197,13 @@ class TushareFinaDisclosureTask(TushareTask):
             )
             return []
 
-    async def process_data(self, df: pd.DataFrame) -> pd.DataFrame:
+    def _process_data(self, df: pd.DataFrame, **kwargs) -> pd.DataFrame:
         """
-        异步处理从API获取的原始数据。
+        处理从API获取的原始数据。
         此方法可以被子类覆盖以实现特定的数据转换逻辑。
         """
         # 首先调用父类的通用处理逻辑 (如果它存在且做了有用的事)
-        # 假设父类的 process_data 是同步的
-        df = super().process_data(df)
+        df = super()._process_data(df, **kwargs)
 
         # 如果df为空或者不是DataFrame，则直接返回
         if not isinstance(df, pd.DataFrame) or df.empty:

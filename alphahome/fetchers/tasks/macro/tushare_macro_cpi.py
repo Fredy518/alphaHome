@@ -15,10 +15,10 @@ import pandas as pd
 
 # 确认导入路径正确 (相对于当前文件)
 from ...sources.tushare.tushare_task import TushareTask
-from alphahome.common.task_system.task_decorator import task_register
+from ....common.task_system.task_decorator import task_register
 
 # 导入月份批次生成工具函数
-from ...tools.batch_utils import generate_month_batches
+from ...sources.tushare.batch_utils import generate_month_batches
 
 
 @task_register()
@@ -110,9 +110,14 @@ class TushareMacroCpiTask(TushareTask):
         start_date = kwargs.get("start_date")
         end_date = kwargs.get("end_date")
 
-        if not start_date or not end_date:
-            self.logger.error(f"任务 {self.name}: 必须提供 start_date 和 end_date 参数")
-            return []
+        # 支持基类的全量更新机制：如果没有提供日期范围，使用默认范围
+        if not start_date:
+            start_date = self.default_start_date
+            self.logger.info(f"任务 {self.name}: 未提供 start_date，使用默认起始日期: {start_date}")
+        if not end_date:
+            from datetime import datetime
+            end_date = datetime.now().strftime("%Y%m%d")
+            self.logger.info(f"任务 {self.name}: 未提供 end_date，使用当前日期: {end_date}")
 
         # 转换为YYYYMM格式
         if len(start_date) == 8:  # YYYYMMDD格式
@@ -155,19 +160,58 @@ class TushareMacroCpiTask(TushareTask):
             return df
 
         # 新增: 计算 month_end_date
-        try:
-            df["month_end_date"] = pd.to_datetime(
-                df["month"], format="%Y%m"
-            ) + pd.offsets.MonthEnd(0)
-            # 确保转换为纯日期对象，如果数据库列是 DATE 类型
-            df["month_end_date"] = df["month_end_date"].dt.date
-        except Exception as e:
-            self.logger.error(
-                f"任务 {self.name}: 计算 month_end_date 时出错: {e}", exc_info=True
+        original_rows = len(df)
+        if "month" in df.columns:
+            # 1. 预过滤无效月份字符串 (例如，非数字或长度不为6的)
+            initial_valid_mask = df["month"].astype(str).str.match(r"^\d{6}$").fillna(False)
+            invalid_month_count = (~initial_valid_mask).sum()
+            if invalid_month_count > 0:
+                self.logger.warning(
+                    f"任务 {self.name}: 发现 {invalid_month_count} 行无效的 'month' 格式，已过滤。"
+                )
+                df = df[initial_valid_mask].copy()
+                if df.empty:
+                    self.logger.info(
+                        f"任务 {self.name}: 过滤无效月份后DataFrame为空，跳过后续处理。"
+                    )
+                    return df
+
+            try:
+                df["month_end_date"] = pd.to_datetime(
+                    df["month"], format="%Y%m", errors='coerce' # 使用 coerce 处理无法解析的值为 NaT
+                ) + pd.offsets.MonthEnd(0)
+
+                # 2. 显式处理 NaT 值：移除 month_end_date 为 NaT 的行
+                nat_mask = df["month_end_date"].isna()
+                nat_count = nat_mask.sum()
+                if nat_count > 0:
+                    self.logger.warning(
+                        f"任务 {self.name}: 发现 {nat_count} 行 'month_end_date' 转换为 NaT，已过滤。"
+                    )
+                    df = df[~nat_mask].copy()
+                    if df.empty:
+                        self.logger.info(
+                            f"任务 {self.name}: 过滤 NaT 日期后DataFrame为空，跳过后续处理。"
+                        )
+                        return df
+
+                # 确保转换为纯日期对象，如果数据库列是 DATE 类型
+                df["month_end_date"] = df["month_end_date"].dt.date
+
+            except Exception as e:
+                self.logger.error(
+                    f"任务 {self.name}: 计算 month_end_date 时出错: {e}", exc_info=True
+                )
+                raise ValueError(
+                    f"任务 {self.name}: month_end_date 计算失败，停止处理。"
+                ) from e
+
+        else:
+            self.logger.warning(
+                f"任务 {self.name}: 原始数据中缺少 'month' 列，无法计算 month_end_date。"
             )
-            raise ValueError(
-                f"任务 {self.name}: month_end_date 计算失败，停止处理。"
-            ) from e
+            # 如果 month 列缺失，且 month_end_date 是 NOT NULL，则返回空 DataFrame 或抛出错误
+            return pd.DataFrame() # 返回空 DataFrame，表示没有有效数据可以保存
 
         self.logger.info(
             f"任务 {self.name}: process_data 被调用，已添加 month_end_date，返回 DataFrame (行数: {len(df)})。"

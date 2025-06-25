@@ -7,12 +7,12 @@ from typing import Any, Dict, List, Optional
 import pandas as pd
 from tqdm.asyncio import tqdm
 
-from alphahome.common.task_system.base_task import BaseTask
-from alphahome.fetchers.tools.batch_utils import (
+from ...common.task_system.base_task import BaseTask
+from ..sources.tushare.batch_utils import (
     generate_natural_day_batches,
     generate_trade_day_batches,
 )
-from alphahome.common.constants import UpdateTypes
+from ...common.constants import UpdateTypes
 
 logger = logging.getLogger(__name__)
 

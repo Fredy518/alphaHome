@@ -7,7 +7,7 @@
 继承自 TushareTask，按 trade_date 增量更新。
 """
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
 import numpy as np  # 引入 numpy 用于处理可能的 inf/-inf
@@ -15,10 +15,10 @@ import pandas as pd
 
 # 导入基础类和装饰器
 from ...sources.tushare.tushare_task import TushareTask
-from alphahome.common.task_system.task_decorator import task_register
+from ....common.task_system.task_decorator import task_register
 
-# 导入批处理工具
-from ...tools.batch_utils import generate_single_date_batches
+
+
 
 
 @task_register()
@@ -32,14 +32,14 @@ class TushareStockFactorProTask(TushareTask):
     primary_keys = ["ts_code", "trade_date"]
     date_column = "trade_date"
     default_start_date = "19901219"  # A股最早交易日附近
+    smart_lookback_days = 3 # 智能增量模式下，回看3天
 
     # --- 代码级默认配置 (会被 config.json 覆盖) --- #
     default_concurrent_limit = 5
     default_page_size = 10000
 
     # 2. TushareTask 特有属性
-    api_name = "stk_factor_pro"  # Tushare API 名称
-    # 包含所有 stk_factor_pro 接口返回的字段
+    api_name = "stk_factor_pro"
     fields = [
         "ts_code",
         "trade_date",
@@ -229,50 +229,61 @@ class TushareStockFactorProTask(TushareTask):
     # 3. 列名映射
     column_mapping = {"vol": "volume"}
 
-    # 4. 自定义索引
-    indexes = [
-        {
-            "name": "idx_stkfactor_code_date",
-            "columns": ["ts_code", "trade_date"],
-            "unique": True,
-        },
-        {"name": "idx_stkfactor_date", "columns": "trade_date"},
-        {"name": "idx_stkfactor_code", "columns": "ts_code"},
-        {"name": "idx_stkfactor_update_time", "columns": "update_time"},
-    ]
+    # 4. 数据类型转换 (所有数值型字段转换为 float)
+    transformations = {
+        col: float for col in fields if col not in ["ts_code", "trade_date"]
+    }
 
     # 5. 数据库表结构
     schema_def = {
         "ts_code": {"type": "VARCHAR(15)", "constraints": "NOT NULL"},
         "trade_date": {"type": "DATE", "constraints": "NOT NULL"},
-        "pe": {"type": "FLOAT"},
         # 动态生成其他所有数值字段的 schema
         **{
             col: {"type": "NUMERIC(18, 6)"}
             for col in fields
-            if col
-            not in [
-                "ts_code",
-                "trade_date",
-                "vol",
-                "amount",
-                "open",
-                "high",
-                "low",
-                "close",
-            ]
+            if col not in ["ts_code", "trade_date", "downdays", "updays", "lowdays", "topdays"]
         },
+        "downdays": {"type": "INTEGER"},
+        "updays": {"type": "INTEGER"},
+        "lowdays": {"type": "INTEGER"},
+        "topdays": {"type": "INTEGER"},
     }
 
-    # 6. 数据类型转换 (所有数值型字段转换为 float)
-    transformations = {
-        col: float for col in fields if col not in ["ts_code", "trade_date"]
-    }
+    # 6. 自定义索引
+    indexes = [
+        {"name": "idx_stkfactor_code_date", "columns": ["ts_code", "trade_date"], "unique": True},
+        {"name": "idx_stkfactor_date", "columns": "trade_date"},
+        {"name": "idx_stkfactor_code", "columns": "ts_code"},
+        {"name": "idx_stkfactor_update_time", "columns": "update_time"},
+    ]
+
+    # 7. 数据验证函数 (用于调用时机验证)
+    def _process_data(self, data: pd.DataFrame, **kwargs) -> pd.DataFrame:
+        """处理从API获取的数据"""
+        if data.empty:
+            return data
+
+        # 调用父类的通用处理逻辑
+        data = super()._process_data(data, **kwargs)
+
+        # 替换 inf/-inf 为 NaN，在后续处理中会被转换为 NULL
+        numeric_columns = data.select_dtypes(include=[np.number]).columns
+        for col in numeric_columns:
+            data.loc[:, col] = data[col].replace([np.inf, -np.inf], np.nan)
+
+        return data
 
     async def get_batch_list(self, **kwargs: Any) -> List[Dict]:
-        """
-        生成批处理参数列表 (使用单日期批次工具)。
+        """使用 BatchPlanner 生成批处理参数列表
+
         为每个交易日生成单独的批次，使用 trade_date 参数。
+
+        Args:
+            **kwargs: 查询参数，包括start_date、end_date、ts_code等
+
+        Returns:
+            List[Dict]: 批处理参数列表
         """
         start_date_overall = kwargs.get("start_date")
         end_date_overall = kwargs.get("end_date")
@@ -282,11 +293,8 @@ class TushareStockFactorProTask(TushareTask):
         if not start_date_overall:
             latest_db_date = await self.get_latest_date()
             if latest_db_date:
-                date_obj = pd.to_datetime(latest_db_date)
-                if pd.notna(date_obj):  # 检查是否为NaT
-                    start_date_overall = (date_obj + pd.Timedelta(days=1)).strftime("%Y%m%d")
-                else:
-                    start_date_overall = self.default_start_date
+                next_day_obj = latest_db_date + timedelta(days=1)
+                start_date_overall = next_day_obj.strftime("%Y%m%d") # type: ignore
             else:
                 start_date_overall = self.default_start_date
             self.logger.info(
@@ -297,102 +305,42 @@ class TushareStockFactorProTask(TushareTask):
             end_date_overall = datetime.now().strftime("%Y%m%d")
             self.logger.info(f"未提供 end_date，使用当前日期: {end_date_overall}")
 
-        if pd.to_datetime(start_date_overall) > pd.to_datetime(end_date_overall):  # type: ignore
+        if datetime.strptime(str(start_date_overall), "%Y%m%d") > datetime.strptime(str(end_date_overall), "%Y%m%d"): # type: ignore
             self.logger.info(
                 f"起始日期 ({start_date_overall}) 晚于结束日期 ({end_date_overall})，无需执行任务。"
             )
             return []
 
         self.logger.info(
-            f"任务 {self.name}: 使用单日期批次工具生成批处理列表，范围: {start_date_overall} 到 {end_date_overall}, 股票代码: {ts_code if ts_code else '所有'}"
+            f"任务 {self.name}: 使用 BatchPlanner 生成批处理列表，范围: {start_date_overall} 到 {end_date_overall}, 股票代码: {ts_code if ts_code else '所有'}"
         )
 
-
         try:
+            # 使用标准的单日期批次生成工具
+            from ...sources.tushare.batch_utils import generate_single_date_batches
+
+            # 准备附加参数
+            additional_params = {"fields": ",".join(self.fields or [])}
+
             batch_list = await generate_single_date_batches(
-                start_date=start_date_overall, # type: ignore
+                start_date=start_date_overall,
                 end_date=end_date_overall,
-                date_field="trade_date",  # API 使用 trade_date 参数
-                ts_code=ts_code,  # 可选的股票代码
-                exchange="SSE",  # 明确指定使用上交所日历作为A股代表
-                additional_params={"fields": self.fields},
+                date_field="trade_date",  # 指定日期字段名
+                ts_code=ts_code,
+                exchange="SSE",
+                additional_params=additional_params,
                 logger=self.logger,
             )
-            self.logger.info(f"成功生成 {len(batch_list)} 个单日期批次。")
+
+            self.logger.info(f"任务 {self.name}: 成功生成 {len(batch_list)} 个批次")
             return batch_list
+
         except Exception as e:
             self.logger.error(
-                f"任务 {self.name}: 生成单日期批次时出错: {e}", exc_info=True
+                f"任务 {self.name}: 生成批次时出错: {e}", exc_info=True
             )
             return []
 
-    # 重写 specific_transform 以处理可能的无穷大值
-    async def specific_transform(self, df: pd.DataFrame) -> pd.DataFrame:
-        """处理 DataFrame 中的无穷大值和数据质量检查"""
-        self.logger.info(f"开始数据质量检查和转换，原始数据形状: {df.shape}")
-        
-        # 选择所有数值类型的列进行处理
-        numeric_cols = df.select_dtypes(include=np.number).columns
-        self.logger.debug(f"识别到 {len(numeric_cols)} 个数值列: {list(numeric_cols)}")
-        
-        # 1. 检查无穷大值
-        inf_counts = {}
-        neg_inf_counts = {}
-        for col in numeric_cols:
-            inf_count = np.isinf(df[col]).sum()
-            pos_inf_count = (df[col] == np.inf).sum()
-            neg_inf_count = (df[col] == -np.inf).sum()
-            if inf_count > 0:
-                inf_counts[col] = inf_count
-                if pos_inf_count > 0:
-                    self.logger.warning(f"列 {col} 包含 {pos_inf_count} 个正无穷大值")
-                if neg_inf_count > 0:
-                    neg_inf_counts[col] = neg_inf_count
-                    self.logger.warning(f"列 {col} 包含 {neg_inf_count} 个负无穷大值")
-        
-        # 2. 检查极值（超出NUMERIC(18,6)范围的值）
-        max_value = 999999999999.999999  # NUMERIC(18,6)的最大值
-        min_value = -999999999999.999999  # NUMERIC(18,6)的最小值
-        extreme_value_counts = {}
-        for col in numeric_cols:
-            extreme_mask = (df[col] > max_value) | (df[col] < min_value)
-            extreme_count = extreme_mask.sum()
-            if extreme_count > 0:
-                extreme_value_counts[col] = extreme_count
-                self.logger.warning(f"列 {col} 包含 {extreme_count} 个超出NUMERIC(18,6)范围的极值")
-                # 记录一些样本极值
-                extreme_values = df.loc[extreme_mask, col].head(3).tolist()
-                self.logger.warning(f"列 {col} 的极值样本: {extreme_values}")
-        
-        # 3. 将无穷大值替换为 NaN
-        df[numeric_cols] = df[numeric_cols].replace([np.inf, -np.inf], np.nan)
-        
-        # 4. 将超出范围的极值也替换为 NaN
-        for col in numeric_cols:
-            extreme_mask = (df[col] > max_value) | (df[col] < min_value)
-            if extreme_mask.any():
-                df.loc[extreme_mask, col] = np.nan
-        
-        # 5. 检查NaN值
-        nan_counts = {}
-        for col in numeric_cols:
-            nan_count = df[col].isna().sum()
-            if nan_count > 0:
-                nan_counts[col] = nan_count
-        
-        # 6. 记录统计信息
-        if inf_counts:
-            self.logger.info(f"处理了无穷大值的列: {inf_counts}")
-        if extreme_value_counts:
-            self.logger.info(f"处理了极值的列: {extreme_value_counts}")
-        if nan_counts:
-            self.logger.info(f"包含NaN值的列: {dict(list(nan_counts.items())[:10])}")  # 只显示前10个
-        
-        # 7. 记录一些基本统计信息
-        if len(numeric_cols) > 0:
-            self.logger.debug(f"数值列的基本统计信息:")
-            stats = df[numeric_cols].describe()
-            self.logger.debug(f"统计摘要:\n{stats}")
-        
-        self.logger.info(f"数据质量检查完成，最终数据形状: {df.shape}")
-        return df
+
+# 导出任务类
+__all__ = ["TushareStockFactorProTask"]

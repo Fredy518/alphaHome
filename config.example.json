@@ -1,10 +1,34 @@
 {
     "_comment": "请将本文件复制到你的用户配置目录（如 C:/Users/<你的用户名>/AppData/Local/YourAppNameOrAuthor/alphaHomeApp/config.json），并根据实际情况填写数据库和API信息。",
     "database": {
-        "url": "postgresql://username:password@localhost:5432/tusharedb"
+        "url": "postgresql://username:password@localhost:5432/tusharedb",
+        "pool_config": {
+            "_comment": "数据库连接池配置 - 用于优化批量数据操作性能",
+            "min_size": 5,
+            "max_size": 25,
+            "command_timeout": 180,
+            "max_queries": 50000,
+            "max_inactive_connection_lifetime": 300,
+            "server_settings": {
+                "_comment": "PostgreSQL 服务器设置 - 优化连接性能",
+                "application_name": "alphahome_fetcher",
+                "tcp_keepalives_idle": "600",
+                "tcp_keepalives_interval": "30",
+                "tcp_keepalives_count": "3",
+                "jit": "off"
+            }
+        }
     },
     "api": {
         "tushare_token": "your_tushare_token_here"
+    },
+    "performance": {
+        "_comment": "性能监控和优化配置",
+        "enable_monitoring": true,
+        "max_history_records": 100,
+        "log_slow_operations": true,
+        "slow_operation_threshold": 10.0,
+        "auto_batch_size_optimization": false
     },
     "tasks": {
         "_comment": "在此处为特定任务覆盖默认设置",

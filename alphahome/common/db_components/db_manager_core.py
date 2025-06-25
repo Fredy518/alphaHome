@@ -214,41 +214,142 @@ class DBManagerCore:
                 raise
         return self._local.connection
 
+    def _get_pool_config(self) -> dict:
+        """获取连接池配置参数
+
+        从配置文件中读取连接池配置，如果配置文件中没有相关配置，
+        则使用优化后的默认值。
+
+        Returns:
+            dict: 连接池配置参数字典
+
+        Note:
+            - 支持通过配置文件动态调整连接池参数
+            - 提供合理的默认值确保性能优化
+            - 配置文件路径: config.json -> database.pool_config
+        """
+        try:
+            # 尝试导入配置管理器（避免循环导入）
+            from ..config_manager import load_config
+            config = load_config()
+
+            # 从配置文件获取连接池配置
+            pool_config = config.get('database', {}).get('pool_config', {})
+
+            # 合并默认配置和用户配置
+            default_config = {
+                'min_size': 5,
+                'max_size': 25,
+                'command_timeout': 180,
+                'max_queries': 50000,
+                'max_inactive_connection_lifetime': 300,
+                'server_settings': {
+                    'application_name': 'alphahome_fetcher',
+                    'tcp_keepalives_idle': '600',
+                    'tcp_keepalives_interval': '30',
+                    'tcp_keepalives_count': '3',
+                    'jit': 'off'
+                }
+            }
+
+            # 合并配置，用户配置优先
+            final_config = default_config.copy()
+            final_config.update(pool_config)
+
+            # 特殊处理 server_settings，允许部分覆盖
+            if 'server_settings' in pool_config:
+                final_config['server_settings'] = {
+                    **default_config['server_settings'],
+                    **pool_config['server_settings']
+                }
+
+            self.logger.debug(f"连接池配置加载完成: {final_config}")
+            return final_config
+
+        except Exception as e:
+            # 如果配置加载失败，使用默认配置
+            self.logger.warning(f"加载连接池配置失败，使用默认配置: {e}")
+            return {
+                'min_size': 5,
+                'max_size': 25,
+                'command_timeout': 180,
+                'max_queries': 50000,
+                'max_inactive_connection_lifetime': 300,
+                'server_settings': {
+                    'application_name': 'alphahome_fetcher',
+                    'tcp_keepalives_idle': '600',
+                    'tcp_keepalives_interval': '30',
+                    'tcp_keepalives_count': '3',
+                    'jit': 'off'
+                }
+            }
+
     async def connect(self):
         """创建数据库连接池（仅异步模式）
-        
+
         在异步模式下创建并初始化asyncpg连接池。连接池提供高效的连接管理，
         支持并发操作和自动连接回收。
-        
+
         连接池特性：
             - 自动连接管理：根据负载自动创建和销毁连接
             - 并发支持：支持多个异步操作同时使用不同连接
             - 健康检查：自动检测和替换无效连接
             - 资源优化：智能的连接复用和回收机制
-            
+
         初始化过程：
             1. 解析连接字符串
-            2. 创建asyncpg连接池
+            2. 创建asyncpg连接池（使用优化配置）
             3. 验证连接可用性
             4. 记录初始化状态
-            
+
+        性能优化配置：
+            - min_size=5: 最小连接数，保持基础连接池
+            - max_size=25: 最大连接数，支持高并发（从默认10提升）
+            - command_timeout=180: 命令超时时间，适应大批量操作
+            - max_queries=50000: 每连接最大查询数，减少连接重建
+            - max_inactive_connection_lifetime=300: 连接最大空闲时间
+
         Raises:
             RuntimeError: 当在同步模式下调用此方法时
             asyncpg.PostgresError: 数据库连接失败时
             Exception: 其他连接相关错误
-            
+
         Note:
             - 此方法仅在异步模式下使用
             - 连接池创建后可以立即使用
             - 重复调用不会创建多个连接池
+            - 配置参数可通过配置文件动态调整
         """
         if self.mode != "async":
             raise RuntimeError("connect 方法只能在异步模式下使用")
 
         if self.pool is None:
             try:
-                self.pool = await asyncpg.create_pool(self.connection_string)
-                self.logger.info("异步数据库连接池创建成功")
+                # 获取连接池配置（支持配置文件覆盖）
+                pool_config = self._get_pool_config()
+
+                self.pool = await asyncpg.create_pool(
+                    self.connection_string,
+                    min_size=pool_config.get('min_size', 5),
+                    max_size=pool_config.get('max_size', 25),
+                    command_timeout=pool_config.get('command_timeout', 180),
+                    max_queries=pool_config.get('max_queries', 50000),
+                    max_inactive_connection_lifetime=pool_config.get('max_inactive_connection_lifetime', 300),
+                    server_settings=pool_config.get('server_settings', {
+                        'application_name': 'alphahome_fetcher',
+                        'tcp_keepalives_idle': '600',
+                        'tcp_keepalives_interval': '30',
+                        'tcp_keepalives_count': '3',
+                        'jit': 'off'  # 关闭JIT以提高小查询性能
+                    })
+                )
+
+                self.logger.info(
+                    f"优化的异步数据库连接池创建成功 "
+                    f"(min_size={pool_config.get('min_size', 5)}, "
+                    f"max_size={pool_config.get('max_size', 25)}, "
+                    f"command_timeout={pool_config.get('command_timeout', 180)}s)"
+                )
             except Exception as e:
                 self.logger.error(f"异步数据库连接池创建失败: {str(e)}")
                 raise

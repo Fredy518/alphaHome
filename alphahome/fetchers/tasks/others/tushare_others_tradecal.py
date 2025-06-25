@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Optional
 import pandas as pd
 
 from ...sources.tushare.tushare_task import TushareTask
-from alphahome.common.task_system.task_decorator import task_register
+from ....common.task_system.task_decorator import task_register
 
 # logger 实例将由 TushareTask 基类提供 (self.logger)
 

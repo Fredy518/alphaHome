@@ -5,7 +5,7 @@ import pandas as pd
 
 from ...sources.tushare import TushareTask
 from alphahome.common.task_system.task_decorator import task_register
-from ...tools.batch_utils import generate_natural_day_batches
+from ...sources.tushare.batch_utils import generate_financial_data_batches
 from ...tools.calendar import get_trade_days_between
 
 
@@ -95,7 +95,7 @@ class TushareFinaForecastTask(TushareTask):
     # ]
 
     async def get_batch_list(self, **kwargs) -> List[Dict]:
-        """生成批处理参数列表 (使用自然日批次工具)
+        """生成批处理参数列表 (使用标准化的财务数据批次工具)
 
         Args:
             **kwargs: 查询参数，包括start_date、end_date、ts_code等
@@ -103,30 +103,13 @@ class TushareFinaForecastTask(TushareTask):
         Returns:
             List[Dict]: 批处理参数列表
         """
-        start_date = kwargs.get("start_date")
-        end_date = kwargs.get("end_date")
-        ts_code = kwargs.get("ts_code")
-
-        if not start_date or not end_date:
-            self.logger.error(f"任务 {self.name}: 必须提供 start_date 和 end_date 参数")
-            return []
-
-        self.logger.info(
-            f"任务 {self.name}: 使用自然日批次工具生成批处理列表，范围: {start_date} 到 {end_date}"
+        # 使用标准化的财务数据批次生成函数
+        return await generate_financial_data_batches(
+            start_date=kwargs.get("start_date"),
+            end_date=kwargs.get("end_date"),
+            ts_code=kwargs.get("ts_code"),
+            default_start_date=self.default_start_date,
+            batch_size=90,  # 使用90天作为批次大小
+            logger=self.logger,
+            task_name=self.name
         )
-
-        try:
-            # 使用自然日批次生成工具
-            batch_list = await generate_natural_day_batches(
-                start_date=start_date,
-                end_date=end_date,
-                batch_size=365,  # 使用365天作为批次大小
-                ts_code=ts_code,
-                logger=self.logger,
-            )
-            return batch_list
-        except Exception as e:
-            self.logger.error(
-                f"任务 {self.name}: 生成自然日批次时出错: {e}", exc_info=True
-            )
-            return []

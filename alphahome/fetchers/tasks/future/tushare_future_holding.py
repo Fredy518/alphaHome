@@ -15,10 +15,10 @@ import pandas as pd
 
 # 确认导入路径正确 (相对于当前文件)
 from ...sources.tushare.tushare_task import TushareTask
-from alphahome.common.task_system.task_decorator import task_register
+from ....common.task_system.task_decorator import task_register
 
 # 导入单交易日批次生成工具函数
-from ...tools.batch_utils import generate_single_date_batches
+from ...sources.tushare.batch_utils import generate_single_date_batches
 
 # logger 由 Task 基类提供
 # import logging
@@ -116,9 +116,14 @@ class TushareFutureHoldingTask(TushareTask):
         start_date = kwargs.get("start_date")
         end_date = kwargs.get("end_date")
 
-        if not start_date or not end_date:
-            self.logger.error(f"任务 {self.name}: 必须提供 start_date 和 end_date 参数")
-            return []
+        # 支持基类的全量更新机制：如果没有提供日期范围，使用默认范围
+        if not start_date:
+            start_date = self.default_start_date
+            self.logger.info(f"任务 {self.name}: 未提供 start_date，使用默认起始日期: {start_date}")
+        if not end_date:
+            from datetime import datetime
+            end_date = datetime.now().strftime("%Y%m%d")
+            self.logger.info(f"任务 {self.name}: 未提供 end_date，使用当前日期: {end_date}")
 
         all_batches: List[Dict] = []
         self.logger.info(
@@ -132,7 +137,6 @@ class TushareFutureHoldingTask(TushareTask):
                 batches_for_exchange = await generate_single_date_batches(
                     start_date=start_date,
                     end_date=end_date,
-                    date_field="trade_date",  # API 使用的日期字段名
                     ts_code=None,  # 获取该交易所下所有合约的排名，不指定特定 symbol
                     exchange=ex_code,  # 用于 get_trade_days_between 内部获取交易日
                     additional_params={
@@ -159,39 +163,6 @@ class TushareFutureHoldingTask(TushareTask):
 
         self.logger.info(f"任务 {self.name}: 总共生成 {len(all_batches)} 个批次。")
         return all_batches
-
-    async def process_data(self, df: pd.DataFrame, **kwargs: Any) -> pd.DataFrame:
-        """
-        异步处理从API获取的原始数据。
-        """
-        if not isinstance(df, pd.DataFrame) or df.empty:
-            self.logger.info(
-                f"任务 {self.name}: process_data 接收到空 DataFrame，跳过处理。"
-            )
-            return df
-
-        # 确保 API 返回的 'exchange' 字段（如果存在且应该填充）被正确处理
-        # 如果 API 返回的 DataFrame 中可能没有 'exchange' 列，但我们批处理时指定了，
-        # 我们需要确保它被添加到 DataFrame 中，因为它是主键一部分。
-        # Tushare fut_holding 的 fields 包含 'exchange'，所以API应该会返回它。
-        # 如果 fut_holding 在某些情况下（如未指定 symbol）不返回 exchange，则需要在这里填充。
-        # 但根据接口文档，exchange 是输出字段，应该总是存在。
-
-        # kwargs 包含API调用时的参数，包括我们通过 additional_params 传递的 'exchange'
-        # api_call_exchange = kwargs.get('exchange')
-        # if api_call_exchange and 'exchange' not in df.columns:
-        #     df['exchange'] = api_call_exchange
-        # elif api_call_exchange and df['exchange'].isnull().any():
-        #     # 如果列存在但有空值，用API调用时的 exchange 填充
-        #     df['exchange'] = df['exchange'].fillna(api_call_exchange)
-
-        # 调用基类方法完成通用处理（列名映射、transformations 应用、日期转换等）
-        # df = super().process_data(df, **kwargs) # 基类会处理 column_mapping 和 transformations
-
-        self.logger.info(
-            f"任务 {self.name}: process_data 处理 DataFrame (行数: {len(df)})."
-        )
-        return df
 
     async def validate_data(self, df: pd.DataFrame, **kwargs: Any) -> pd.DataFrame:
         """

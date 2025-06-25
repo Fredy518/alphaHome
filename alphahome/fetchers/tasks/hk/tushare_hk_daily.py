@@ -13,8 +13,8 @@ from typing import Any, Dict, List
 import pandas as pd
 
 from ...sources.tushare.tushare_task import TushareTask
-from alphahome.common.task_system.task_decorator import task_register
-from ...tools.batch_utils import generate_trade_day_batches
+from ....common.task_system.task_decorator import task_register
+from ...sources.tushare.batch_utils import generate_trade_day_batches
 
 
 @task_register()
@@ -30,6 +30,7 @@ class TushareHKDailyTask(TushareTask):
     default_start_date = (
         "19860402"  # 港股市场较早的参考日期 (恒生指数起始附近，请按实际数据源调整)
     )
+    smart_lookback_days = 0 # 禁用智能增量模式下的回看机制
 
     # --- 代码级默认配置 (会被 config.json 覆盖) --- #
     default_concurrent_limit = 5  # 默认并发限制
@@ -126,9 +127,7 @@ class TushareHKDailyTask(TushareTask):
         )  # 使用 'HKEX' 作为 Tushare Pro API 中 `hk_tradecal` 的交易所参数
         # 或根据 generate_trade_day_batches 的期望值调整
 
-        if not start_date or not end_date:
-            self.logger.error(f"任务 {self.name}: 必须提供 start_date 和 end_date 参数")
-            return []
+        # 日期范围已通过默认值处理，无需额外检查
 
         self.logger.info(
             f"任务 {self.name}: 使用交易日批次工具生成批处理列表，范围: {start_date} 到 {end_date} for exchange: {exchange_code_for_calendar}"

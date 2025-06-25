@@ -9,7 +9,7 @@
 
 import asyncio
 import logging
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
@@ -18,7 +18,7 @@ from ...sources.tushare.tushare_task import TushareTask
 from alphahome.common.task_system.task_decorator import task_register
 
 # 导入批处理工具
-from ...tools.batch_utils import (
+from ...sources.tushare.batch_utils import (
     generate_single_date_batches,
     generate_trade_day_batches,
 )
@@ -36,10 +36,11 @@ class TushareFundDailyTask(TushareTask):
     primary_keys = ["ts_code", "trade_date"]
     date_column = "trade_date"
     default_start_date = "20000101"  # 调整为合理的起始日期
+    smart_lookback_days = 3 # 智能增量模式下，回看3天
 
     # --- 代码级默认配置 (会被 config.json 覆盖) --- #
     default_concurrent_limit = 2
-    default_page_size = 6000
+    default_page_size = 2000
 
     # 2. TushareTask 特有属性
     api_name = "fund_daily"  # Tushare API 名称
@@ -120,13 +121,7 @@ class TushareFundDailyTask(TushareTask):
 
     def __init__(self, db_connection, api_token=None, api=None, **kwargs):
         """初始化任务，并设置特定的API调用限制"""
-        super().__init__(db_connection, api_token, api)
-
-        # 设置fund_daily API的速率限制（每分钟最多调用次数）
-        # 为了避免触发Tushare的限制，将其设置为较低的值
-        if hasattr(self.api, "set_api_rate_limit"):
-            self.api.set_api_rate_limit("fund_daily", 120)  # 每分钟最多120次调用
-            self.logger.info(f"已设置 {self.api_name} API的速率限制为: 120次/分钟")
+        super().__init__(db_connection, api_token, api, **kwargs)
 
     async def get_batch_list(self, **kwargs: Any) -> List[Dict]:
         """
@@ -164,7 +159,7 @@ class TushareFundDailyTask(TushareTask):
             batch_list = await generate_single_date_batches(
                 start_date=start_date,
                 end_date=end_date,
-                date_field="trade_date",  # 使用 trade_date 作为日期字段
+                date_field="trade_date",
                 ts_code=ts_code,
                 logger=self.logger,
             )
@@ -196,7 +191,7 @@ class TushareFundDailyTask(TushareTask):
                 )
         return df
 
-    def prepare_params(self, batch_params: Dict) -> Dict:
+    async def prepare_params(self, batch_params: Dict) -> Dict:
         """
         准备 API 调用参数。
         将批次中的 trade_date 直接映射到 API 参数中。
@@ -213,10 +208,12 @@ class TushareFundDailyTask(TushareTask):
 
         return api_params
 
-    async def fetch_batch(self, batch_params: Dict) -> pd.DataFrame:
+    async def fetch_batch(
+        self, batch_params: Dict, stop_event: Optional[asyncio.Event] = None
+    ) -> Optional[pd.DataFrame]:
         """重写fetch_batch方法，添加请求延迟"""
         # 调用父类方法获取数据
-        df = await super().fetch_batch(batch_params)
+        df = await super().fetch_batch(batch_params, stop_event=stop_event)
 
         # 添加延迟，避免请求过于频繁
         if hasattr(self, "request_delay") and self.request_delay > 0:
