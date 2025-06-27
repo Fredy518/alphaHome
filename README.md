@@ -807,7 +807,36 @@ python -m alphahome.gui.main_window
 4. **代码质量检查**: `make lint && make test`
 5. **提交 Pull Request**
 
-详见: [TDD实践指南](docs/TDD_GUIDE.md)
+详见: [TDD实践指南](docs/development/tdd_guide.md)
+
+## 📚 **文档导航**
+
+完整的文档已重新整理，按功能分类：
+
+### **🚀 快速开始**
+- [安装指南](docs/setup/installation.md) - 环境配置和依赖安装
+- [配置指南](docs/setup/configuration.md) - 数据库连接和API配置
+
+### **👥 用户文档**
+- [用户指南](docs/user/user_guide.md) - 完整的用户操作手册
+- [常见问题](docs/user/faq.md) - 常见问题解答
+
+### **🔧 开发文档**
+- [TDD实践指南](docs/development/tdd_guide.md) - 测试驱动开发指南
+- [贡献指南](docs/development/contributing.md) - 如何参与项目开发
+
+### **🏗️ 架构文档**
+- [系统架构](docs/architecture/system_overview.md) - 整体架构设计
+- [任务系统设计](docs/architecture/task_system.md) - 四层任务架构详解
+
+### **📊 业务文档**
+- [数据源说明](docs/business/data_sources.md) - 支持的数据源详解
+- [数据质量](docs/business/data_quality.md) - 数据质量检查和验证
+
+### **🔧 工具文档**
+- [命令行工具](docs/tools/cli.md) - Make命令和脚本使用
+
+更多文档请查看 [文档中心](docs/README.md)
 
 ## 📄 **许可证**
 

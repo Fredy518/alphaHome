@@ -129,7 +129,7 @@ class TushareDataTransformer:
                 try:
                     # 确保处理前列中没有Python原生的None，统一使用np.nan
                     if data[column].dtype == "object":
-                        data[column] = data[column].fillna(np.nan)
+                        data[column] = data[column].fillna(np.nan).infer_objects(copy=False)
 
                     # 定义一个安全的转换函数，处理np.nan值
                     def safe_transform(x):
