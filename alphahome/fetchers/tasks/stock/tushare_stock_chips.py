@@ -91,6 +91,19 @@ class TushareStockChipsTask(TushareTask):
         # update_time 列会自动添加
     }
 
+    # 7. 数据验证规则
+    validations = [
+        lambda df: df['ts_code'].notna(),
+        lambda df: df['trade_date'].notna(),
+        lambda df: df['his_high'] >= df['his_low'],
+        lambda df: df['cost_15pct'] >= df['cost_5pct'],
+        lambda df: df['cost_50pct'] >= df['cost_15pct'],
+        lambda df: df['cost_85pct'] >= df['cost_50pct'],
+        lambda df: df['cost_95pct'] >= df['cost_85pct'],
+        lambda df: df['weight_avg'] > 0,
+        lambda df: df['winner_rate'].between(0, 100),
+    ]
+
     async def get_batch_list(self, **kwargs: Any) -> List[Dict[str, Any]]:
         """使用 BatchPlanner 生成批处理参数列表
 
@@ -111,9 +124,8 @@ class TushareStockChipsTask(TushareTask):
         if not start_date_overall:
             latest_db_date = await self.get_latest_date()
             if latest_db_date:
-                start_date_overall = (
-                    pd.to_datetime(latest_db_date) + pd.Timedelta(days=1)
-                ).strftime("%Y%m%d")
+                start_date_overall = latest_db_date + pd.Timedelta(days=1)
+                start_date_overall = start_date_overall.strftime("%Y%m%d")
             else:
                 start_date_overall = self.default_start_date
             self.logger.info(

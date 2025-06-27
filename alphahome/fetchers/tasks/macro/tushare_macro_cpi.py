@@ -148,10 +148,9 @@ class TushareMacroCpiTask(TushareTask):
             # 抛出异常以便上层调用者感知
             raise RuntimeError(f"任务 {self.name}: 生成月度批次失败") from e
 
-    async def process_data(self, df: pd.DataFrame, **kwargs) -> pd.DataFrame:
+    def process_data(self, df: pd.DataFrame, **kwargs) -> pd.DataFrame:
         """
-        异步处理从API获取的原始数据。
-        调用基类方法完成通用处理。
+        处理从API获取的原始数据（重写基类扩展点）
         """
         if not isinstance(df, pd.DataFrame) or df.empty:
             self.logger.info(
@@ -159,7 +158,10 @@ class TushareMacroCpiTask(TushareTask):
             )
             return df
 
-        # 新增: 计算 month_end_date
+        # 首先调用基类的数据处理方法（应用基础转换）
+        df = super().process_data(df, **kwargs)
+
+        # CPI特定的数据处理
         original_rows = len(df)
         if "month" in df.columns:
             # 1. 预过滤无效月份字符串 (例如，非数字或长度不为6的)
@@ -177,78 +179,78 @@ class TushareMacroCpiTask(TushareTask):
                     return df
 
             try:
-                df["month_end_date"] = pd.to_datetime(
-                    df["month"], format="%Y%m", errors='coerce' # 使用 coerce 处理无法解析的值为 NaT
-                ) + pd.offsets.MonthEnd(0)
-
-                # 2. 显式处理 NaT 值：移除 month_end_date 为 NaT 的行
-                nat_mask = df["month_end_date"].isna()
-                nat_count = nat_mask.sum()
-                if nat_count > 0:
+                # 2. 手动生成 month_end_date 列（从 YYYYMM 转换为该月的最后一天）
+                self.logger.debug(f"任务 {self.name}: 开始生成 month_end_date 列")
+                
+                def convert_month_to_end_date(month_str):
+                    """将 YYYYMM 格式转换为该月的最后一天"""
+                    try:
+                        if pd.isna(month_str) or month_str == '':
+                            return None
+                        
+                        month_str = str(month_str).strip()
+                        if len(month_str) != 6 or not month_str.isdigit():
+                            return None
+                            
+                        year = int(month_str[:4])
+                        month = int(month_str[4:6])
+                        
+                        # 创建该月第一天，然后找到下月第一天，再减去一天得到月末
+                        from datetime import datetime
+                        import calendar
+                        
+                        # 获取该月的最后一天
+                        last_day = calendar.monthrange(year, month)[1]
+                        month_end = datetime(year, month, last_day)
+                        
+                        return month_end.date()
+                    except Exception as e:
+                        self.logger.warning(f"转换月份 '{month_str}' 时出错: {e}")
+                        return None
+                
+                df["month_end_date"] = df["month"].apply(convert_month_to_end_date)
+                
+                # 检查转换结果
+                null_count = df["month_end_date"].isna().sum()
+                if null_count > 0:
                     self.logger.warning(
-                        f"任务 {self.name}: 发现 {nat_count} 行 'month_end_date' 转换为 NaT，已过滤。"
+                        f"任务 {self.name}: 有 {null_count} 行的 month_end_date 转换失败，将被过滤掉"
                     )
-                    df = df[~nat_mask].copy()
-                    if df.empty:
-                        self.logger.info(
-                            f"任务 {self.name}: 过滤 NaT 日期后DataFrame为空，跳过后续处理。"
-                        )
-                        return df
-
-                # 确保转换为纯日期对象，如果数据库列是 DATE 类型
-                df["month_end_date"] = df["month_end_date"].dt.date
-
+                    # 过滤掉转换失败的行
+                    df = df[df["month_end_date"].notna()].copy()
+                
+                self.logger.info(
+                    f"任务 {self.name}: 成功生成 month_end_date 列，剩余 {len(df)} 行数据"
+                )
+                
             except Exception as e:
                 self.logger.error(
-                    f"任务 {self.name}: 计算 month_end_date 时出错: {e}", exc_info=True
+                    f"任务 {self.name}: 生成 'month_end_date' 列时出错: {e}",
+                    exc_info=True,
                 )
-                raise ValueError(
-                    f"任务 {self.name}: month_end_date 计算失败，停止处理。"
-                ) from e
+                # 如果生成失败，确保不会有 null 值传递到数据库
+                return pd.DataFrame()
 
-        else:
+        # 验证过滤后是否还有数据
+        if len(df) < original_rows:
             self.logger.warning(
-                f"任务 {self.name}: 原始数据中缺少 'month' 列，无法计算 month_end_date。"
+                f"任务 {self.name}: 在日期处理后，数据从 {original_rows} 行减少到 {len(df)} 行。"
             )
-            # 如果 month 列缺失，且 month_end_date 是 NOT NULL，则返回空 DataFrame 或抛出错误
-            return pd.DataFrame() # 返回空 DataFrame，表示没有有效数据可以保存
 
-        self.logger.info(
-            f"任务 {self.name}: process_data 被调用，已添加 month_end_date，返回 DataFrame (行数: {len(df)})。"
-        )
-        return df
-
-    async def validate_data(self, df: pd.DataFrame, **kwargs: Any) -> pd.DataFrame:
-        """
-        验证从 Tushare API 获取的数据。
-        - 检查 DataFrame 是否为空。
-        - 检查关键业务字段 ('month', 'nt_val', 'nt_yoy') 是否全部为空。
-        """
         if df.empty:
-            self.logger.warning(
-                f"任务 {self.name}: 从 API 获取的 DataFrame 为空，无需验证。"
+            self.logger.info(
+                f"任务 {self.name}: 处理后无有效数据，返回空DataFrame。"
             )
-            return df
 
-        critical_cols = [
-            "month",
-            "nt_val",
-            "nt_yoy",
-        ]  # 最关键的字段：月份、全国当月值和同比
-        missing_cols = [col for col in critical_cols if col not in df.columns]
-        if missing_cols:
-            error_msg = f"任务 {self.name}: 数据验证失败 - 缺失关键业务字段: {', '.join(missing_cols)}。"
-            self.logger.error(error_msg)
-            raise ValueError(error_msg)
-
-        # 替换空字符串为 NA 以便 isnull() 检测
-        df_check = df[critical_cols].replace("", pd.NA)
-        if df_check.isnull().all(axis=1).all(): # type: ignore
-            error_msg = f"任务 {self.name}: 数据验证失败 - 所有行的关键业务字段 ({', '.join(critical_cols)}) 均为空值。"
-            self.logger.critical(error_msg)
-            raise ValueError(error_msg)
-
-        self.logger.info(
-            f"任务 {self.name}: 数据验证通过，获取了 {len(df)} 条有效记录。"
-        )
         return df
+
+    # 7. 数据验证规则 (真正生效的验证机制)
+    validations = [
+        (lambda df: df['month'].notna(), "月份不能为空"),
+        (lambda df: df['nt_val'].notna(), "全国当月CPI值不能为空"),
+        (lambda df: df['nt_yoy'].notna(), "全国同比增长率不能为空"),
+        (lambda df: ~(df['month'].astype(str).str.strip().eq('') | df['month'].isna()), "月份不能为空字符串"),
+        (lambda df: df['nt_val'] >= 0, "CPI值应为非负数"),
+        (lambda df: df['nt_val'] <= 1000, "CPI值应在合理范围内（≤1000）"),
+        (lambda df: df['nt_yoy'].abs() <= 100, "同比增长率应在合理范围内（±100%）"),
+    ]

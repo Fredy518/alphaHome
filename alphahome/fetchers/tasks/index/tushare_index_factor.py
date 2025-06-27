@@ -11,6 +11,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
+import numpy as np
 
 # 导入基础类和装饰器
 from ...sources.tushare.tushare_task import TushareTask
@@ -147,6 +148,18 @@ class TushareIndexFactorProTask(TushareTask):
         {"name": "idx_factorpro_update_time", "columns": "update_time"},
     ]
 
+    # 4.1 数据验证规则
+    validations = [
+        lambda df: df['ts_code'].notna(),
+        lambda df: df['trade_date'].notna(),
+        lambda df: df['close'] > 0,
+        lambda df: df['high'] >= df['low'],
+        lambda df: df['volume'] >= 0,
+        lambda df: df['amount'] >= 0,
+        lambda df: df['rsi_bfq_12'].between(0, 100), # RSI指标应在0-100之间
+        lambda df: df['kdj_k_bfq'].between(0, 100), # KDJ.K指标应在0-100之间
+    ]
+
     # 5. 数据库表结构
     schema_def = {
         "ts_code": {"type": "VARCHAR(20)", "constraints": "NOT NULL"},
@@ -194,7 +207,7 @@ class TushareIndexFactorProTask(TushareTask):
             latest_db_date = await self.get_latest_date()
             if latest_db_date:
                 start_date_overall = (
-                    pd.to_datetime(latest_db_date) + pd.Timedelta(days=1)
+                    latest_db_date + pd.Timedelta(days=1)
                 ).strftime("%Y%m%d")
             else:
                 start_date_overall = self.default_start_date

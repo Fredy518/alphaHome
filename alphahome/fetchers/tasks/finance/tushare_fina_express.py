@@ -148,17 +148,16 @@ class TushareFinaExpressTask(TushareTask):
     }
 
     # 7.数据验证规则
-    # validations = [
-    #     lambda df: pd.to_datetime(df["end_date"], errors="coerce").notna(),
-    #     lambda df: pd.to_datetime(df["ann_date"], errors="coerce").notna(),
-    #     lambda df: df["revenue"].fillna(0) >= 0,  # 营业收入应为正
-    #     lambda df: df["total_assets"].fillna(0) >= 0,  # 总资产应为正
-    #     lambda df: df["diluted_eps"].fillna(0).abs() < 100,  # 每股收益应在合理范围内
-    #     lambda df: df["diluted_roe"].fillna(0).abs() < 1,  # ROE应在合理范围内
-    #     lambda df: df["yoy_sales"].fillna(0).abs() < 10,  # 销售同比增长率应在合理范围内
-    #     lambda df: df["yoy_net_profit"].fillna(0).abs() < 10,  # 净利润同比增长率应在合理范围内
-    #     lambda df: df["growth_assets"].fillna(0).abs() < 10  # 总资产同比增长率应在合理范围内
-    # ]
+    validations = [
+        (lambda df: df['ts_code'].notna(), "股票代码不能为空"),
+        (lambda df: df['ann_date'].notna(), "公告日期不能为空"),
+        (lambda df: df['end_date'].notna(), "报告期不能为空"),
+        (lambda df: df['ann_date'] >= df['end_date'], "公告日期应晚于或等于报告期"),
+        (lambda df: df["revenue"].fillna(0) >= 0, "营业收入不能为负数"),
+        (lambda df: df["total_assets"].fillna(0) >= 0, "总资产不能为负数"),
+        (lambda df: df["diluted_eps"].fillna(0).abs() <= 100, "每股收益应在合理范围内（±100元）"),
+        (lambda df: df["diluted_roe"].fillna(0).abs() <= 1000, "ROE应在合理范围内（±1000%）"),
+    ]
 
     async def get_batch_list(self, **kwargs) -> List[Dict]:
         """生成批处理参数列表 (使用标准化的财务数据批次工具)

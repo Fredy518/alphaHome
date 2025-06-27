@@ -24,7 +24,7 @@ import asyncio  # 添加 asyncio 导入
 from ...sources.tushare.tushare_task import TushareTask
 from ...sources.tushare.batch_utils import (
     generate_stock_code_batches,
-    generate_trade_day_batches
+    generate_single_date_batches
 )
 from ....common.task_system.task_decorator import task_register
 
@@ -121,6 +121,19 @@ class TushareStockDividendTask(TushareTask):
         {"name": "idx_stock_dividend_update_time", "columns": "update_time"},
     ]
 
+    # 7. 数据验证规则
+    validations = [
+        lambda df: df['ts_code'].notna(),
+        lambda df: df['ex_date'].notna(),
+        lambda df: df['stk_div'] >= 0,
+        lambda df: df['cash_div'] >= 0,
+        lambda df: df['cash_div_tax'] >= df['cash_div'], # 税前分红应大于等于税后
+        lambda df: df['div_proc'].isin(['预案', '股东大会通过', '实施']),
+        # 逻辑日期检查 (允许某些日期为空)
+        lambda df: (df['ex_date'] >= df['record_date']) | df['record_date'].isnull(),
+        lambda df: (df['pay_date'] >= df['ex_date']) | df['pay_date'].isnull(),
+    ]
+
     async def get_batch_list(self, **kwargs) -> List[Dict]:
         """使用 BatchPlanner 生成批处理参数列表
 
@@ -178,13 +191,13 @@ class TushareStockDividendTask(TushareTask):
                     )
                     return []
 
-                return await generate_trade_day_batches(
-                    logger=self.logger,
+                return await generate_single_date_batches(
                     start_date=start_date,
                     end_date=end_date,
+                    date_field="ex_date",
+                    logger=self.logger,
                     exchange=kwargs.get("exchange", "SSE"),
-                    additional_params={"fields": ",".join(self.fields or [])},
-                    **kwargs # 传递其他可能的参数
+                    additional_params={"fields": ",".join(self.fields or [])}
                 )
 
         except Exception as e:

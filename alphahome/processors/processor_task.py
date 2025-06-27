@@ -147,29 +147,30 @@ class ProcessorTask(BaseTask, BlockProcessorMixin):
         return tables_data
     
     def process_data(self, data, stop_event=None, **kwargs):
-        """处理数据
-        
-        重写基类方法，专门处理数据计算逻辑。
-        
+        """
+        处理数据（重写基类的扩展点）
+
+        专门处理数据计算逻辑，实现了 ProcessorTask 特有的数据处理流程。
+
         Args:
             data: 源数据，可能是DataFrame或多个表的数据字典
             stop_event: 停止事件
             **kwargs: 其他参数
-            
+
         Returns:
             pd.DataFrame: 处理后的数据
         """
-        # 调用核心计算方法
+        # 首先调用核心计算方法（ProcessorTask特有逻辑）
         if isinstance(data, dict):
             # 多表数据
             result = self._calculate_from_multiple_sources(data, **kwargs)
         else:
             # 单表数据
             result = self._calculate_from_single_source(data, **kwargs)
-        
-        # 应用基类的通用处理逻辑（如transformations）
+
+        # 然后应用基类的通用处理逻辑（如transformations）
         result = super().process_data(result, stop_event=stop_event, **kwargs)
-        
+
         return result
     
     def _calculate_from_single_source(self, data: pd.DataFrame, **kwargs) -> pd.DataFrame:

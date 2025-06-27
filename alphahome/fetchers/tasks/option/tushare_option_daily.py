@@ -165,7 +165,7 @@ class TushareOptionDailyTask(TushareTask):
             # 抛出异常以便上层调用者感知
             raise RuntimeError(f"任务 {self.name}: 生成批次失败") from e
 
-    async def process_data(self, df: pd.DataFrame, **kwargs) -> pd.DataFrame:
+    def process_data(self, df: pd.DataFrame, **kwargs) -> pd.DataFrame:
         """
         异步处理从API获取的原始数据。
         调用基类方法完成通用处理（日期转换、transformations 应用）。
@@ -188,44 +188,12 @@ class TushareOptionDailyTask(TushareTask):
         )
         return df
 
-    async def validate_data(self, df: pd.DataFrame, **kwargs: Any) -> pd.DataFrame:
-        """
-        验证从 Tushare API 获取的数据。
-        - 检查 DataFrame 是否为空。
-        - 检查关键业务字段 ('ts_code', 'trade_date', 'exchange', 'close', 'volume') 是否全部为空。
-        """
-        if df.empty:
-            exchange = kwargs.get("exchange", "未知交易所")
-            self.logger.warning(
-                f"任务 {self.name}: 从 API 获取 {exchange} 的 DataFrame 为空，无需验证。"
-            )
-            return df
+    # 验证规则：使用 validations 列表（真正生效的验证机制）
+    validations = [
+        lambda df: df['ts_code'].notna(),       # 期权代码不能为空
+        lambda df: df['trade_date'].notna(),    # 交易日期不能为空
+        lambda df: (df['close'] >= 0),          # 收盘价不能为负
+        lambda df: (df['vol'] >= 0),            # 成交量不能为负
+    ]
+    
 
-        # 关键业务字段列表
-        critical_cols = [
-            "ts_code",
-            "trade_date",
-            "exchange",
-            "close",
-            "volume",
-        ]  # 使用映射后的 volume
-
-        # 检查关键列是否存在
-        missing_cols = [col for col in critical_cols if col not in df.columns]
-        if missing_cols:
-            error_msg = f"任务 {self.name}: 数据验证失败 - 缺失关键业务字段: {', '.join(missing_cols)}."
-            self.logger.error(error_msg)
-            raise ValueError(error_msg)
-
-        # 检查关键列是否所有行都为空
-        # 替换空字符串为 NA 以便 isnull() 检测
-        df_check = df[critical_cols].replace("", pd.NA)
-        if df_check.isnull().all(axis=1).all():
-            error_msg = f"任务 {self.name}: 数据验证失败 - 所有行的关键业务字段 ({', '.join(critical_cols)}) 均为空值或缺失。"
-            self.logger.critical(error_msg)
-            raise ValueError(error_msg)
-
-        self.logger.info(
-            f"任务 {self.name}: 数据验证通过，获取了 {len(df)} 条有效记录。"
-        )
-        return df

@@ -250,6 +250,17 @@ class TushareStockFactorProTask(TushareTask):
         "topdays": {"type": "INTEGER"},
     }
 
+    # 5.1 数据验证规则
+    validations = [
+        lambda df: df['ts_code'].notna(),
+        lambda df: df['trade_date'].notna(),
+        lambda df: df['adj_factor'] > 0, # 复权因子必须为正
+        lambda df: df['close'] > 0,
+        lambda df: df['high'] >= df['low'],
+        lambda df: df['volume'] >= 0,
+        lambda df: df['turnover_rate'].between(0, 100),
+    ]
+
     # 6. 自定义索引
     indexes = [
         {"name": "idx_stkfactor_code_date", "columns": ["ts_code", "trade_date"], "unique": True},
@@ -258,14 +269,13 @@ class TushareStockFactorProTask(TushareTask):
         {"name": "idx_stkfactor_update_time", "columns": "update_time"},
     ]
 
-    # 7. 数据验证函数 (用于调用时机验证)
-    def _process_data(self, data: pd.DataFrame, **kwargs) -> pd.DataFrame:
+    def process_data(self, data: pd.DataFrame, **kwargs) -> pd.DataFrame:
         """处理从API获取的数据"""
         if data.empty:
             return data
 
         # 调用父类的通用处理逻辑
-        data = super()._process_data(data, **kwargs)
+        data = super().process_data(data, **kwargs)
 
         # 替换 inf/-inf 为 NaN，在后续处理中会被转换为 NULL
         numeric_columns = data.select_dtypes(include=[np.number]).columns

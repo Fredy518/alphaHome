@@ -197,13 +197,13 @@ class TushareFinaDisclosureTask(TushareTask):
             )
             return []
 
-    def _process_data(self, df: pd.DataFrame, **kwargs) -> pd.DataFrame:
+    def process_data(self, df: pd.DataFrame, **kwargs) -> pd.DataFrame:
         """
-        处理从API获取的原始数据。
-        此方法可以被子类覆盖以实现特定的数据转换逻辑。
+        对财报披露计划数据进行额外处理。
+        - 确保 `actual_date` 列的数据类型正确，并处理空值。
         """
         # 首先调用父类的通用处理逻辑 (如果它存在且做了有用的事)
-        df = super()._process_data(df, **kwargs)
+        df = super().process_data(df, **kwargs)
 
         # 如果df为空或者不是DataFrame，则直接返回
         if not isinstance(df, pd.DataFrame) or df.empty:

@@ -243,33 +243,32 @@ class TushareFinaIndicatorTask(TushareTask):
         },  # Assuming update_flag is a single character
     }
 
-    # 7.数据验证规则 (Optional, add specific checks if needed)
-    validations = []
+    # 7.数据验证规则
+    validations = [
+        (lambda df: df['ts_code'].notna(), "股票代码不能为空"),
+        (lambda df: df['end_date'].notna(), "报告期不能为空"),
+    ]
 
-    def process_data(self, data):
-        """处理从Tushare获取的数据
-
-        简化版本：只处理财务指标特有的数据清理需求
+    def process_data(self, data, **kwargs):
         """
+        处理从API获取的原始数据。
+        - 增加对 'update_flag' 的处理，如果值不是 '0' 或 '1' 则设为 NULL
+        """
+        # 首先调用父类的通用处理逻辑
+        data = super().process_data(data, **kwargs)
 
-        # 处理财务指标特有的数据清理：ann_date 空值填充
-        if "ann_date" in data.columns and "end_date" in data.columns:
-            # 使用 end_date 填充空的 ann_date
-            null_mask = data["ann_date"].isna() | (data["ann_date"] == "")
-            if null_mask.any():
-                data.loc[null_mask, "ann_date"] = data.loc[null_mask, "end_date"]
-                self.logger.info(f"已使用 end_date 填充 {null_mask.sum()} 条记录的空 ann_date")
-
-                # 检查填充后是否还有空值（说明 end_date 也为空）
-                still_null = data["ann_date"].isna() | (data["ann_date"] == "")
-                if still_null.any():
-                    self.logger.warning(f"移除 {still_null.sum()} 条无法修复的记录（end_date 也为空）")
-                    data = data[~still_null]
+        if "update_flag" in data.columns:
+            # 仅保留 '0' 和 '1'，其他值（包括空字符串、None等）替换为 pd.NA
+            data["update_flag"] = data["update_flag"].where(
+                data["update_flag"].isin(["0", "1"]), pd.NA
+            )
 
         return data
 
     async def get_batch_list(self, **kwargs) -> List[Dict]:
-        """生成批处理参数列表 (使用标准化的财务数据批次工具)
+        """
+        生成批处理参数列表。
+        对于财务数据，通常按单个股票代码分批获取所有报告期的数据。
 
         Args:
             **kwargs: 查询参数，包括start_date、end_date、ts_code等

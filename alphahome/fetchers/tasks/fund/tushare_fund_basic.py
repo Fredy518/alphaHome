@@ -124,12 +124,21 @@ class TushareFundBasicTask(TushareTask):
         },  # 新增 update_time 索引
     ]
 
-    def __init__(self, db_connection, api_token=None, api=None, **kwargs):
-        """初始化任务"""
-        super().__init__(db_connection, api_token=api_token, api=api, **kwargs)
-        # 全量更新，设置为串行执行以简化
-        self.concurrent_limit = 1
-        self.logger.info(f"任务 {self.name} 已配置为串行执行 (concurrent_limit=1)")
+    # 7. 数据验证规则
+    validations = [
+        (lambda df: df['ts_code'].notna(), "基金代码不能为空"),
+        (lambda df: df['name'].notna(), "基金名称不能为空"),
+        (lambda df: df['fund_type'].notna(), "基金类型不能为空"),
+        (lambda df: df['status'].isin(['D', 'I', 'L']), "存续状态必须为D/I/L（终止/发行/上市）"),
+        (lambda df: df['market'].isin(['E', 'O']), "市场类型必须为E/O（场内/场外）"),
+    ]
+
+    # def __init__(self, db_connection, api_token=None, api=None, **kwargs):
+    #     """初始化任务"""
+    #     super().__init__(db_connection, api_token=api_token, api=api, **kwargs)
+    #     # 全量更新，设置为串行执行以简化
+    #     self.concurrent_limit = 1
+    #     self.logger.info(f"任务 {self.name} 已配置为串行执行 (concurrent_limit=1)")
 
     async def get_batch_list(self, **kwargs: Any) -> List[Dict]:
         """
@@ -139,34 +148,4 @@ class TushareFundBasicTask(TushareTask):
         self.logger.info(f"任务 {self.name}: 全量获取模式，生成单一批次。")
         return [{'market': 'E'}, {'market': 'O'}]
 
-    async def validate_data(self, df: pd.DataFrame, **kwargs: Any) -> pd.DataFrame:
-        """
-        验证从 Tushare API 获取的数据。
-        - 检查 DataFrame 是否为空。
-        - 检查关键业务字段 ('name') 是否全部为空。
-        """
-        if df.empty:
-            self.logger.warning(
-                f"任务 {self.name}: 从 API 获取的 DataFrame 为空，无需验证。"
-            )
-            return df
-
-        critical_cols = ["name"]
-        missing_cols = [col for col in critical_cols if col not in df.columns]
-        if missing_cols:
-            error_msg = f"任务 {self.name}: 数据验证失败 - 缺失关键业务字段: {', '.join(missing_cols)}。"
-            self.logger.error(error_msg)
-            raise ValueError(error_msg)
-
-        # 替换空字符串为 NA 以便 isnull() 检测
-        df_check = df[critical_cols].replace("", pd.NA)
-        if df_check.isnull().all(axis=1).all():
-            error_msg = f"任务 {self.name}: 数据验证失败 - 所有行的关键业务字段 ({', '.join(critical_cols)}) 均为空值。"
-            self.logger.critical(error_msg)
-            raise ValueError(error_msg)
-
-        self.logger.info(
-            f"任务 {self.name}: 数据验证通过，获取了 {len(df)} 条有效记录。"
-        )
-        return df
 

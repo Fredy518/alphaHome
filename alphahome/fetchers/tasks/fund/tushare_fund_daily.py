@@ -113,11 +113,16 @@ class TushareFundDailyTask(TushareTask):
         }  # 新增 update_time 索引
     ]
 
-    # 7. 速率控制设置 - 添加这些属性
-    # 降低并发数，避免过多并发请求导致触发API限制
-    concurrent_limit = 2
-    # 每次请求后的等待时间（秒），避免请求过于密集
-    request_delay = 0.2
+    # 7. 数据验证规则
+    validations = [
+        (lambda df: df['ts_code'].notna(), "基金代码不能为空"),
+        (lambda df: df['trade_date'].notna(), "交易日期不能为空"),
+        (lambda df: df['close'] > 0, "收盘价必须为正数"),
+        (lambda df: df['high'] >= df['low'], "最高价不能低于最低价"),
+        (lambda df: df['volume'] >= 0, "成交量不能为负数"),
+        (lambda df: df['amount'] >= 0, "成交额不能为负数"),
+    ]
+
 
     def __init__(self, db_connection, api_token=None, api=None, **kwargs):
         """初始化任务，并设置特定的API调用限制"""
@@ -170,53 +175,3 @@ class TushareFundDailyTask(TushareTask):
             return []
 
     # validate_data 可以使用基类或自定义
-    async def validate_data(self, df: pd.DataFrame, **kwargs: Any) -> pd.DataFrame:
-        """
-        验证基金日线数据。
-        """
-        if df.empty:
-            return df
-        # 检查映射后的 volume 和 turnover 是否为非负数
-        if "volume" in df.columns:
-            negative_vol = (df["volume"].dropna() < 0).sum()
-            if negative_vol > 0:
-                self.logger.warning(
-                    f"任务 {self.name}: 列 'volume' 发现 {negative_vol} 条负值记录。"
-                )
-        if "amount" in df.columns:
-            negative_amount = (df["amount"].dropna() < 0).sum()
-            if negative_amount > 0:
-                self.logger.warning(
-                    f"任务 {self.name}: 列 'amount' 发现 {negative_amount} 条负值记录。"
-                )
-        return df
-
-    async def prepare_params(self, batch_params: Dict) -> Dict:
-        """
-        准备 API 调用参数。
-        将批次中的 trade_date 直接映射到 API 参数中。
-        fund_daily API 需要 trade_date 或 ts_code 至少提供一个。
-        """
-        api_params = {}
-
-        # 传递必要的参数：ts_code 和 trade_date
-        if "ts_code" in batch_params and batch_params["ts_code"]:
-            api_params["ts_code"] = batch_params["ts_code"]
-
-        if "trade_date" in batch_params and batch_params["trade_date"]:
-            api_params["trade_date"] = batch_params["trade_date"]
-
-        return api_params
-
-    async def fetch_batch(
-        self, batch_params: Dict, stop_event: Optional[asyncio.Event] = None
-    ) -> Optional[pd.DataFrame]:
-        """重写fetch_batch方法，添加请求延迟"""
-        # 调用父类方法获取数据
-        df = await super().fetch_batch(batch_params, stop_event=stop_event)
-
-        # 添加延迟，避免请求过于频繁
-        if hasattr(self, "request_delay") and self.request_delay > 0:
-            await asyncio.sleep(self.request_delay)
-
-        return df

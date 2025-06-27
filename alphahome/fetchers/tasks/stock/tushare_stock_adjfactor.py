@@ -53,12 +53,11 @@ class TushareStockAdjFactorTask(TushareTask):
     }
 
     # 7.数据验证规则
-    # validations = [
-    #     # 验证复权因子是否为正数
-    #     lambda df: df["adj_factor"].fillna(0) > 0,
-    #     # 验证日期格式
-    #     lambda df: pd.to_datetime(df["trade_date"], errors="coerce").notna()
-    # ]
+    validations = [
+        (lambda df: df["ts_code"].notna(), "股票代码不能为空"),
+        (lambda df: df["trade_date"].notna(), "交易日期不能为空"),
+        (lambda df: df["adj_factor"] > 0, "复权因子必须为正数"),
+    ]
 
     # 8. 分批配置
     batch_trade_days_single_code = 240

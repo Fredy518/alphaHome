@@ -117,56 +117,25 @@ class TushareOptionBasicTask(TushareTask):
         使用包含常见期货和股票期权交易所的列表。
         """
         # 包含常见期货和股票期权交易所的列表 (待验证哪些支持 opt_basic)
-        exchanges = ["CFFEX", "DCE", "CZCE", "SHFE", "SSE", "SZSE"]
+        exchanges = ["CFFEX", "SSE", "SZSE"] # 暂时只获取金融期权合约
         batch_list = [{"exchange": exc} for exc in exchanges]
         self.logger.info(
             f"任务 {self.name}: 按交易所分批获取模式，生成 {len(batch_list)} 个批次。"
         )
         return batch_list
 
-    async def validate_data(self, df: pd.DataFrame, **kwargs: Any) -> pd.DataFrame:
-        """
-        验证从 Tushare API 获取的数据。
-        - 检查 DataFrame 是否为空 (注意空是允许的，如果某个交易所没有合约)。
-        - 检查关键业务字段是否全部为空或缺失。
-        """
-        if df.empty:
-            exchange = kwargs.get("exchange", "未知交易所")
-            self.logger.warning(
-                f"任务 {self.name}: 从 API 获取 {exchange} 的 DataFrame 为空，无需验证。"
-            )
-            return df
-
-        # 关键业务字段列表
-        critical_cols = [
-            "ts_code",
-            "name",
-            "exchange",
-            "call_put",
-            "exercise_price",
-            "maturity_date",
-        ]
-
-        # 检查关键列是否存在
-        missing_cols = [col for col in critical_cols if col not in df.columns]
-        if missing_cols:
-            error_msg = f"任务 {self.name}: 数据验证失败 - 缺失关键业务字段: {', '.join(missing_cols)}."
-            self.logger.error(error_msg)
-            raise ValueError(error_msg)
-
-        # 检查关键列是否所有行都为空
-        # 替换空字符串为 NA以便 isnull() 检测
-        df_check = df[critical_cols].replace("", pd.NA)
-        if df_check.isnull().all(axis=1).all():
-            error_msg = f"任务 {self.name}: 数据验证失败 - 所有行的关键业务字段 ({', '.join(critical_cols)}) 均为空值或缺失。"  # 修正错误信息，包含缺失
-            self.logger.critical(error_msg)
-            raise ValueError(error_msg)
-
-        # 检查 exercise_price 和 maturity_date 是否有非空值 (至少有一行有效数据)
-        if df["exercise_price"].isnull().all() or df["maturity_date"].isnull().all():
-            self.logger.warning(
-                f"任务 {self.name}: 数据验证警告 - exercise_price 或 maturity_date 列全为空，请检查数据源或API调用。"
-            )
-
-        self.logger.info(f"任务 {self.name}: 数据验证通过，获取了 {len(df)} 条记录。")
-        return df
+    # 7. 数据验证规则 (真正生效的验证机制)
+    validations = [
+        (lambda df: df['ts_code'].notna(), "期权代码不能为空"),
+        (lambda df: df['name'].notna(), "期权名称不能为空"),
+        (lambda df: df['exchange'].notna(), "交易所不能为空"),
+        (lambda df: df['call_put'].notna(), "看涨看跌标识不能为空"),
+        (lambda df: df['exercise_price'].notna(), "行权价不能为空"),
+        (lambda df: df['maturity_date'].notna(), "到期日不能为空"),
+        (lambda df: ~(df['ts_code'].astype(str).str.strip().eq('') | df['ts_code'].isna()), "期权代码不能为空字符串"),
+        (lambda df: ~(df['name'].astype(str).str.strip().eq('') | df['name'].isna()), "期权名称不能为空字符串"),
+        (lambda df: ~(df['exchange'].astype(str).str.strip().eq('') | df['exchange'].isna()), "交易所不能为空字符串"),
+        (lambda df: ~(df['call_put'].astype(str).str.strip().eq('') | df['call_put'].isna()), "看涨看跌标识不能为空字符串"),
+        (lambda df: df['call_put'].isin(['C', 'P']), "看涨看跌标识必须为C或P"),
+        (lambda df: df['exercise_price'] > 0, "行权价必须为正数"),
+    ]

@@ -33,7 +33,7 @@ class TushareHKDailyTask(TushareTask):
     smart_lookback_days = 0 # 禁用智能增量模式下的回看机制
 
     # --- 代码级默认配置 (会被 config.json 覆盖) --- #
-    default_concurrent_limit = 5  # 默认并发限制
+    default_concurrent_limit = 1  # 默认并发限制
     default_page_size = 5000  # Tushare hk_daily 每页最大数量 (或按实际接口调整)
 
     # 2. TushareTask 特有属性
@@ -101,11 +101,23 @@ class TushareHKDailyTask(TushareTask):
     batch_trade_days_single_code = 240 * 2  # 单代码查询时，每个批次的交易日数量 (约2年)
     batch_trade_days_all_codes = 5  # 全市场查询时，每个批次的交易日数量 (5天)
 
-    # validations (继承基类或自定义)
-    # async def validate_data(self, df: pd.DataFrame, **kwargs: Any) -> pd.DataFrame:
-    #     df = await super().validate_data(df, **kwargs)
-    #     # Add HK-specific validations if needed
-    #     return df
+    # 8. 数据验证规则 (真正生效的验证机制)
+    validations = [
+        (lambda df: df['ts_code'].notna(), "港股代码不能为空"),
+        (lambda df: df['trade_date'].notna(), "交易日期不能为空"),
+        (lambda df: df['close'].notna(), "收盘价不能为空"),
+        (lambda df: df['close'] > 0, "收盘价必须为正数"),
+        (lambda df: df['open'] > 0, "开盘价必须为正数"),
+        (lambda df: df['high'] > 0, "最高价必须为正数"),
+        (lambda df: df['low'] > 0, "最低价必须为正数"),
+        (lambda df: df['high'] >= df['low'], "最高价不能低于最低价"),
+        (lambda df: df['high'] >= df['open'], "最高价不能低于开盘价"),
+        (lambda df: df['high'] >= df['close'], "最高价不能低于收盘价"),
+        (lambda df: df['low'] <= df['open'], "最低价不能高于开盘价"),
+        (lambda df: df['low'] <= df['close'], "最低价不能高于收盘价"),
+        (lambda df: df['volume'] >= 0, "成交量不能为负数"),
+        (lambda df: df['amount'] >= 0, "成交额不能为负数"),
+    ]
 
     async def get_batch_list(self, **kwargs: Any) -> List[Dict]:
         """生成批处理参数列表 (使用专用交易日批次工具)

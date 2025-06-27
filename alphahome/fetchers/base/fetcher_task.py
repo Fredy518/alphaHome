@@ -40,7 +40,7 @@ class FetcherTask(BaseTask, ABC):
     default_concurrent_limit = 5
     default_max_retries = 3
     default_retry_delay = 2
-    default_smart_lookback_days = 15
+    smart_lookback_days = 10
 
     def __init__(
         self,
@@ -88,7 +88,7 @@ class FetcherTask(BaseTask, ABC):
         self.concurrent_limit = int(task_config.get("concurrent_limit", cls.default_concurrent_limit))
         self.max_retries = int(task_config.get("max_retries", cls.default_max_retries))
         self.retry_delay = int(task_config.get("retry_delay", cls.default_retry_delay))
-        self.smart_lookback_days = int(task_config.get("smart_lookback_days", cls.default_smart_lookback_days))
+        self.smart_lookback_days = int(task_config.get("smart_lookback_days", cls.smart_lookback_days))
 
         self.logger.info(
             f"'{self.name}': Applied config - concurrent_limit={self.concurrent_limit}, "

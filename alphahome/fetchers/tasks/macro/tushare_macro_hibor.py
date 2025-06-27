@@ -131,10 +131,9 @@ class TushareMacroHiborTask(TushareTask):
             # 抛出异常以便上层调用者感知
             raise RuntimeError(f"任务 {self.name}: 生成自然日批次失败") from e
 
-    async def process_data(self, df: pd.DataFrame, **kwargs) -> pd.DataFrame:
+    def process_data(self, df: pd.DataFrame, **kwargs) -> pd.DataFrame:
         """
-        异步处理从API获取的原始数据。
-        调用基类方法完成通用处理（日期转换、transformations 应用）。
+        处理从API获取的原始数据（重写基类扩展点）
         """
         # 如果df为空或者不是DataFrame，则直接返回
         if not isinstance(df, pd.DataFrame) or df.empty:
@@ -143,40 +142,21 @@ class TushareMacroHiborTask(TushareTask):
             )
             return df
 
-        # 此处可以添加 hibor 特有的额外处理，如果需要的话。
+        # 首先调用基类的数据处理方法（应用基础转换）
+        df = super().process_data(df, **kwargs)
 
         self.logger.info(
-            f"任务 {self.name}: process_data 被调用，返回 DataFrame (行数: {len(df)})。"
+            f"任务 {self.name}: process_data 完成，返回 DataFrame (行数: {len(df)})。"
         )
         return df
 
-    async def validate_data(self, df: pd.DataFrame, **kwargs: Any) -> pd.DataFrame:
-        """
-        验证从 Tushare API 获取的数据。
-        - 检查 DataFrame 是否为空。
-        - 检查关键业务字段 ('date', 'on', '3m') 是否全部为空。
-        """
-        if df.empty:
-            self.logger.warning(
-                f"任务 {self.name}: 从 API 获取的 DataFrame 为空，无需验证。"
-            )
-            return df
-
-        critical_cols = ["date", "on", "3m"]  # 关键列
-        missing_cols = [col for col in critical_cols if col not in df.columns]
-        if missing_cols:
-            error_msg = f"任务 {self.name}: 数据验证失败 - 缺失关键业务字段: {', '.join(missing_cols)}。"
-            self.logger.error(error_msg)
-            raise ValueError(error_msg)
-
-        # 替换空字符串为 NA 以便 isnull() 检测
-        df_check = df[critical_cols].replace("", pd.NA)
-        if df_check.isnull().all(axis=1).all():
-            error_msg = f"任务 {self.name}: 数据验证失败 - 所有行的关键业务字段 ({', '.join(critical_cols)}) 均为空值。"
-            self.logger.critical(error_msg)
-            raise ValueError(error_msg)
-
-        self.logger.info(
-            f"任务 {self.name}: 数据验证通过，获取了 {len(df)} 条有效记录。"
-        )
-        return df
+    # 7. 数据验证规则 (真正生效的验证机制)
+    validations = [
+        (lambda df: df['date'].notna(), "日期不能为空"),
+        (lambda df: df['on'].notna(), "隔夜利率不能为空"),
+        (lambda df: ~(df['date'].astype(str).str.strip().eq('') | df['date'].isna()), "日期不能为空字符串"),
+        (lambda df: df['on'] >= 0, "隔夜利率不能为负数"),
+        (lambda df: df['on'] <= 50, "隔夜利率应在合理范围内（≤50%）"),
+        (lambda df: df['3m'] >= 0 if '3m' in df.columns else True, "3个月利率不能为负数"),
+        (lambda df: df['3m'] <= 50 if '3m' in df.columns else True, "3个月利率应在合理范围内（≤50%）"),
+    ]

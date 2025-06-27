@@ -90,84 +90,31 @@ class TushareOthersHktradecalTask(TushareTask):
         )
         return batches
 
-    async def fetch_data_for_batch(
-        self, batch_params: Dict, start_date: str, end_date: str
-    ) -> pd.DataFrame:
-        """直接用批次参数的 start_date 和 end_date 调用 Tushare API。"""
-        self.logger.info(
-            f"任务 {self.name}: 获取数据，日期范围: {start_date} - {end_date}"
-        )
-        params = {"start_date": start_date, "end_date": end_date, "is_open": ""}
-        try:
-            df = await self.api.query(api_name=self.api_name, params=params, fields="")
-            if df is None:
-                self.logger.warning(
-                    f"任务 {self.name}: API调用返回 None，参数: {params}"
-                )
-                return pd.DataFrame()
-            if df.empty:
-                self.logger.info(f"任务 {self.name}: API返回空数据框，参数: {params}")
+    def process_data(self, df: pd.DataFrame, **kwargs: Any) -> pd.DataFrame:
+        """处理从API获取的原始数据框（重写基类扩展点）"""
+        if not isinstance(df, pd.DataFrame) or df.empty:
+            return pd.DataFrame()
+
+        # 首先调用基类的数据处理方法（应用基础转换）
+        # 注意：TushareDataTransformer 已经处理了列名映射、数据转换和日期字段
+        df = super().process_data(df, **kwargs)
+
+        # 港股交易日历特定的业务逻辑处理
+        # 确保 exchange 字段存在且为 HKEX
+        if "exchange" not in df.columns or df["exchange"].isna().all():
             df["exchange"] = "HKEX"
-            return df
-        except Exception as e:
-            self.logger.error(
-                f"任务 {self.name}: 调用 {self.api_name} 时发生错误，参数 {params}: {e}"
-            )
-            return pd.DataFrame()
 
-    async def process_data(self, df: pd.DataFrame, **kwargs: Any) -> pd.DataFrame:
-        """处理从API获取的原始数据框。"""
-        if not isinstance(df, pd.DataFrame) or df.empty:
-            return pd.DataFrame()
+        # 确保字段顺序（如果需要）
+        available_fields = [f for f in self.fields if f in df.columns]
+        if len(available_fields) < len(df.columns):
+            df = df[available_fields]
 
-        df = df.rename(columns=self.column_mapping, errors="ignore")
-        for col_name, func in self.transformations.items():
-            if col_name in df.columns:
-                try:
-                    df[col_name] = func(df[col_name])
-                except Exception as e:
-                    self.logger.warning(
-                        f"任务 {self.name}: 对列 '{col_name}' 应用转换失败: {e}"
-                    )
-
-        for field in self.fields:
-            if field not in df.columns:
-                if field == "exchange":  # 确保 exchange 列存在
-                    df[field] = "HKEX"
-                else:
-                    df[field] = None
-
-        date_cols_to_process = ["cal_date", "pretrade_date"]
-        for col in date_cols_to_process:
-            if col in df.columns:
-                df[col] = pd.to_datetime(df[col], errors="coerce")
-
-        df = df[[f for f in self.fields if f in df.columns]]
         return df
 
-    async def validate_data(self, df: pd.DataFrame, **kwargs: Any) -> pd.DataFrame:
-        """验证处理后的数据。"""
-        if not isinstance(df, pd.DataFrame) or df.empty:
-            return df
-
-        required_cols = self.primary_keys + ["is_open"]
-        missing_cols = [col for col in required_cols if col not in df.columns]
-        if missing_cols:
-            error_msg = f"任务 {self.name} (HKEX): 数据验证失败 - 缺失关键字段: {', '.join(missing_cols)}。"
-            self.logger.error(error_msg)
-            raise ValueError(error_msg)
-
-        for pk_col in self.primary_keys:
-            if df[pk_col].isnull().any():
-                error_msg = f"任务 {self.name} (HKEX): 数据验证失败 - 主键列 '{pk_col}' 包含空值。"
-                self.logger.error(error_msg)
-                raise ValueError(error_msg)
-
-        if "is_open" in df.columns:
-            valid_is_open_values = df["is_open"].dropna()
-            if not valid_is_open_values.empty:
-                if not valid_is_open_values.isin([0, 1]).all():
-                    self.logger.warning(
-                        f"任务 {self.name} (HKEX): 列 'is_open' 包含意外值 (非0或1)。"
-                    )
-        return df
+    # 验证规则：使用 validations 列表（真正生效的验证机制）
+    validations = [
+        lambda df: df['exchange'].notna(),      # 交易所代码不能为空
+        lambda df: df['cal_date'].notna(),      # 日历日期不能为空
+        lambda df: df['is_open'].notna(),       # 是否开市标志不能为空
+        lambda df: df['is_open'].isin([0, 1]),  # 开市标志必须是0或1
+    ]

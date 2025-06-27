@@ -59,7 +59,15 @@ class TushareFundAdjFactorTask(TushareTask):
         # 主键 ("ts_code", "trade_date") 索引由基类自动处理
     }
 
-    # 6. 自定义索引 (主键已包含)
+    # 6. 数据验证规则
+    validations = [
+        (lambda df: df['ts_code'].notna(), "基金代码不能为空"),
+        (lambda df: df['trade_date'].notna(), "交易日期不能为空"),
+        (lambda df: df['adj_factor'] > 0, "复权因子必须为正数"),
+        (lambda df: df['adj_factor'] <= 100, "复权因子应在合理范围内（≤100）"),
+    ]
+
+    # 7. 自定义索引 (主键已包含)
     indexes = [
         {
             "name": "idx_tushare_fund_adjfactor_update_time",
@@ -133,17 +141,3 @@ class TushareFundAdjFactorTask(TushareTask):
             return []
 
     # adj_factor 接口非常简单，可能不需要复杂的验证
-    async def validate_data(self, df: pd.DataFrame, **kwargs: Any) -> pd.DataFrame:
-        """
-        验证基金复权因子数据。
-        """
-        if df.empty:
-            return df
-        # 检查 adj_factor 是否为正数
-        if "adj_factor" in df.columns:
-            negative_factor = (df["adj_factor"].dropna() <= 0).sum()
-            if negative_factor > 0:
-                self.logger.warning(
-                    f"任务 {self.name}: 列 'adj_factor' 发现 {negative_factor} 条非正值记录。"
-                )
-        return df

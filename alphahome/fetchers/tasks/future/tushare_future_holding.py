@@ -102,6 +102,17 @@ class TushareFutureHoldingTask(TushareTask):
         {"name": "idx_fut_hold_upd", "columns": "update_time"},
     ]
 
+    # 7. 数据验证规则
+    validations = [
+        lambda df: df['trade_date'].notna(),
+        lambda df: df['symbol'].notna(),
+        lambda df: df['broker'].notna(),
+        lambda df: df['exchange'].notna(),
+        lambda df: df['volume'] >= 0,
+        lambda df: df['long_hld'] >= 0,
+        lambda df: df['short_hld'] >= 0,
+    ]
+
     # def __init__(
     #     self, db_connection, api_token: Optional[str] = None, api: Optional[Any] = None
     # ):
@@ -164,52 +175,3 @@ class TushareFutureHoldingTask(TushareTask):
         self.logger.info(f"任务 {self.name}: 总共生成 {len(all_batches)} 个批次。")
         return all_batches
 
-    async def validate_data(self, df: pd.DataFrame, **kwargs: Any) -> pd.DataFrame:
-        """
-        验证从 Tushare API 获取的数据。
-        """
-        if df.empty:
-            self.logger.warning(
-                f"任务 {self.name}: 从 API 获取的 DataFrame 为空，无需验证。"
-            )
-            return df
-
-        # 使用映射后的列名 'volume'
-        critical_cols = ["trade_date", "symbol", "broker", "exchange", "volume"]
-        missing_cols = [col for col in critical_cols if col not in df.columns]
-        if missing_cols:
-            error_msg = f"任务 {self.name}: 数据验证失败 - 缺失关键业务字段: {', '.join(missing_cols)}。"
-            self.logger.error(error_msg)
-            raise ValueError(error_msg)
-
-        # 检查关键字段是否全部为空行
-        # 替换空字符串为 NA 以便 isnull() 检测，对数值列不适用，但对字符主键列有用
-        df_check = df.copy()
-        for col in ["symbol", "broker", "exchange"]:  # 字符串列
-            if col in df_check.columns:
-                df_check[col] = df_check[col].replace("", pd.NA)
-
-        # 检查主键列（包括字符串和日期）是否有空值
-        # trade_date 由 TushareDataTransformer 转换为日期对象，不太可能为 pd.NA 除非原始数据就有问题
-        # symbol, broker, exchange 是字符串，现在已处理空字符串
-        # 主键列不应有空值
-        for pk_col in self.primary_keys:
-            if df_check[pk_col].isnull().any():
-                error_msg = (
-                    f"任务 {self.name}: 数据验证失败 - 主键字段 '{pk_col}' 包含空值。"
-                )
-                self.logger.error(error_msg)
-                # 可以选择记录具体哪一行，但为了简化，先抛出错误
-                # self.logger.error(f"空值所在行:\n{{df_check[df_check[pk_col].isnull()]}}")
-                raise ValueError(error_msg)
-
-        # 检查数值型的 volume 是否有不合理的值 (例如负数)，但成交量为0是可能的
-        # if 'volume' in df.columns and (df['volume'] < 0).any():
-        #     error_msg = f"任务 {self.name}: 数据验证失败 - 'volume' 字段包含负值。"
-        #     self.logger.error(error_msg)
-        #     raise ValueError(error_msg)
-
-        self.logger.info(
-            f"任务 {self.name}: 数据验证通过，获取了 {len(df)} 条有效记录。"
-        )
-        return df

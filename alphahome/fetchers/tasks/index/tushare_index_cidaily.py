@@ -155,42 +155,20 @@ class TushareIndexCiDailyTask(TushareTask):
 
     # prepare_params 方法使用基类默认实现
 
-    async def validate_data(self, df: pd.DataFrame, **kwargs: Any) -> pd.DataFrame:
-        """
-        验证从 Tushare API 获取的中信行业日线数据。
-        与 sw_daily 逻辑一致 (检查映射后的 volume)。
-        """
-        if df.empty:
-            self.logger.warning(f"任务 {self.name}: 获取的 DataFrame 为空，无需验证。")
-            return df
-
-        # 检查关键列是否存在 (使用映射后的 volume)
-        critical_cols = ["ts_code", "trade_date", "close", "volume", "amount"]
-        missing_cols = [col for col in critical_cols if col not in df.columns]
-        if missing_cols:
-            error_msg = f"任务 {self.name}: 数据验证失败 - 缺失关键业务字段: {', '.join(missing_cols)}。"
-            self.logger.error(error_msg)
-            raise ValueError(error_msg)
-
-        # 可选：检查价格/成交量/成交额是否为负数
-        numeric_cols_to_check = [
-            "open",
-            "low",
-            "high",
-            "close",
-            "pre_close",
-            "volume",
-            "amount",
-        ]
-        for col in numeric_cols_to_check:
-            if col in df.columns:
-                negative_count = (df[col].dropna() < 0).sum()
-                if negative_count > 0:
-                    self.logger.warning(
-                        f"任务 {self.name}: 数据验证发现 {negative_count} 条记录的 {col} 为负值。"
-                    )
-
-        self.logger.info(
-            f"任务 {self.name}: 数据验证通过 (或仅记录警告)，保留 {len(df)} 条记录。"
-        )
-        return df
+    # 7. 数据验证规则 (真正生效的验证机制)
+    validations = [
+        (lambda df: df['ts_code'].notna(), "中信行业指数代码不能为空"),
+        (lambda df: df['trade_date'].notna(), "交易日期不能为空"),
+        (lambda df: df['close'].notna(), "收盘价不能为空"),
+        (lambda df: df['close'] > 0, "收盘价必须为正数"),
+        (lambda df: df['open'] > 0, "开盘价必须为正数"),
+        (lambda df: df['high'] > 0, "最高价必须为正数"),
+        (lambda df: df['low'] > 0, "最低价必须为正数"),
+        (lambda df: df['high'] >= df['low'], "最高价不能低于最低价"),
+        (lambda df: df['high'] >= df['open'], "最高价不能低于开盘价"),
+        (lambda df: df['high'] >= df['close'], "最高价不能低于收盘价"),
+        (lambda df: df['low'] <= df['open'], "最低价不能高于开盘价"),
+        (lambda df: df['low'] <= df['close'], "最低价不能高于收盘价"),
+        (lambda df: df['volume'] >= 0, "成交量不能为负数"),
+        (lambda df: df['amount'] >= 0, "成交额不能为负数"),
+    ]

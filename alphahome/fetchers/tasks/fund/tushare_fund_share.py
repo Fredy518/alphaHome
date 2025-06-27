@@ -58,7 +58,14 @@ class TushareFundShareTask(TushareTask):
         # 主键 ("ts_code", "trade_date") 索引由基类根据 primary_keys 自动处理
     }
 
-    # 6. 自定义索引 (主键已包含，无需额外添加)
+    # 6. 数据验证规则
+    validations = [
+        (lambda df: df['ts_code'].notna(), "基金代码不能为空"),
+        (lambda df: df['trade_date'].notna(), "交易日期不能为空"),
+        (lambda df: df['fd_share'] >= 0, "基金份额不能为负数"),
+    ]
+
+    # 7. 自定义索引 (主键已包含，无需额外添加)
     indexes = [
         {
             "name": "idx_tushare_fund_share_update_time",
@@ -134,35 +141,3 @@ class TushareFundShareTask(TushareTask):
             )
             return []
 
-    async def validate_data(self, df: pd.DataFrame, **kwargs: Any) -> pd.DataFrame:
-        """
-        验证从 Tushare API 获取的数据。
-        - 检查 DataFrame 是否为空。
-        - 检查 fd_share 是否存在负值 (可选)。
-        """
-        if df.empty:
-            self.logger.warning(f"任务 {self.name}: 获取的 DataFrame 为空，无需验证。")
-            return df
-
-        # 检查关键列是否存在
-        critical_cols = ["ts_code", "trade_date", "fd_share"]
-        missing_cols = [col for col in critical_cols if col not in df.columns]
-        if missing_cols:
-            error_msg = f"任务 {self.name}: 数据验证失败 - 缺失关键业务字段: {', '.join(missing_cols)}。"
-            self.logger.error(error_msg)
-            raise ValueError(error_msg)
-
-        # 可选：检查份额是否为负数 (Tushare理论上不应返回负数，但增加检查更稳健)
-        if "fd_share" in df.columns:
-            negative_share_count = (df["fd_share"].dropna() < 0).sum()
-            if negative_share_count > 0:
-                self.logger.warning(
-                    f"任务 {self.name}: 数据验证发现 {negative_share_count} 条记录的 fd_share 为负值。"
-                )
-                # 此处可以选择过滤掉这些行或仅记录警告
-                # df = df[df['fd_share'] >= 0]
-
-        self.logger.info(
-            f"任务 {self.name}: 数据验证通过 (或仅记录警告)，保留 {len(df)} 条记录。"
-        )
-        return df

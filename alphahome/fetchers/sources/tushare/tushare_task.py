@@ -129,7 +129,7 @@ class TushareTask(FetcherTask, abc.ABC):
                 return None
 
             # 数据转换
-            processed_data = await self.data_transformer.process_data(data)
+            processed_data = self.data_transformer.process_data(data)
             return processed_data
 
         except Exception as e:
@@ -150,22 +150,15 @@ class TushareTask(FetcherTask, abc.ABC):
         """
         raise NotImplementedError("每个 Tushare 任务子类必须实现 get_batch_list 方法")
 
-    def _process_data(self, data, **kwargs):
+    def process_data(self, data: pd.DataFrame, **kwargs) -> pd.DataFrame:
         """
-        Tushare 特有的数据处理。
-        
-        注意：在新架构下，大部分通用处理由 BaseTask._process_data 和 
-        TushareDataTransformer 完成。如果具体任务（如TushareStockDailyTask）
-        需要非常特殊的处理，可以重写此方法。
-        
-        默认实现：
-        1. 调用基类（BaseTask）的通用处理逻辑。
-        2. （可选）执行额外的 Tushare 特定处理。
+        处理从API获取的原始数据。
+
+        在新的架构中，所有的数据转换（列映射、日期转换、自定义转换）
+        都由 TushareDataTransformer 在 _fetch_data 步骤中统一处理。
+        因此，此方法现在是一个直通方法，以防止 BaseTask 中的
+        process_data 和 _apply_transformations 被重复调用，从而避免
+        冗余处理和潜在的副作用。
         """
-        # 首先调用基类（BaseTask）的通用处理
-        data = super()._process_data(data, **kwargs)
-        
-        # 此处可以添加所有 TushareTask 子类都需要的通用处理逻辑
-        # 例如，基于 Tushare API 返回的通用字段进行的处理
-            
+        # 转换已在 _fetch_data 中由 TushareDataTransformer 处理，此处直接返回
         return data

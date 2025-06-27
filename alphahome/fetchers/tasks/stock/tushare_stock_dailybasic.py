@@ -105,18 +105,14 @@ class TushareStockDailyBasicTask(TushareTask):
     }
 
     # 7.数据验证规则
-    # validations = [
-    #     # 验证市值是否为正
-    #     lambda df: df["total_mv"].fillna(0) >= 0,
-    #     # 验证流通市值是否为正
-    #     lambda df: df["circ_mv"].fillna(0) >= 0,
-    #     # 验证换手率是否合理
-    #     lambda df: df["turnover_rate"].fillna(0) >= 0,
-    #     # 验证股本数据是否合理
-    #     lambda df: df["total_share"].fillna(0) >= df["float_share"].fillna(0),
-    #     # 验证日期格式
-    #     lambda df: pd.to_datetime(df["trade_date"], errors="coerce").notna()
-    # ]
+    validations = [
+        (lambda df: df["ts_code"].notna(), "股票代码不能为空"),
+        (lambda df: df["trade_date"].notna(), "交易日期不能为空"),
+        (lambda df: df["total_mv"].fillna(0) >= 0, "总市值不能为负数"),
+        (lambda df: df["circ_mv"].fillna(0) >= 0, "流通市值不能为负数"),
+        (lambda df: df["turnover_rate"].fillna(0) >= 0, "换手率不能为负数"),
+        (lambda df: df["total_share"].fillna(0) >= df["float_share"].fillna(0), "总股本应大于等于流通股本"),
+    ]
 
     # 8. 分批配置 (与 TushareStockDailyTask 保持一致或根据需要调整)
     batch_trade_days_single_code = 240  # 单代码查询时，每个批次的交易日数量 (约1年)

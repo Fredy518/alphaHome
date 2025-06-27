@@ -91,12 +91,15 @@ class TushareHKBasicTask(TushareTask):
         # {"name": "idx_hk_basic_security_type", "columns": "security_type"}
     ]
 
-    def __init__(self, db_connection, api_token=None, api=None, **kwargs):
-        """初始化任务"""
-        super().__init__(db_connection, api_token=api_token, api=api, **kwargs)
-        # 全量更新，设置为串行执行以简化
-        self.concurrent_limit = 1
-        self.logger.info(f"任务 {self.name} 已配置为串行执行 (concurrent_limit=1)")
+    # 7. 数据验证规则
+    validations = [
+        lambda df: df['ts_code'].notna(),
+        lambda df: df['ts_code'].str.endswith('.HK'),
+        lambda df: df['name'].notna(),
+        lambda df: df['market'].notna(),
+        lambda df: df['list_status'].isin(['L', 'D', 'P']), # L上市 D退市 P暂停上市
+        lambda df: df['trade_unit'] > 0,
+    ]
 
     async def get_batch_list(self, **kwargs: Any) -> List[Dict]:
         """
@@ -106,44 +109,3 @@ class TushareHKBasicTask(TushareTask):
         # Tushare hk_basic 接口可能支持按 list_status 过滤，但全量通常一次获取
         return [{}]  # 触发一次不带参数的 API 调用
 
-    async def validate_data(self, df: pd.DataFrame, **kwargs: Any) -> pd.DataFrame:
-        """
-        验证从 Tushare API 获取的数据。
-        - 检查 DataFrame 是否为空。
-        - 检查关键业务字段 ('name') 是否全部为空 (ts_code is primary key, should always exist)。
-        """
-        if df.empty:
-            self.logger.warning(
-                f"任务 {self.name}: 从 API 获取的 DataFrame 为空，无需验证。"
-            )
-            return df
-
-        critical_cols = ["name"]  # ts_code is already handled as PK
-        missing_cols = [col for col in critical_cols if col not in df.columns]
-        if missing_cols:
-            error_msg = f"任务 {self.name}: 数据验证失败 - 缺失关键业务字段: {', '.join(missing_cols)}。"
-            self.logger.error(error_msg)
-            raise ValueError(error_msg)
-
-        # 替换空字符串为 NA 以便 isnull() 检测
-        df_check = df[critical_cols].replace("", pd.NA)
-        # Check if all critical columns are null for any row
-        if df_check.isnull().all(axis=1).any():
-            # More precise logging: find rows where all critical cols are null
-            all_null_rows = df[df_check.isnull().all(axis=1)]
-            self.logger.warning(
-                f"任务 {self.name}: 数据验证发现 {len(all_null_rows)} 行的关键业务字段 ({', '.join(critical_cols)}) 同时为空: {all_null_rows['ts_code'].tolist() if 'ts_code' in all_null_rows else 'ts_code not available'}"
-            )
-            # Depending on strictness, one might raise ValueError here or just warn.
-            # For hk_basic, a stock must have a name.
-            if (
-                df_check.isnull().all(axis=1).all()
-            ):  # if ALL rows have all critical_cols as null
-                error_msg = f"任务 {self.name}: 数据验证失败 - 所有行的关键业务字段 ({', '.join(critical_cols)}) 均为空值。"
-                self.logger.critical(error_msg)
-                raise ValueError(error_msg)
-
-        self.logger.info(
-            f"任务 {self.name}: 数据验证通过（或有警告），获取了 {len(df)} 条记录。"
-        )
-        return df

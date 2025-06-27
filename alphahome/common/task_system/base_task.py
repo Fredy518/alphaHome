@@ -3,7 +3,7 @@ import inspect
 import logging
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta, date
-from typing import Any, Callable, Dict, List, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Union, Tuple
 
 import numpy as np
 import pandas as pd
@@ -33,7 +33,7 @@ class BaseTask(ABC):
     data_source: Optional[str] = None  # 数据源标识（如'tushare', 'wind', 'jqdata'等）
     default_start_date: str = "20200101" # 默认起始日期
     transformations: Optional[Dict[str, Callable]] = None # 数据转换函数字典
-    validations: Optional[List[Callable]] = None # 数据验证函数列表
+    validations: Optional[List[Union[Callable, Tuple[Callable, str]]]] = None # 数据验证函数列表
     schema_def: Optional[Dict[str, Any]] = None # 表结构定义
     set_config: Optional[Callable[[Dict[str, Any]], None]] = None # 可选的任务配置方法
 
@@ -59,7 +59,13 @@ class BaseTask(ABC):
         执行任务的完整生命周期 (模板方法)。
 
         这是一个 final 方法，子类不应重写。
-        子类应通过实现 _fetch_data, _process_data 等钩子方法来定义具体行为。
+        子类应通过实现 _fetch_data, process_data 等钩子方法来定义具体行为。
+
+        标准处理流程：
+        1. 获取数据 (_fetch_data)
+        2. 处理数据 (process_data -> _apply_transformations + 业务逻辑)
+        3. 验证数据 (_validate_data)
+        4. 保存数据 (_save_data)
         """
         self.logger.info(f"开始执行任务: {self.name} (类型: {self.task_type})")
 
@@ -84,30 +90,62 @@ class BaseTask(ABC):
                 self.logger.info("没有获取到数据")
                 return {"status": "no_data", "rows": 0}
 
-            # 处理数据
+            # 处理数据（模板方法模式）
             self.logger.info(f"处理数据，共 {len(data) if isinstance(data, pd.DataFrame) else '多源'} 行")
-            processed_data = self._process_data(data, stop_event=stop_event, **kwargs)
+            processed_data = self.process_data(data, stop_event=stop_event, **kwargs)
 
             if stop_event and stop_event.is_set():
-                raise asyncio.CancelledError("任务在 _process_data 后被取消")
+                raise asyncio.CancelledError("任务在 process_data 后被取消")
 
             # 再次检查处理后的数据是否为空
             if processed_data is None or (isinstance(processed_data, pd.DataFrame) and processed_data.empty):
                 self.logger.warning("数据处理后为空")
                 return {"status": "no_data", "rows": 0}
 
+            # 验证数据（统一验证入口）
+            self.logger.debug(f"验证数据，共 {len(processed_data) if isinstance(processed_data, pd.DataFrame) else '多源'} 行")
+            validation_passed, validated_data, validation_details = self._validate_data(
+                processed_data,
+                stop_event=stop_event,
+                validation_mode=getattr(self, 'validation_mode', 'report')
+            )
+
+            if stop_event and stop_event.is_set():
+                raise asyncio.CancelledError("任务在 _validate_data 后被取消")
+
+            # 使用验证后的数据（可能被过滤）
+            final_data = validated_data
+
             # 保存数据
             self.logger.info(f"保存数据到表 {self.table_name}")
-            result = await self._save_data(processed_data, stop_event=stop_event)
+            save_result = await self._save_data(final_data, stop_event=stop_event)
 
             if stop_event and stop_event.is_set():
                 raise asyncio.CancelledError("任务在 _save_data 后被取消")
 
-            # 后处理
-            await self._post_execute(result, stop_event=stop_event)
+            # 构建最终结果，包含验证详情
+            final_result = {
+                "status": "success",
+                "table": self.table_name,
+                "rows": save_result.get("rows", 0) if isinstance(save_result, dict) else 0
+            }
 
-            self.logger.info(f"任务执行完成: {result}")
-            return result
+            # 添加验证信息
+            if not validation_passed:
+                final_result["status"] = "partial_success"
+                final_result["validation"] = False
+                final_result["validation_warning"] = "数据验证未完全通过，请检查日志"
+            else:
+                final_result["validation"] = True
+
+            # 添加验证详情
+            final_result["validation_details"] = validation_details
+
+            # 后处理
+            await self._post_execute(final_result, stop_event=stop_event)
+
+            self.logger.info(f"任务执行完成: {final_result}")
+            return final_result
             
         except asyncio.CancelledError:
             self.logger.warning(f"任务 {self.name} 被取消。")
@@ -153,18 +191,38 @@ class BaseTask(ABC):
         """获取原始数据（子类必须实现）"""
         raise NotImplementedError
 
-    def _process_data(self, data, stop_event: Optional[asyncio.Event] = None, **kwargs):
-        """处理原始数据"""
+    def _apply_transformations(self, data, stop_event: Optional[asyncio.Event] = None, **kwargs):
+        """
+        应用通用的数据转换（私有方法，不允许子类重写）
+
+        该方法专门负责应用基础的数据转换，包括：
+        - 数据类型转换（transformations）
+        - 列名映射（column_mapping）
+        - 其他通用的数据标准化操作
+
+        Args:
+            data: 原始数据
+            stop_event: 停止事件（可选）
+            **kwargs: 额外参数
+
+        Returns:
+            处理后的数据
+        """
+        if data is None:
+            return data
+
         # 支持数据转换
         if hasattr(self, "transformations") and self.transformations:
             # 检查data是否为DataFrame（processor可能返回字典）
             if isinstance(data, pd.DataFrame):
+                self.logger.debug(f"任务 {self.name}: 开始应用 {len(self.transformations)} 个数据转换规则")
+
                 for column, transform in self.transformations.items():
                     if column in data.columns:
                         try:
                             # 先将所有None值转换为np.nan，确保一致的缺失值处理
                             data[column] = data[column].fillna(np.nan)
-                            
+
                             # 检查列是否包含nan值
                             explicit_boolean_for_nan_check: bool = (data[column].isna().any() == True)
                             if explicit_boolean_for_nan_check:
@@ -193,70 +251,222 @@ class BaseTask(ABC):
                             self.logger.error(f"处理列 {column} 时发生错误: {str(e)}")
                             # 不中断处理，继续处理其他列
 
+                self.logger.debug(f"任务 {self.name}: 数据转换完成")
+
         return data
 
-    def _validate_data(self, data, stop_event: Optional[asyncio.Event] = None):
-        """验证数据有效性
-        
-        如果验证失败，会返回False，但不会抛出异常，以允许数据处理继续进行。
-        开发者可以根据需要在子类中重写此方法，实现更严格的验证策略。
-        
+    def process_data(self, data, stop_event: Optional[asyncio.Event] = None, **kwargs):
+        """
+        处理从 _fetch_data 获取的原始数据。
+        这是数据处理的主要扩展点，子类可以重写此方法以实现自定义处理逻辑。
+
+        默认实现会调用 _apply_transformations 来应用基础转换。
+
+        子类重写时应该：
+        1. 调用 super().process_data() 来应用基础转换
+        2. 添加特定的业务逻辑处理
+        3. 返回处理后的数据
+
         Args:
-            data (pd.DataFrame): 要验证的数据
-            
+            data: 原始数据
+            stop_event: 停止事件（可选）
+            **kwargs: 额外参数
+
         Returns:
-            bool: 验证结果，True表示验证通过，False表示验证失败
+            处理后的数据
+        """
+        # 首先应用基础转换
+        data = self._apply_transformations(data, stop_event=stop_event, **kwargs)
+
+        # 默认实现不添加额外处理，子类可以重写此方法添加特定逻辑
+        return data
+
+    def _validate_data(self, data, stop_event: Optional[asyncio.Event] = None, validation_mode: str = "report"):
+        """
+        统一的数据验证方法（重构后的版本）
+
+        该方法是数据验证的唯一入口点，支持两种验证模式：
+        - report: 报告模式，记录验证结果但不过滤数据（默认）
+        - filter: 过滤模式，移除不符合验证规则的数据行
+
+        Args:
+            data: 待验证的数据
+            stop_event: 停止事件（可选）
+            validation_mode: 验证模式 ("report" 或 "filter")
+
+        Returns:
+            tuple: (验证结果, 处理后的数据, 验证详情)
+                - 验证结果 (bool): True表示验证通过
+                - 处理后的数据: 根据验证模式可能被过滤
+                - 验证详情 (dict): 包含验证状态和失败信息
         """
         if not hasattr(self, "validations") or not self.validations:
-            return True
-            
+            self.logger.debug(f"任务 {self.name} 未定义验证规则，跳过验证")
+            return True, data, {"status": "no_rules", "failed_validations": {}}
+
+        # 获取验证模式配置（任务可以重写默认模式）
+        task_validation_mode = getattr(self, 'validation_mode', validation_mode)
+
+        if isinstance(data, pd.DataFrame):
+            return self._validate_dataframe(data, stop_event, task_validation_mode)
+        else:
+            # 非DataFrame数据的验证（如字典等）
+            return self._validate_non_dataframe(data, stop_event, task_validation_mode)
+
+
+    def _validate_dataframe(self, data: pd.DataFrame, stop_event: Optional[asyncio.Event], validation_mode: str):
+        """
+        验证DataFrame数据的具体实现
+
+        Args:
+            data: DataFrame数据
+            stop_event: 停止事件
+            validation_mode: 验证模式 ("report" 或 "filter")
+
+        Returns:
+            tuple: (验证结果, 处理后的数据, 验证详情)
+        """
+        total_rows = len(data)
         validation_passed = True
-        
-        for validator in self.validations:
+        failed_validation_details = {}
+
+        # 用于过滤模式的掩码
+        valid_mask = pd.Series(True, index=data.index) if validation_mode == "filter" else None
+
+        self.logger.info(f"开始验证数据，共 {len(self.validations)} 个验证规则，数据行数: {total_rows}，模式: {validation_mode}") # type: ignore
+
+        for i, validation_item in enumerate(self.validations): # type: ignore
+            if stop_event and stop_event.is_set():
+                self.logger.warning("验证在执行期间被取消")
+                raise asyncio.CancelledError("验证取消")
+
+            # 解析验证规则（支持新旧格式）
+            if isinstance(validation_item, tuple) and len(validation_item) == 2:
+                validator, validator_name = validation_item
+            else:
+                validator = validation_item
+                validator_name = f"验证规则_{i+1}"
+
             try:
-                # 检查验证器信息
-                validator_name = (
-                    validator.__name__ 
-                    if hasattr(validator, "__name__") 
-                    else "未命名验证器"
-                )
-                self.logger.debug(f"执行验证器: {validator_name}")
-                
-                if stop_event and stop_event.is_set():
-                    self.logger.warning("验证在执行期间被取消")
-                    raise asyncio.CancelledError("验证取消")
-                    
-                validation_result = validator(data)
-                if isinstance(validation_result, bool) and not validation_result:
-                    self.logger.warning(f"数据验证失败: {validator_name}")
+                self.logger.debug(f"执行验证器: \"{validator_name}\"")
+
+                # 根据验证模式选择数据源
+                validation_data = data[valid_mask] if validation_mode == "filter" and valid_mask is not None else data
+                validation_result = validator(validation_data) # type: ignore
+
+                if isinstance(validation_result, pd.Series) and validation_result.dtype == bool:
+                    if not validation_result.all():
+                        failed_count = (~validation_result).sum()
+                        failed_percentage = (failed_count / len(validation_data)) * 100 if len(validation_data) > 0 else 0
+
+                        self.logger.warning(
+                            f"  - 验证失败: \"{validator_name}\"，"
+                            f"失败行数: {failed_count}/{len(validation_data)} ({failed_percentage:.2f}%)"
+                        )
+                        failed_validation_details[validator_name] = f"{failed_count}行失败"
+                        validation_passed = False
+
+                        # 在过滤模式下更新掩码
+                        if validation_mode == "filter" and valid_mask is not None:
+                            # 需要将validation_result对齐到原始数据的索引
+                            aligned_result = pd.Series(True, index=data.index)
+                            aligned_result.loc[validation_data.index] = validation_result
+                            valid_mask &= aligned_result
+
+                elif isinstance(validation_result, bool) and not validation_result:
+                    self.logger.warning(f"  - 验证失败: \"{validator_name}\" (返回False，影响整批数据)")
+                    failed_validation_details[validator_name] = "整批失败"
                     validation_passed = False
-                    # 不立即退出，继续运行其他验证器以获取更多信息
+
+                    # 在过滤模式下，整批失败意味着所有数据都无效
+                    if validation_mode == "filter" and valid_mask is not None:
+                        valid_mask[:] = False
+
             except Exception as e:
-                self.logger.error(f"执行验证器时发生错误: {str(e)}")
+                self.logger.error(f"  - 执行验证器 \"{validator_name}\" 时发生错误: {e}", exc_info=True)
+                failed_validation_details[validator_name] = "执行错误"
                 validation_passed = False
-        
-        if not validation_passed:
-            self.logger.warning("数据验证未完全通过，但将继续处理")
-            
-            # 记录包含NaN值的列，帮助诊断
+
+        # 根据验证模式处理结果
+        if validation_mode == "filter" and valid_mask is not None:
+            filtered_data = data[valid_mask].copy()
+            filtered_count = len(filtered_data)
+
+            if filtered_count < total_rows:
+                self.logger.warning(f"过滤模式: 移除了 {total_rows - filtered_count} 行不符合验证规则的数据")
+
+            result_data = filtered_data
+        else:
+            result_data = data
+
+        # 输出验证结果摘要
+        if validation_passed:
+            self.logger.info(f"✅ 任务 {self.name} 数据验证通过 (通过 {len(self.validations)} 个验证规则)") # type: ignore
+        else:
+            self.logger.warning(f"⚠️ 任务 {self.name} 验证未完全通过，失败详情: {failed_validation_details}")
             if isinstance(data, pd.DataFrame):
                 nan_columns = data.columns[data.isna().any()].tolist()
                 if nan_columns:
                     self.logger.info(f"以下列包含NaN值，可能影响验证结果: {', '.join(nan_columns)}")
-        
-        return validation_passed
+
+        return validation_passed, result_data, {
+            "status": "passed" if validation_passed else "failed",
+            "failed_validations": failed_validation_details,
+            "original_rows": total_rows,
+            "result_rows": len(result_data) if isinstance(result_data, pd.DataFrame) else total_rows,
+            "validation_mode": validation_mode
+        }
+
+    def _validate_non_dataframe(self, data, stop_event: Optional[asyncio.Event], validation_mode: str):
+        """
+        验证非DataFrame数据的具体实现
+
+        Args:
+            data: 非DataFrame数据
+            stop_event: 停止事件
+            validation_mode: 验证模式
+
+        Returns:
+            tuple: (验证结果, 处理后的数据, 验证详情)
+        """
+        validation_passed = True
+        failed_validation_details = {}
+
+        self.logger.info(f"开始验证非DataFrame数据，共 {len(self.validations)} 个验证规则，模式: {validation_mode}") # type: ignore
+
+        for i, validation_item in enumerate(self.validations): # type: ignore
+            if stop_event and stop_event.is_set():
+                raise asyncio.CancelledError("验证取消")
+
+            # 解析验证规则
+            if isinstance(validation_item, tuple) and len(validation_item) == 2:
+                validator, validator_name = validation_item
+            else:
+                validator = validation_item
+                validator_name = f"验证规则_{i+1}"
+
+            try:
+                validation_result = validator(data) # type: ignore
+                if not validation_result:
+                    self.logger.warning(f"  - 验证失败: \"{validator_name}\"")
+                    failed_validation_details[validator_name] = "验证失败"
+                    validation_passed = False
+            except Exception as e:
+                self.logger.error(f"  - 执行验证器 \"{validator_name}\" 时发生错误: {e}", exc_info=True)
+                failed_validation_details[validator_name] = "执行错误"
+                validation_passed = False
+
+        return validation_passed, data, {
+            "status": "passed" if validation_passed else "failed",
+            "failed_validations": failed_validation_details,
+            "validation_mode": validation_mode
+        }
 
     async def _save_data(self, data: pd.DataFrame, stop_event: Optional[asyncio.Event] = None) -> Dict[str, Any]:
         """将处理后的数据保存到数据库"""
         await self._ensure_table_exists()
         if stop_event and stop_event.is_set():
             raise asyncio.CancelledError("任务在 _ensure_table_exists 后被取消")
-
-        # 验证数据
-        self.logger.info("验证数据")
-        validation_passed = self._validate_data(data, stop_event=stop_event)
-        if not validation_passed:
-            self.logger.warning("数据验证未通过，但将继续保存")
 
         # 新增：在保存前根据主键去重
         if self.primary_keys and not data.empty:
@@ -344,12 +554,14 @@ class BaseTask(ABC):
         if stop_event and stop_event.is_set():
             raise asyncio.CancelledError("任务在 _save_to_database 后被取消")
 
-        result = {"status": "success", "table": self.table_name, "rows": total_affected_rows}
-        if not validation_passed:
-            result["status"] = "partial_success"
-            result["validation"] = False
-            
-        return result
+        # Construct final result
+        final_result = {
+            "status": "success",
+            "table": self.table_name,
+            "rows": total_affected_rows
+        }
+
+        return final_result
 
     async def _ensure_table_exists(self, stop_event: Optional[asyncio.Event] = None, **kwargs):
         """确保数据库表存在，如果不存在则创建"""

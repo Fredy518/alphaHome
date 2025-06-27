@@ -91,34 +91,12 @@ class TushareIndexSwmemberTask(TushareTask):  # <-- 类名改回
         self.logger.info(f"任务 {self.name}: 生成获取最新(Y)和历史(N)行业成分的批次。")
         return [{"is_new": "Y"}, {"is_new": "N"}]  # <-- 返回两个批次
 
-    async def validate_data(self, df: pd.DataFrame, **kwargs: Any) -> pd.DataFrame:
-        """
-        验证从 Tushare API 获取的申万行业成分数据。
-        - 检查 DataFrame 是否为空。
-        - 检查关键标识字段 (ts_code, l3_code, in_date) 是否全部为空。
-        """
-        if df.empty:
-            self.logger.warning(
-                f"任务 {self.name}: 从 API 获取的 DataFrame 为空，无需验证。"
-            )
-            return df
-
-        # 1. 检查关键字段是否存在
-        critical_cols = ["ts_code", "l3_code", "in_date"]
-        missing_cols = [col for col in critical_cols if col not in df.columns]
-        if missing_cols:
-            error_msg = f"任务 {self.name}: 数据验证失败 - 缺失关键业务字段: {', '.join(missing_cols)}。"
-            self.logger.error(error_msg)
-            raise ValueError(error_msg)
-
-        # 2. 检查关键字段是否在所有行中都为空值
-        df_check = df[critical_cols].replace("", pd.NA)  # 将空字符串视为空
-        if df_check.isnull().all(axis=1).all():
-            error_msg = f"任务 {self.name}: 数据验证失败 - 所有行的关键字段 ({', '.join(critical_cols)}) 均为空值。可能数据源返回异常数据。"
-            self.logger.critical(error_msg)
-            raise ValueError(error_msg)
-
-        self.logger.info(
-            f"任务 {self.name}: 数据验证通过，获取了 {len(df)} 条有效成分记录。"
-        )
-        return df
+    # 7. 数据验证规则 (真正生效的验证机制)
+    validations = [
+        (lambda df: df['ts_code'].notna(), "股票代码不能为空"),
+        (lambda df: df['l3_code'].notna(), "申万三级行业代码不能为空"),
+        (lambda df: df['in_date'].notna(), "纳入日期不能为空"),
+        (lambda df: ~(df['ts_code'].astype(str).str.strip().eq('') | df['ts_code'].isna()), "股票代码不能为空字符串"),
+        (lambda df: ~(df['l3_code'].astype(str).str.strip().eq('') | df['l3_code'].isna()), "申万三级行业代码不能为空字符串"),
+        (lambda df: ~(df['in_date'].astype(str).str.strip().eq('') | df['in_date'].isna()), "纳入日期不能为空字符串"),
+    ]

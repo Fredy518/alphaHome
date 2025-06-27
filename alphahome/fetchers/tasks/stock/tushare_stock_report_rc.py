@@ -78,7 +78,6 @@ class TushareStockReportRcTask(TushareTask):
         "ev_ebitda": float,
         "max_price": float,
         "min_price": float,
-        "create_time": lambda x: pd.to_datetime(x) if pd.notna(x) else None,
     }
 
     # 5.列名映射 (No mapping needed for this API)
@@ -113,8 +112,17 @@ class TushareStockReportRcTask(TushareTask):
         "create_time": {"type": "TIMESTAMP"},
     }
 
-    # 7.数据验证规则 (Optional)
-    validations = []
+    # 7.数据验证规则
+    validations = [
+        lambda df: df['ts_code'].notna(),
+        lambda df: df['report_date'].notna(),
+        lambda df: df['org_name'].notna(),
+        lambda df: df['author_name'].notna(),
+        lambda df: df['quarter'].notna(),
+        lambda df: df['quarter'].str.match(r'^\d{4}Q[1-4]$'), # 季度格式应为 YYYYQ[1-4]
+        lambda df: (df['max_price'] >= df['min_price']) | df['min_price'].isnull() | df['max_price'].isnull(),
+        lambda df: df['roe'].between(-100, 100) | df['roe'].isnull(), # ROE应在合理范围
+    ]
 
     async def get_batch_list(self, **kwargs) -> List[Dict]:
         """使用 BatchPlanner 生成批处理参数列表 (基于 report_date)

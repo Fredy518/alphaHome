@@ -97,60 +97,16 @@ class TushareIndexCiMemberTask(TushareTask):
         self.logger.info(f"任务 {self.name}: 生成获取最新(Y)和历史(N)行业成分的批次。")
         return [{"is_new": "Y"}, {"is_new": "N"}]  # <-- 返回两个批次
 
-    async def validate_data(self, df: pd.DataFrame, **kwargs: Any) -> pd.DataFrame:
-        """
-        验证从 Tushare API 获取的指数成分数据。
-        - 检查 DataFrame 是否为空。
-        - 检查关键标识字段 (ts_code, l3_code, in_date) 是否全部为空。
-        - 过滤掉 l3_code 为空的记录（因为它是 NOT NULL 字段）。
-        """
-        if df.empty:
-            self.logger.warning(
-                f"任务 {self.name}: 从 API 获取的 DataFrame 为空，无需验证。"
-            )
-            return df
-
-        original_count = len(df)
-
-        # 1. 检查关键字段是否存在 (映射后的字段名)
-        critical_cols = ["ts_code", "l3_code", "in_date"]
-        missing_cols = [col for col in critical_cols if col not in df.columns]
-        if missing_cols:
-            error_msg = f"任务 {self.name}: 数据验证失败 - 缺失关键业务字段: {', '.join(missing_cols)}。"
-            self.logger.error(error_msg)
-            raise ValueError(error_msg)
-
-        # 2. 过滤掉 l3_code 为空的记录
-        before_filter = len(df)
-        # 检查 l3_code 是否为空（包括 None、NaN、空字符串）
-        l3_code_mask = df['l3_code'].notna() & (df['l3_code'] != '') & (df['l3_code'] != 'null')
-        df = df[l3_code_mask].copy()
-        after_filter = len(df)
-        
-        if before_filter > after_filter:
-            filtered_count = before_filter - after_filter
-            self.logger.warning(
-                f"任务 {self.name}: 过滤掉 {filtered_count} 条 l3_code 为空的记录。"
-            )
-
-        # 3. 检查过滤后是否还有数据
-        if df.empty:
-            self.logger.warning(
-                f"任务 {self.name}: 过滤后没有有效数据。"
-            )
-            return df
-
-        # 4. 检查关键字段是否在所有行中都为空值
-        df_check = df[critical_cols].replace("", pd.NA)
-        if df_check.isnull().all(axis=1).all():
-            error_msg = f"任务 {self.name}: 数据验证失败 - 所有行的关键字段 ({', '.join(critical_cols)}) 均为空值。可能数据源返回异常数据。"
-            self.logger.critical(error_msg)
-            raise ValueError(error_msg)
-
-        self.logger.info(
-            f"任务 {self.name}: 数据验证通过，从原始 {original_count} 条记录中获取了 {len(df)} 条有效成分记录。"
-        )
-        return df
+    # 7. 数据验证规则 (真正生效的验证机制)
+    validations = [
+        (lambda df: df['ts_code'].notna(), "股票代码不能为空"),
+        (lambda df: df['l3_code'].notna(), "中信三级行业代码不能为空"),
+        (lambda df: df['in_date'].notna(), "纳入日期不能为空"),
+        (lambda df: ~(df['ts_code'].astype(str).str.strip().eq('') | df['ts_code'].isna()), "股票代码不能为空字符串"),
+        (lambda df: ~(df['l3_code'].astype(str).str.strip().eq('') | df['l3_code'].isna()), "中信三级行业代码不能为空字符串"),
+        (lambda df: ~(df['in_date'].astype(str).str.strip().eq('') | df['in_date'].isna()), "纳入日期不能为空字符串"),
+        (lambda df: df['l3_code'].astype(str) != 'null', "中信三级行业代码不能为null值"),
+    ]
 
     # 可选：如果需要在保存前进行额外处理，可以覆盖 process_data
     # async def process_data(self, df: pd.DataFrame, batch_params: Dict) -> pd.DataFrame:

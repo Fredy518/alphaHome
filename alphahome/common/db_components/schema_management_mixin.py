@@ -221,15 +221,15 @@ class SchemaManagementMixin:
                         pk_cols_str = ", ".join([f'"{pk}"' for pk in primary_keys])
                         columns.append(f"PRIMARY KEY ({pk_cols_str})")
 
-                    columns_str = ",\\n            ".join(columns)
+                    columns_str = ", ".join(columns)
                     create_table_sql = f"""
                     CREATE TABLE IF NOT EXISTS {resolved_table_name} (
-                        {columns_str}
+                        {",\n            ".join(columns)}
                     );
                     """
 
                     self.logger.info( # type: ignore
-                        f"准备为表 '{resolved_table_name}' 执行建表语句:\\n{create_table_sql}"
+                        f"准备为表 '{resolved_table_name}' 执行建表语句:\n{create_table_sql}"
                     )
                     await conn.execute(create_table_sql) # type: ignore
                     self.logger.info(f"表 '{resolved_table_name}' 创建成功或已存在。") # type: ignore
@@ -350,10 +350,10 @@ class SchemaManagementMixin:
         """重命名数据库中的表。"""
         query = f'ALTER TABLE "{schema}"."{old_table_name}" RENAME TO "{new_table_name}";'
         try:
-            await self.execute(query)
-            self.logger.info(f"成功将表 '{schema}.{old_table_name}' 重命名为 '{new_table_name}'。")
+            await self.execute(query) # type: ignore
+            self.logger.info(f"成功将表 '{schema}.{old_table_name}' 重命名为 '{new_table_name}'。") # type: ignore
         except Exception as e:
-            self.logger.error(f"重命名表 '{schema}.{old_table_name}' 失败: {e}", exc_info=True)
+            self.logger.error(f"重命名表 '{schema}.{old_table_name}' 失败: {e}", exc_info=True) # type: ignore
             raise
 
     async def view_exists(self, view_name: str, schema: str = "public") -> bool:
@@ -363,18 +363,18 @@ class SchemaManagementMixin:
         WHERE table_schema = $1 AND table_name = $2;
         """
         try:
-            result = await self.fetch_one(query, schema, view_name)
+            result = await self.fetch_one(query, schema, view_name) # type: ignore
             return result is not None
         except Exception as e:
-            self.logger.error(f"检查视图 '{schema}.{view_name}' 是否存在时失败: {e}", exc_info=True)
+            self.logger.error(f"检查视图 '{schema}.{view_name}' 是否存在时失败: {e}", exc_info=True) # type: ignore
             return False
 
     async def create_view(self, view_name: str, target_table_name: str, schema: str = "public"):
         """创建一个指向目标表的视图。"""
         query = f'CREATE OR REPLACE VIEW "{schema}"."{view_name}" AS SELECT * FROM "{schema}"."{target_table_name}";'
         try:
-            await self.execute(query)
-            self.logger.info(f"成功创建或更新视图 '{schema}.{view_name}' 以指向 '{target_table_name}'。")
+            await self.execute(query) # type: ignore
+            self.logger.info(f"成功创建或更新视图 '{schema}.{view_name}' 以指向 '{target_table_name}'。") # type: ignore
         except Exception as e:
-            self.logger.error(f"创建视图 '{schema}.{view_name}' 失败: {e}", exc_info=True)
+            self.logger.error(f"创建视图 '{schema}.{view_name}' 失败: {e}", exc_info=True) # type: ignore
             raise

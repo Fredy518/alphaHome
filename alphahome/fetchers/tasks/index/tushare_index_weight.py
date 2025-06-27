@@ -69,6 +69,15 @@ class TushareIndexWeightTask(TushareTask):
         }  # 新增 update_time 索引
     ]
 
+    # 7. 数据验证规则
+    validations = [
+        lambda df: df['index_code'].notna(),
+        lambda df: df['con_code'].notna(),
+        lambda df: df['trade_date'].notna(),
+        lambda df: df['weight'] > 0,      # 权重必须为正
+        lambda df: df['weight'] < 100,    # 权重通常小于100（百分比）
+    ]
+
     # 构造函数：基类的 __init__ 方法期望处理 task_id, task_name, cfg, db_manager, api, logger 参数。
     # 上面定义的类属性将被基类使用。
     # 如果需要基类 TushareTask 之外的特定初始化逻辑，
@@ -157,8 +166,12 @@ class TushareIndexWeightTask(TushareTask):
             return []
 
         try:
-            start_dt = pd.to_datetime(start_date_str, format='%Y%m%d')
-            end_dt = pd.to_datetime(end_date_str, format='%Y%m%d')
+            start_dt = datetime.strptime(start_date_str, '%Y%m%d')
+            end_dt = datetime.strptime(end_date_str, '%Y%m%d')
+            
+            date_ranges = list(
+                pd.date_range(start=start_dt, end=end_dt, freq="MS")
+            )
         except ValueError as e:
             self.logger.error(f"无法将日期 {start_date_str}, {end_date_str} 解析为 datetime 对象: {e}")
             return []
@@ -166,11 +179,8 @@ class TushareIndexWeightTask(TushareTask):
         batches = []
         date_format = "%Y%m%d"
 
-        # 生成月份范围
-        month_range = pd.date_range(start=start_dt.replace(day=1), end=end_dt, freq='MS')
-
         for index_code in index_codes:
-            for month_start in month_range:
+            for month_start in date_ranges:
                 month_end = month_start + pd.offsets.MonthEnd(1)
                 
                 # 确保我们不会超出总的结束日期
@@ -187,6 +197,6 @@ class TushareIndexWeightTask(TushareTask):
                     "end_date": month_end.strftime(date_format)
                 })
 
-        self.logger.info(f"为 {len(index_codes)} 个指数代码在 {len(month_range)} 个月份内生成了 {len(batches)} 个批次。")
+        self.logger.info(f"为 {len(index_codes)} 个指数代码在 {len(date_ranges)} 个月份内生成了 {len(batches)} 个批次。")
         return batches
     

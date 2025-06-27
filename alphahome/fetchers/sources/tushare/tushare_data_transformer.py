@@ -76,6 +76,38 @@ class TushareDataTransformer:
 
         return data
 
+    def _convert_date_columns(self, data: pd.DataFrame) -> pd.DataFrame:
+        """
+        根据 schema_def 自动转换日期列。
+        """
+        if not hasattr(self.task, "schema_def") or not self.task.schema_def:
+            return data
+
+        for col, definition in self.task.schema_def.items():
+            col_type = definition.get("type", "").upper()
+            if col in data.columns and (col_type.startswith("DATE") or col_type.startswith("TIMESTAMP")):
+                if pd.api.types.is_datetime64_any_dtype(data[col]):
+                    continue
+                
+                self.logger.debug(f"自动转换日期列: {col}")
+                
+                original_nan_count = data[col].isna().sum()
+                
+                # 替换空字符串为 NaT
+                if data[col].dtype == 'object':
+                    data[col] = data[col].replace('', None)
+
+                converted_col = pd.to_datetime(data[col], errors='coerce')
+                
+                new_nan_count = converted_col.isna().sum()
+                
+                if new_nan_count > original_nan_count:
+                    self.logger.warning(
+                        f"列 '{col}' 在日期转换中有 {new_nan_count - original_nan_count} 个值无法解析，已转换为 NaT。"
+                    )
+                data[col] = converted_col
+        return data
+
     def _apply_transformations(self, data: pd.DataFrame) -> pd.DataFrame:
         """应用数据转换
 
@@ -135,10 +167,20 @@ class TushareDataTransformer:
 
         return data
 
-    async def process_data(self, data: pd.DataFrame, **kwargs) -> pd.DataFrame:
-        """处理从Tushare获取的数据
+    def process_data(self, data: pd.DataFrame, **kwargs) -> pd.DataFrame:
+        """
+        处理从Tushare获取的数据（在fetch阶段的初步处理）
 
-        包括列名映射和数据转换。
+        注意：在新的重构架构下，这个方法主要负责 fetch 阶段的初步数据处理，
+        包括列名映射等。主要的数据转换和业务逻辑处理现在由 BaseTask.process_data
+        和 TushareTask.process_data 负责，避免重复处理。
+
+        Args:
+            data: 从API获取的原始数据
+            **kwargs: 额外参数
+
+        Returns:
+            pd.DataFrame: 初步处理后的数据
         """
         if data is None or data.empty:
             self.logger.info("process_data: 输入数据为空，跳过处理。")
@@ -147,70 +189,15 @@ class TushareDataTransformer:
         # 1. 应用列名映射
         data = self._apply_column_mapping(data)
 
-        # 2. 应用通用数据类型转换 (from transformations dict)
+        # 2. 自动转换日期列
+        data = self._convert_date_columns(data)
+
+        # 3. 应用在任务中定义的其他转换
         data = self._apply_transformations(data)
 
-        # 3. 调用子类可能重写的 process_data 方法进行额外处理
-        if hasattr(cast(Any, self.task), "process_data") and callable(
-            cast(Any, self.task).process_data
-        ):
-            self.logger.debug("调用Task子类特定的数据处理方法...")
-            # 检查是否为异步方法
-            if inspect.iscoroutinefunction(cast(Any, self.task).process_data):
-                data = await cast(Any, self.task).process_data(data, **kwargs)
-            else:
-                data = cast(Any, self.task).process_data(data, **kwargs)
-            
-            # 显式地将返回结果 cast 为 DataFrame
-            data = cast(pd.DataFrame, data)
-
+        self.logger.debug(f"Transformer初步处理完成，数据行数: {len(data)}")
         return data
 
-    async def validate_data(self, data: pd.DataFrame) -> pd.DataFrame:
-        """验证从Tushare获取的数据
-
-        不符合验证规则的数据会被过滤掉。
-
-        Args:
-            data (pd.DataFrame): 待验证的数据
-
-        Returns:
-            pd.DataFrame: 验证后的数据（已过滤掉不符合规则的数据）
-        """
-        if data is None or data.empty:
-            self.logger.warning("没有数据需要验证")
-            return data
-
-        # 记录原始数据行数
-        original_count = len(data)
-        valid_mask = pd.Series(True, index=data.index)
-
-        # 应用自定义验证规则
-        # 检查 self.task 是否具有 validations 属性
-        if hasattr(self.task, "validations") and self.task.validations:
-            for validation_func in self.task.validations:
-                try:
-                    # 获取每行数据的验证结果
-                    validation_result = validation_func(data[valid_mask])
-                    if isinstance(validation_result, pd.Series):
-                        valid_mask &= validation_result
-                    else:
-                        if not validation_result:
-                            self.logger.warning(
-                                f"整批数据未通过验证: {validation_func.__name__ if hasattr(validation_func, '__name__') else '未命名验证'}"
-                            )
-                            valid_mask &= False
-                except Exception as e:
-                    self.logger.warning(f"执行验证时发生错误: {str(e)}")
-                    valid_mask &= False
-
-        # 应用验证结果
-        filtered_data = data[valid_mask].copy()
-        filtered_count = len(filtered_data)
-
-        if filtered_count < original_count:
-            self.logger.warning(
-                f"数据验证: 过滤掉 {original_count - filtered_count} 行不符合规则的数据"
-            )
-
-        return cast(pd.DataFrame, filtered_data)
+    # 注意：验证功能已统一到 BaseTask._validate_data 方法中
+    # 不再在 Transformer 阶段进行验证，避免重复验证和架构混乱
+    # 如果需要过滤式验证，可以在任务中设置 validation_mode = "filter"

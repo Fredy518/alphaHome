@@ -113,33 +113,11 @@ class TushareStockBasicTask(TushareTask):
         ]
         return batch_list
 
-    async def validate_data(self, df: pd.DataFrame, **kwargs: Any) -> pd.DataFrame:
-        """
-        验证从 Tushare API 获取的数据。
-        - 检查 DataFrame 是否为空。
-        - 检查关键业务字段 ('symbol', 'name') 是否全部为空。
-        """
-        if df.empty:
-            self.logger.warning(
-                f"任务 {self.name}: 从 API 获取的 DataFrame 为空，无需验证。"
-            )
-            return df
-
-        critical_cols = ["symbol", "name"]
-        missing_cols = [col for col in critical_cols if col not in df.columns]
-        if missing_cols:
-            error_msg = f"任务 {self.name}: 数据验证失败 - 缺失关键业务字段: {', '.join(missing_cols)}。"
-            self.logger.error(error_msg)
-            raise ValueError(error_msg)
-
-        # 替换空字符串为 NA 以便 isnull() 检测
-        df_check = df[critical_cols].replace("", pd.NA)
-        if df_check.isnull().all(axis=1).all(): # type: ignore
-            error_msg = f"任务 {self.name}: 数据验证失败 - 所有行的关键业务字段 ({', '.join(critical_cols)}) 均为空值。"
-            self.logger.critical(error_msg)
-            raise ValueError(error_msg)
-
-        self.logger.info(
-            f"任务 {self.name}: 数据验证通过，获取了 {len(df)} 条有效记录。"
-        )
-        return df
+    # 验证规则：使用 validations 列表（真正生效的验证机制）
+    validations = [
+        (lambda df: df['ts_code'].str.match(r'^\d{6}\.(SH|SZ|BJ)$'), "股票代码格式检查（6位数字.SH/SZ/BJ）"),
+        (lambda df: df['symbol'].notna(), "股票简称不能为空"),
+        (lambda df: df['name'].notna(), "股票名称不能为空"),
+        (lambda df: ~(df['symbol'].astype(str).str.strip().eq('') | df['symbol'].isna()), "股票简称不能为空字符串"),
+        (lambda df: ~(df['name'].astype(str).str.strip().eq('') | df['name'].isna()), "股票名称不能为空字符串"),
+    ]

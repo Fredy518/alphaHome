@@ -85,7 +85,7 @@ class TushareBatchProcessor:
 
         return None
 
-    async def _transform_and_validate_batch_data(
+    def _transform_and_validate_batch_data(
         self, batch_data: pd.DataFrame, batch_log_prefix: str
     ) -> Optional[pd.DataFrame]:
         """处理和验证批次数据。"""
@@ -95,7 +95,7 @@ class TushareBatchProcessor:
         try:
             self.logger.info(f"{batch_log_prefix}: 处理 {len(batch_data)} 行数据")
             # 调用 TushareDataTransformer 的 process_data
-            processed_data = await self.data_transformer.process_data(batch_data)
+            processed_data = self.data_transformer.process_data(batch_data)
 
             if not isinstance(processed_data, pd.DataFrame):
                 self.logger.error(
@@ -114,28 +114,15 @@ class TushareBatchProcessor:
             return None
 
         try:
+            # 验证功能已统一到 BaseTask._validate_data 方法中，这里不再单独验证
+            # 直接使用处理后的数据进行去重等操作
+            validated_data = processed_data
+            
             self.logger.info(
-                f"{batch_log_prefix}: 验证处理后的数据 ({len(processed_data)} 行)"
+                f"{batch_log_prefix}: 准备保存处理后的数据 ({len(validated_data)} 行)"
             )
-            # 调用 TushareDataTransformer 的 validate_data
-            validated_data = await self.data_transformer.validate_data(processed_data)
 
-            if not isinstance(validated_data, pd.DataFrame):
-                self.logger.error(
-                    f"{batch_log_prefix}: 验证数据后没有得到有效的DataFrame，而是: {type(validated_data)}"
-                )
-                return None
-
-            if validated_data.empty:
-                self.logger.info(
-                    f"{batch_log_prefix}: 数据验证后为空或所有数据均被过滤。"
-                )
-                return validated_data
-
-            # 目前，假设如果此处仍需要 primary_keys，可以通过 self.task 访问，但理想情况下它应该属于转换器逻辑的一部分。
-            # 通常，最好是 TushareDataTransformer.validate_data 返回已经去重的数据
-            # 或者由 TushareDataTransformer.process_data 处理。
-            # 如果 TushareTask 需要在助手转换和验证后强制执行：
+            # 在批处理器中执行基本的去重操作（如果需要）
             if hasattr(self.task, "primary_keys") and self.task.primary_keys:
                 original_count = len(validated_data)
                 validated_data.drop_duplicates(
@@ -144,17 +131,17 @@ class TushareBatchProcessor:
                 deduped_count = len(validated_data)
                 if deduped_count < original_count:
                     self.logger.debug(
-                        f"{batch_log_prefix}: (在Processor中)基于主键 {self.task.primary_keys} 去重，移除了 {original_count - deduped_count} 行重复数据。"
+                        f"{batch_log_prefix}: 基于主键 {self.task.primary_keys} 去重，移除了 {original_count - deduped_count} 行重复数据。"
                     )
 
             self.logger.info(
-                f"{batch_log_prefix}: 数据处理和验证完成，得到 {len(validated_data)} 行有效数据。"
+                f"{batch_log_prefix}: 数据处理完成，得到 {len(validated_data)} 行有效数据。"
             )
             return validated_data
 
         except Exception as e:
             self.logger.error(
-                f"{batch_log_prefix}: 验证数据或去重时发生错误: {e}", exc_info=True
+                f"{batch_log_prefix}: 处理数据或去重时发生错误: {e}", exc_info=True
             )
             return None
 
@@ -264,7 +251,7 @@ class TushareBatchProcessor:
                 self.logger.info(f"{batch_log_prefix}: 获取到空数据，无需进一步处理。")
                 return 0
 
-            validated_data = await self._transform_and_validate_batch_data(
+            validated_data = self._transform_and_validate_batch_data(
                 batch_data, batch_log_prefix
             )
             if validated_data is None:

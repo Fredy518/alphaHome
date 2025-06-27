@@ -479,9 +479,14 @@ class TushareFinaBalancesheetTask(TushareTask):
     }
 
     # 7.数据验证规则
-    # validations = [
-    #     lambda df: (df['total_assets'] == df['total_liab'] + df['total_hldr_eqy_inc_min_int']).all()
-    # ]
+    validations = [
+        (lambda df: df['ts_code'].notna(), "股票代码不能为空"),
+        (lambda df: df['ann_date'].notna(), "公告日期不能为空"),
+        (lambda df: df['end_date'].notna(), "报告期不能为空"),
+        (lambda df: df['ann_date'] >= df['end_date'], "公告日期应晚于或等于报告期"),
+        (lambda df: df['total_assets'].fillna(0) >= 0, "总资产不能为负数"),
+        (lambda df: df['total_liab'].fillna(0) >= 0, "总负债不能为负数"),
+    ]
 
     async def get_batch_list(self, **kwargs) -> List[Dict]:
         """生成批处理参数列表 (使用标准化的财务数据批次工具)

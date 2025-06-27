@@ -8,7 +8,7 @@
 """
 
 import logging
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional, Union, Callable, Tuple
 
 import pandas as pd
 
@@ -98,7 +98,16 @@ class TushareFundNavTask(TushareTask):
         },  # 新增 update_time 索引
     ]
 
-    # 7. 分批配置
+    # 7. 数据验证规则
+    validations: Optional[List[Union[Callable, Tuple[Callable, str]]]] = [
+        (lambda df: df['ts_code'].notna(), "基金代码不能为空"),
+        (lambda df: df['nav_date'].notna(), "净值日期不能为空"),
+        (lambda df: df['unit_nav'] > 0, "单位净值必须为正"),
+        (lambda df: df['accum_nav'] >= df['unit_nav'], "累计净值应大于等于单位净值"),
+        (lambda df: df['net_asset'] >= 0, "基金资产净值非负"),
+    ]
+
+    # 8. 分批配置
     batch_trade_days_single_code = 360  # 单基金查询时，约1.5年
     batch_trade_days_all_codes = 5  # 全市场查询
 
@@ -177,27 +186,3 @@ class TushareFundNavTask(TushareTask):
         return api_params
 
     # validate_data 可以使用基类或自定义
-    async def validate_data(self, df: pd.DataFrame, **kwargs: Any) -> pd.DataFrame:
-        """
-        验证基金净值数据。
-        """
-        if df.empty:
-            return df
-        # 可以添加对 unit_nav 等是否为正数的检查
-        numeric_cols = [
-            "unit_nav",
-            "accum_nav",
-            "net_asset",
-            "total_netasset",
-            "adj_nav",
-        ]
-        for col in numeric_cols:
-            if col in df.columns:
-                # 允许净资产为负？暂时只检查单位净值和复权净值
-                if col in ["unit_nav", "adj_nav"]:
-                    negative_count = (df[col].dropna() < 0).sum()
-                    if negative_count > 0:
-                        self.logger.warning(
-                            f"任务 {self.name}: 列 '{col}' 发现 {negative_count} 条负值记录。"
-                        )
-        return df

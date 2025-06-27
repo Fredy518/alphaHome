@@ -82,12 +82,23 @@ class TushareStockDailyTask(TushareTask):
         "amount": {"type": "FLOAT"},
     }
 
-    # 7.数据验证规则 (使用目标字段名 volume)
-    # validations = [
-    #     lambda df: df["close"] >= 0,
-    #     lambda df: df["volume"] >= 0, # 目标字段名
-    #     lambda df: df["amount"] >= 0
-    # ]
+    # 7.数据验证规则 (使用目标字段名 volume) - 真正生效的验证机制
+    validations = [
+        (lambda df: df["close"] > 0, "收盘价必须为正数"),
+        (lambda df: df["open"] > 0, "开盘价必须为正数"),
+        (lambda df: df["high"] > 0, "最高价必须为正数"),
+        (lambda df: df["low"] > 0, "最低价必须为正数"),
+        (lambda df: df["volume"] >= 0, "成交量不能为负数"),
+        (lambda df: df["amount"] >= 0, "成交额不能为负数"),
+        (lambda df: df["high"] >= df["low"], "最高价不能低于最低价"),
+        (lambda df: df["high"] >= df["open"], "最高价不能低于开盘价"),
+        (lambda df: df["high"] >= df["close"], "最高价不能低于收盘价"),
+        (lambda df: df["low"] <= df["open"], "最低价不能高于开盘价"),
+        (lambda df: df["low"] <= df["close"], "最低价不能高于收盘价"),
+    ]
+
+    # 8.验证模式配置 - 使用报告模式记录验证结果
+    validation_mode = "report"  # 报告验证结果但保留所有数据
 
     # 8. 分批配置
     batch_trade_days_single_code = 240  # 单代码查询时，每个批次的交易日数量 (约1年)

@@ -112,16 +112,21 @@ class TushareFutureDailyTask(TushareTask):
         {"name": "idx_future_daily_update_time", "columns": "update_time"},
     ]
 
-    # 7. 分批配置
+    # 7. 数据验证规则
+    validations = [
+        lambda df: df['ts_code'].notna(),
+        lambda df: df['trade_date'].notna(),
+        lambda df: df['close'] > 0,
+        lambda df: df['high'] >= df['low'],
+        lambda df: df['volume'] >= 0,
+        lambda df: df['amount'] >= 0,
+        lambda df: df['oi'] >= 0, # 持仓量不能为负
+    ]
+
+    # 8. 分批配置
     # 自然日按月分批，一个月大约30天
-    batch_natural_days_month = 30# --- This __init__ was commented out for code simplification. ---
-# 
-# 
-# def __init__(self, db_connection, api_token=None, api=None, **kwargs):
-# """初始化任务"""
-# super().__init__(db_connection, api_token=api_token, api=api, **kwargs)
-# self.logger.info(f"任务 {self.name} 已配置初始化。")
-# 
+    batch_natural_days_month = 30
+
     async def get_batch_list(self, **kwargs: Any) -> List[Dict]:
         """
         生成批处理参数列表，使用自然日按月分批。
@@ -163,38 +168,3 @@ class TushareFutureDailyTask(TushareTask):
             # 抛出异常以便上层调用者感知
             raise RuntimeError(f"任务 {self.name}: 生成自然日批次失败") from e
 
-    async def validate_data(self, df: pd.DataFrame, **kwargs: Any) -> pd.DataFrame:
-        """
-        验证从 Tushare API 获取的数据。
-        - 检查 DataFrame 是否为空。
-        - 检查关键业务字段 ('ts_code', 'trade_date', 'close', 'volume') 是否全部为空。
-        """
-        if df.empty:
-            self.logger.warning(
-                f"任务 {self.name}: 从 API 获取的 DataFrame 为空，无需验证。"
-            )
-            return df
-
-        critical_cols = [
-            "ts_code",
-            "trade_date",
-            "close",
-            "volume",
-        ]  # 使用映射后的 volume
-        missing_cols = [col for col in critical_cols if col not in df.columns]
-        if missing_cols:
-            error_msg = f"任务 {self.name}: 数据验证失败 - 缺失关键业务字段: {', '.join(missing_cols)}。"
-            self.logger.error(error_msg)
-            raise ValueError(error_msg)
-
-        # 替换空字符串为 NA 以便 isnull() 检测
-        df_check = df[critical_cols].replace("", pd.NA)
-        if df_check.isnull().all(axis=1).all():
-            error_msg = f"任务 {self.name}: 数据验证失败 - 所有行的关键业务字段 ({', '.join(critical_cols)}) 均为空值。"
-            self.logger.critical(error_msg)
-            raise ValueError(error_msg)
-
-        self.logger.info(
-            f"任务 {self.name}: 数据验证通过，获取了 {len(df)} 条有效记录。"
-        )
-        return df

@@ -294,9 +294,14 @@ class TushareFinaIncomeTask(TushareTask):
     }
 
     # 7.数据验证规则
-    # validations = [
-    #     lambda df: (df['total_profit'] == df['income_befr_tax'] + df['income_tax']).all() | df['total_profit'].isnull() | df['income_befr_tax'].isnull() | df['income_tax'].isnull()
-    # ]
+    validations = [
+        (lambda df: df['ts_code'].notna(), "股票代码不能为空"),
+        (lambda df: df['ann_date'].notna(), "公告日期不能为空"),
+        (lambda df: df['end_date'].notna(), "报告期不能为空"),
+        (lambda df: df['ann_date'] >= df['end_date'], "公告日期应晚于或等于报告期"),
+        (lambda df: df['revenue'].fillna(0) >= 0, "营业收入不能为负数"),
+        (lambda df: df['total_profit'].fillna(0) >= -df['revenue'].fillna(0) if 'revenue' in df.columns else True, "利润总额应在合理范围内"),
+    ]
 
     async def get_batch_list(self, **kwargs) -> List[Dict]:
         """生成批处理参数列表 (使用标准化的财务数据批次工具)

@@ -148,30 +148,3 @@ class TushareFundPortfolioTask(TushareTask):
             return []
 
     # prepare_params 可以使用基类默认实现，它会传递 batch_list 中的所有参数
-
-    async def validate_data(self, df: pd.DataFrame, **kwargs: Any) -> pd.DataFrame:
-        """
-        验证基金持仓数据。
-        """
-        if df.empty:
-            return df
-
-        # 检查关键列是否存在
-        critical_cols = ["ts_code", "ann_date", "end_date", "symbol"]
-        missing_cols = [col for col in critical_cols if col not in df.columns]
-        if missing_cols:
-            error_msg = f"任务 {self.name}: 数据验证失败 - 缺失关键业务字段: {', '.join(missing_cols)}。"
-            self.logger.error(error_msg)
-            raise ValueError(error_msg)
-
-        # 检查数值列是否为负数 (理论上不应为负)
-        numeric_cols_check = ["mkv", "amount", "stk_mkv_ratio", "stk_float_ratio"]
-        for col in numeric_cols_check:
-            if col in df.columns:
-                negative_count = (df[col].dropna() < 0).sum()
-                if negative_count > 0:
-                    self.logger.warning(
-                        f"任务 {self.name}: 列 '{col}' 发现 {negative_count} 条负值记录。"
-                    )
-
-        return df
