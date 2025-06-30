@@ -114,12 +114,21 @@ async def test_database_connection(db_url: str) -> Dict[str, Any]:
     try:
         logger.info(f"正在尝试使用URL连接到数据库: {db_url[:db_url.find('@')]}...")
         temp_manager = create_async_manager(db_url)
-        # test_connection 会尝试执行一个简单的查询
-        await temp_manager.test_connection()
-        logger.info("数据库连接测试成功。")
-        return {"status": "success", "message": "数据库连接成功！"}
+        
+        # test_connection 返回布尔值，需要检查其结果
+        is_connected = await temp_manager.test_connection()
+        
+        if is_connected:
+            logger.info("数据库连接测试成功。")
+            return {"status": "success", "message": "数据库连接成功！"}
+        else:
+            # test_connection 内部已经记录了详细错误
+            logger.warning("数据库连接测试返回失败状态。")
+            return {"status": "error", "message": "数据库连接验证失败。请检查日志获取详细信息。"}
+            
     except Exception as e:
-        logger.error(f"数据库连接测试失败: {e}", exc_info=True)
+        # 这个except块主要捕获 create_async_manager 或其他意外错误
+        logger.error(f"数据库连接测试过程中发生意外错误: {e}", exc_info=True)
         return {"status": "error", "message": f"数据库连接失败: {e}"}
     finally:
         if temp_manager:

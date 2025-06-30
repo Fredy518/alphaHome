@@ -64,13 +64,17 @@ def get_settings_from_ui(widgets: Dict[str, tk.Widget]) -> Dict[str, Any]:
     # 收集Tushare Token
     tushare_token = widgets.get("tushare_token", tk.Entry()).get()
 
-    return {"db_url": db_url, "tushare_token": tushare_token}
+    # 返回符合 config.json 完整结构的字典
+    return {
+        "database": {"url": db_url},
+        "api": {"tushare_token": tushare_token},
+    }
 
 async def handle_test_db_connection(widgets: Dict[str, tk.Widget]):
     """处理测试数据库连接按钮点击事件。"""
     # 从UI收集数据库信息 to build a temporary URL for testing
     settings = get_settings_from_ui(widgets)
-    db_url = settings.get("db_url")
+    db_url = settings.get("database", {}).get("url")
 
     info_label = widgets.get("settings_info_label")
     if info_label:

@@ -62,7 +62,7 @@ from ..common.config_manager import _config_manager as config_manager
 from ..common.db_manager import DBManager  # 添加 DBManager 导入
 from ..common.logging_utils import get_logger, setup_logging
 from ..common.schema_migrator import run_migration_check, run_refactoring_check
-from ..common.task_system import UnifiedTaskFactory
+from ..common.task_system import UnifiedTaskFactory, task_factory
 from .services import (
     task_registry_service,
     configuration_service,
@@ -74,47 +74,6 @@ logger = get_logger(__name__)
 # --- Module-level State ---
 db_manager = None
 _response_callback: Optional[Callable] = None
-
-
-async def reinitialize_db_and_reload_data():
-    """
-    重新初始化数据库连接并重新加载所有数据
-    
-    从配置中获取数据库URL，创建新的数据库连接，
-    执行schema迁移检查，确保数据库结构是最新的。
-    """
-    global db_manager
-    
-    settings = configuration_service.get_current_settings()
-    if settings:
-        db_url = settings.get("database", {}).get("url")
-        if db_url:
-            try:
-                db_manager = DBManager(db_url, mode="async")
-                logger.info("Controller: DB Manager created successfully.")
-
-                # --- SCHEMA MIGRATION CHECK ---
-                # 在数据库连接成功后，立即执行 schema 迁移检查
-                logger.info("Controller: Preparing to run schema migration check...")
-                all_tasks_dict = UnifiedTaskFactory.get_tasks_by_type(None)
-                if all_tasks_dict:
-                    # 从字典中提取类对象列表
-                    task_classes = list(all_tasks_dict.values())
-                    # 1. 首先运行旧的迁移检查
-                    await run_migration_check(db_manager, task_classes)
-                    # 2. 然后运行新的重构检查
-                    await run_refactoring_check(db_manager, task_classes)
-                else:
-                    logger.warning("Controller: No tasks found in registry for migration check.")
-                # --- END MIGRATION CHECK ---
-
-            except Exception as e:
-                logger.error(f"Controller: Failed to create DB Manager or run migration: {e}", exc_info=True)
-                db_manager = None
-        else:
-            logger.warning("Controller: No database URL found in settings.")
-    else:
-        logger.warning("Controller: No settings loaded.")
 
 
 async def initialize_controller(response_callback):
@@ -135,7 +94,6 @@ async def initialize_controller(response_callback):
     # Initialize all controller logic modules
     task_registry_service.initialize_task_registry(response_callback)
     configuration_service.initialize_storage_settings(response_callback)
-    # data_processing.initialize_data_processing(response_callback)  # 注释掉已删除的模块
     task_execution_service.set_response_callback(response_callback)
     
     # 初始化任务执行会话
@@ -143,9 +101,22 @@ async def initialize_controller(response_callback):
     
     logger.info("所有控制器逻辑模块已初始化。")
     
-    # Perform initial DB connection and data load
-    await reinitialize_db_and_reload_data()
-    
+    # Perform initial DB connection and data load using the factory's reload method
+    try:
+        await UnifiedTaskFactory.reload_config()
+        db_manager = UnifiedTaskFactory.get_db_manager()
+        if db_manager:
+             # 在数据库连接成功后，立即执行 schema 迁移检查
+            logger.info("Controller: Preparing to run schema migration check...")
+            all_tasks_dict = UnifiedTaskFactory.get_tasks_by_type(None)
+            task_classes = list(all_tasks_dict.values())
+            await run_migration_check(db_manager, task_classes)
+            await run_refactoring_check(db_manager, task_classes)
+            logger.info("Schema migration check completed.")
+    except Exception as e:
+        logger.error(f"Controller: Initial UnifiedTaskFactory setup failed: {e}", exc_info=True)
+        db_manager = None
+
     logger.info("控制器初始化完成。")
 
 
@@ -250,46 +221,61 @@ async def handle_request(command: str, data: Optional[Dict[str, Any]] = None):
     try:
         if command == "GET_ALL_TASK_STATUS":
             await handle_get_all_task_status()
+
         elif command == "RUN_TASKS":
             await handle_run_tasks(
-                tasks_to_run=data.get("tasks_to_run", []),
-                start_date=data.get("start_date"),
-                end_date=data.get("end_date"),
-                exec_mode=data.get("exec_mode", "serial"),
+                data.get("tasks", []),
+                data.get("start_date"),
+                data.get("end_date"),
+                data.get("exec_mode", "serial"),
             )
+
         elif command == "STOP_TASKS":
             handle_stop_tasks()
+
         elif command == "GET_COLLECTION_TASKS":
             await handle_get_collection_tasks()
+
+        elif command == "GET_PROCESSING_TASKS":
+            await handle_get_processing_tasks()
+
         elif command == "TOGGLE_COLLECTION_SELECT":
             row_index = data.get("row_index", -1)
             if row_index >= 0:
                 task_registry_service.toggle_collection_select(row_index)
-            else:
-                logger.warning("TOGGLE_COLLECTION_SELECT: 无效的行索引")
-        elif command == "GET_PROCESSING_TASKS":
-            await handle_get_processing_tasks()
+
         elif command == "TOGGLE_PROCESSING_SELECT":
             row_index = data.get("row_index", -1)
             if row_index >= 0:
                 task_registry_service.toggle_processing_select(row_index)
-            else:
-                logger.warning("TOGGLE_PROCESSING_SELECT: 无效的行索引")
+
         elif command == "GET_STORAGE_SETTINGS":
             await configuration_service.handle_get_storage_settings()
+
         elif command == "SAVE_STORAGE_SETTINGS":
+            # The configuration service now handles saving and reloading.
             await configuration_service.handle_save_settings(data)
-            # 保存后，使用新设置重新初始化数据库连接
-            await reinitialize_db_and_reload_data()
+            
+            # After reloading, we need to refresh the UI task list
+            await handle_get_collection_tasks()
+            await handle_get_processing_tasks()
+
+        elif command == "TEST_DB_CONNECTION":
+            db_url = data.get("db_url")
+            if db_url:
+                await configuration_service.test_database_connection(db_url)
+            else:
+                logger.warning("Test DB connection request received with no URL.")
+            
         else:
-            logger.warning(f"Unknown command received: {command}")
-            if _response_callback:
-                _response_callback("LOG", {"level": "warning", "message": f"收到未知命令: {command}"})
-        
+            logger.warning(f"Unknown command: {command}")
+            
     except Exception as e:
         logger.error(f"Error handling command '{command}': {e}", exc_info=True)
         if _response_callback:
-            _response_callback("LOG", {"level": "error", "message": f"处理命令 '{command}' 时出错: {e}"})
+            _response_callback(
+                "LOG", {"level": "error", "message": f"处理命令 '{command}' 时发生意外错误: {e}"}
+            )
 
 
 # --- 添加缺失的controller请求函数 ---
