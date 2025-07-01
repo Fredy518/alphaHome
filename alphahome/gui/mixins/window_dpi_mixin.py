@@ -142,44 +142,89 @@ class WindowDpiMixin:
         import sys
         import os
         import subprocess
-        
+
         logger = get_logger("main_window")
-        
+
         # 确认重启
         if messagebox.askyesno(
-            "重启应用", 
+            "重启应用",
             "重启应用程序将关闭当前窗口并重新启动。\n\n确定要继续吗？"
         ):
             try:
                 logger.info("用户确认重启应用程序")
-                
+
                 # 获取当前Python可执行文件和脚本路径
                 python_exe = sys.executable
                 script_path = os.path.abspath(sys.argv[0])
-                
-                # 如果是通过模块运行的，使用run.py
-                if script_path.endswith('__main__.py') or 'alphahome' in script_path:
-                    # 查找run.py文件
+
+                logger.info(f"原始脚本路径: {script_path}")
+
+                # 尝试多种方式找到正确的启动脚本
+                run_script_found = False
+
+                # 方法1: 如果是通过模块运行的，查找run.py
+                if script_path.endswith('__main__.py') or 'alphahome' in os.path.basename(script_path):
+                    # 从当前文件位置向上查找项目根目录
                     current_dir = os.path.dirname(os.path.abspath(__file__))
-                    project_root = os.path.dirname(os.path.dirname(current_dir))
+                    # window_dpi_mixin.py -> mixins -> gui -> alphahome -> 项目根目录
+                    project_root = os.path.dirname(os.path.dirname(os.path.dirname(current_dir)))
                     run_script = os.path.join(project_root, 'run.py')
-                    
+
+                    logger.info(f"计算的项目根目录: {project_root}")
+                    logger.info(f"查找run.py路径: {run_script}")
+
                     if os.path.exists(run_script):
                         script_path = run_script
+                        run_script_found = True
+                        logger.info(f"找到run.py: {run_script}")
                     else:
-                        logger.warning(f"未找到run.py，使用当前脚本: {script_path}")
-                
-                logger.info(f"重启命令: {python_exe} {script_path}")
-                
+                        logger.warning(f"方法1未找到run.py: {run_script}")
+
+                # 方法2: 如果方法1失败，尝试从sys.path查找
+                if not run_script_found:
+                    for path in sys.path:
+                        if path and os.path.isdir(path):
+                            potential_run = os.path.join(path, 'run.py')
+                            if os.path.exists(potential_run):
+                                # 验证这是正确的run.py（包含alphahome导入）
+                                try:
+                                    with open(potential_run, 'r', encoding='utf-8') as f:
+                                        content = f.read()
+                                        if 'alphahome' in content and 'run_gui' in content:
+                                            script_path = potential_run
+                                            run_script_found = True
+                                            logger.info(f"通过sys.path找到run.py: {potential_run}")
+                                            break
+                                except Exception:
+                                    continue
+
+                # 方法3: 如果仍未找到，尝试使用模块启动方式
+                if not run_script_found:
+                    logger.warning("未找到run.py，尝试使用模块启动方式")
+                    # 使用 python -m alphahome 的方式启动
+                    try:
+                        subprocess.Popen([python_exe, '-m', 'alphahome'],
+                                       creationflags=subprocess.CREATE_NEW_CONSOLE if os.name == 'nt' else 0)
+                        logger.info("使用模块方式启动新进程成功，关闭当前应用")
+                        self.destroy()
+                        return
+                    except Exception as module_error:
+                        logger.error(f"模块启动方式失败: {module_error}")
+                        # 继续使用原始脚本路径
+                        logger.warning(f"回退到原始脚本路径: {script_path}")
+
+                logger.info(f"最终重启命令: {python_exe} {script_path}")
+
                 # 启动新进程
-                subprocess.Popen([python_exe, script_path], 
-                               cwd=os.path.dirname(script_path),
+                cwd = os.path.dirname(script_path) if os.path.isfile(script_path) else os.getcwd()
+                subprocess.Popen([python_exe, script_path],
+                               cwd=cwd,
                                creationflags=subprocess.CREATE_NEW_CONSOLE if os.name == 'nt' else 0)
-                
+
                 # 关闭当前应用
                 logger.info("启动新进程成功，关闭当前应用")
                 self.destroy()
-                
+
             except Exception as e:
                 logger.error(f"重启应用失败: {e}")
                 messagebox.showerror("重启失败", f"重启应用程序时发生错误:\n{e}")
