@@ -1,7 +1,7 @@
 {
     "_comment": "请将本文件复制到你的用户配置目录（如 C:/Users/<你的用户名>/AppData/Local/YourAppNameOrAuthor/alphaHomeApp/config.json），并根据实际情况填写数据库和API信息。",
     "database": {
-        "url": "postgresql://username:password@localhost:5432/tusharedb",
+        "url": "postgresql://username:password@localhost:5432/alphadb",
         "pool_config": {
             "_comment": "数据库连接池配置 - 用于优化批量数据操作性能",
             "min_size": 5,
@@ -20,7 +20,11 @@
         }
     },
     "api": {
-        "tushare_token": "your_tushare_token_here"
+        "tushare_token": "your_tushare_token_here",
+        "ifind": {
+            "base_url": "https://quantapi.51ifind.com/api/v1/",
+            "refresh_token": "your_ifind_refresh_token_here"
+        }
     },
     "performance": {
         "_comment": "性能监控和优化配置",

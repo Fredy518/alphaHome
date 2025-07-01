@@ -1,8 +1,8 @@
-# TushareDB 使用文档
+# AlphaDB 使用文档
 
 ## 引言
 
-`tusharedb` 是 `alphahome` 项目用于存储从 [Tushare Pro API](https://tushare.pro/) 获取的金融数据的 PostgreSQL 数据库。本文档旨在说明数据库的结构和内容。
+`alphadb` 是 `alphahome` 项目用于存储从 [Tushare Pro API](https://tushare.pro/) 等多数据源获取的金融数据的 PostgreSQL 数据库。本文档旨在说明数据库的结构和内容。
 
 **注意:** 本文档基于对 `alphahome` 项目代码的分析生成。实际数据库结构可能因迁移或手动更改而略有不同。
 

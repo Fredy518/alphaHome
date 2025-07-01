@@ -45,38 +45,38 @@ conda install numpy pandas scipy matplotlib
 pip install -r requirements.txt
 ```
 
-### **Q3: PostgreSQL连接失败**
-**问题**: 数据库连接错误，无法连接到PostgreSQL
-**解决方案**:
-```bash
-# 1. 检查PostgreSQL服务状态
-# Windows: 服务管理器中查看PostgreSQL服务
-# macOS: brew services list | grep postgresql
-# Linux: sudo systemctl status postgresql
+### **Q3: 如何设置和连接到 PostgreSQL 数据库？**
+**回答**:
+1.  **安装 PostgreSQL**: 如果您尚未安装，请从 [PostgreSQL 官网](https://www.postgresql.org/download/) 下载并安装。
+2.  **创建数据库和用户**: 使用 `psql` 或您喜欢的数据库管理工具执行以下 SQL 命令。
+    ```sql
+    -- 建议创建一个专门用于本应用的用户
+    CREATE USER alphahome WITH PASSWORD 'your_strong_password';
 
-# 2. 检查连接参数
-python -c "
-import psycopg2
-try:
-    conn = psycopg2.connect(
-        host='localhost',
-        port=5432,
-        database='tusharedb',
-        user='your_username',
-        password='your_password'
-    )
-    print('数据库连接成功!')
-    conn.close()
-except Exception as e:
-    print(f'连接失败: {e}')
-"
+    -- 创建数据库
+    CREATE DATABASE alphadb;
 
-# 3. 创建数据库和用户
-psql -U postgres
-CREATE DATABASE tusharedb;
-CREATE USER alphahome WITH PASSWORD 'your_password';
-GRANT ALL PRIVILEGES ON DATABASE tusharedb TO alphahome;
-```
+    -- 将数据库的所有权和权限授予新用户
+    GRANT ALL PRIVILEGES ON DATABASE alphadb TO alphahome;
+    ```
+3.  **配置 AlphaHome**:
+    在您的用户配置目录中找到或创建 `config.json` 文件（例如 `C:/Users/YourUser/AppData/Local/trademaster/alphahome/config.json`），并按以下格式填入数据库连接信息：
+    ```json
+    {
+        "database": {
+            "url": "postgresql://alphahome:your_strong_password@localhost:5432/alphadb"
+        },
+        "api": {
+            "tushare_token": "your_tushare_token_here"
+        }
+    }
+    ```
+4. **(重要) 从旧版本升级?**
+   如果您是从旧版本升级，并且现有的数据库名为 `tusharedb`，请在更新 `config.json` 文件**之前**，先从项目根目录运行迁移脚本来自动重命名数据库：
+   ```bash
+   python scripts/migrate_db_name.py
+   ```
+   该脚本将安全地引导您完成数据库的重命名过程。重命名后，再更新您的 `config.json` 文件。
 
 ### **Q4: 配置文件问题**
 **问题**: config.json配置不生效或格式错误

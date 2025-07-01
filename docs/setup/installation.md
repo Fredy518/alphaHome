@@ -112,11 +112,11 @@ make install
 psql -U postgres
 
 -- 创建数据库
-CREATE DATABASE tusharedb;
+CREATE DATABASE alphadb;
 
 -- 创建用户（可选）
 CREATE USER alphahome WITH PASSWORD 'your_password';
-GRANT ALL PRIVILEGES ON DATABASE tusharedb TO alphahome;
+GRANT ALL PRIVILEGES ON DATABASE alphadb TO alphahome;
 ```
 
 2. **配置连接**
@@ -139,7 +139,7 @@ cp config.example.json config.json
 ```json
 {
     "database": {
-        "url": "postgresql://username:password@localhost:5432/tusharedb"
+        "url": "postgresql://username:password@localhost:5432/alphadb"
     },
     "api": {
         "tushare_token": "your_tushare_token_here"

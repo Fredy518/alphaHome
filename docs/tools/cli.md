@@ -295,7 +295,7 @@ grep -c "INFO\|WARNING\|ERROR" logs/alphahome.log
 ### **数据库调试**
 ```bash
 # 连接到PostgreSQL
-psql -U username -d tusharedb
+psql -U username -d alphadb
 
 # 查看表结构
 \d table_name

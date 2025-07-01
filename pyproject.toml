@@ -21,6 +21,7 @@ classifiers = [
 dependencies = [
     "aiohttp>=3.12.13",
     "asyncpg>=0.30.0",
+    "psycopg2-binary>=2.9.9",
     "matplotlib>=3.9.0",
     "numpy>=1.26.0",
     "pandas>=2.2.0",

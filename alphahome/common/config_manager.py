@@ -66,38 +66,31 @@ class ConfigManager:
         else:
             logger.warning(f"配置文件 {self.config_file} 未找到，将尝试环境变量。")
 
-        # 处理环境变量回退
-        db_url = config_data.get("database", {}).get("url")
-        tushare_token = config_data.get("api", {}).get("tushare_token")
+        # 使用从文件加载的配置作为基础
+        final_config = config_data
 
-        if not db_url:
-            logger.info(
-                "配置文件中未找到数据库 URL，尝试从环境变量 DATABASE_URL 加载。"
-            )
+        # 确保顶层键存在，以避免 KeyErrors
+        final_config.setdefault("database", {})
+        final_config.setdefault("api", {})
+
+        # 如果配置文件中缺少，则尝试从环境变量加载
+        if not final_config["database"].get("url"):
             db_url_from_env = os.environ.get("DATABASE_URL")
             if db_url_from_env:
                 logger.info("成功从环境变量 DATABASE_URL 加载数据库 URL。")
-                db_url = db_url_from_env
+                final_config["database"]["url"] = db_url_from_env
             else:
                 logger.warning("配置文件和环境变量均未设置有效的数据库 URL。")
 
-        if not tushare_token:
+        if not final_config["api"].get("tushare_token"):
             tushare_token_from_env = os.environ.get("TUSHARE_TOKEN")
             if tushare_token_from_env:
                 logger.info("从环境变量 TUSHARE_TOKEN 加载 Tushare Token。")
-                tushare_token = tushare_token_from_env
-
-        # 构建完整配置结构
-        final_config = {
-            "database": {"url": db_url},
-            "api": {"tushare_token": tushare_token or ""},
-            "tasks": config_data.get("tasks", {}),
-            "backtesting": config_data.get("backtesting", {}),
-        }
+                final_config["api"]["tushare_token"] = tushare_token_from_env
 
         self._config_cache = final_config
         self._config_loaded = True
-        logger.debug("配置已加载并缓存。")
+        logger.debug(f"配置已加载并缓存: {final_config}")
         return self._config_cache
 
     def reload_config(self):

@@ -20,7 +20,7 @@ alphahome/
 ```json
 {
     "database": {
-        "url": "postgresql://username:password@localhost:5432/tusharedb",
+        "url": "postgresql://username:password@localhost:5432/alphadb",
         "pool_config": {
             "min_size": 5,
             "max_size": 25,

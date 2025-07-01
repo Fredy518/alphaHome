@@ -11,7 +11,7 @@ def get_database_connection():
         conn = psycopg2.connect(
             host="localhost",
             port="5432",
-            database="tusharedb",
+            database="alphadb",
             user="postgres",  # 替换为您的用户名
             password="wuhao123"  # 替换为您的密码
         )
