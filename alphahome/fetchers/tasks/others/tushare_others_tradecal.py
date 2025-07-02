@@ -23,6 +23,7 @@ class TushareOthersTradecalTask(TushareTask):
     """获取A股及中国大陆期货交易所交易日历 (trade_cal)"""
 
     # 核心任务属性
+    domain = "others"  # 业务域标识
     name: str = "tushare_others_tradecal"  # 更新任务名称
     description: str = "获取A股及中国大陆期货交易所交易日历 (trade_cal)"  # 更新描述
     table_name: str = "others_calendar"  # 两个日历任务共享此表

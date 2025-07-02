@@ -24,6 +24,7 @@ class TushareHKBasicTask(TushareTask):
     """获取所有港股基础信息 (全量更新)"""
 
     # 1. 核心属性
+    domain = "hk"  # 业务域标识
     name = "tushare_hk_basic"
     description = "获取港股上市公司基本信息"
     table_name = "hk_basic"

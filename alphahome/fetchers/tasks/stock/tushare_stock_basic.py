@@ -26,6 +26,7 @@ class TushareStockBasicTask(TushareTask):
     """获取所有股票基础信息 (全量更新)"""
 
     # 1. 核心属性
+    domain = "stock"  # 业务域标识
     name = "tushare_stock_basic"
     description = "获取上市公司基本信息"
     table_name = "stock_basic"

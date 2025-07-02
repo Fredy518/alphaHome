@@ -18,6 +18,7 @@ class TushareFinaCashflowTask(TushareTask):
     """
 
     # 1.核心属性
+    domain = "finance"  # 业务域标识
     name = "tushare_fina_cashflow"
     description = "获取上市公司现金流量表数据"
     table_name = "fina_cashflow"

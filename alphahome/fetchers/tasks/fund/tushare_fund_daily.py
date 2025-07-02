@@ -33,6 +33,7 @@ class TushareFundDailyTask(TushareTask):
     description = "获取场内基金日线行情"
     table_name = "fund_daily"
     data_source = "tushare"
+    domain = "fund"  # 业务域标识
     primary_keys = ["ts_code", "trade_date"]
     date_column = "trade_date"
     default_start_date = "20000101"  # 调整为合理的起始日期

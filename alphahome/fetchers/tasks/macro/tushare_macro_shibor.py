@@ -26,6 +26,7 @@ class TushareMacroShiborTask(TushareTask):
     """获取上海银行同业拆借利率SHIBOR数据"""
 
     # 1. 核心属性
+    domain = "macro"  # 业务域标识
     name = "tushare_macro_shibor"
     description = "获取上海银行间同业拆放利率Shibor"
     table_name = "macro_shibor"

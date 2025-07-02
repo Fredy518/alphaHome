@@ -26,6 +26,7 @@ class TushareStockFactorProTask(TushareTask):
     """获取股票技术面因子数据 (专业版)"""
 
     # 1. 核心属性
+    domain = "stock"  # 业务域标识
     name = "tushare_stock_factor_pro"
     description = "获取股票技术面因子数据 (专业版)"
     table_name = "stock_factor_pro"

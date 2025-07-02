@@ -30,6 +30,7 @@ class TushareFutureHoldingTask(TushareTask):
     """获取期货每日成交及持仓排名"""
 
     # 1. 核心属性
+    domain = "future"  # 业务域标识
     name = "tushare_future_holding"
     description = "获取期货持仓数据"
     table_name = "future_holding"

@@ -34,6 +34,7 @@ class TushareIndexSwDailyTask(TushareTask):
     date_column = "trade_date"
     default_start_date = "20050101"  # 根据 Tushare 数据起始调整
     data_source = "tushare"
+    domain = "index"  # 业务域标识
 
     # --- 代码级默认配置 (会被 config.json 覆盖) --- #
     default_concurrent_limit = 5

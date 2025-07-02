@@ -16,6 +16,7 @@ class TushareStockReportRcTask(TushareTask):
     """
 
     # 1.核心属性
+    domain = "stock"  # 业务域标识
     name = "tushare_stock_report_rc"
     description = "获取券商盈利预测数据"
     table_name = "stock_report_rc"

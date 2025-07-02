@@ -22,6 +22,7 @@ class TushareFinaExpressTask(TushareTask):
     description = "获取上市公司业绩快报"
     table_name = "fina_express"
     data_source = "tushare"
+    domain = "finance"  # 业务域标识
     primary_keys = ["ts_code", "end_date", "ann_date"]
     date_column = "ann_date"
     default_start_date = "19900101"

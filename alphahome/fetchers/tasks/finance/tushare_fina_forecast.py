@@ -25,6 +25,7 @@ class TushareFinaForecastTask(TushareTask):
     date_column = "ann_date"  # 应该使用ann_date
     default_start_date = "19900101"
     data_source = "tushare"
+    domain = "finance"  # 业务域标识
 
     # --- 代码级默认配置 (会被 config.json 覆盖) --- #
     default_concurrent_limit = 5

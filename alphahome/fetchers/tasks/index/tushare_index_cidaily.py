@@ -38,6 +38,7 @@ class TushareIndexCiDailyTask(TushareTask):
     default_concurrent_limit = 5
     default_page_size = 4000
     data_source = "tushare"
+    domain = "index"  # 业务域标识
 
     # 2. TushareTask 特有属性
     api_name = "ci_daily"  # Tushare API 名称

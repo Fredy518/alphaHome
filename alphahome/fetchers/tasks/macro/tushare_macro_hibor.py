@@ -33,6 +33,7 @@ class TushareMacroHiborTask(TushareTask):
     date_column = "date"  # 日期列名，用于确认最新数据日期
     default_start_date = "20061231"  # 数据最早可获取日期，根据Tushare文档设置
     data_source = "tushare"
+    domain = "macro"  # 业务域标识
 
     # --- 代码级默认配置 (会被 config.json 覆盖) --- #
     default_concurrent_limit = 3  # 默认并发限制

@@ -26,6 +26,7 @@ class TushareIndexFactorProTask(TushareTask):
     """获取指数技术面因子数据 (专业版)"""
 
     # 1. 核心属性
+    domain = "index"  # 业务域标识
     name = "tushare_index_factor_pro"
     description = "获取指数技术面因子数据 (专业版)"
     table_name = "index_factor_pro"

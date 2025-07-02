@@ -35,6 +35,7 @@ class TushareIndexBasicTask(TushareTask):
     date_column = None  # 全量任务
     default_start_date = "19900101"  # 全量任务，设置一个早期默认起始日期
     data_source = "tushare"
+    domain = "index"  # 业务域标识
 
     # --- 代码级默认配置 (会被 config.json 覆盖) --- #
     default_concurrent_limit = 1

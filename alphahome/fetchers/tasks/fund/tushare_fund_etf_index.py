@@ -36,6 +36,7 @@ class TushareFundEtfIndexTask(TushareTask):
     date_column = None  # 全量更新任务，无日期列
     default_start_date = "19700101" # 全量获取
     data_source = "tushare"
+    domain = "fund"  # 业务域标识
     # smart_lookback_days = 5  # 智能增量模式下，回看5天 (不再需要)
 
     # --- 代码级默认配置 (会被 config.json 覆盖) --- #

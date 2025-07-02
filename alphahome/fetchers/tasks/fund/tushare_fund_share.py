@@ -25,6 +25,7 @@ class TushareFundShareTask(TushareTask):
     """获取基金规模数据 (含ETF)"""
 
     # 1. 核心属性
+    domain = "fund"  # 业务域标识
     name = "tushare_fund_share"
     description = "获取基金规模数据 (含ETF)"
     table_name = "fund_share"

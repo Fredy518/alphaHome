@@ -24,6 +24,7 @@ class TushareFinaDisclosureTask(TushareTask):
     """获取上市公司财报披露计划数据"""
 
     # 1. 核心属性
+    domain = "finance"  # 业务域标识
     name = "tushare_fina_disclosure"
     description = "获取上市公司财报披露计划数据"
     table_name = "fina_disclosure"

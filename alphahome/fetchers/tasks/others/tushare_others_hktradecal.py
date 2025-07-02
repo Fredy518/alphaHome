@@ -25,6 +25,7 @@ class TushareOthersHktradecalTask(TushareTask):
     """获取港股交易日历 (hk_tradecal)"""
 
     # 核心任务属性
+    domain = "others"  # 业务域标识
     name: str = "tushare_others_hktradecal"
     description: str = "获取港股交易日历 (hk_tradecal)"
     table_name: str = "others_calendar"

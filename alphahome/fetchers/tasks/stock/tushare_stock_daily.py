@@ -16,6 +16,7 @@ class TushareStockDailyTask(TushareTask):
     """
 
     # 1.核心属性
+    domain = "stock"  # 业务域标识
     name = "tushare_stock_daily"
     description = "获取A股股票日线行情数据"
     table_name = "stock_daily"

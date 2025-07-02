@@ -32,6 +32,7 @@ class TushareFundBasicTask(TushareTask):
     date_column = None  # 全量更新
     default_start_date = "19700101"  # 全量更新
     data_source = "tushare"
+    domain = "fund"  # 业务域标识
 
     # --- 代码级默认配置 (会被 config.json 覆盖) --- #
     default_concurrent_limit = 1

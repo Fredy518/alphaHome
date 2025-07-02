@@ -25,6 +25,7 @@ class TushareOptionBasicTask(TushareTask):
     """获取期货及股票期权合约基础信息 (全量更新，按交易所分批)"""
 
     # 1. 核心属性
+    domain = "option"  # 业务域标识
     name = "tushare_option_basic"
     description = "获取期货及股票期权合约基础信息"
     table_name = "option_basic"

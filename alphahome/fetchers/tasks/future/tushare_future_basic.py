@@ -32,6 +32,7 @@ class TushareFutureBasicTask(TushareTask):
     date_column = None  # 该任务不以日期为主，全量更新
     default_start_date = "19700101"  # 全量任务不需要起始日期
     data_source = "tushare"
+    domain = "future"  # 业务域标识
 
     # --- 代码级默认配置 (会被 config.json 覆盖) --- #
     # 考虑到需要按交易所分批，可以适当增加并发限制

@@ -33,6 +33,7 @@ class TushareMacroCpiTask(TushareTask):
     date_column = "month_end_date"  # 修改: 使用 month_end_date 作为主要日期列
     default_start_date = "19960101"  # API 支持YYYYMM，但为与 month_end_date 保持一致性
     data_source = "tushare"
+    domain = "macro"  # 业务域标识
 
     # --- 代码级默认配置 (会被 config.json 覆盖) --- #
     default_concurrent_limit = 5  # 默认并发限制

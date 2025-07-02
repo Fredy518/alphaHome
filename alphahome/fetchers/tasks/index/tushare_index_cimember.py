@@ -28,6 +28,7 @@ class TushareIndexCiMemberTask(TushareTask):
     primary_keys = ["ts_code", "l3_code", "in_date"]  # <-- 修改主键为 l3_code
     date_column = None  # <-- 明确一下没有主日期列用于增量
     data_source = "tushare"
+    domain = "index"  # 业务域标识
 
     # --- 代码级默认配置 (会被 config.json 覆盖) --- #
     default_concurrent_limit = 2

@@ -50,6 +50,7 @@ class TushareStockDividendTask(TushareTask):
     date_column = "ex_date"  # 除权除息日
     default_start_date = "20050101"  # 默认开始日期
     data_source = "tushare"
+    domain = "stock"  # 业务域标识
     smart_lookback_days = 3 # 智能增量模式下，回看3天
 
     # --- 代码级默认配置 (会被 config.json 覆盖) --- #

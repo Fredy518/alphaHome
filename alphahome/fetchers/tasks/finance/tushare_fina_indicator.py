@@ -24,6 +24,7 @@ class TushareFinaIndicatorTask(TushareTask):
     date_column = "end_date" # 使用 end_date 作为日期列, 因为start_date 和 end_date 是报告期开始日期和结束日期
     default_start_date = "19900101"
     data_source = "tushare"
+    domain = "finance"  # 业务域标识
 
     # --- 代码级默认配置 (会被 config.json 覆盖) --- #
     default_concurrent_limit = 5

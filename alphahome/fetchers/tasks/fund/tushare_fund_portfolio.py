@@ -30,6 +30,7 @@ class TushareFundPortfolioTask(TushareTask):
     description = "获取公募基金持仓明细"
     table_name = "fund_portfolio"
     data_source = "tushare"
+    domain = "fund"  # 业务域标识
     # 主键：基金代码 + 公告日期 + 股票代码 + 报告期 能够唯一确定一条持仓记录
     primary_keys = ["ts_code", "ann_date", "symbol", "end_date"]
     date_column = "ann_date"  # 使用公告日期进行增量更新

@@ -29,6 +29,7 @@ class TushareOptionDailyTask(TushareTask):
     """获取期货及股票期权日线行情数据"""
 
     # 1. 核心属性
+    domain = "option"  # 业务域标识
     name = "tushare_option_daily"
     description = "获取期货及股票期权日线行情数据"
     table_name = "option_daily"

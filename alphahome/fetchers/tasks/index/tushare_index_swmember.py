@@ -23,6 +23,7 @@ class TushareIndexSwmemberTask(TushareTask):  # <-- 类名改回
     """获取申万行业成分 (分级) - tushare_index_swmember"""
 
     # 1. 核心属性
+    domain = "index"  # 业务域标识
     name = "tushare_index_swmember"  # <-- 改回
     description = "获取最新的申万(SW)行业成分 (分级) 数据"  # 描述可以保留
     table_name = "index_swmember"  # <-- 改回

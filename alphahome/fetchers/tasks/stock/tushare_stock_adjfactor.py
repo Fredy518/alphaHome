@@ -16,6 +16,7 @@ class TushareStockAdjFactorTask(TushareTask):
     """
 
     # 1.核心属性
+    domain = "stock"  # 业务域标识
     name = "tushare_stock_adjfactor"
     description = "获取股票复权因子"
     table_name = "stock_adjfactor"

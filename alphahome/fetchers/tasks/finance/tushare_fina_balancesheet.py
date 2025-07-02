@@ -18,6 +18,7 @@ class TushareFinaBalancesheetTask(TushareTask):
     """
 
     # 1.核心属性
+    domain = "finance"  # 业务域标识
     name = "tushare_fina_balancesheet"
     description = "获取上市公司资产负债表数据"
     table_name = "fina_balancesheet"

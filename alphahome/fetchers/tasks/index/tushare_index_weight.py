@@ -19,6 +19,7 @@ class TushareIndexWeightTask(TushareTask):
     """
 
     # 1. 核心属性 (类似于 tushare_index_swdaily.py)
+    domain = "index"  # 业务域标识
     name = "tushare_index_weight"  # 任务标识符
     description = "获取指数成分股及权重(月度)"  # 已是中文，无需修改
     table_name = "index_weight"  # 默认数据库表名

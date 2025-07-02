@@ -19,6 +19,7 @@ class TushareFinaIncomeTask(TushareTask):
     """
 
     # 1.核心属性
+    domain = "finance"  # 业务域标识
     name = "tushare_fina_income"
     description = "获取上市公司利润表数据"
     table_name = "fina_income"

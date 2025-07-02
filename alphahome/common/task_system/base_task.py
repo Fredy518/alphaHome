@@ -31,6 +31,7 @@ class BaseTask(ABC):
     auto_add_update_time = True  # 是否自动添加更新时间
     timestamp_column_name: Optional[str] = "update_time" # 时间戳列名，None表示不使用
     data_source: Optional[str] = None  # 数据源标识（如'tushare', 'wind', 'jqdata'等）
+    domain: Optional[str] = None  # 业务域标识（如'stock', 'fund', 'macro'等）
     default_start_date: str = "20200101" # 默认起始日期
     transformations: Optional[Dict[str, Callable]] = None # 数据转换函数字典
     validations: Optional[List[Union[Callable, Tuple[Callable, str]]]] = None # 数据验证函数列表
@@ -51,6 +52,34 @@ class BaseTask(ABC):
 
         self.db = db_connection
         self.logger = logging.getLogger(f"task.{self.name}")
+
+    def get_business_domain(self) -> str:
+        """获取任务的业务域
+
+        优先级：
+        1. 显式定义的domain属性
+        2. 从任务名称推断（改进的推断逻辑）
+        3. 回退到数据源
+
+        Returns:
+            str: 业务域标识（如'stock', 'fund', 'macro'等）
+        """
+        # 优先使用显式定义的domain属性
+        if self.domain:
+            return self.domain
+
+        # 回退到从任务名称推断（改进版逻辑）
+        if self.name:
+            parts = self.name.split('_')
+            if len(parts) > 1:
+                # 统一使用第二部分作为业务域，无论是什么数据源
+                return parts[1]  # stock, fund, macro, etc.
+            elif len(parts) == 1:
+                # 如果只有一部分，使用该部分
+                return parts[0]
+
+        # 最后回退到数据源
+        return self.data_source or "unknown"
 
     async def execute(
         self, stop_event: Optional[asyncio.Event] = None, **kwargs

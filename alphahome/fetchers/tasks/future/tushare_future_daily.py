@@ -29,6 +29,7 @@ class TushareFutureDailyTask(TushareTask):
     """获取中金所（CFFEX）期货及期权日线行情数据"""
 
     # 1. 核心属性
+    domain = "future"  # 业务域标识
     name = "tushare_future_daily"
     description = "获取中金所（CFFEX）期货及期权日线行情数据"
     table_name = "future_daily"

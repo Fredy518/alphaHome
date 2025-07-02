@@ -25,6 +25,7 @@ class TushareStockChipsTask(TushareTask):
     """获取A股每日筹码平均成本和胜率情况"""
 
     # 1. 核心属性
+    domain = "stock"  # 业务域标识
     name = "tushare_stock_chips"
     description = "获取A股每日筹码平均成本和胜率情况"
     table_name = "stock_chips"

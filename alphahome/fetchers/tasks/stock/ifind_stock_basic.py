@@ -31,6 +31,7 @@ class iFindStockBasicTask(iFindTask):
     primary_keys = ["stock_code_a"]  # 使用映射后的字段名作为主键
     date_column = None  # 基础信息不按日期更新
     data_source = "ifind"
+    domain = "stock"  # 业务域标识
 
     # 2. iFindTask 必需属性（data_pool 端点不使用这些属性，但需要设置以满足基类要求）
     api_endpoint: str = "data_pool"

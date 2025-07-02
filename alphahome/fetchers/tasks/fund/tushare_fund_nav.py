@@ -35,6 +35,7 @@ class TushareFundNavTask(TushareTask):
     date_column = "nav_date"  # 主要日期列用于增量更新
     default_start_date = "20000101"  # 设定一个较早的默认开始日期
     data_source = "tushare"
+    domain = "fund"  # 业务域标识
     smart_lookback_days = 3 # 智能增量模式下，回看3天
 
     # --- 代码级默认配置 (会被 config.json 覆盖) --- #

@@ -23,6 +23,7 @@ class TushareStockDailyBasicTask(TushareTask):
     date_column = "trade_date"
     default_start_date = "19910101"  # Tushare 股票日基本指标大致起始日期
     data_source = "tushare"
+    domain = "stock"  # 业务域标识
     smart_lookback_days = 3 # 智能增量模式下，回看3天
 
     # --- 代码级默认配置 (会被 config.json 覆盖) --- #

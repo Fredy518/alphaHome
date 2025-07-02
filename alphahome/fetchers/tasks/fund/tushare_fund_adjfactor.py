@@ -32,6 +32,7 @@ class TushareFundAdjFactorTask(TushareTask):
     date_column = "trade_date"
     default_start_date = "20000101"  # 与基金净值/日线保持一致
     data_source = "tushare"
+    domain = "fund"  # 业务域标识
 
     # --- 代码级默认配置 (会被 config.json 覆盖) --- #
     default_concurrent_limit = 5

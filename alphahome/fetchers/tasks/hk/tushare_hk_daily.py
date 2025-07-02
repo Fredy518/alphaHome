@@ -22,6 +22,7 @@ class TushareHKDailyTask(TushareTask):
     """获取港股日线行情数据"""
 
     # 1. 核心属性
+    domain = "hk"  # 业务域标识
     name = "tushare_hk_daily"
     description = "获取港股日线行情数据"
     table_name = "hk_daily"
