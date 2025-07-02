@@ -78,8 +78,8 @@ class UtilityMixin:
             result = await self.fetch_val(query)  # type: ignore
 
             query_duration = time.time() - start_time
-            if query_duration > 1.0:  # 只记录耗时超过1秒的查询
-                self.logger.warning(  # type: ignore
+            if query_duration > 3.0:  # 只记录耗时超过3秒的查询
+                self.logger.debug(  # type: ignore
                     f"数据库查询耗时较长: {resolved_table_name}.{date_column} - {query_duration:.2f}秒"
                 )
 

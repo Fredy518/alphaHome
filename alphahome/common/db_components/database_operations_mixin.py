@@ -519,7 +519,7 @@ class DatabaseOperationsMixin:
 
         # 检查时间戳列是否存在于DataFrame中
         if timestamp_column and timestamp_column not in df_columns:
-            self.logger.info( # type: ignore
+            self.logger.debug( # type: ignore
                 f"COPY_FROM_DATAFRAME (表: {resolved_table_name}): 时间戳列 '{timestamp_column}' 未在DataFrame列中找到，自动添加当前时间。"
             )
             df = df.copy()
@@ -682,19 +682,19 @@ class DatabaseOperationsMixin:
                         # 获取性能摘要（用于优化建议）
                         perf_summary = self._performance_monitor.get_performance_summary()
 
-                        self.logger.info( # type: ignore
-                            f"COPY_FROM_DATAFRAME (表: {resolved_table_name}): 成功处理 {copy_count} 条记录 "
-                            f"| 耗时: {processing_time:.2f}s | 吞吐量: {throughput:.0f} 行/秒 "
-                            f"| 操作类型: {operation_type} | 总操作数: {perf_summary['total_operations']}"
-                        )
-
-                        # 如果处理时间较长，提供性能建议
-                        if processing_time > 10.0:  # 超过10秒的操作
+                        # 简化日志输出，只在处理时间较长时输出详细信息
+                        if processing_time > 15.0:  # 超过15秒的操作才输出详细日志
                             optimal_size = perf_summary['optimal_batch_size']
                             self.logger.info( # type: ignore
-                                f"性能建议 (表: {resolved_table_name}): 当前批次 {batch_size} 行耗时较长，"
-                                f"建议批次大小: {optimal_size} 行 "
-                                f"(基于最近平均吞吐量: {perf_summary['recent_average_throughput']:.0f} 行/秒)"
+                                f"COPY_FROM_DATAFRAME (表: {resolved_table_name}): 成功处理 {copy_count} 条记录 "
+                                f"| 耗时: {processing_time:.2f}s | 吞吐量: {throughput:.0f} 行/秒 "
+                                f"| 建议批次大小: {optimal_size} 行"
+                            )
+                        else:
+                            # 正常情况下只输出简要信息
+                            self.logger.debug( # type: ignore
+                                f"COPY_FROM_DATAFRAME (表: {resolved_table_name}): 成功处理 {copy_count} 条记录 "
+                                f"| 耗时: {processing_time:.2f}s | 吞吐量: {throughput:.0f} 行/秒"
                             )
                     else:
                         # 如果性能监控未启用，使用简单日志

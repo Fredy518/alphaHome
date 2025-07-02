@@ -37,9 +37,14 @@
     "tasks": {
         "_comment": "在此处为特定任务覆盖默认设置",
         "tushare_stock_daily": {
-            "batch_size": 100,
-            "retry_count": 3,
-            "delay_seconds": 1
+            "save_batch_size": 5000,
+            "concurrent_limit": 10,
+            "max_retries": 3,
+            "retry_delay": 1
+        },
+        "tushare_stock_factor_pro": {
+            "save_batch_size": 5000,
+            "concurrent_limit": 5
         },
         "tushare_stock_basic": {
             "update_frequency": "daily"

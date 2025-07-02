@@ -92,9 +92,9 @@ alphahome/
 {
     "tasks": {
         "tushare_stock_daily": {
-            "batch_size": 100,
-            "retry_count": 3,
-            "delay_seconds": 1,
+            "save_batch_size": 5000,
+            "max_retries": 3,
+            "retry_delay": 1,
             "concurrent_limit": 10,
             "rate_limit_delay": 45,
             "enable_validation": true
@@ -104,20 +104,20 @@ alphahome/
             "concurrent_limit": 5
         },
         "tushare_fina_indicator": {
-            "batch_size": 50,
+            "save_batch_size": 3000,
             "concurrent_limit": 3,
-            "delay_seconds": 2
+            "retry_delay": 2
         }
     }
 }
 ```
 
 **配置参数说明：**
-- `batch_size`: 批处理大小
-- `retry_count`: 重试次数
-- `delay_seconds`: 请求间隔（秒）
+- `save_batch_size`: 数据保存批次大小（每次保存到数据库的行数）
+- `max_retries`: 最大重试次数
+- `retry_delay`: 重试间隔（秒）
 - `concurrent_limit`: 并发限制
-- `rate_limit_delay`: 频率限制延迟
+- `rate_limit_delay`: 频率限制延迟（秒）
 - `enable_validation`: 是否启用数据验证
 
 ### **批处理配置**

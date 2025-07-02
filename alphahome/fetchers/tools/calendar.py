@@ -71,19 +71,19 @@ def _load_db_config() -> Optional[Dict[str, Any]]:
             "config.json",
         ]
         user_config_path = os.path.join(*user_config_path_parts)
-        logger.info(
+        logger.debug(
             f"_load_db_config: 尝试读取用户特定配置文件: {os.path.abspath(user_config_path)}"
         )
         if os.path.exists(user_config_path):
             actual_path = user_config_path
-            logger.info(
+            logger.debug(
                 f"_load_db_config: 实际读取的用户配置文件路径: {os.path.abspath(actual_path)}"
             )
             try:
                 with open(actual_path, "r", encoding="utf-8") as f:
                     config_data = json.load(f)
                 db_config = config_data.get("database")
-                logger.info(
+                logger.debug(
                     f"_load_db_config: 从 {os.path.abspath(actual_path)} 加载的 database 配置: {db_config}"
                 )
                 if db_config and isinstance(db_config, dict) and db_config.get("url"):
@@ -97,7 +97,7 @@ def _load_db_config() -> Optional[Dict[str, Any]]:
                     f"加载或解析用户配置文件 {os.path.abspath(actual_path)} 时出错: {e}"
                 )
         else:
-            logger.info(
+            logger.debug(
                 f"_load_db_config: 用户特定配置文件未找到: {os.path.abspath(user_config_path)}"
             )
     else:
@@ -106,14 +106,14 @@ def _load_db_config() -> Optional[Dict[str, Any]]:
         )
 
     # 如果用户特定配置加载失败或未找到，则回退到项目根目录的 example config
-    logger.info("_load_db_config: 回退到尝试加载项目根目录的 config.example.json。")
+    logger.debug("_load_db_config: 回退到尝试加载项目根目录的 config.example.json。")
     current_dir = os.path.dirname(os.path.abspath(__file__))
     # 项目根目录相对于 alphahome/fetchers/tools/ 是 ../../../
     example_config_file_path = os.path.join(
         current_dir, "..", "..", "..", "config.example.json"
     )
 
-    logger.info(
+    logger.debug(
         f"_load_db_config: 尝试读取示例配置文件: {os.path.abspath(example_config_file_path)}"
     )
     actual_path = example_config_file_path  # 现在 actual_path 指向 example config
@@ -171,10 +171,10 @@ async def _get_db_pool() -> Optional[asyncpg.Pool]:
                     user, _ = user_pass.split(":", 1)
                     log_url = f"{protocol_part}://{user}:********@{host_part}"
 
-            logger.info(f"尝试使用URL创建数据库连接池: {log_url}")
-            logger.info(f"即将使用以下DSN创建连接池 (详情见掩码后URL): {log_url}")
+            logger.debug(f"尝试使用URL创建数据库连接池: {log_url}")
+            logger.debug(f"即将使用以下DSN创建连接池 (详情见掩码后URL): {log_url}")
             _DB_POOL = await asyncpg.create_pool(dsn=db_url, min_size=1, max_size=5)
-            logger.info("数据库连接池创建成功。")
+            logger.debug("数据库连接池创建成功。")
         except Exception as e:
             logger.error(f"创建数据库连接池失败: {e}")
             _DB_POOL = None  # 如果创建失败，确保 _DB_POOL 为 None
@@ -250,7 +250,7 @@ async def get_trade_cal(
                 sql_query, db_exchange_code, start_date, end_date
             )
 
-        logger.info(
+        logger.debug(
             f"_get_trade_cal: Database raw records count for {db_exchange_code} ({start_date}-{end_date}): {len(records) if records else 'None'}"
         )
         if records:
@@ -285,7 +285,7 @@ async def get_trade_cal(
                     final_df["is_open"] = pd.to_numeric(
                         final_df["is_open"], errors="coerce"
                     ).astype("Int64")
-            logger.info(
+            logger.debug(
                 f"从数据库获取并处理了 {len(final_df)} 条 {db_exchange_code} 交易日历数据 ({start_date}-{end_date})。"
             )
         else:

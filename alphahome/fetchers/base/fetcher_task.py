@@ -90,9 +90,16 @@ class FetcherTask(BaseTask, ABC):
         self.retry_delay = int(task_config.get("retry_delay", cls.default_retry_delay))
         self.smart_lookback_days = int(task_config.get("smart_lookback_days", cls.smart_lookback_days))
 
+        # 处理数据保存批次大小配置 (优先使用save_batch_size，向后兼容batch_size)
+        self.save_batch_size = int(
+            task_config.get("save_batch_size",
+                           task_config.get("batch_size", cls.default_save_batch_size))
+        )
+
         self.logger.debug(
             f"'{self.name}': Applied config - concurrent_limit={self.concurrent_limit}, "
-            f"max_retries={self.max_retries}, retry_delay={self.retry_delay}"
+            f"max_retries={self.max_retries}, retry_delay={self.retry_delay}, "
+            f"save_batch_size={self.save_batch_size}"
         )
 
     @abstractmethod

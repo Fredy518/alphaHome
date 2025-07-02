@@ -291,8 +291,8 @@ async def _update_tasks_with_latest_timestamp(task_cache: List[Dict[str, Any]]):
                     task_detail["latest_update_time"] = "无数据"
 
                 task_duration = time.time() - task_start_time
-                if task_duration > 1.0:  # 只记录耗时超过1秒的任务
-                    logger.warning(f"任务 {task_name} 查询耗时: {task_duration:.2f}秒")
+                if task_duration > 3.0:  # 只记录耗时超过3秒的任务
+                    logger.debug(f"任务 {task_name} 查询耗时: {task_duration:.2f}秒")
 
             except Exception as e:
                 task_duration = time.time() - task_start_time
