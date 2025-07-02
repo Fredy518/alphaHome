@@ -8,6 +8,7 @@ from typing import Any, Callable, Dict, List, Optional, Union, Tuple
 import numpy as np
 import pandas as pd
 from ..db_manager import DBManager
+from ..constants import UpdateTypes
 
 
 class BaseTask(ABC):
@@ -52,6 +53,26 @@ class BaseTask(ABC):
 
         self.db = db_connection
         self.logger = logging.getLogger(f"task.{self.name}")
+
+        # 从kwargs中提取常用参数
+        self.update_type = kwargs.get("update_type", UpdateTypes.SMART)
+        self.start_date = kwargs.get("start_date")
+        self.end_date = kwargs.get("end_date")
+        self.task_config = kwargs.get("task_config", {})
+
+        # 数据保存策略参数
+        self.use_insert_mode = kwargs.get("use_insert_mode", False)
+
+        # 设置保存批次大小
+        self.save_batch_size = self.task_config.get("save_batch_size", self.default_save_batch_size)
+
+        # 设置任务特定配置
+        if hasattr(self, "set_config") and callable(self.set_config):
+            self.set_config(self.task_config)
+
+        self.logger.debug(f"任务 {self.name} 初始化完成，更新类型: {self.update_type}")
+        self.logger.debug(f"任务 {self.name} 保存批次大小: {self.save_batch_size}")
+        self.logger.info(f"任务 {self.name} 数据保存策略: {'INSERT模式' if self.use_insert_mode else 'UPSERT模式'} (use_insert_mode={self.use_insert_mode})")
 
     def get_business_domain(self) -> str:
         """获取任务的业务域
@@ -616,7 +637,13 @@ class BaseTask(ABC):
 
     async def _save_to_database(self, data, stop_event: Optional[asyncio.Event] = None, **kwargs):
         """将DataFrame保存到数据库（提供给子类重写的高级接口）"""
-        
+
+        # 检查是否强制使用INSERT模式
+        if self.use_insert_mode:
+            self.logger.info(f"任务 {self.name} 使用INSERT模式保存数据，跳过重复数据检查")
+            return await self.db.copy_from_dataframe(df=data, target=self)
+
+        # 原有的UPSERT逻辑
         if not self.primary_keys:
             self.logger.warning(f"任务 {self.name} 未定义主键 (primary_keys)，将使用简单的 COPY 插入，可能导致重复数据。")
             return await self.db.copy_from_dataframe(df=data, target=self)
@@ -625,8 +652,9 @@ class BaseTask(ABC):
         update_columns = [
             col for col in df_columns if col not in self.primary_keys
         ]
-        
+
         try:
+            self.logger.info(f"任务 {self.name} 使用UPSERT模式保存数据，处理重复数据冲突")
             affected_rows = await self.db.upsert(
                 df=data,
                 target=self,

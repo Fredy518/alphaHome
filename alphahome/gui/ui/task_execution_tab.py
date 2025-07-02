@@ -84,6 +84,44 @@ def create_task_execution_tab(
     widgets["start_date_entry"] = start_date_entry
     widgets["end_date_entry"] = end_date_entry
 
+    # --- 数据保存策略框架 ---
+    save_strategy_frame = ttk.LabelFrame(left_panel, text="数据保存策略", padding=10)
+    save_strategy_frame.pack(side=tk.TOP, fill=tk.X, pady=(10, 0))
+
+    # 使用INSERT模式复选框
+    use_insert_mode = tk.BooleanVar(value=False)
+    widgets["use_insert_mode"] = use_insert_mode
+
+    insert_mode_cb = ttk.Checkbutton(
+        save_strategy_frame,
+        text="使用INSERT模式（跳过重复数据检查）",
+        variable=use_insert_mode,
+    )
+    insert_mode_cb.pack(anchor=tk.W, pady=(0, 5))
+    widgets["insert_mode_cb"] = insert_mode_cb
+
+    # 策略说明标签
+    strategy_info_frame = ttk.Frame(save_strategy_frame)
+    strategy_info_frame.pack(fill=tk.X, pady=(0, 5))
+
+    info_label = ttk.Label(
+        strategy_info_frame,
+        text="• 勾选：提高保存速度，但可能产生重复数据\n• 未勾选：处理重复数据，但保存速度较慢",
+        font=("TkDefaultFont", 8),
+        foreground="gray"
+    )
+    info_label.pack(anchor=tk.W)
+    widgets["strategy_info_label"] = info_label
+
+    # 警告标签（初始隐藏）
+    warning_label = ttk.Label(
+        strategy_info_frame,
+        text="⚠️ 警告：INSERT模式可能产生重复数据，请确保数据源无重复",
+        font=("TkDefaultFont", 8),
+        foreground="red"
+    )
+    widgets["warning_label"] = warning_label
+
     # --- 运行控制框架 ---
     run_frame = ttk.Frame(left_panel, padding=(0, 10))
     run_frame.pack(side=tk.TOP, fill=tk.X, pady=(20, 0))

@@ -15,14 +15,18 @@
 # 导入基类
 from .base_task import ProcessorTaskBase
 
-# 导入所有处理任务（旧版本，保持兼容性）
-from .stock_adjusted_price import StockAdjustedPriceTask
-
-# 导入新架构的任务
-from .stock_adjusted_price_v2 import StockAdjustedPriceTaskV2
+# 导入具体的处理任务
+from .stock_adjusted_price_v2 import StockAdjustedPriceV2Task
+from .stock_adjdaily_processor import StockAdjdailyProcessorTask
+# 导入旧的 stock_adjusted_price 任务，如果需要保持兼容性
+# from .stock_adjusted_price import StockAdjustedPriceTask
 
 __all__ = [
+    # 基类
     "ProcessorTaskBase",
-    "StockAdjustedPriceTask",      # 旧版本
-    "StockAdjustedPriceTaskV2",    # 新版本
+    
+    # 具体任务
+    "StockAdjustedPriceV2Task",
+    "StockAdjdailyProcessorTask",
+    # "StockAdjustedPriceTask", # 如需兼容，取消此行注释
 ]

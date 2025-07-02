@@ -30,7 +30,7 @@ import pandas as pd
 
 from ...common.db_manager import DBManager
 from ...common.logging_utils import get_logger
-from ..processor_task import ProcessorTask
+from .base_task import ProcessorTaskBase
 from ...common.task_system import task_register
 
 # 实际项目中，你需要确保这些导入路径是正确的
@@ -39,7 +39,7 @@ from ..utils.query_builder import QueryBuilder
 
 
 @task_register()
-class StockAdjdailyProcessorTask(ProcessorTask):
+class StockAdjdailyProcessorTask(ProcessorTaskBase):
     """
     股票日线后复权调整与交易日补全处理器
     """

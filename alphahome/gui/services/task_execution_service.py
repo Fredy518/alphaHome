@@ -128,6 +128,7 @@ async def run_tasks(
     start_date: Optional[str],
     end_date: Optional[str],
     exec_mode: str,
+    use_insert_mode: bool = False,
 ):
     """Runs a list of selected tasks with the given parameters."""
     global _global_stop_event, _current_running_tasks
@@ -184,6 +185,9 @@ async def run_tasks(
             else:
                 logger.warning(f"未知的执行模式: {exec_mode}，将使用默认的 '{UpdateTypes.SMART}' 模式。")
                 task_init_params['update_type'] = UpdateTypes.SMART
+
+            # 添加数据保存策略参数
+            task_init_params['use_insert_mode'] = use_insert_mode
 
             try:
                 task_instance = await UnifiedTaskFactory.create_task_instance(

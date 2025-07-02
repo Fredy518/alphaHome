@@ -16,7 +16,7 @@ import logging
 
 from ..tasks.base_task import ProcessorTaskBase
 from ...common.logging_utils import get_logger
-from ...common.task_system import UnifiedTaskFactory, get_task
+from ...common.task_system import UnifiedTaskFactory, get_task, BaseTask
 
 
 class ProcessorEngine:
@@ -244,9 +244,8 @@ class ProcessorEngine:
         
         return results
     
-    async def _get_task_instance(self, task_name: str, db_connection=None) -> ProcessorTaskBase:
+    async def _get_task_instance(self, task_name: str, db_connection=None) -> BaseTask:
         """获取任务实例"""
-        # 检查缓存
         if task_name in self._task_cache:
             return self._task_cache[task_name]
         
@@ -255,19 +254,19 @@ class ProcessorEngine:
         if task_class is None:
             raise ValueError(f"未找到任务: {task_name}")
         
-        # 创建任务实例
-        task = task_class(db_connection=db_connection)
+        # 创建任务实例，传递db连接和其他参数
+        task = task_class(db_connection=db_connection, **self.config.get(task_name, {}))
         
         # 验证任务类型
-        if not isinstance(task, ProcessorTaskBase):
-            raise TypeError(f"任务 {task_name} 不是 ProcessorTaskBase 的实例")
+        if not isinstance(task, BaseTask):
+            raise TypeError(f"任务 {task_name} 不是 BaseTask 的实例")
         
         # 缓存任务实例
         self._task_cache[task_name] = task
         
         return task
     
-    async def _check_dependencies(self, task: ProcessorTaskBase):
+    async def _check_dependencies(self, task: BaseTask):
         """检查任务依赖"""
         if not hasattr(task, 'dependencies') or not task.dependencies:
             return
@@ -275,10 +274,11 @@ class ProcessorEngine:
         self.logger.info(f"检查任务 {task.name} 的依赖: {task.dependencies}")
         
         # TODO: 实现依赖检查逻辑
-        # 这里应该检查依赖任务是否已经完成
-        # 可能需要查询数据库或任务状态管理系统
+        # 1. 查询一个中央任务状态表(task_registry)
+        # 2. 对每个依赖任务，检查其最新状态是否为 'success'
+        # 3. 如果任何依赖项未成功完成，可以抛出异常或等待
     
-    async def _execute_single_task(self, task: ProcessorTaskBase, **kwargs) -> Dict[str, Any]:
+    async def _execute_single_task(self, task: BaseTask, **kwargs) -> Dict[str, Any]:
         """执行单个任务"""
         try:
             if self.timeout:

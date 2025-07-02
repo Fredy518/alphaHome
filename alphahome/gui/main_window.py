@@ -301,7 +301,7 @@ class MainWindow(WindowEventsMixin, WindowDpiMixin, WindowLayoutMixin, tk.Tk):
     async def run_selected_tasks(self):
         """
         运行选中的任务
-        
+
         ## 从UI获取任务执行参数并发送到后端执行。
         """
         params = task_execution_handler.get_execution_params(self.ui_elements)
@@ -313,6 +313,7 @@ class MainWindow(WindowEventsMixin, WindowDpiMixin, WindowLayoutMixin, tk.Tk):
                     "start_date": params["start_date"],
                     "end_date": params["end_date"],
                     "exec_mode": params["exec_mode"],
+                    "use_insert_mode": params["use_insert_mode"],
                 },
             )
 

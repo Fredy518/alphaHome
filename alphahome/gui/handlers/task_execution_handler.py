@@ -135,10 +135,10 @@ def update_task_status_treeview(widgets: Dict[str, tk.Widget], status_list: List
 def handle_exec_mode_change(widgets: Dict[str, tk.Widget]):
     """
     处理执行模式变化事件
-    
+
     根据选择的执行模式显示或隐藏日期选择框架。
     只有在"手动增量"模式下才显示日期选择。
-    
+
     Args:
         widgets (Dict[str, tk.Widget]): UI组件字典
     """
@@ -149,6 +149,25 @@ def handle_exec_mode_change(widgets: Dict[str, tk.Widget]):
             date_frame.pack(side=tk.TOP, fill=tk.X, pady=(10, 0))
         else:
             date_frame.pack_forget()
+
+
+def handle_insert_mode_change(widgets: Dict[str, tk.Widget]):
+    """
+    处理INSERT模式复选框变化事件
+
+    根据复选框状态显示或隐藏警告信息。
+
+    Args:
+        widgets (Dict[str, tk.Widget]): UI组件字典
+    """
+    use_insert_mode = widgets.get("use_insert_mode", tk.BooleanVar()).get()
+    warning_label = widgets.get("warning_label")
+
+    if warning_label:
+        if use_insert_mode:
+            warning_label.pack(anchor=tk.W, pady=(5, 0))
+        else:
+            warning_label.pack_forget()
 
 
 def handle_stop_tasks(widgets: Dict[str, tk.Widget]):
@@ -266,11 +285,15 @@ def get_execution_params(widgets: Dict[str, tk.Widget]) -> Optional[Dict[str, An
     else:
         add_log_entry(widgets, "未选择任何任务，请先选择要执行的任务", "warning")
     
+    # 获取数据保存策略选项
+    use_insert_mode = widgets.get("use_insert_mode", tk.BooleanVar()).get()
+
     return {
         "tasks_to_run": all_selected_tasks,
         "start_date": start_date,
         "end_date": end_date,
         "exec_mode": exec_mode,
+        "use_insert_mode": use_insert_mode,
     }
 
 def handle_toggle_history_mode(widgets: Dict[str, tk.Widget]):

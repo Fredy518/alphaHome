@@ -11,9 +11,9 @@
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional, Union
 import pandas as pd
+import asyncio
 
 from ..pipelines.base_pipeline import ProcessingPipeline
-from ..base.block_processor import BlockProcessor
 from ...common.task_system.base_task import BaseTask
 from ...common.logging_utils import get_logger
 
@@ -22,12 +22,13 @@ class ProcessorTaskBase(BaseTask, ABC):
     """
     数据处理任务基类
     
-    结合了统一任务系统的BaseTask和新的处理器架构。
-    任务层负责：
-    1. 定义具体的业务处理逻辑
-    2. 组合使用流水线和操作
-    3. 处理数据获取和保存
-    4. 与统一任务系统集成
+    这是所有处理器任务的统一基类，负责定义一个完整的业务处理流程。
+    它编排了数据获取、处理（通过流水线）和保存的整个过程。
+    
+    子类需要实现的核心方法：
+    1. `fetch_data`: 定义从哪里获取源数据。
+    2. `create_pipeline`: 定义使用哪个`ProcessingPipeline`来处理数据。
+    3. `save_result`: 定义如何保存处理后的结果。
     
     示例:
     ```python
@@ -35,23 +36,19 @@ class ProcessorTaskBase(BaseTask, ABC):
     class MyProcessorTask(ProcessorTaskBase):
         name = "my_processor"
         table_name = "my_result_table"
-        description = "我的数据处理任务"
+        source_tables = ["source_a", "source_b"]
         
-        def create_pipeline(self):
+        def create_pipeline(self) -> ProcessingPipeline:
             return MyDataPipeline(config=self.get_pipeline_config())
         
-        async def execute_task(self, **kwargs):
-            # 获取数据
-            data = await self.fetch_data(**kwargs)
+        async def fetch_data(self, **kwargs) -> pd.DataFrame:
+            # 实现从 source_a 和 source_b 获取并合并数据的逻辑
+            ...
+            return merged_data
             
-            # 创建并执行流水线
-            pipeline = self.create_pipeline()
-            result = await pipeline.execute(data)
-            
-            # 保存结果
-            await self.save_result(result["data"])
-            
-            return result
+        async def save_result(self, data: pd.DataFrame, **kwargs):
+            # 实现将结果保存到 my_result_table 的逻辑
+            ...
     ```
     """
     
@@ -59,188 +56,139 @@ class ProcessorTaskBase(BaseTask, ABC):
     task_type: str = "processor"
     
     # 处理器任务特有属性
-    source_tables: List[str] = []        # 源数据表列表
-    dependencies: List[str] = []         # 依赖的其他任务
+    # source_tables, dependencies 等属性已由 BaseTask 提供
     calculation_method: Optional[str] = None  # 计算方法标识
     
-    def __init__(self, db_connection=None):
-        """初始化处理任务
+    def __init__(self, db_connection=None, **kwargs):
+        """初始化处理任务"""
+        super().__init__(db_connection=db_connection, **kwargs)
         
-        Args:
-            db_connection: 数据库连接
-        """
-        super().__init__(db_connection)
+        # 内部流水线实例
+        self._pipeline: Optional[ProcessingPipeline] = None
         
-        # 设置处理任务专用的日志记录器
-        self.logger = get_logger(f"processor_task.{self.name}")
-        
-        # 处理器实例
-        self._pipeline = None
-        
-        # 验证必要的配置
         if not self.source_tables:
-            self.logger.warning(f"处理任务 {self.name} 未定义source_tables")
-    
+            self.logger.warning(f"处理任务 {self.name} 未定义 source_tables")
+
     @abstractmethod
     def create_pipeline(self) -> ProcessingPipeline:
         """
-        创建处理流水线
+        创建处理流水线。
         
-        子类必须实现此方法来创建具体的处理流水线。
+        子类必须实现此方法来构建和返回一个具体的`ProcessingPipeline`实例。
         
         Returns:
-            ProcessingPipeline: 处理流水线实例
+            ProcessingPipeline: 用于处理数据的流水线实例。
         """
         raise NotImplementedError("子类必须实现 create_pipeline 方法")
     
     def get_pipeline_config(self) -> Dict[str, Any]:
         """
-        获取流水线配置
+        获取传递给流水线的配置。
         
         子类可以重写此方法来提供特定的流水线配置。
         
         Returns:
-            Dict[str, Any]: 流水线配置字典
+            Dict[str, Any]: 流水线配置字典。
         """
         return {
-            "continue_on_stage_error": False,
-            "collect_stats": True
+            "continue_on_stage_error": self.task_config.get("continue_on_stage_error", False),
+            "collect_stats": self.task_config.get("collect_stats", True),
         }
-    
-    async def execute_task(self, **kwargs) -> Dict[str, Any]:
+
+    async def _fetch_data(self, stop_event: Optional[asyncio.Event] = None, **kwargs) -> Optional[pd.DataFrame]:
         """
-        执行处理任务的核心逻辑
+        获取数据（内部实现）。
         
-        子类可以重写此方法来实现具体的任务执行逻辑。
-        默认实现提供了标准的处理流程。
-        
-        Args:
-            **kwargs: 任务执行参数
-            
-        Returns:
-            Dict[str, Any]: 执行结果
+        这是 BaseTask._fetch_data 的具体实现，它会调用子类定义的 fetch_data。
         """
-        self.logger.info(f"开始执行处理任务: {self.name}")
-        
-        try:
-            # 1. 获取数据
-            data = await self.fetch_data(**kwargs)
-            if data is None or data.empty:
-                self.logger.warning("未获取到数据，任务结束")
-                return {
-                    "status": "success",
-                    "message": "No data to process",
-                    "rows": 0
-                }
-            
-            # 2. 创建并执行流水线
-            if self._pipeline is None:
-                self._pipeline = self.create_pipeline()
-            
-            result = await self._pipeline.execute(data, **kwargs)
-            
-            if result["status"] != "success":
-                raise Exception(f"流水线执行失败: {result.get('error', 'Unknown error')}")
-            
-            processed_data = result["data"]
-            
-            # 3. 保存结果
-            if processed_data is not None and not processed_data.empty:
-                await self.save_result(processed_data, **kwargs)
-                rows_processed = len(processed_data)
-            else:
-                rows_processed = 0
-            
-            self.logger.info(f"处理任务 {self.name} 完成，处理行数: {rows_processed}")
-            
-            return {
-                "status": "success",
-                "rows": rows_processed,
-                "metadata": result.get("metadata", {}),
-                "message": f"Successfully processed {rows_processed} rows"
-            }
-            
-        except Exception as e:
-            self.logger.error(f"处理任务 {self.name} 执行失败: {str(e)}", exc_info=True)
-            return {
-                "status": "error",
-                "error": str(e),
-                "message": f"Task execution failed: {str(e)}"
-            }
-    
+        self.logger.info(f"从源表获取数据: {self.source_tables}")
+        return await self.fetch_data(**kwargs)
+
+    @abstractmethod
     async def fetch_data(self, **kwargs) -> Optional[pd.DataFrame]:
         """
-        获取数据
+        获取数据的抽象方法。
         
-        子类可以重写此方法来实现具体的数据获取逻辑。
-        默认实现尝试从source_tables获取数据。
+        子类必须实现此方法来定义具体的数据获取逻辑，例如从多个数据源查询并合并数据。
         
         Args:
             **kwargs: 数据获取参数
             
         Returns:
-            Optional[pd.DataFrame]: 获取的数据
+            Optional[pd.DataFrame]: 获取并准备好的数据。
         """
-        if not self.source_tables:
-            self.logger.warning("未定义source_tables，无法获取数据")
-            return None
-        
-        # 这里应该实现具体的数据获取逻辑
-        # 由于涉及到数据库操作，这里提供一个框架
-        self.logger.info(f"从源表获取数据: {self.source_tables}")
-        
-        # TODO: 实现具体的数据获取逻辑
-        # 可能需要调用数据库管理器或其他数据源
-        
-        return pd.DataFrame()  # 占位符
-    
-    async def save_result(self, data: pd.DataFrame, **kwargs):
+        raise NotImplementedError("子类必须实现 fetch_data 方法")
+
+    def process_data(self, data: pd.DataFrame, stop_event: Optional[asyncio.Event] = None, **kwargs) -> Optional[pd.DataFrame]:
         """
-        保存处理结果
+        处理数据（重写 BaseTask 的 process_data）。
         
-        子类可以重写此方法来实现具体的结果保存逻辑。
-        
-        Args:
-            data: 要保存的数据
-            **kwargs: 保存参数
+        此方法调用 `create_pipeline` 创建流水线，并用它来处理数据。
+        注意：这是一个同步方法，但它调用的 pipeline.execute 是异步的。
+        这在 BaseTask 的 `execute` 循环中可以正常工作。
         """
+        if self._pipeline is None:
+            self._pipeline = self.create_pipeline()
+        
+        # BaseTask.execute 会 await 这个协程
+        return self._pipeline.execute(data, **kwargs)
+
+    async def _save_data(self, data: pd.DataFrame, stop_event: Optional[asyncio.Event] = None, **kwargs):
+        """
+        保存处理结果（内部实现）。
+        
+        这是 BaseTask._save_data 的具体实现，它会调用子类定义的 save_result。
+        """
+        if data is None or data.empty:
+            self.logger.warning("没有数据需要保存")
+            return
+            
         if not hasattr(self, 'table_name') or not self.table_name:
-            self.logger.warning("未定义table_name，无法保存结果")
+            self.logger.warning("未定义 table_name，无法保存结果")
             return
         
         self.logger.info(f"保存结果到表: {self.table_name}，行数: {len(data)}")
-        
-        # TODO: 实现具体的数据保存逻辑
-        # 可能需要调用数据库管理器
-    
-    async def run(self, **kwargs) -> Dict[str, Any]:
+        await self.save_result(data, **kwargs)
+
+
+    @abstractmethod
+    async def save_result(self, data: pd.DataFrame, **kwargs):
         """
-        任务执行入口点
+        保存处理结果的抽象方法。
         
-        重写BaseTask的run方法，使用新的执行逻辑。
+        子类必须实现此方法来定义具体的结果保存逻辑。
         
         Args:
-            **kwargs: 执行参数
-            
-        Returns:
-            Dict[str, Any]: 执行结果
+            data: 要保存的数据。
+            **kwargs: 保存参数。
         """
-        return await self.execute_task(**kwargs)
-    
-    def get_processing_info(self) -> Dict[str, Any]:
+        raise NotImplementedError("子类必须实现 save_result 方法")
+
+    async def run(self, **kwargs) -> Dict[str, Any]:
+        """
+        任务执行入口点。
+        
+        重写BaseTask的run方法，确保调用正确的执行流程。
+        """
+        return await self.execute(**kwargs)
+
+    def get_task_info(self) -> Dict[str, Any]:
         """获取处理任务的详细信息"""
         info = {
             "name": self.name,
             "type": self.task_type,
             "source_tables": self.source_tables,
-            "target_table": getattr(self, 'table_name', None),
+            "target_table": self.table_name,
             "dependencies": self.dependencies,
-            "calculation_method": self.calculation_method,
             "description": self.description,
         }
         
-        # 添加流水线信息
-        if self._pipeline is not None:
+        # 在执行前，pipeline可能尚未创建
+        try:
+            if self._pipeline is None:
+                self._pipeline = self.create_pipeline()
             info["pipeline"] = self._pipeline.get_pipeline_info()
-        
+        except Exception as e:
+            info["pipeline"] = f"流水线尚未创建或创建失败: {e}"
+
         return info

@@ -57,7 +57,7 @@ from .tasks import ProcessorTaskBase
 from .engine import ProcessorEngine
 
 # 保持向后兼容性
-from .processor_task import ProcessorTask
+# from .processor_task import ProcessorTask # 已被删除
 
 # 重新导出统一任务系统的组件
 from ..common.task_system import (
@@ -97,7 +97,7 @@ __all__ = [
     "ProcessorEngine",
 
     # 向后兼容
-    "ProcessorTask",
+    # "ProcessorTask", # 已被删除
     "BaseTask",
 
     # 任务系统组件

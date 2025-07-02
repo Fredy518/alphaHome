@@ -142,22 +142,24 @@ async def handle_run_tasks(
     start_date: Optional[str],
     end_date: Optional[str],
     exec_mode: str,
+    use_insert_mode: bool = False,
 ):
     """
     处理运行任务的请求
-    
+
     验证数据库连接后，将任务提交给任务执行服务进行处理。
     支持串行和并行执行模式。
-    
+
     Args:
         tasks_to_run (List[Dict[str, Any]]): 要执行的任务列表
         start_date (Optional[str]): 开始日期
-        end_date (Optional[str]): 结束日期  
+        end_date (Optional[str]): 结束日期
         exec_mode (str): 执行模式（"serial" 或 "parallel"）
+        use_insert_mode (bool): 是否使用INSERT模式（跳过重复数据检查）
     """
     if db_manager:
         await task_execution_service.run_tasks(
-            db_manager, tasks_to_run, start_date, end_date, exec_mode
+            db_manager, tasks_to_run, start_date, end_date, exec_mode, use_insert_mode
         )
     else:
         logger.error("Request to run tasks, but DB manager is not initialized.")
@@ -228,6 +230,7 @@ async def handle_request(command: str, data: Optional[Dict[str, Any]] = None):
                 data.get("start_date"),
                 data.get("end_date"),
                 data.get("exec_mode", "serial"),
+                data.get("use_insert_mode", False),
             )
 
         elif command == "STOP_TASKS":

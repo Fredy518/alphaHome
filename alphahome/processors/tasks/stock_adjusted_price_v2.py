@@ -2,27 +2,26 @@
 # -*- coding: utf-8 -*-
 
 """
-股票后复权价格计算任务 (重构版本)
+股票后复权价格计算任务 (V2)
 
-使用新的处理器架构，通过流水线组合操作来计算股票后复权价格。
-计算公式：后复权价格 = 原始价格 * 累积复权因子
+演示如何使用新的分层处理器架构（Task -> Pipeline -> Operation）实现一个完整的处理任务。
+计算公式：后复权价格 = 原始价格 * 复权因子
 """
 
-from datetime import date, datetime, timedelta
-from typing import Any, Dict, List, Optional
-
-import numpy as np
+from typing import Any, Dict, Optional
 import pandas as pd
 
 from ...common.task_system import task_register
-from .base_task import ProcessorTaskBase
-from ..pipelines.base_pipeline import ProcessingPipeline
-from ..operations.base_operation import Operation
+from ...processors.tasks.base_task import ProcessorTaskBase
+from ...processors.pipelines.base_pipeline import ProcessingPipeline
+from ...processors.operations.base_operation import Operation
+from ...processors.utils.query_builder import QueryBuilder
 
 
 class AdjustmentFactorOperation(Operation):
-    """复权因子处理操作"""
-    
+    """
+    核心计算操作：应用复权因子。
+    """
     def __init__(self, config=None):
         super().__init__(name="AdjustmentFactorOperation", config=config)
     
@@ -33,30 +32,31 @@ class AdjustmentFactorOperation(Operation):
         
         result = data.copy()
         
-        # 确保有必要的列
         required_cols = ['ts_code', 'trade_date', 'open', 'high', 'low', 'close', 'vol', 'adj_factor']
-        missing_cols = set(required_cols) - set(result.columns)
-        if missing_cols:
-            raise ValueError(f"缺少必要的列: {missing_cols}")
+        if not set(required_cols).issubset(result.columns):
+            missing = set(required_cols) - set(result.columns)
+            raise ValueError(f"缺少必要的列进行复权计算: {missing}")
         
-        # 计算后复权价格
+        # 为了安全，填充可能由外连接产生的NaN复权因子
+        result['adj_factor'] = result['adj_factor'].fillna(1.0)
+        
         result['adj_open'] = result['open'] * result['adj_factor']
         result['adj_high'] = result['high'] * result['adj_factor']
         result['adj_low'] = result['low'] * result['adj_factor']
         result['adj_close'] = result['close'] * result['adj_factor']
-        result['adj_vol'] = result['vol']  # 成交量不需要复权
-        
-        # 保留必要的列
+        result['adj_vol'] = result['vol']  # 成交量通常不做复权调整
+
         output_cols = ['ts_code', 'trade_date', 'adj_open', 'adj_high', 'adj_low', 'adj_close', 'adj_vol']
-        result = result[output_cols]
+        final_result = result[output_cols].copy()
         
-        self.logger.info(f"完成复权价格计算，处理 {len(result)} 行数据")
-        return result
+        self.logger.info(f"复权价格计算完成，处理了 {len(final_result)} 行数据。")
+        return final_result
 
 
 class DataValidationOperation(Operation):
-    """数据验证操作"""
-    
+    """
+    数据验证操作：确保处理后的数据质量。
+    """
     def __init__(self, config=None):
         super().__init__(name="DataValidationOperation", config=config)
     
@@ -68,175 +68,138 @@ class DataValidationOperation(Operation):
         result = data.copy()
         original_len = len(result)
         
-        # 移除价格为负数或零的记录
         price_cols = ['adj_open', 'adj_high', 'adj_low', 'adj_close']
-        for col in price_cols:
-            if col in result.columns:
-                result = result[result[col] > 0]
+        result = result.dropna(subset=price_cols, how='any')
+        result = result[(result[price_cols] > 0).all(axis=1)]
         
-        # 移除异常的价格关系（如最高价小于最低价）
-        if all(col in result.columns for col in ['adj_high', 'adj_low']):
+        if 'adj_high' in result.columns and 'adj_low' in result.columns:
             result = result[result['adj_high'] >= result['adj_low']]
         
-        # 移除成交量为负数的记录
         if 'adj_vol' in result.columns:
             result = result[result['adj_vol'] >= 0]
         
         removed_count = original_len - len(result)
         if removed_count > 0:
-            self.logger.info(f"数据验证完成，移除异常数据 {removed_count} 行")
+            self.logger.info(f"数据验证完成，移除了 {removed_count} 行无效数据。")
         
         return result
 
 
-class StockAdjustedPricePipeline(ProcessingPipeline):
-    """股票后复权价格计算流水线"""
-    
+class StockAdjustedPriceV2Pipeline(ProcessingPipeline):
+    """
+    股票后复权价格计算流水线，负责编排操作。
+    """
+    name = "StockAdjustedPriceV2Pipeline"
+
     def build_pipeline(self):
         """构建处理流水线"""
-        # 阶段1: 复权因子计算
-        self.add_stage(
-            name="复权价格计算",
-            operations=AdjustmentFactorOperation(config=self.config)
-        )
-        
-        # 阶段2: 数据验证和清理
-        self.add_stage(
-            name="数据验证",
-            operations=DataValidationOperation(config=self.config)
-        )
+        self.add_stage(name="复权价格计算", operations=AdjustmentFactorOperation(config=self.config))
+        self.add_stage(name="数据质量验证", operations=DataValidationOperation(config=self.config))
 
 
 @task_register()
-class StockAdjustedPriceTaskV2(ProcessorTaskBase):
+class StockAdjustedPriceV2Task(ProcessorTaskBase):
     """
-    股票后复权价格计算任务 (重构版本)
-    
-    使用新的处理器架构实现股票后复权价格计算。
+    股票后复权价格计算任务，负责定义整个业务流程（I/O + 处理）。
     """
-    
     name = "stock_adjusted_price_v2"
     table_name = "stock_adjusted_daily_v2"
-    description = "计算股票后复权价格 (重构版本)"
+    description = "计算股票后复权日线价格 (V2 架构)"
     
-    # 源数据表
     source_tables = ["tushare_stock_daily", "tushare_stock_adj_factor"]
-    
-    # 主键和日期列
     primary_keys = ["ts_code", "trade_date"]
-    date_column = "trade_date"
-    
-    # 计算方法标识
-    calculation_method = "backward_adjustment"
-    
-    # 必需的输出列
-    required_columns = ["ts_code", "trade_date", "adj_open", "adj_high", "adj_low", "adj_close", "adj_vol"]
     
     def create_pipeline(self) -> ProcessingPipeline:
         """创建处理流水线"""
-        return StockAdjustedPricePipeline(
-            name="StockAdjustedPricePipeline",
+        return StockAdjustedPriceV2Pipeline(
+            name=self.name,
             config=self.get_pipeline_config()
         )
     
-    def get_pipeline_config(self) -> Dict[str, Any]:
-        """获取流水线配置"""
-        config = super().get_pipeline_config()
-        config.update({
-            "continue_on_stage_error": False,  # 遇到错误时停止
-            "collect_stats": True,             # 收集统计信息
-        })
-        return config
-    
     async def fetch_data(self, **kwargs) -> Optional[pd.DataFrame]:
         """
-        获取股票数据和复权因子数据
-        
-        这里应该实现具体的数据获取逻辑，从数据库中获取：
-        1. 股票日线数据 (tushare_stock_daily)
-        2. 复权因子数据 (tushare_stock_adj_factor)
-        
-        然后将两个数据集合并。
+        通过左连接从数据库获取日线行情和复权因子数据。
         """
-        self.logger.info("获取股票日线数据和复权因子数据")
+        start_date = kwargs.get('start_date')
+        end_date = kwargs.get('end_date')
+        codes = kwargs.get('codes')
+
+        qb = QueryBuilder("tushare_stock_daily as d")
+        qb.select([
+            'd.ts_code', 'd.trade_date', 
+            'd.open', 'd.high', 'd.low', 'd.close', 'd.vol',
+            'a.adj_factor'
+        ])
+        qb.add_condition(
+            "LEFT JOIN tushare_stock_adj_factor as a ON d.ts_code = a.ts_code AND d.trade_date = a.trade_date"
+        )
         
-        # TODO: 实现具体的数据获取逻辑
-        # 这里应该：
-        # 1. 从 tushare_stock_daily 获取股票日线数据
-        # 2. 从 tushare_stock_adj_factor 获取复权因子数据
-        # 3. 按 ts_code 和 trade_date 合并数据
+        query_params = {}
+        if start_date and end_date:
+            qb.add_condition("d.trade_date BETWEEN $start_date AND $end_date")
+            query_params['start_date'] = start_date
+            query_params['end_date'] = end_date
         
-        # 示例数据结构（实际应该从数据库获取）
-        sample_data = pd.DataFrame({
-            'ts_code': ['000001.SZ', '000002.SZ'],
-            'trade_date': ['20240101', '20240101'],
-            'open': [10.0, 20.0],
-            'high': [11.0, 21.0],
-            'low': [9.5, 19.5],
-            'close': [10.5, 20.5],
-            'vol': [1000000, 2000000],
-            'adj_factor': [1.0, 1.0]
-        })
+        if codes:
+            qb.add_in_condition('d.ts_code', '$codes')
+            query_params['codes'] = codes
+            
+        qb.add_order_by('d.ts_code').add_order_by('d.trade_date')
+
+        # 这里的 build 方法需要能处理 JOIN 语句，我们简化一下，直接拼接
+        # 注意：一个更健壮的QueryBuilder需要能优雅地处理JOIN
+        join_str = "LEFT JOIN tushare_stock_adj_factor as a ON d.ts_code = a.ts_code AND d.trade_date = a.trade_date"
+        base_query, params = qb.build(query_params)
         
-        return sample_data
-    
+        # 这是一个临时的hack，来将JOIN注入查询
+        final_query = base_query.replace(f"FROM {qb.table_name}", f"FROM {qb.table_name} {join_str}")
+        
+        self.logger.info(f"执行查询获取行情和复权因子数据...")
+        self.logger.debug(f"Query: {final_query}, Params: {params}")
+
+        try:
+            data = await self.db.fetch_dataframe(final_query, **params)
+            if data is not None and not data.empty:
+                self.logger.info(f"成功获取 {len(data)} 条数据进行处理。")
+                return data
+            else:
+                self.logger.warning("未获取到任何需要处理的数据。")
+                return pd.DataFrame()
+        except Exception as e:
+            self.logger.error(f"获取数据失败: {e}", exc_info=True)
+            return pd.DataFrame()
+
     async def save_result(self, data: pd.DataFrame, **kwargs):
-        """保存处理结果到数据库"""
+        """
+        将处理后的复权价格数据保存到数据库。
+        """
         if data.empty:
-            self.logger.warning("没有数据需要保存")
+            self.logger.warning("没有数据需要保存。")
             return
         
-        self.logger.info(f"保存后复权价格数据到 {self.table_name}，行数: {len(data)}")
+        self.logger.info(f"准备保存 {len(data)} 条后复权价格数据到 {self.table_name}...")
         
-        # TODO: 实现具体的数据保存逻辑
-        # 这里应该将数据保存到 stock_adjusted_daily_v2 表
-        
-        # 验证数据完整性
-        missing_cols = set(self.required_columns) - set(data.columns)
-        if missing_cols:
-            raise ValueError(f"保存数据缺少必要的列: {missing_cols}")
-        
-        # 数据类型转换和格式化
-        result = data.copy()
-        
-        # 确保价格列的精度
+        # 在这里可以添加数据类型转换和格式化逻辑
         price_cols = ['adj_open', 'adj_high', 'adj_low', 'adj_close']
         for col in price_cols:
-            if col in result.columns:
-                result[col] = result[col].round(2)
+            if col in data.columns:
+                data[col] = data[col].round(4)
         
-        # 确保成交量为整数
-        if 'adj_vol' in result.columns:
-            result['adj_vol'] = result['adj_vol'].astype(int)
-        
-        self.logger.info(f"数据格式化完成，准备保存 {len(result)} 行数据")
-        
-        # 这里应该调用数据库管理器保存数据
-        # await self.db.save_dataframe(result, self.table_name)
-    
-    def _calculate_from_multiple_sources(self, data: Dict[str, pd.DataFrame], **kwargs) -> pd.DataFrame:
-        """
-        从多个数据源计算（兼容旧接口）
-        
-        这个方法保持与旧版本的兼容性。
-        """
-        # 如果传入的是字典格式的多表数据，需要先合并
-        if isinstance(data, dict):
-            # 合并股票数据和复权因子数据
-            stock_data = data.get('tushare_stock_daily', pd.DataFrame())
-            adj_factor_data = data.get('tushare_stock_adj_factor', pd.DataFrame())
-            
-            if stock_data.empty or adj_factor_data.empty:
-                self.logger.warning("股票数据或复权因子数据为空")
-                return pd.DataFrame()
-            
-            # 合并数据
-            merged_data = pd.merge(
-                stock_data, adj_factor_data,
-                on=['ts_code', 'trade_date'],
-                how='inner'
+        if 'adj_vol' in data.columns:
+            data['adj_vol'] = data['adj_vol'].astype('int64')
+
+        # 使用DBManager的upsert功能保存数据
+        try:
+            await self.db.save_dataframe(
+                data, 
+                self.table_name, 
+                primary_keys=self.primary_keys,
+                use_insert_mode=self.use_insert_mode
             )
-            
-            return merged_data
-        
-        return data
+            self.logger.info(f"成功保存 {len(data)} 条数据到 {self.table_name}。")
+        except Exception as e:
+            self.logger.error(f"保存数据到 {self.table_name} 失败: {e}", exc_info=True)
+            raise
+
+    # _calculate_from_multiple_sources 方法不再需要，其逻辑被分解到
+    # fetch_data 和 Pipeline 中。

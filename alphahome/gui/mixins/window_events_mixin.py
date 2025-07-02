@@ -148,6 +148,17 @@ class WindowEventsMixin:
         # Call once to set initial state
         task_execution_handler.handle_exec_mode_change(self.ui_elements)
 
+        # Bind INSERT mode checkbox
+        insert_mode_cb = self.ui_elements.get("insert_mode_cb")
+        if insert_mode_cb:
+            insert_mode_cb.config(
+                command=lambda: task_execution_handler.handle_insert_mode_change(
+                    self.ui_elements
+                )
+            )
+        # Call once to set initial state
+        task_execution_handler.handle_insert_mode_change(self.ui_elements)
+
         # Window close
         self.protocol("WM_DELETE_WINDOW", self.on_closing)
         
