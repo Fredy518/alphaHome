@@ -72,7 +72,7 @@ class TushareDataTransformer:
         }
         if rename_map:
             data.rename(columns=rename_map, inplace=True)
-            self.logger.info(f"已应用列名映射: {rename_map}")
+            self.logger.debug(f"已应用列名映射: {rename_map}")
 
         return data
 

@@ -80,15 +80,15 @@ class TushareStockChipsTask(TushareTask):
     schema_def = {
         "ts_code": {"type": "VARCHAR(15)", "constraints": "NOT NULL"},
         "trade_date": {"type": "DATE", "constraints": "NOT NULL"},
-        "his_low": {"type": "FLOAT"},
-        "his_high": {"type": "FLOAT"},
-        "cost_5pct": {"type": "FLOAT"},
-        "cost_15pct": {"type": "FLOAT"},
-        "cost_50pct": {"type": "FLOAT"},
-        "cost_85pct": {"type": "FLOAT"},
-        "cost_95pct": {"type": "FLOAT"},
-        "weight_avg": {"type": "FLOAT"},
-        "winner_rate": {"type": "FLOAT"},
+        "his_low": {"type": "NUMERIC(15,4)"},
+        "his_high": {"type": "NUMERIC(15,4)"},
+        "cost_5pct": {"type": "NUMERIC(15,4)"},
+        "cost_15pct": {"type": "NUMERIC(15,4)"},
+        "cost_50pct": {"type": "NUMERIC(15,4)"},
+        "cost_85pct": {"type": "NUMERIC(15,4)"},
+        "cost_95pct": {"type": "NUMERIC(15,4)"},
+        "weight_avg": {"type": "NUMERIC(15,4)"},
+        "winner_rate": {"type": "NUMERIC(10,4)"},
         # update_time 列会自动添加
     }
 

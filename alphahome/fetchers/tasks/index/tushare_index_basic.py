@@ -72,7 +72,7 @@ class TushareIndexBasicTask(TushareTask):
         "publisher": {"type": "VARCHAR(100)"},
         "category": {"type": "VARCHAR(100)"},
         "base_date": {"type": "DATE"},
-        "base_point": {"type": "FLOAT"},
+        "base_point": {"type": "NUMERIC(10,4)"},
         "list_date": {"type": "DATE"},
         # 移除不再获取的字段定义
         # "index_type": {"type": "VARCHAR(50)"},

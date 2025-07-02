@@ -57,7 +57,7 @@ class TushareIndexWeightTask(TushareTask):
         "index_code": {"type": "VARCHAR(20)", "constraints": "NOT NULL"},
         "con_code": {"type": "VARCHAR(20)", "constraints": "NOT NULL"},
         "trade_date": {"type": "DATE", "constraints": "NOT NULL"},
-        "weight": {"type": "FLOAT"},
+        "weight": {"type": "NUMERIC(8,6)"},
         # update_time 通常由基类自动添加
         # 主键和 date_column 的索引通常由基类处理
     }

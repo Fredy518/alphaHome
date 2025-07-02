@@ -165,7 +165,7 @@ class TushareIndexFactorProTask(TushareTask):
     schema_def = {
         "ts_code": {"type": "VARCHAR(20)", "constraints": "NOT NULL"},
         "trade_date": {"type": "DATE", "constraints": "NOT NULL"},
-        "est_peg": {"type": "FLOAT"},
+        "est_peg": {"type": "NUMERIC(10,4)"},
         # 先定义基础行情字段
         "open": {"type": "NUMERIC(18,6)"},
         "high": {"type": "NUMERIC(18,6)"},
@@ -174,6 +174,7 @@ class TushareIndexFactorProTask(TushareTask):
         "volume": {"type": "NUMERIC(18,6)"},  # volume放在行情字段组
         "amount": {"type": "NUMERIC(18,6)"},
         # 然后动态生成其他因子字段
+        # 注意：这里排除的是API返回的原始字段名，上面已经单独定义了volume字段
         **{
             col: {"type": "NUMERIC(18,6)"}
             for col in fields
@@ -181,7 +182,7 @@ class TushareIndexFactorProTask(TushareTask):
             not in [
                 "ts_code",
                 "trade_date",
-                "vol",
+                "vol",  # API原始字段名，已映射为volume
                 "amount",
                 "open",
                 "high",

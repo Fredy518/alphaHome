@@ -263,6 +263,10 @@ async def _get_single_task_details(task_name: str) -> Optional[Dict[str, Any]]:
 
 async def _update_tasks_with_latest_timestamp(task_cache: List[Dict[str, Any]]):
     """使用每个任务的最新数据时间戳更新任务缓存列表。"""
+    import time
+    start_time = time.time()
+    logger.info(f"开始更新 {len(task_cache)} 个任务的最新时间戳...")
+
     db_manager = UnifiedTaskFactory.get_db_manager()
     if not db_manager:
         for task_detail in task_cache:
@@ -270,7 +274,10 @@ async def _update_tasks_with_latest_timestamp(task_cache: List[Dict[str, Any]]):
         return
 
     async def update_single_task(task_detail: Dict[str, Any]):
+        task_start_time = time.time()
         table_name = task_detail.get("table_name")
+        task_name = task_detail.get("name", "未知任务")
+
         if table_name:
             try:
                 # 修复: 传递整个task_detail字典，而不是只有name
@@ -282,9 +289,15 @@ async def _update_tasks_with_latest_timestamp(task_cache: List[Dict[str, Any]]):
                     task_detail["latest_update_time"] = format_datetime_for_display(latest_time)
                 else:
                     task_detail["latest_update_time"] = "无数据"
+
+                task_duration = time.time() - task_start_time
+                if task_duration > 1.0:  # 只记录耗时超过1秒的任务
+                    logger.warning(f"任务 {task_name} 查询耗时: {task_duration:.2f}秒")
+
             except Exception as e:
+                task_duration = time.time() - task_start_time
                 logger.warning(
-                    f"查询 {table_name} 最新时间失败: {e}"
+                    f"查询 {table_name} 最新时间失败 (耗时: {task_duration:.2f}秒): {e}"
                 )
                 task_detail["latest_update_time"] = "查询失败"
         else:
@@ -293,6 +306,9 @@ async def _update_tasks_with_latest_timestamp(task_cache: List[Dict[str, Any]]):
     # 使用 asyncio.gather 并发更新所有任务
     tasks = [update_single_task(task) for task in task_cache]
     await asyncio.gather(*tasks)
+
+    total_duration = time.time() - start_time
+    logger.info(f"完成所有任务时间戳更新，总耗时: {total_duration:.2f}秒")
 
 
 # --- 用于向后兼容的函数别名 ---

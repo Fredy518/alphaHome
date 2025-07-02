@@ -74,10 +74,10 @@ class TushareFundPortfolioTask(TushareTask):
         "ann_date": {"type": "DATE", "constraints": "NOT NULL"},
         "end_date": {"type": "DATE", "constraints": "NOT NULL"},  # 报告期也加入非空
         "symbol": {"type": "VARCHAR(10)", "constraints": "NOT NULL"},  # 股票代码
-        "mkv": {"type": "FLOAT"},
-        "amount": {"type": "FLOAT"},
-        "stk_mkv_ratio": {"type": "FLOAT"},
-        "stk_float_ratio": {"type": "FLOAT"},
+        "mkv": {"type": "NUMERIC(20,3)"},
+        "amount": {"type": "NUMERIC(20,2)"},
+        "stk_mkv_ratio": {"type": "NUMERIC(10,4)"},
+        "stk_float_ratio": {"type": "NUMERIC(10,4)"},
         # update_time 会自动添加
     }
 

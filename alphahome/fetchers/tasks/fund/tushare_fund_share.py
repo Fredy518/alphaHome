@@ -54,7 +54,7 @@ class TushareFundShareTask(TushareTask):
     schema_def = {
         "ts_code": {"type": "VARCHAR(15)", "constraints": "NOT NULL"},
         "trade_date": {"type": "DATE", "constraints": "NOT NULL"},
-        "fd_share": {"type": "FLOAT"},  # 单位：万份
+        "fd_share": {"type": "NUMERIC(20,2)"},  # 单位：万份
         # update_time 会自动添加
         # 主键 ("ts_code", "trade_date") 索引由基类根据 primary_keys 自动处理
     }

@@ -27,7 +27,7 @@ class iFindStockBasicTask(iFindTask):
     # 1. 核心属性
     name: str = "ifind_stock_basic"
     description = "获取上市公司基本资料（同花顺 iFind）"
-    table_name: str = "ifind_stock_basic"
+    table_name: str = "stock_basic"
     primary_keys = ["stock_code_a"]  # 使用映射后的字段名作为主键
     date_column = None  # 基础信息不按日期更新
     data_source = "ifind"

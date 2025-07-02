@@ -63,20 +63,31 @@ class UtilityMixin:
         Returns:
             Optional[datetime]: 最新日期的datetime对象，如果表为空则返回None
         """
+        import time
+        start_time = time.time()
+
         schema, table_name = self.resolver.get_schema_and_table(target)  # type: ignore
         resolved_table_name = f'"{schema}"."{table_name}"'
 
         query = f'''
-        SELECT MAX("{date_column}") 
+        SELECT MAX("{date_column}")
         FROM {resolved_table_name}
         '''
 
         try:
             result = await self.fetch_val(query)  # type: ignore
+
+            query_duration = time.time() - start_time
+            if query_duration > 1.0:  # 只记录耗时超过1秒的查询
+                self.logger.warning(  # type: ignore
+                    f"数据库查询耗时较长: {resolved_table_name}.{date_column} - {query_duration:.2f}秒"
+                )
+
             return result if result is not None else None
         except Exception as e:
+            query_duration = time.time() - start_time
             self.logger.error(  # type: ignore
-                f"获取最新日期失败 (表: {resolved_table_name}, 列: {date_column}): {e}"
+                f"获取最新日期失败 (表: {resolved_table_name}, 列: {date_column}, 耗时: {query_duration:.2f}秒): {e}"
             )
             raise
 

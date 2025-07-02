@@ -77,15 +77,15 @@ class TushareIndexCiDailyTask(TushareTask):
     schema_def = {
         "ts_code": {"type": "VARCHAR(20)", "constraints": "NOT NULL"},
         "trade_date": {"type": "DATE", "constraints": "NOT NULL"},
-        "open": {"type": "FLOAT"},
-        "low": {"type": "FLOAT"},
-        "high": {"type": "FLOAT"},
-        "close": {"type": "FLOAT"},
-        "pre_close": {"type": "FLOAT"},
-        "change": {"type": "FLOAT"},
-        "pct_change": {"type": "FLOAT"},
-        "volume": {"type": "FLOAT"},  # 使用映射后的列名
-        "amount": {"type": "FLOAT"},
+        "open": {"type": "NUMERIC(15,4)"},
+        "low": {"type": "NUMERIC(15,4)"},
+        "high": {"type": "NUMERIC(15,4)"},
+        "close": {"type": "NUMERIC(15,4)"},
+        "pre_close": {"type": "NUMERIC(15,4)"},
+        "change": {"type": "NUMERIC(15,4)"},
+        "pct_change": {"type": "NUMERIC(10,4)"},
+        "volume": {"type": "NUMERIC(20,2)"},  # 使用映射后的列名
+        "amount": {"type": "NUMERIC(20,3)"},
         # update_time 会自动添加
         # 主键 ("ts_code", "trade_date") 索引由基类自动处理
     }

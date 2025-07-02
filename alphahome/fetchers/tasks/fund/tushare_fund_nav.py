@@ -79,12 +79,12 @@ class TushareFundNavTask(TushareTask):
         "ts_code": {"type": "VARCHAR(15)", "constraints": "NOT NULL"},
         "ann_date": {"type": "DATE"},
         "nav_date": {"type": "DATE", "constraints": "NOT NULL"},
-        "unit_nav": {"type": "FLOAT"},
-        "accum_nav": {"type": "FLOAT"},
-        "accum_div": {"type": "FLOAT"},
-        "net_asset": {"type": "FLOAT"},
-        "total_netasset": {"type": "FLOAT"},
-        "adj_nav": {"type": "FLOAT"},
+        "unit_nav": {"type": "NUMERIC(15,6)"},
+        "accum_nav": {"type": "NUMERIC(15,6)"},
+        "accum_div": {"type": "NUMERIC(15,6)"},
+        "net_asset": {"type": "NUMERIC(20,3)"},
+        "total_netasset": {"type": "NUMERIC(20,3)"},
+        "adj_nav": {"type": "NUMERIC(15,6)"},
         # update_time 会自动添加
         # 主键 ("ts_code", "nav_date") 索引由基类自动处理
     }

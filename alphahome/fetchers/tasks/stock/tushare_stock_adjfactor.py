@@ -50,7 +50,7 @@ class TushareStockAdjFactorTask(TushareTask):
     schema_def = {
         "ts_code": {"type": "VARCHAR(15)", "constraints": "NOT NULL"},
         "trade_date": {"type": "DATE", "constraints": "NOT NULL"},
-        "adj_factor": {"type": "FLOAT"},
+        "adj_factor": {"type": "NUMERIC(12,8)"},
     }
 
     # 7.数据验证规则

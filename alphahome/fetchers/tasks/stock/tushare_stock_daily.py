@@ -72,15 +72,15 @@ class TushareStockDailyTask(TushareTask):
     schema_def = {
         "ts_code": {"type": "VARCHAR(15)", "constraints": "NOT NULL"},
         "trade_date": {"type": "DATE", "constraints": "NOT NULL"},
-        "open": {"type": "FLOAT"},
-        "high": {"type": "FLOAT"},
-        "low": {"type": "FLOAT"},
-        "close": {"type": "FLOAT"},
-        "pre_close": {"type": "FLOAT"},
-        "change": {"type": "FLOAT"},
-        "pct_chg": {"type": "FLOAT"},
-        "volume": {"type": "FLOAT"},  # 目标字段名
-        "amount": {"type": "FLOAT"},
+        "open": {"type": "NUMERIC(15,4)"},
+        "high": {"type": "NUMERIC(15,4)"},
+        "low": {"type": "NUMERIC(15,4)"},
+        "close": {"type": "NUMERIC(15,4)"},
+        "pre_close": {"type": "NUMERIC(15,4)"},
+        "change": {"type": "NUMERIC(15,4)"},
+        "pct_chg": {"type": "NUMERIC(10,4)"},
+        "volume": {"type": "NUMERIC(20,2)"},  # 目标字段名
+        "amount": {"type": "NUMERIC(20,3)"},
     }
 
     # 7.数据验证规则 (使用目标字段名 volume) - 真正生效的验证机制

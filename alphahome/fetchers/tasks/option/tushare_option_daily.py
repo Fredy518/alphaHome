@@ -88,17 +88,16 @@ class TushareOptionDailyTask(TushareTask):
         "ts_code": {"type": "VARCHAR(30)", "constraints": "NOT NULL"},
         "trade_date": {"type": "DATE", "constraints": "NOT NULL"},
         "exchange": {"type": "VARCHAR(10)"},
-        "pre_settle": {"type": "FLOAT"},
-        "pre_close": {"type": "FLOAT"},
-        "open": {"type": "FLOAT"},
-        "high": {"type": "FLOAT"},
-        "low": {"type": "FLOAT"},
-        "close": {"type": "FLOAT"},
-        "settle": {"type": "FLOAT"},  # 结算价
-        "pre_settle": {"type": "FLOAT"},  # 昨日结算价
-        "volume": {"type": "FLOAT"},  # 成交量 (映射后的名称)
-        "amount": {"type": "FLOAT"},  # 成交额
-        "oi": {"type": "FLOAT"},  # 持仓量
+        "pre_settle": {"type": "NUMERIC(15,4)"},  # 昨日结算价
+        "pre_close": {"type": "NUMERIC(15,4)"},
+        "open": {"type": "NUMERIC(15,4)"},
+        "high": {"type": "NUMERIC(15,4)"},
+        "low": {"type": "NUMERIC(15,4)"},
+        "close": {"type": "NUMERIC(15,4)"},
+        "settle": {"type": "NUMERIC(15,4)"},  # 结算价
+        "volume": {"type": "NUMERIC(20,2)"},  # 成交量 (映射后的名称)
+        "amount": {"type": "NUMERIC(20,3)"},  # 成交额
+        "oi": {"type": "NUMERIC(20,2)"},  # 持仓量
         # update_time 会自动添加
     }
 
@@ -194,7 +193,7 @@ class TushareOptionDailyTask(TushareTask):
         lambda df: df['ts_code'].notna(),       # 期权代码不能为空
         lambda df: df['trade_date'].notna(),    # 交易日期不能为空
         lambda df: (df['close'] >= 0),          # 收盘价不能为负
-        lambda df: (df['vol'] >= 0),            # 成交量不能为负
+        lambda df: (df['volume'] >= 0),            # 成交量不能为负
     ]
     
 

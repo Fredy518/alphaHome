@@ -111,7 +111,7 @@ async def initialize_controller(response_callback):
             all_tasks_dict = UnifiedTaskFactory.get_tasks_by_type(None)
             task_classes = list(all_tasks_dict.values())
             await run_migration_check(db_manager, task_classes)
-            await run_refactoring_check(db_manager, task_classes)
+            await run_refactoring_check(db_manager, task_classes)  # 已恢复：PASS1表名重命名功能
             logger.info("Schema migration check completed.")
     except Exception as e:
         logger.error(f"Controller: Initial UnifiedTaskFactory setup failed: {e}", exc_info=True)

@@ -79,16 +79,16 @@ class TushareOptionBasicTask(TushareTask):
         "exchange": {"type": "VARCHAR(10)"},
         "name": {"type": "VARCHAR(100)"},
         "per_unit": {
-            "type": "FLOAT"
-        },  # 文档是str，暂定FLOAT，若API返回str需调整或在process_data处理
+            "type": "NUMERIC(10,4)"
+        },  # 文档是str，暂定NUMERIC，若API返回str需调整或在process_data处理
         "opt_code": {"type": "VARCHAR(20)"},
         "opt_type": {"type": "VARCHAR(10)"},
         "call_put": {"type": "VARCHAR(10)"},
         "exercise_type": {"type": "VARCHAR(10)"},
-        "exercise_price": {"type": "FLOAT"},
+        "exercise_price": {"type": "NUMERIC(15,4)"},
         "s_month": {"type": "VARCHAR(10)"},
         "maturity_date": {"type": "DATE"},
-        "list_price": {"type": "FLOAT"},
+        "list_price": {"type": "NUMERIC(15,4)"},
         "list_date": {"type": "DATE"},
         "delist_date": {"type": "DATE"},
         "last_edate": {"type": "DATE"},

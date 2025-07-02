@@ -80,9 +80,9 @@ class TushareFutureBasicTask(TushareTask):
         "exchange": {"type": "VARCHAR(10)"},
         "name": {"type": "VARCHAR(50)"},
         "fut_code": {"type": "VARCHAR(10)"},
-        "multiplier": {"type": "FLOAT"},  # 合约乘数
+        "multiplier": {"type": "NUMERIC(10,2)"},  # 合约乘数
         "trade_unit": {"type": "VARCHAR(10)"},
-        "per_unit": {"type": "FLOAT"},  # 交易单位
+        "per_unit": {"type": "NUMERIC(10,2)"},  # 交易单位
         "quote_unit": {"type": "VARCHAR(10)"},
         "quote_unit_desc": {"type": "VARCHAR(50)"},
         "d_mode_desc": {"type": "VARCHAR(50)"},

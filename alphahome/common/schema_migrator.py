@@ -144,8 +144,10 @@ async def run_refactoring_check(db_manager: "DBManager", all_tasks: List[Type[Ba
 
     # --- PASS 2: 创建向后兼容的视图 ---
     # 视图的名称是任务的 `name` 属性
-    logger.info("PASS 2: 开始检查并创建向后兼容的视图...")
+    logger.info("PASS 2: 视图创建功能已禁用，跳过...")
     view_created_count = 0
+    # 注释：如需重新启用视图创建，请取消下面代码的注释
+    """
     for task_def in all_tasks:
         schema = getattr(task_def, "data_source", "public")
         new_name = getattr(task_def, "table_name", None)
@@ -174,10 +176,11 @@ async def run_refactoring_check(db_manager: "DBManager", all_tasks: List[Type[Ba
 
         except Exception as e:
             logger.error(f"为 '{schema}.{view_name}' 创建视图时发生错误: {e}", exc_info=True)
-
+    """
+    # 视图创建功能已禁用
     if view_created_count > 0:
         logger.info(f"PASS 2: 完成，共创建了 {view_created_count} 个兼容性视图。")
     else:
-        logger.info("PASS 2: 未发现需要创建的新视图。")
+        logger.info("PASS 2: 视图创建功能已禁用。")
 
-    logger.info("数据库表名重构检查完成。") 
+    logger.info("数据库表名重构检查完成。")

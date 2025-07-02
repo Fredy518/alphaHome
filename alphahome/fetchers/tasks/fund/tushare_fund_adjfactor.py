@@ -55,7 +55,7 @@ class TushareFundAdjFactorTask(TushareTask):
     schema_def = {
         "ts_code": {"type": "VARCHAR(15)", "constraints": "NOT NULL"},
         "trade_date": {"type": "DATE", "constraints": "NOT NULL"},
-        "adj_factor": {"type": "FLOAT"},
+        "adj_factor": {"type": "NUMERIC(12,8)"},
         # update_time 会自动添加
         # 主键 ("ts_code", "trade_date") 索引由基类自动处理
     }

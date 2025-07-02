@@ -94,15 +94,15 @@ class TushareFundDailyTask(TushareTask):
     schema_def = {
         "ts_code": {"type": "VARCHAR(15)", "constraints": "NOT NULL"},
         "trade_date": {"type": "DATE", "constraints": "NOT NULL"},
-        "open": {"type": "FLOAT"},
-        "high": {"type": "FLOAT"},
-        "low": {"type": "FLOAT"},
-        "close": {"type": "FLOAT"},
-        "pre_close": {"type": "FLOAT"},
-        "change": {"type": "FLOAT"},
-        "pct_chg": {"type": "FLOAT"},
-        "volume": {"type": "FLOAT"},  # 映射后的列名
-        "amount": {"type": "FLOAT"},  # 修正：保持amount列名不变
+        "open": {"type": "NUMERIC(15,4)"},
+        "high": {"type": "NUMERIC(15,4)"},
+        "low": {"type": "NUMERIC(15,4)"},
+        "close": {"type": "NUMERIC(15,4)"},
+        "pre_close": {"type": "NUMERIC(15,4)"},
+        "change": {"type": "NUMERIC(15,4)"},
+        "pct_chg": {"type": "NUMERIC(10,4)"},
+        "volume": {"type": "NUMERIC(20,2)"},  # 映射后的列名
+        "amount": {"type": "NUMERIC(20,3)"},  # 修正：保持amount列名不变
         # update_time 会自动添加
     }
 
