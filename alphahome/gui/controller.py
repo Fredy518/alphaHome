@@ -224,7 +224,7 @@ async def handle_request(command: str, data: Optional[Dict[str, Any]] = None):
 
         elif command == "RUN_TASKS":
             await handle_run_tasks(
-                data.get("tasks", []),
+                data.get("tasks_to_run", []),
                 data.get("start_date"),
                 data.get("end_date"),
                 data.get("exec_mode", "serial"),

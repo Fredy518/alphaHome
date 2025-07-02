@@ -5,7 +5,6 @@ from typing import Dict, Any, Optional, List
 import asyncio
 from alphahome.fetchers.base.fetcher_task import FetcherTask
 from alphahome.fetchers.sources.ifind.ifind_api import iFindAPI
-from alphahome.common.db_manager import DBManager
 from alphahome.common.config_manager import ConfigManager
 
 class iFindTask(FetcherTask, ABC):
@@ -17,6 +16,7 @@ class iFindTask(FetcherTask, ABC):
     - 使用类属性而非方法来定义必需配置
     - 保持简洁的抽象接口
     - 在 __init__ 中验证必需属性
+    - 与任务工厂系统兼容
     """
     
     data_source = "ifind"
@@ -26,14 +26,23 @@ class iFindTask(FetcherTask, ABC):
     api_endpoint: Optional[str] = None  # iFind API 端点名称
     indicators: Optional[str] = None    # 默认指标列表（分号分隔）
     
-    def __init__(self, db_manager: DBManager, config_manager: ConfigManager, **kwargs):
-        super().__init__(db_manager, **kwargs)
+    def __init__(self, db_connection, **kwargs):
+        """
+        初始化 iFindTask。
+        
+        Args:
+            db_connection: 数据库连接（与 TushareTask 保持一致）
+            **kwargs: 传递给 FetcherTask 的参数
+        """
+        super().__init__(db_connection, **kwargs)
         
         # 验证必需属性（参考 TushareTask 的设计）
         if self.api_endpoint is None or self.indicators is None:
             raise ValueError("iFindTask 子类必须定义 api_endpoint 和 indicators 属性")
         
-        self.api = iFindAPI(config_manager)
+        # 内部创建 ConfigManager（而不是要求外部传递）
+        self.config_manager = ConfigManager()
+        self.api = iFindAPI(self.config_manager)
         
         # iFind 特有的配置
         self.codes_to_fetch: List[str] = kwargs.get("codes", [])
