@@ -72,7 +72,14 @@ class BaseTask(ABC):
 
         self.logger.debug(f"任务 {self.name} 初始化完成，更新类型: {self.update_type}")
         self.logger.debug(f"任务 {self.name} 保存批次大小: {self.save_batch_size}")
-        self.logger.info(f"任务 {self.name} 数据保存策略: {'INSERT模式' if self.use_insert_mode else 'UPSERT模式'} (use_insert_mode={self.use_insert_mode})")
+        self.logger.debug(
+            f"任务 {self.name} 数据保存策略: "
+            f"{'INSERT模式' if self.use_insert_mode else 'UPSERT模式'} "
+            f"(use_insert_mode={self.use_insert_mode})"
+        )
+
+        # 任务元数据
+        self.status: str = "PENDING"
 
     def get_business_domain(self) -> str:
         """获取任务的业务域

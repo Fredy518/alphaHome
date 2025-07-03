@@ -158,6 +158,10 @@ class ViewAwareFieldConverter:
     
     def get_view_definitions(self):
         """获取所有视图定义"""
+        if not self.cursor:
+            logger.error("数据库游标未初始化，无法获取视图定义")
+            return
+            
         query = """
         SELECT viewname, definition
         FROM pg_views
@@ -176,6 +180,10 @@ class ViewAwareFieldConverter:
         """删除所有视图"""
         logger.info("开始删除所有视图...")
         
+        if not self.cursor:
+            logger.error("数据库游标未初始化，无法删除视图")
+            return
+
         for view_name in self.view_definitions.keys():
             try:
                 drop_sql = f"DROP VIEW IF EXISTS tushare.{view_name} CASCADE"
@@ -186,6 +194,10 @@ class ViewAwareFieldConverter:
     
     def get_double_precision_fields(self) -> List[Tuple[str, str]]:
         """获取基础表中的double precision字段"""
+        if not self.cursor:
+            logger.error("数据库游标未初始化，无法获取字段")
+            return []
+
         query = """
         SELECT t.table_name, c.column_name
         FROM information_schema.tables t
@@ -219,6 +231,10 @@ class ViewAwareFieldConverter:
         target_type = self.get_target_type(table_name, column_name)
         
         try:
+            if not self.cursor:
+                logger.error(f"数据库游标未初始化，跳过转换 {table_name}.{column_name}")
+                return False
+
             alter_sql = f"""
             ALTER TABLE tushare.{table_name} 
             ALTER COLUMN {column_name} TYPE {target_type}
@@ -262,11 +278,20 @@ class ViewAwareFieldConverter:
         """重新创建所有视图"""
         logger.info("开始重新创建视图...")
         
+        if not self.cursor:
+            logger.error("数据库游标未初始化，无法重新创建视图")
+            return False
+
         success_count = 0
         failed_count = 0
         
         for view_name, definition in self.view_definitions.items():
             try:
+                if not self.cursor:
+                    logger.error(f"数据库游标未初始化，跳过创建视图 {view_name}")
+                    failed_count += 1
+                    continue
+
                 create_sql = f"CREATE VIEW tushare.{view_name} AS {definition}"
                 self.cursor.execute(create_sql)
                 logger.info(f"✅ 成功创建视图: {view_name}")

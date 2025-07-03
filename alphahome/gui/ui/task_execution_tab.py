@@ -108,7 +108,8 @@ def create_task_execution_tab(
         strategy_info_frame,
         text="• 勾选：提高保存速度，但可能产生重复数据\n• 未勾选：处理重复数据，但保存速度较慢",
         font=("TkDefaultFont", 8),
-        foreground="gray"
+        foreground="gray",
+        wraplength=280  # 强制在此宽度下换行
     )
     info_label.pack(anchor=tk.W)
     widgets["strategy_info_label"] = info_label
@@ -118,7 +119,8 @@ def create_task_execution_tab(
         strategy_info_frame,
         text="⚠️ 警告：INSERT模式可能产生重复数据，请确保数据源无重复",
         font=("TkDefaultFont", 8),
-        foreground="red"
+        foreground="red",
+        wraplength=280  # 强制在此宽度下换行
     )
     widgets["warning_label"] = warning_label
 

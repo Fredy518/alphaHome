@@ -72,8 +72,11 @@ class BatchPerformanceMonitor:
         self.total_rows_processed += batch_size
         self.total_processing_time += processing_time
 
-    def get_performance_summary(self) -> Dict[str, Any]:
+    def get_performance_summary(self, latest_record: Dict[str, Any]) -> Dict[str, Any]:
         """获取性能摘要统计
+
+        Args:
+            latest_record: 最近一次操作的性能记录
 
         Returns:
             包含性能统计信息的字典
@@ -84,10 +87,30 @@ class BatchPerformanceMonitor:
                 'total_rows_processed': 0,
                 'average_throughput': 0,
                 'recent_average_throughput': 0,
-                'optimal_batch_size': 5000
+                'optimal_batch_size': 5000  # 初始建议值
             }
 
-        recent_records = self.performance_history[-10:]  # 最近10次操作
+        # --- 新的动态建议逻辑 ---
+        current_size = latest_record['batch_size']
+        time_taken = latest_record['processing_time']
+        
+        if time_taken < 15:
+            # 性能非常好，建议显著增加
+            suggested_size = current_size * 1.5
+        elif time_taken < 45:
+            # 性能良好，建议适度增加
+            suggested_size = current_size * 1.2
+        elif time_taken > 90:
+            # 性能较差，建议减少
+            suggested_size = current_size * 0.75
+        else:
+            # 性能可接受，维持现状
+            suggested_size = float(current_size)
+
+        # 将建议值规整到最近的500倍数，并确保不小于2000
+        optimal_batch_size = max(2000, round(suggested_size / 500) * 500)
+
+        recent_records = self.performance_history[-10:]
         recent_throughput = sum(r['throughput'] for r in recent_records) / len(recent_records)
 
         overall_throughput = (
@@ -95,19 +118,12 @@ class BatchPerformanceMonitor:
             if self.total_processing_time > 0 else 0
         )
 
-        # 找到吞吐量最高的批次大小
-        if len(recent_records) > 0:
-            best_record = max(recent_records, key=lambda x: x['throughput'])
-            optimal_batch_size = best_record['batch_size']
-        else:
-            optimal_batch_size = 5000
-
         return {
             'total_operations': self.total_operations,
             'total_rows_processed': self.total_rows_processed,
             'average_throughput': overall_throughput,
             'recent_average_throughput': recent_throughput,
-            'optimal_batch_size': optimal_batch_size,
+            'optimal_batch_size': int(optimal_batch_size),
             'recent_performance': recent_records
         }
 
@@ -676,32 +692,18 @@ class DatabaseOperationsMixin:
                             operation_type=operation_type
                         )
 
-                        # 计算吞吐量
-                        throughput = batch_size / processing_time if processing_time > 0 else 0
+                        # 获取最新的性能记录以生成建议
+                        latest_record = self._performance_monitor.performance_history[-1]
+                        stats = self._performance_monitor.get_performance_summary(latest_record)
+                        throughput = stats['recent_average_throughput']
+                        optimal_size = stats['optimal_batch_size']
 
-                        # 获取性能摘要（用于优化建议）
-                        perf_summary = self._performance_monitor.get_performance_summary()
-
-                        # 简化日志输出，只在处理时间较长时输出详细信息
-                        if processing_time > 15.0:  # 超过15秒的操作才输出详细日志
-                            optimal_size = perf_summary['optimal_batch_size']
-                            self.logger.info( # type: ignore
-                                f"COPY_FROM_DATAFRAME (表: {resolved_table_name}): 成功处理 {copy_count} 条记录 "
-                                f"| 耗时: {processing_time:.2f}s | 吞吐量: {throughput:.0f} 行/秒 "
-                                f"| 建议批次大小: {optimal_size} 行"
-                            )
-                        else:
-                            # 正常情况下只输出简要信息
-                            self.logger.debug( # type: ignore
-                                f"COPY_FROM_DATAFRAME (表: {resolved_table_name}): 成功处理 {copy_count} 条记录 "
-                                f"| 耗时: {processing_time:.2f}s | 吞吐量: {throughput:.0f} 行/秒"
-                            )
-                    else:
-                        # 如果性能监控未启用，使用简单日志
-                        throughput = batch_size / processing_time if processing_time > 0 else 0
-                        self.logger.info( # type: ignore
-                            f"COPY_FROM_DATAFRAME (表: {resolved_table_name}): 成功处理 {copy_count} 条记录 "
-                            f"| 耗时: {processing_time:.2f}s | 吞吐量: {throughput:.0f} 行/秒"
+                        self.logger.info(  # type: ignore
+                            f"COPY_FROM_DATAFRAME (表: \"{schema}\".\"{table_name}\"): "
+                            f"成功处理 {len(df)} 条记录 | "
+                            f"耗时: {processing_time:.2f}s | "
+                            f"吞吐量: {throughput:.0f} 行/秒 | "
+                            f"建议批次大小: {optimal_size} 行"
                         )
 
                     return copy_count
@@ -715,8 +717,6 @@ class DatabaseOperationsMixin:
                         f"| 失败前耗时: {processing_time:.2f}s | 批次大小: {batch_size} 行"
                     )
                     raise
-
-
 
     async def upsert(
         self,
@@ -776,7 +776,7 @@ class DatabaseOperationsMixin:
             >>> print(f"建议批次大小: {stats['optimal_batch_size']} 行")
         """
         if hasattr(self, '_performance_monitor'):
-            return self._performance_monitor.get_performance_summary()
+            return self._performance_monitor.get_performance_summary(self._performance_monitor.performance_history[-1])
         else:
             return {
                 'total_operations': 0,

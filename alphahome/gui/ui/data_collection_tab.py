@@ -9,6 +9,7 @@ from tkinter import ttk
 from typing import Dict
 from ..utils.layout_manager import create_data_collection_column_manager
 from ..utils.dpi_aware_ui import get_ui_factory
+from ..handlers import data_collection_handler
 
 _ALL_TYPES_OPTION = "所有类型"
 
@@ -23,60 +24,63 @@ def create_data_collection_tab(parent: ttk.Frame) -> Dict[str, tk.Widget]:
     # --- 顶部按钮和过滤框架 ---
     top_frame = ttk.Frame(parent)
     top_frame.pack(side=tk.TOP, fill=tk.X, pady=(0, 5))
+    top_frame.grid_columnconfigure(1, weight=1)
 
-    # --- 左侧按钮 ---
-    refresh_button = ui_factory.create_button(
-        top_frame,
-        text="刷新列表",
-    )
+    # --- 左侧按钮容器 ---
+    button_frame = ttk.Frame(top_frame)
+    button_frame.grid(row=0, column=0, sticky="w")
+
+    refresh_button = ui_factory.create_button(button_frame, text="刷新列表")
     refresh_button.pack(side=tk.LEFT, padx=(0, 5))
     widgets["collection_refresh_button"] = refresh_button
 
-    select_all_button = ui_factory.create_button(
-        top_frame,
-        text="全选",
-    )
+    select_all_button = ui_factory.create_button(button_frame, text="全选")
     select_all_button.pack(side=tk.LEFT, padx=(0, 5))
     widgets["collection_select_all_button"] = select_all_button
 
-    deselect_all_button = ui_factory.create_button(
-        top_frame,
-        text="取消全选",
-    )
+    deselect_all_button = ui_factory.create_button(button_frame, text="取消全选")
     deselect_all_button.pack(side=tk.LEFT, padx=(0, 5))
     widgets["collection_deselect_all_button"] = deselect_all_button
 
-    # --- 右侧过滤 (使用Grid布局支持小屏幕) ---
+    # --- 右侧过滤 (同步创建，延迟布局) ---
     filter_frame = ttk.Frame(top_frame)
-    filter_frame.pack(side=tk.RIGHT, padx=(10, 0))
+    widgets["filter_frame"] = filter_frame
     
-    # 配置网格权重
-    filter_frame.grid_columnconfigure(1, weight=1)
-    filter_frame.grid_columnconfigure(3, weight=1)
-    filter_frame.grid_columnconfigure(5, weight=1)
-
-    # 第一行：名称过滤和数据源过滤
-    ui_factory.create_label(filter_frame, text="名称过滤:").grid(row=0, column=0, sticky="w", padx=(0, 2))
-    name_filter_entry = ui_factory.create_entry(filter_frame, width=18)  # 增加宽度
-    name_filter_entry.grid(row=0, column=1, sticky="ew", padx=(0, 8))
+    # 创建控件并添加到字典
+    name_filter_label = ui_factory.create_label(filter_frame, text="名称过滤:")
+    name_filter_entry = ui_factory.create_entry(filter_frame, width=18)
     widgets["collection_filter_entry"] = name_filter_entry
 
-    ui_factory.create_label(filter_frame, text="数据源过滤:").grid(row=0, column=2, sticky="w", padx=(0, 2))
+    data_source_label = ui_factory.create_label(filter_frame, text="数据源过滤:")
     data_source_filter_combo = ui_factory.create_combobox(
-        filter_frame, values=[_ALL_TYPES_OPTION], state="readonly", width=12  # 增加宽度
+        filter_frame, values=[_ALL_TYPES_OPTION], state="readonly", width=12
     )
     data_source_filter_combo.set(_ALL_TYPES_OPTION)
-    data_source_filter_combo.grid(row=0, column=3, sticky="ew", padx=(0, 8))
     widgets["collection_data_source_combo"] = data_source_filter_combo
 
-    # 第二行：类型过滤（在小屏幕上可能换行显示）
-    ui_factory.create_label(filter_frame, text="类型过滤:").grid(row=0, column=4, sticky="w", padx=(0, 2))
+    type_label = ui_factory.create_label(filter_frame, text="类型过滤:")
     type_filter_combo = ui_factory.create_combobox(
-        filter_frame, values=[_ALL_TYPES_OPTION], state="readonly", width=12  # 增加宽度
+        filter_frame, values=[_ALL_TYPES_OPTION], state="readonly", width=12
     )
     type_filter_combo.set(_ALL_TYPES_OPTION)
-    type_filter_combo.grid(row=0, column=5, sticky="ew")
     widgets["collection_task_type_combo"] = type_filter_combo
+
+    def _layout_filters():
+        """延迟布局过滤器以确保父容器尺寸已确定"""
+        filter_frame.grid(row=0, column=1, sticky="e", padx=(10, 0))
+        
+        filter_frame.grid_columnconfigure(1, weight=1)
+        filter_frame.grid_columnconfigure(3, weight=1)
+        filter_frame.grid_columnconfigure(5, weight=1)
+
+        name_filter_label.grid(row=0, column=0, sticky="w", padx=(0, 2))
+        name_filter_entry.grid(row=0, column=1, sticky="ew", padx=(0, 8))
+        
+        data_source_label.grid(row=0, column=2, sticky="w", padx=(0, 2))
+        data_source_filter_combo.grid(row=0, column=3, sticky="ew", padx=(0, 8))
+
+        type_label.grid(row=0, column=4, sticky="w", padx=(0, 2))
+        type_filter_combo.grid(row=0, column=5, sticky="ew")
 
     # --- Treeview (表格) 框架 ---
     tree_frame = ttk.Frame(parent)
@@ -96,15 +100,7 @@ def create_data_collection_tab(parent: ttk.Frame) -> Dict[str, tk.Widget]:
 
     # 初始化动态列宽管理器
     column_manager = create_data_collection_column_manager(tree)
-    tree._column_manager = column_manager  # 保存引用以便后续使用
-    
-    # 注释掉静态列宽配置，完全由动态管理器控制
-    # tree.column("selected", width=60, anchor=tk.CENTER, stretch=False)
-    # tree.column("data_source", width=80, anchor=tk.CENTER, stretch=False)
-    # tree.column("type", width=100, stretch=False)
-    # tree.column("name", width=220, stretch=True)
-    # tree.column("description", width=350, stretch=True)
-    # tree.column("latest_update_time", width=160, anchor=tk.CENTER, stretch=False)
+    tree._column_manager = column_manager
 
     vsb = ttk.Scrollbar(tree_frame, orient="vertical", command=tree.yview)
     hsb = ttk.Scrollbar(tree_frame, orient="horizontal", command=tree.xview)
@@ -126,7 +122,9 @@ def create_data_collection_tab(parent: ttk.Frame) -> Dict[str, tk.Widget]:
     
     # 启用动态列宽管理器
     column_manager.bind_resize_event()
-    # 延迟配置列宽以确保父容器已完全初始化
     tree.after_idle(column_manager.configure_columns)
+
+    # 延迟布局过滤器
+    parent.after(50, _layout_filters)
 
     return widgets 

@@ -5,8 +5,11 @@
 """
 import tkinter as tk
 from typing import Dict, Any, List
+import logging
 
 from .. import controller
+
+logger = logging.getLogger(__name__)
 
 _ALL_TYPES_OPTION = "所有类型"
 
@@ -145,10 +148,21 @@ def update_collection_task_list_ui(widgets: Dict[str, tk.Widget], task_list: Lis
 def _update_collection_task_display(widgets: Dict[str, tk.Widget]):
     """根据当前的过滤和排序更新Treeview。"""
     tree = widgets.get("collection_task_tree")
+    if not tree:
+        logger.warning("UI widget 'collection_task_tree' not found.")
+        return
+
     type_combo = widgets.get("collection_task_type_combo")
+    if not type_combo:
+        logger.warning("UI widget 'collection_task_type_combo' not found.")
+
     data_source_combo = widgets.get("collection_data_source_combo")
+    if not data_source_combo:
+        logger.warning("UI widget 'collection_data_source_combo' not found.")
+    
     name_filter_entry = widgets.get("collection_filter_entry")
-    if not tree: return
+    if not name_filter_entry:
+        logger.warning("UI widget 'collection_filter_entry' not found.")
 
     for item in tree.get_children():
         tree.delete(item)
