@@ -43,6 +43,13 @@ include = ["alphahome", "alphahome.*"]
 [project.scripts]
 alphahome = "alphahome.gui.main_window:run_gui" # 当用户安装后，可以运行 alphahome 命令启动 GUI
 
+[project.optional-dependencies]
+research = [
+    "jupyterlab>=4.0.0",
+    "papermill>=2.4.0",
+    "nbconvert>=7.16.0",
+]
+
 [tool.black]
 line-length = 88
 target-version = ['py310', 'py311', 'py312']

@@ -10,9 +10,13 @@ project_root = Path(__file__).resolve().parent
 sys.path.insert(0, str(project_root))
 
 from alphahome.gui.main_window import run_gui
+from research import initialize_research_environment
 
 if __name__ == "__main__":
     try:
+        # 在启动时初始化投研工作台环境
+        initialize_research_environment()
+        
         run_gui()
     except KeyboardInterrupt:
         print("应用程序被用户中断。")
