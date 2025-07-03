@@ -14,6 +14,7 @@
 
 # 导入基类
 from .base_task import ProcessorTaskBase
+from .block_processing_mixin import BlockProcessingTaskMixin
 
 # 导入具体的处理任务
 from .stock_adjusted_price_v2 import StockAdjustedPriceV2Task
@@ -24,7 +25,8 @@ from .stock_adjdaily_processor import StockAdjdailyProcessorTask
 __all__ = [
     # 基类
     "ProcessorTaskBase",
-    
+    "BlockProcessingTaskMixin",
+
     # 具体任务
     "StockAdjustedPriceV2Task",
     "StockAdjdailyProcessorTask",

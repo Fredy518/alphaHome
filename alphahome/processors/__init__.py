@@ -7,20 +7,9 @@ alphaHome 数据处理模块
 该模块提供数据处理的核心功能，采用分层架构设计:
 
 ## 架构层次
-1. **基础层** (base/): 处理器基类和分块处理支持
-2. **操作层** (operations/): 原子级数据处理操作
-3. **流水线层** (pipelines/): 高级数据处理流水线
-4. **任务层** (tasks/): 具体的数据处理任务
-5. **引擎层** (engine/): 处理引擎，协调和执行任务
-
-## 主要功能
-1. 数据清洗和标准化
-2. 特征工程
-3. 技术指标计算
-4. 因子构建的基础处理
-5. 分块处理大数据集
-6. 流水线式数据处理
-7. 任务调度和执行监控
+1. **引擎层 (engine/)**: 任务调度、并发控制和执行监控。
+2. **任务层 (tasks/)**: 封装完整的业务处理流程，负责数据IO和操作编排。
+3. **操作层 (operations/)**: 可复用的、原子级的数据处理操作。
 
 ## 使用示例
 ```python
@@ -30,34 +19,28 @@ from alphahome.processors import ProcessorEngine
 engine = ProcessorEngine(max_workers=4)
 result = await engine.execute_task("stock_adjusted_price_v2")
 
-# 直接使用流水线
-from alphahome.processors.pipelines import ProcessingPipeline
-from alphahome.processors.operations import Operation
+# 在任务内部直接使用操作
+from alphahome.processors import Operation, OperationPipeline
 
-pipeline = MyDataPipeline()
-result = await pipeline.execute(data)
+class MyTask(ProcessorTaskBase):
+    async def process_data(self, data, **kwargs):
+        pipeline = OperationPipeline("MyInternalPipeline")
+        pipeline.add_operation(MyOperation1())
+        pipeline.add_operation(MyOperation2())
+        return await pipeline.apply(data)
 ```
 """
 
-__version__ = "0.2.0"
-
-# 导入基础层
-from .base import BaseProcessor, DataProcessor, BlockProcessor, BlockProcessorMixin
+__version__ = "0.3.0"
 
 # 导入操作层
 from .operations import Operation, OperationPipeline
 
-# 导入流水线层
-from .pipelines import ProcessingPipeline
-
 # 导入任务层
-from .tasks import ProcessorTaskBase
+from .tasks import ProcessorTaskBase, BlockProcessingTaskMixin
 
 # 导入引擎层
 from .engine import ProcessorEngine
-
-# 保持向后兼容性
-# from .processor_task import ProcessorTask # 已被删除
 
 # 重新导出统一任务系统的组件
 from ..common.task_system import (
@@ -72,33 +55,17 @@ from ..common.task_system import (
 # 导入所有具体的processor任务（这会触发@task_register装饰器）
 from . import tasks
 
-# 确保processor任务注册到UnifiedTaskFactory（放在任务导入之后） (此步骤已不再需要)
-# from ..common.task_system.task_decorator import register_tasks_to_factory
-# register_tasks_to_factory()
-
 __all__ = [
-    # 基础层
-    "BaseProcessor",
-    "DataProcessor",
-    "BlockProcessor",
-    "BlockProcessorMixin",
-
     # 操作层
     "Operation",
     "OperationPipeline",
 
-    # 流水线层
-    "ProcessingPipeline",
-
     # 任务层
     "ProcessorTaskBase",
+    "BlockProcessingTaskMixin",
 
     # 引擎层
     "ProcessorEngine",
-
-    # 向后兼容
-    # "ProcessorTask", # 已被删除
-    "BaseTask",
 
     # 任务系统组件
     "task_register",

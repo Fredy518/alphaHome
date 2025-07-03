@@ -149,7 +149,7 @@ class BaseTask(ABC):
 
             # 处理数据（模板方法模式）
             self.logger.info(f"处理数据，共 {len(data) if isinstance(data, pd.DataFrame) else '多源'} 行")
-            processed_data = self.process_data(data, stop_event=stop_event, **kwargs)
+            processed_data = await self.process_data(data, stop_event=stop_event, **kwargs)
 
             if stop_event and stop_event.is_set():
                 raise asyncio.CancelledError("任务在 process_data 后被取消")

@@ -187,7 +187,7 @@ def create_task_execution_tab(
     
     # 初始化动态列宽管理器
     status_column_manager = create_task_status_column_manager(task_status_tree)
-    task_status_tree._column_manager = status_column_manager  # 保存引用以便后续使用
+    task_status_tree._column_manager = status_column_manager  # type: ignore
     
     # 注释掉静态列宽配置，完全由动态管理器控制
     # task_status_tree.column("name", width=200, stretch=True)

@@ -100,7 +100,7 @@ def create_data_collection_tab(parent: ttk.Frame) -> Dict[str, tk.Widget]:
 
     # 初始化动态列宽管理器
     column_manager = create_data_collection_column_manager(tree)
-    tree._column_manager = column_manager
+    tree._column_manager = column_manager # type: ignore
 
     vsb = ttk.Scrollbar(tree_frame, orient="vertical", command=tree.yview)
     hsb = ttk.Scrollbar(tree_frame, orient="horizontal", command=tree.xview)
@@ -117,8 +117,8 @@ def create_data_collection_tab(parent: ttk.Frame) -> Dict[str, tk.Widget]:
     tree.insert("", tk.END, values=("", "", "", "正在加载, 请稍候...", "", ""), tags=("loading",))
 
     # 为排序状态添加属性
-    tree._last_sort_col = "type"
-    tree._last_sort_reverse = False
+    tree._last_sort_col = "type" # type: ignore
+    tree._last_sort_reverse = False # type: ignore
     
     # 启用动态列宽管理器
     column_manager.bind_resize_event()

@@ -57,6 +57,7 @@ class ProcessorEngine:
     
     def __init__(
         self,
+        db_manager: "DBManager",
         max_workers: int = 4,
         timeout: Optional[float] = None,
         config: Optional[Dict[str, Any]] = None
@@ -64,10 +65,15 @@ class ProcessorEngine:
         """初始化处理引擎
         
         Args:
+            db_manager: 已初始化的数据库管理器实例。
             max_workers: 最大并发工作线程数
             timeout: 任务执行超时时间（秒）
             config: 引擎配置
         """
+        if db_manager is None:
+            raise ValueError("必须为ProcessorEngine提供一个DBManager实例。")
+            
+        self.db_manager = db_manager
         self.max_workers = max_workers
         self.timeout = timeout
         self.config = config or {}
@@ -84,9 +90,6 @@ class ProcessorEngine:
             "last_execution": None
         }
         
-        # 任务缓存
-        self._task_cache = {}
-        
         # 线程池
         self._executor = ThreadPoolExecutor(max_workers=max_workers)
         
@@ -95,7 +98,6 @@ class ProcessorEngine:
     async def execute_task(
         self,
         task_name: str,
-        db_connection=None,
         **kwargs
     ) -> Dict[str, Any]:
         """
@@ -103,7 +105,6 @@ class ProcessorEngine:
         
         Args:
             task_name: 任务名称
-            db_connection: 数据库连接
             **kwargs: 任务执行参数
             
         Returns:
@@ -119,7 +120,7 @@ class ProcessorEngine:
             self.logger.info(f"开始执行任务: {task_name}")
             
             # 获取任务实例
-            task = await self._get_task_instance(task_name, db_connection)
+            task = await self._get_task_instance(task_name)
             
             # 检查依赖
             await self._check_dependencies(task)
@@ -174,7 +175,6 @@ class ProcessorEngine:
     async def execute_tasks(
         self,
         task_names: List[str],
-        db_connection=None,
         parallel: bool = True,
         **kwargs
     ) -> Dict[str, Dict[str, Any]]:
@@ -183,7 +183,6 @@ class ProcessorEngine:
         
         Args:
             task_names: 任务名称列表
-            db_connection: 数据库连接
             parallel: 是否并行执行
             **kwargs: 任务执行参数
             
@@ -193,14 +192,13 @@ class ProcessorEngine:
         self.logger.info(f"开始执行 {len(task_names)} 个任务，并行模式: {parallel}")
         
         if parallel and len(task_names) > 1:
-            return await self._execute_tasks_parallel(task_names, db_connection, **kwargs)
+            return await self._execute_tasks_parallel(task_names, **kwargs)
         else:
-            return await self._execute_tasks_sequential(task_names, db_connection, **kwargs)
+            return await self._execute_tasks_sequential(task_names, **kwargs)
     
     async def execute_batch(
         self,
         task_configs: Dict[str, Dict[str, Any]],
-        db_connection=None,
         parallel: bool = True
     ) -> Dict[str, Dict[str, Any]]:
         """
@@ -208,7 +206,6 @@ class ProcessorEngine:
         
         Args:
             task_configs: 任务配置字典，格式为 {task_name: {param1: value1, ...}}
-            db_connection: 数据库连接
             parallel: 是否并行执行
             
         Returns:
@@ -222,7 +219,7 @@ class ProcessorEngine:
             # 并行执行
             tasks = []
             for task_name, config in task_configs.items():
-                task_coro = self.execute_task(task_name, db_connection, **config)
+                task_coro = self.execute_task(task_name, **config)
                 tasks.append((task_name, task_coro))
             
             # 等待所有任务完成
@@ -239,36 +236,28 @@ class ProcessorEngine:
         else:
             # 顺序执行
             for task_name, config in task_configs.items():
-                result = await self.execute_task(task_name, db_connection, **config)
+                result = await self.execute_task(task_name, **config)
                 results[task_name] = result
         
         return results
     
-    async def _get_task_instance(self, task_name: str, db_connection=None) -> BaseTask:
-        """获取任务实例"""
-        if task_name in self._task_cache:
-            return self._task_cache[task_name]
+    async def _get_task_instance(self, task_name: str) -> BaseTask:
+        """
+        获取一个新创建的任务实例。
         
-        # 从任务工厂获取任务
-        task_class = get_task(task_name)
-        if task_class is None:
-            raise ValueError(f"未找到任务: {task_name}")
-        
-        # 创建任务实例，传递db连接和其他参数
-        task = task_class(db_connection=db_connection, **self.config.get(task_name, {}))
-        
-        # 验证任务类型
-        if not isinstance(task, BaseTask):
-            raise TypeError(f"任务 {task_name} 不是 BaseTask 的实例")
-        
-        # 缓存任务实例
-        self._task_cache[task_name] = task
-        
+        使用工厂的 `create_task_instance` 方法来确保每次执行
+        都能获得一个干净的任务实例，并传入引擎级别的配置。
+        """
+        task = await UnifiedTaskFactory.create_task_instance(
+            task_name,
+            **self.config.get(task_name, {})
+        )
         return task
     
     async def _check_dependencies(self, task: BaseTask):
         """检查任务依赖"""
         if not hasattr(task, 'dependencies') or not task.dependencies:
+            self.logger.info("所有依赖项检查通过")
             return
         
         self.logger.info(f"检查任务 {task.name} 的依赖: {task.dependencies}")
@@ -296,60 +285,42 @@ class ProcessorEngine:
     async def _execute_tasks_parallel(
         self,
         task_names: List[str],
-        db_connection=None,
         **kwargs
     ) -> Dict[str, Dict[str, Any]]:
-        """并行执行任务"""
-        tasks = []
-        for task_name in task_names:
-            task_coro = self.execute_task(task_name, db_connection, **kwargs)
-            tasks.append((task_name, task_coro))
-        
+        """并行执行多个任务"""
+        loop = asyncio.get_running_loop()
+        futures = {
+            loop.run_in_executor(
+                self._executor, self._run_async_in_thread, self.execute_task, name, **kwargs
+            ): name
+            for name in task_names
+        }
+
         results = {}
-        
-        # 使用 asyncio.gather 并行执行
-        try:
-            task_results = await asyncio.gather(
-                *[task_coro for _, task_coro in tasks],
-                return_exceptions=True
-            )
-            
-            for (task_name, _), result in zip(tasks, task_results):
-                if isinstance(result, Exception):
-                    results[task_name] = {
-                        "status": "error",
-                        "error": str(result),
-                        "task_name": task_name
-                    }
-                else:
-                    results[task_name] = result
-                    
-        except Exception as e:
-            self.logger.error(f"并行执行任务时发生错误: {str(e)}")
-            raise
-        
+        for future in as_completed(futures):
+            task_name = futures[future]
+            try:
+                result = future.result()
+                results[task_name] = result
+            except Exception as e:
+                self.logger.error(f"并行任务 {task_name} 执行失败: {e}", exc_info=True)
+                results[task_name] = {"status": "error", "error": str(e)}
         return results
     
     async def _execute_tasks_sequential(
         self,
         task_names: List[str],
-        db_connection=None,
         **kwargs
     ) -> Dict[str, Dict[str, Any]]:
-        """顺序执行任务"""
+        """顺序执行多个任务"""
         results = {}
-        
-        for task_name in task_names:
-            result = await self.execute_task(task_name, db_connection, **kwargs)
-            results[task_name] = result
-            
-            # 如果任务失败且配置为遇错停止，则中断执行
-            if (result.get("status") != "success" and 
-                not self.config.get("continue_on_error", True)):
-                self.logger.warning(f"任务 {task_name} 失败，中断后续任务执行")
-                break
-        
+        for name in task_names:
+            results[name] = await self.execute_task(name, **kwargs)
         return results
+    
+    def _run_async_in_thread(self, coro, *args, **kwargs):
+        """在线程池中运行异步函数的辅助方法"""
+        return asyncio.run(coro(*args, **kwargs))
     
     def get_stats(self) -> Dict[str, Any]:
         """获取引擎统计信息"""
@@ -365,7 +336,7 @@ class ProcessorEngine:
         return stats
     
     def reset_stats(self):
-        """重置统计信息"""
+        """重置执行统计"""
         self._execution_stats = {
             "total_tasks": 0,
             "successful_tasks": 0,
@@ -374,15 +345,14 @@ class ProcessorEngine:
             "start_time": None,
             "last_execution": None
         }
-        self.logger.info("引擎统计信息已重置")
+        self.logger.info("处理器引擎统计信息已重置")
     
     def clear_cache(self):
-        """清除任务缓存"""
-        self._task_cache.clear()
-        self.logger.info("任务缓存已清除")
+        """清理引擎内部缓存（此版本中无缓存）"""
+        self.logger.info("处理器引擎没有内部任务缓存，无需清理。")
     
     def shutdown(self):
-        """关闭引擎"""
+        """关闭引擎的线程池"""
         self._executor.shutdown(wait=True)
         self.logger.info("处理引擎已关闭")
     

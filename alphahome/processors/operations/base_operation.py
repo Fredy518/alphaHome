@@ -20,21 +20,7 @@ class Operation(abc.ABC):
     """数据处理操作基类
 
     所有数据处理操作的抽象基类，定义了统一的接口。
-
-    示例:
-    ```python
-    class MyOperation(Operation):
-        def __init__(self, param1=1, param2="value"):
-            super().__init__(name="MyOperation")
-            self.param1 = param1
-            self.param2 = param2
-
-        async def apply(self, data):
-            # 实现具体的数据处理逻辑
-            result = data.copy()
-            # ... 数据处理操作
-            return result
-    ```
+    一个操作是纯粹的、无状态的数据转换函数。
     """
 
     def __init__(
@@ -50,108 +36,18 @@ class Operation(abc.ABC):
         self.config = config or {}
         self.logger = get_logger(f"operation.{self.name}")
 
-        # 操作统计信息
-        self._execution_count = 0
-        self._last_execution_time = None
-        self._total_processing_time = 0.0
-
     @abc.abstractmethod
-    async def apply(self, data: pd.DataFrame) -> pd.DataFrame:
+    async def apply(self, data: pd.DataFrame, **kwargs) -> pd.DataFrame:
         """应用操作到数据
 
         Args:
             data: 输入数据框
+            **kwargs: 其他处理参数
 
         Returns:
             pd.DataFrame: 处理后的数据框
         """
         raise NotImplementedError("子类必须实现apply方法")
-
-    async def execute(self, data: pd.DataFrame) -> Dict[str, Any]:
-        """
-        执行操作的完整流程，包含统计和错误处理
-
-        Args:
-            data: 输入数据
-
-        Returns:
-            包含结果和元数据的字典
-        """
-        start_time = datetime.now()
-
-        try:
-            # 验证输入
-            self._validate_input(data)
-
-            # 执行操作
-            result = await self.apply(data)
-
-            # 验证输出
-            self._validate_output(result)
-
-            # 更新统计信息
-            end_time = datetime.now()
-            processing_time = (end_time - start_time).total_seconds()
-            self._execution_count += 1
-            self._last_execution_time = end_time
-            self._total_processing_time += processing_time
-
-            self.logger.debug(
-                f"操作 {self.name} 执行完成，"
-                f"处理时间: {processing_time:.3f}秒，"
-                f"输入行数: {len(data)}，"
-                f"输出行数: {len(result)}"
-            )
-
-            return {
-                "status": "success",
-                "data": result,
-                "metadata": {
-                    "operation_name": self.name,
-                    "processing_time": processing_time,
-                    "input_rows": len(data),
-                    "output_rows": len(result),
-                    "execution_count": self._execution_count,
-                    "timestamp": end_time
-                }
-            }
-
-        except Exception as e:
-            self.logger.error(f"操作 {self.name} 执行失败: {str(e)}", exc_info=True)
-            return {
-                "status": "error",
-                "error": str(e),
-                "metadata": {
-                    "operation_name": self.name,
-                    "timestamp": datetime.now()
-                }
-            }
-
-    def _validate_input(self, data: pd.DataFrame):
-        """验证输入数据"""
-        if not isinstance(data, pd.DataFrame):
-            raise TypeError(f"输入数据必须是pandas DataFrame，实际类型: {type(data)}")
-
-        if data.empty:
-            self.logger.warning(f"操作 {self.name} 接收到空数据")
-
-    def _validate_output(self, data: pd.DataFrame):
-        """验证输出数据"""
-        if not isinstance(data, pd.DataFrame):
-            raise TypeError(f"输出数据必须是pandas DataFrame，实际类型: {type(data)}")
-
-    def get_stats(self) -> Dict[str, Any]:
-        """获取操作统计信息"""
-        return {
-            "name": self.name,
-            "execution_count": self._execution_count,
-            "last_execution_time": self._last_execution_time,
-            "total_processing_time": self._total_processing_time,
-            "average_processing_time": (
-                self._total_processing_time / self._execution_count
-                if self._execution_count > 0 else 0
-            )
-        }
 
     def __str__(self) -> str:
         """返回操作的字符串表示"""
@@ -166,21 +62,7 @@ class OperationPipeline:
     """操作流水线
 
     将多个操作组合成一个流水线，按顺序应用到数据上。
-
-    示例:
-    ```python
-    # 创建操作
-    fill_na = FillNAOperation(method='mean', columns=['close', 'volume'])
-    ma5 = MovingAverageOperation(window=5, column='close', result_column='ma5')
-
-    # 创建流水线
-    pipeline = OperationPipeline("日线处理")
-    pipeline.add_operation(fill_na)
-    pipeline.add_operation(ma5)
-
-    # 应用流水线
-    result = await pipeline.apply(data)
-    ```
+    这是一个可选的辅助工具，用于组织多个操作。
     """
 
     def __init__(self, name: str = "Pipeline", config: Optional[Dict[str, Any]] = None):
@@ -197,12 +79,6 @@ class OperationPipeline:
 
         # 流水线配置
         self.stop_on_error = self.config.get("stop_on_error", True)
-        self.collect_stats = self.config.get("collect_stats", True)
-
-        # 统计信息
-        self._execution_count = 0
-        self._last_execution_time = None
-        self._operation_stats = []
 
     def add_operation(
         self, operation: Operation, condition: Optional[Callable[[pd.DataFrame], bool]] = None
@@ -252,27 +128,27 @@ class OperationPipeline:
         """获取流水线中所有操作的名称"""
         return [operation.name for operation, _ in self.operations]
 
-    async def apply(self, data: pd.DataFrame) -> pd.DataFrame:
+    async def apply(self, data: pd.DataFrame, **kwargs) -> pd.DataFrame:
         """应用流水线到数据
 
         按顺序应用流水线中的所有操作。
 
         Args:
             data: 输入数据框
+            **kwargs: 传递给每个操作的额外参数
 
         Returns:
             pd.DataFrame: 处理后的数据框
         """
         if data is None or data.empty:
-            self.logger.warning("输入数据为空")
-            return pd.DataFrame()
+            self.logger.warning("流水线接收到空数据，直接返回。")
+            return pd.DataFrame() if data is None else data.copy()
 
-        self.logger.info(
+        self.logger.debug(
             f"开始执行流水线 '{self.name}'，操作数量: {len(self.operations)}"
         )
 
-        # 创建输入数据的副本
-        result = data.copy()
+        result = data
 
         # 依次应用各个操作
         for i, (operation, condition) in enumerate(self.operations):
@@ -281,12 +157,14 @@ class OperationPipeline:
                 try:
                     should_apply = condition(result)
                     if not should_apply:
-                        self.logger.info(
+                        self.logger.debug(
                             f"跳过操作 {i+1}/{len(self.operations)}: {operation.name} (条件不满足)"
                         )
                         continue
                 except Exception as e:
-                    self.logger.error(f"执行条件函数时出错: {str(e)}")
+                    self.logger.error(f"执行条件函数时出错 for {operation.name}: {str(e)}")
+                    if self.stop_on_error:
+                        raise
                     continue
 
             # 应用操作
@@ -294,89 +172,16 @@ class OperationPipeline:
                 self.logger.debug(
                     f"执行操作 {i+1}/{len(self.operations)}: {operation.name}"
                 )
-                result = await operation.apply(result)
-                self.logger.debug(
-                    f"操作 {operation.name} 完成，结果行数: {len(result)}"
-                )
+                result = await operation.apply(result, **kwargs)
             except Exception as e:
                 self.logger.error(
                     f"执行操作 {operation.name} 时出错: {str(e)}", exc_info=True
                 )
-                raise
+                if self.stop_on_error:
+                    raise
 
-        self.logger.info(f"流水线 '{self.name}' 执行完成，结果行数: {len(result)}")
+        self.logger.debug(f"流水线 '{self.name}' 执行完成，结果行数: {len(result)}")
         return result
-
-    async def execute(self, data: pd.DataFrame) -> Dict[str, Any]:
-        """
-        执行流水线的完整流程，包含统计和错误处理
-
-        Args:
-            data: 输入数据
-
-        Returns:
-            包含结果和元数据的字典
-        """
-        start_time = datetime.now()
-
-        try:
-            result = await self.apply(data)
-
-            end_time = datetime.now()
-            processing_time = (end_time - start_time).total_seconds()
-            self._execution_count += 1
-            self._last_execution_time = end_time
-
-            self.logger.info(
-                f"流水线 {self.name} 执行完成，"
-                f"处理时间: {processing_time:.2f}秒，"
-                f"输入行数: {len(data)}，"
-                f"输出行数: {len(result)}"
-            )
-
-            return {
-                "status": "success",
-                "data": result,
-                "metadata": {
-                    "pipeline_name": self.name,
-                    "processing_time": processing_time,
-                    "input_rows": len(data),
-                    "output_rows": len(result),
-                    "execution_count": self._execution_count,
-                    "operation_count": len(self.operations),
-                    "operation_stats": self._operation_stats if self.collect_stats else None,
-                    "timestamp": end_time
-                }
-            }
-
-        except Exception as e:
-            self.logger.error(f"流水线 {self.name} 执行失败: {str(e)}", exc_info=True)
-            return {
-                "status": "error",
-                "error": str(e),
-                "metadata": {
-                    "pipeline_name": self.name,
-                    "timestamp": datetime.now()
-                }
-            }
-
-    def get_stats(self) -> Dict[str, Any]:
-        """获取流水线统计信息"""
-        return {
-            "name": self.name,
-            "execution_count": self._execution_count,
-            "last_execution_time": self._last_execution_time,
-            "operation_count": len(self.operations),
-            "operation_names": self.get_operation_names(),
-            "operation_stats": self._operation_stats
-        }
-
-    def clear_stats(self):
-        """清除统计信息"""
-        self._execution_count = 0
-        self._last_execution_time = None
-        self._operation_stats = []
-        self.logger.info(f"清除流水线 {self.name} 的统计信息")
 
     def __len__(self):
         """返回流水线中操作的数量"""

@@ -44,7 +44,7 @@ def create_task_log_tab(
     clear_button = ttk.Button(
         controls_frame,
         text="Clear Log",
-        command=handlers.get("handle_clear_log"),
+        command=handlers.get("handle_clear_log"), # type: ignore
     )
     clear_button.pack(side="right")
     widgets["clear_log_button"] = clear_button

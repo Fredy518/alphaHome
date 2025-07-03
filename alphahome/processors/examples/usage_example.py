@@ -4,7 +4,7 @@
 """
 新架构使用示例
 
-演示如何使用重构后的processors模块的分层架构。
+演示如何使用重构后的 `Engine -> Task -> Operation` 三层架构。
 """
 
 import asyncio
@@ -14,7 +14,6 @@ from datetime import datetime
 # 导入新架构的组件
 from alphahome.processors import (
     ProcessorEngine,
-    ProcessingPipeline,
     Operation,
     OperationPipeline,
     ProcessorTaskBase,
@@ -22,14 +21,12 @@ from alphahome.processors import (
 )
 
 
-# 示例1: 创建自定义操作
+# 示例1: 创建自定义操作 (Operation)
+# Operation是可复用的、原子级的数据处理单元。
 class DataCleaningOperation(Operation):
     """数据清洗操作示例"""
     
-    def __init__(self, config=None):
-        super().__init__(name="DataCleaningOperation", config=config)
-    
-    async def apply(self, data: pd.DataFrame) -> pd.DataFrame:
+    async def apply(self, data: pd.DataFrame, **kwargs) -> pd.DataFrame:
         """清洗数据"""
         if data.empty:
             return data
@@ -41,7 +38,7 @@ class DataCleaningOperation(Operation):
         result = result.drop_duplicates()
         
         # 填充缺失值
-        result = result.fillna(method='forward')
+        result = result.fillna(method='ffill')
         
         self.logger.info(f"数据清洗完成，原始行数: {original_len}，清洗后: {len(result)}")
         return result
@@ -50,10 +47,7 @@ class DataCleaningOperation(Operation):
 class FeatureEngineeringOperation(Operation):
     """特征工程操作示例"""
     
-    def __init__(self, config=None):
-        super().__init__(name="FeatureEngineeringOperation", config=config)
-    
-    async def apply(self, data: pd.DataFrame) -> pd.DataFrame:
+    async def apply(self, data: pd.DataFrame, **kwargs) -> pd.DataFrame:
         """特征工程"""
         if data.empty:
             return data
@@ -73,45 +67,37 @@ class FeatureEngineeringOperation(Operation):
         return result
 
 
-# 示例2: 创建自定义流水线
-class ExampleDataPipeline(ProcessingPipeline):
-    """示例数据处理流水线"""
-    
-    def build_pipeline(self):
-        """构建流水线"""
-        # 阶段1: 数据清洗
-        self.add_stage(
-            name="数据清洗",
-            operations=DataCleaningOperation(config=self.config)
-        )
-        
-        # 阶段2: 特征工程
-        self.add_stage(
-            name="特征工程",
-            operations=FeatureEngineeringOperation(config=self.config)
-        )
-
-
-# 示例3: 创建自定义任务
+# 示例2: 创建自定义任务 (Task)
+# Task是业务逻辑的封装单元，负责数据IO和编排Operations。
 @task_register()
 class ExampleProcessorTask(ProcessorTaskBase):
     """示例处理任务"""
     
     name = "example_processor"
     table_name = "example_result"
-    description = "示例数据处理任务"
+    description = "一个演示新架构的示例数据处理任务"
     
     source_tables = ["example_source"]
     
-    def create_pipeline(self) -> ProcessingPipeline:
-        """创建处理流水线"""
-        return ExampleDataPipeline(
-            name="ExampleDataPipeline",
-            config=self.get_pipeline_config()
-        )
+    async def process_data(self, data: pd.DataFrame, **kwargs) -> pd.DataFrame:
+        """
+        在任务内部编排一个或多个操作来处理数据。
+        """
+        self.logger.info(f"开始处理任务 {self.name} 的数据...")
+        
+        # OperationPipeline是一个可选的辅助工具，用于串联多个操作。
+        pipeline = OperationPipeline(name="ExampleInternalPipeline")
+        pipeline.add_operation(DataCleaningOperation())
+        pipeline.add_operation(FeatureEngineeringOperation())
+        
+        processed_data = await pipeline.apply(data)
+        
+        self.logger.info(f"任务 {self.name} 数据处理完成。")
+        return processed_data
     
     async def fetch_data(self, **kwargs) -> pd.DataFrame:
-        """获取示例数据"""
+        """获取示例数据（实际应从数据库或文件读取）"""
+        self.logger.info(f"为任务 {self.name} 获取示例数据...")
         # 创建示例数据
         data = pd.DataFrame({
             'id': range(1, 101),
@@ -124,85 +110,64 @@ class ExampleProcessorTask(ProcessorTaskBase):
         data.loc[10:15, 'price'] = None
         data = pd.concat([data, data.iloc[:5]], ignore_index=True)
         
-        self.logger.info(f"获取示例数据，行数: {len(data)}")
+        self.logger.info(f"获取示例数据完成，行数: {len(data)}")
         return data
     
     async def save_result(self, data: pd.DataFrame, **kwargs):
         """保存结果（示例实现）"""
-        self.logger.info(f"保存处理结果，行数: {len(data)}")
-        # 在实际应用中，这里会保存到数据库
+        self.logger.info(f"开始保存任务 {self.name} 的处理结果，行数: {len(data)}")
+        # 在实际应用中，这里会通过 self.db_connection 保存到数据库
         print("处理结果预览:")
         print(data.head())
+        self.logger.info(f"任务 {self.name} 的结果保存完成。")
 
 
+# 示例3: 使用处理引擎 (Engine)
 async def example_usage():
     """使用示例"""
     print("=== 新架构使用示例 ===\n")
     
-    # 示例1: 直接使用操作
-    print("1. 直接使用操作")
+    # 1. 单独使用 Operation
+    print("--- 1. 单独使用原子操作 ---")
     sample_data = pd.DataFrame({
-        'price': [10, 11, None, 12, 13],
-        'volume': [1000, 1100, 1200, 1300, 1400]
+        'price': [10, 11, None, 12, 13, 11],
+        'volume': [1000, 1100, 1200, 1300, 1400, 1100]
     })
     
     cleaning_op = DataCleaningOperation()
-    cleaned_data = await cleaning_op.execute(sample_data)
-    print(f"清洗后数据行数: {len(cleaned_data['data'])}")
-    print()
+    cleaned_data = await cleaning_op.apply(sample_data)
+    print(f"单独清洗操作后，数据行数: {len(cleaned_data)}\n")
     
-    # 示例2: 使用操作流水线
-    print("2. 使用操作流水线")
+    # 2. 使用 OperationPipeline 辅助工具
+    print("--- 2. 使用操作流水线辅助工具 ---")
     op_pipeline = OperationPipeline("ExampleOperationPipeline")
     op_pipeline.add_operation(DataCleaningOperation())
     op_pipeline.add_operation(FeatureEngineeringOperation())
     
-    result = await op_pipeline.execute(sample_data)
-    print(f"操作流水线处理结果: {result['status']}")
-    print()
+    result_df = await op_pipeline.apply(sample_data)
+    print(f"操作流水线处理后，结果包含 'ma_5' 列: {'ma_5' in result_df.columns}\n")
     
-    # 示例3: 使用处理流水线
-    print("3. 使用处理流水线")
-    pipeline = ExampleDataPipeline(name="ExamplePipeline")
-    result = await pipeline.execute(sample_data)
-    print(f"处理流水线结果行数: {len(result['data'])}")
-    print()
-    
-    # 示例4: 使用处理引擎执行任务
-    print("4. 使用处理引擎执行任务")
+    # 3. 使用处理引擎执行完整任务
+    print("--- 3. 使用处理引擎执行一个完整的任务 ---")
+    # 引擎负责调度和执行在系统中注册的任务
     engine = ProcessorEngine(max_workers=2)
     
     try:
+        # 通过任务名称执行
         result = await engine.execute_task("example_processor")
-        print(f"任务执行结果: {result['status']}")
-        print(f"处理行数: {result.get('rows', 0)}")
+        print(f"任务 'example_processor' 执行结果: {result['status']}")
+        print(f"处理的总行数: {result.get('rows', 0)}\n")
         
-        # 获取引擎统计信息
-        stats = engine.get_stats()
-        print(f"引擎统计: 总任务数={stats['total_tasks']}, 成功率={stats['success_rate']:.2%}")
-        
-    finally:
-        engine.shutdown()
-    
-    print()
-    
-    # 示例5: 批量执行任务
-    print("5. 批量执行任务")
-    engine = ProcessorEngine(max_workers=2)
-    
-    try:
-        # 批量执行配置
-        batch_config = {
-            "example_processor": {"param1": "value1"},
-            # 可以添加更多任务
-        }
-        
+        # 批量执行任务
+        print("--- 4. 批量执行任务 ---")
+        batch_config = { "example_processor": {} } # 可以为任务传递特定参数
         results = await engine.execute_batch(batch_config, parallel=True)
         
-        for task_name, result in results.items():
-            print(f"任务 {task_name}: {result['status']}")
+        for task_name, batch_result in results.items():
+            print(f"批量任务 '{task_name}' 执行状态: {batch_result['status']}")
         
     finally:
+        # 优雅地关闭引擎
         engine.shutdown()
 
 

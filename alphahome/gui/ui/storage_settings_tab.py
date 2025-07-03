@@ -26,7 +26,7 @@ def create_storage_settings_tab(parent: ttk.Frame) -> Dict[str, tk.Widget]:
         entry = ttk.Entry(
             db_frame,
             width=40,
-            show="*" if key == "db_password" else None,
+            show="*" if key == "db_password" else "", # type: ignore
             state="normal",
         )
         entry.grid(row=i, column=1, padx=5, pady=2, sticky=tk.EW)

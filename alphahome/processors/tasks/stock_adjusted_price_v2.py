@@ -4,7 +4,7 @@
 """
 股票后复权价格计算任务 (V2)
 
-演示如何使用新的分层处理器架构（Task -> Pipeline -> Operation）实现一个完整的处理任务。
+演示如何使用新的三层架构（Engine -> Task -> Operation）实现一个完整的处理任务。
 计算公式：后复权价格 = 原始价格 * 复权因子
 """
 
@@ -13,8 +13,7 @@ import pandas as pd
 
 from ...common.task_system import task_register
 from ...processors.tasks.base_task import ProcessorTaskBase
-from ...processors.pipelines.base_pipeline import ProcessingPipeline
-from ...processors.operations.base_operation import Operation
+from ...processors.operations.base_operation import Operation, OperationPipeline
 from ...processors.utils.query_builder import QueryBuilder
 
 
@@ -85,16 +84,7 @@ class DataValidationOperation(Operation):
         return result
 
 
-class StockAdjustedPriceV2Pipeline(ProcessingPipeline):
-    """
-    股票后复权价格计算流水线，负责编排操作。
-    """
-    name = "StockAdjustedPriceV2Pipeline"
-
-    def build_pipeline(self):
-        """构建处理流水线"""
-        self.add_stage(name="复权价格计算", operations=AdjustmentFactorOperation(config=self.config))
-        self.add_stage(name="数据质量验证", operations=DataValidationOperation(config=self.config))
+# 移除独立的Pipeline类，将其功能集成到Task中
 
 
 @task_register()
@@ -105,16 +95,28 @@ class StockAdjustedPriceV2Task(ProcessorTaskBase):
     name = "stock_adjusted_price_v2"
     table_name = "stock_adjusted_daily_v2"
     description = "计算股票后复权日线价格 (V2 架构)"
-    
+
     source_tables = ["tushare_stock_daily", "tushare_stock_adj_factor"]
     primary_keys = ["ts_code", "trade_date"]
-    
-    def create_pipeline(self) -> ProcessingPipeline:
-        """创建处理流水线"""
-        return StockAdjustedPriceV2Pipeline(
-            name=self.name,
-            config=self.get_pipeline_config()
-        )
+
+    async def process_data(self, data: pd.DataFrame, **kwargs) -> pd.DataFrame:
+        """
+        在任务内部编排操作来处理数据
+        """
+        if data.empty:
+            return data
+
+        self.logger.info(f"开始处理股票后复权价格数据，输入行数: {len(data)}")
+
+        # 使用OperationPipeline作为内部辅助工具
+        pipeline = OperationPipeline("StockAdjustedPriceV2InternalPipeline")
+        pipeline.add_operation(AdjustmentFactorOperation())
+        pipeline.add_operation(DataValidationOperation())
+
+        processed_data = await pipeline.apply(data)
+
+        self.logger.info(f"股票后复权价格处理完成，输出行数: {len(processed_data)}")
+        return processed_data
     
     async def fetch_data(self, **kwargs) -> Optional[pd.DataFrame]:
         """
