@@ -82,11 +82,8 @@ async def handle_get_collection_tasks():
                 # 推断任务子类型
                 task_type = getattr(task_instance, 'task_type', 'fetch')
                 if task_type == 'fetch':
-                    parts = name.split('_')
-                    if parts[0] == "tushare" and len(parts) > 1:
-                        task_type = parts[1]
-                    elif parts[0] != "tushare":
-                        task_type = parts[0]
+                    # 使用业务域获取方法，优先使用domain属性
+                    task_type = task_instance.get_business_domain()
 
                 # 推断数据源
                 data_source = getattr(task_instance, 'data_source', None)
@@ -244,11 +241,9 @@ async def _get_single_task_details(task_name: str) -> Optional[Dict[str, Any]]:
         
         # 为 'fetch' 任务推断更具体的子类型
         if details["task_type"] == 'fetch':
-            parts = task_name.split('_')
-            if parts[0] == "tushare" and len(parts) > 1:
-                details["task_type"] = parts[1]
-            elif parts[0] != "tushare":
-                details["task_type"] = parts[0]
+            # 使用业务域获取方法，优先使用domain属性
+            business_domain = task_instance.get_business_domain()
+            details["task_type"] = business_domain
 
         return details
 

@@ -162,3 +162,18 @@ class TushareTask(FetcherTask, abc.ABC):
         """
         # 转换已在 _fetch_data 中由 TushareDataTransformer 处理，此处直接返回
         return data
+
+
+    def supports_incremental_update(self) -> bool:
+        """ 默认支持智能增量更新
+        """
+        return True
+
+    def get_incremental_skip_reason(self) -> str:
+        """
+        返回不支持智能增量更新的原因说明
+
+        Returns:
+            str: 跳过原因说明
+        """
+        return ""

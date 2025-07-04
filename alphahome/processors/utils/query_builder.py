@@ -36,7 +36,7 @@ class QueryBuilder:
     })
 
     # 执行查询
-    rows = await db.fetch_all(query, params)
+            rows = await db.fetch(query, *params)
     ```
     """
 

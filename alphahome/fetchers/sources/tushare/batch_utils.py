@@ -492,7 +492,7 @@ async def _get_stock_codes_from_sources(
             query += f" ORDER BY {code_column}"
 
             logger.info(f"从数据库获取股票代码: {query}")
-            result = await db_connection.fetch_all(query)
+            result = await db_connection.fetch(query)
 
             if result:
                 codes = [row[code_column] for row in result]
