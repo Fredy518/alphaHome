@@ -13,8 +13,9 @@ iFind 基金市场展望数据任务
 
 import logging
 import pandas as pd
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Union
 import asyncio
+from datetime import datetime
 
 from alphahome.fetchers.sources.ifind.ifind_task import iFindTask
 from alphahome.fetchers.sources.tushare.tushare_api import TushareAPI
@@ -56,7 +57,7 @@ class iFindFundMarketforwardlookTask(iFindTask):
     # 6. 代码级默认配置
     default_concurrent_limit = 1  # iFind 一次性获取所有数据，无需并发
     update_type = "incremental"   # 增量更新
-    default_start_year = "2022"   # 默认起始年度（全量模式使用）
+    default_start_year = "2010"   # 默认起始年度（全量模式使用）
     FUND_CODE_BATCH_SIZE = 1000   # iFind API 单次请求的最大基金代码数量（免费账户限制1万条数据）
 
     # 5. 数据库表结构定义
@@ -94,13 +95,15 @@ class iFindFundMarketforwardlookTask(iFindTask):
                 - fund_codes: 可选的基金代码列表
         """
         super().__init__(db_connection, **kwargs)
-        
-        # 获取年度和报告期参数
-        self.year = kwargs.get("year", "2024")
+        # 基准年份，仅用于全量更新或默认增量模式。在手动增量模式下，此参数将被忽略。
+        self.year = kwargs.get("year", str(datetime.now().year))
         self.start_year = kwargs.get("start_year", self.default_start_year)  # 起始年度
         self.periods = kwargs.get("periods", ["H1", "A"])  # 默认获取半年报和年报
         self.fund_codes = kwargs.get("fund_codes", [])
         self.full_mode = kwargs.get("full_mode", False)  # 是否为全量模式
+        
+        # 手动增量模式下的精确待办列表
+        self.updates_to_run = kwargs.get("updates_to_run")
         
         # 验证报告期参数
         for period in self.periods:
@@ -119,6 +122,10 @@ class iFindFundMarketforwardlookTask(iFindTask):
             "A": "年报"
         }
         return period_names.get(period, period)
+
+    def _get_period_code(self, period: str) -> str:
+        """获取报告期对应的数字代码"""
+        return self.PERIOD_MAPPING.get(period, "105") # 默认年报
 
     def _get_report_date(self, year: str, period: str) -> str:
         """
@@ -228,110 +235,72 @@ class iFindFundMarketforwardlookTask(iFindTask):
         # 按年度、报告期和基金代码批次生成任务批次
         batches = []
 
-        # 确定年度范围
-        if self.full_mode:
-            # 全量模式：从起始年度到当前年度
-            years = [str(year) for year in range(int(self.start_year), int(self.year) + 1)]
-        else:
-            # 增量模式：只处理指定年度
-            years = [self.year]
-
-        for year in years:
-            for period in self.periods:
+        # --- 批次生成逻辑重构 ---
+        # 优先使用手动增量模式提供的精确待办列表
+        if self.updates_to_run is not None:
+            self.logger.info(f"手动增量模式：将根据 {len(self.updates_to_run)} 个精确的(年度,报告期)对生成任务。")
+            for item in self.updates_to_run:
+                year = item['year']
+                period = item['period']
                 period_code = self.PERIOD_MAPPING[period]
                 period_name = self._get_period_name(period)
                 report_date = self._get_report_date(year, period)
 
                 for i, chunk in enumerate(fund_code_chunks):
-                    batch = {
-                        "fund_codes": chunk,
-                        "year": year,
-                        "period": period,
-                        "period_code": period_code,
-                        "period_name": period_name,
-                        "report_date": report_date,
-                        "batch_num": i + 1,
+                    batches.append({
+                        "fund_codes": chunk, "year": year, "period": period,
+                        "period_code": period_code, "period_name": period_name,
+                        "report_date": report_date, "batch_num": i + 1,
                         "total_batches": len(fund_code_chunks)
-                    }
-                    batches.append(batch)
+                    })
+        else:
+            # 默认或全量模式
+            # 确定年度范围
+            if self.full_mode:
+                # 全量模式：从起始年度到当前年度
+                years = [str(year) for year in range(int(self.start_year), int(self.year) + 1)]
+            else:
+                # 增量模式：只处理指定年度
+                years = [self.year]
+
+            for year in years:
+                for period in self.periods:
+                    period_code = self.PERIOD_MAPPING[period]
+                    period_name = self._get_period_name(period)
+                    report_date = self._get_report_date(year, period)
+
+                    for i, chunk in enumerate(fund_code_chunks):
+                        batches.append({
+                            "fund_codes": chunk, "year": year, "period": period,
+                            "period_code": period_code, "period_name": period_name,
+                            "report_date": report_date, "batch_num": i + 1,
+                            "total_batches": len(fund_code_chunks)
+                        })
 
         self.logger.info(f"总共生成了 {len(batches)} 个批次任务")
         return batches
 
     async def prepare_params(self, batch: Dict[str, Any]) -> Dict[str, Any]:
         """
-        为 basic_data_service 端点准备参数。
-        重写基类方法以支持带参数的指标调用。
+        为给定的批次准备iFind API请求参数。
+        这个方法覆盖了基类的实现，以处理更复杂的参数结构（年度、报告期）。
         """
-        if not batch or "fund_codes" not in batch:
-            raise ValueError("批次不能为空或缺少基金代码")
-
-        fund_codes = batch["fund_codes"]
-        year = batch["year"]
-        period_code = batch["period_code"]
-
-        # 构造 iFind API 所需的参数格式
+        codes_str = ";".join(batch['fund_codes'])
+        
+        # 从 batch 中动态获取 year 和 period_code
+        year = batch.get('year', self.year)
+        # 修正：使用 period_code 而不是 period
+        period_code = batch.get('period_code', self._get_period_code(self.periods[0] if self.periods else 'A'))
+        
+        # 根据父类 iFindTask 的期望，直接构造参数字典
         params = {
             "endpoint": self.api_endpoint,
-            "codes": ",".join(fund_codes),  # 基金代码用逗号分隔
-            "indicators": [self.indicators],  # 指标列表
-            "indiparams": [[year, period_code]]  # 年度和报告期参数
+            "codes": codes_str,
+            "indicators": self.indicators,
+            "indiparams": [[year, period_code]]  # iFind特定格式: [[年度, 报告期代码]]
         }
-
-        self.logger.debug(f"为批次准备参数: codes={len(fund_codes)}个, year={year}, period={period_code}")
+        self.logger.debug(f"为批次准备参数: 年份={year}, 报告期代码={period_code}, 代码数量={len(batch['fund_codes'])}")
         return params
-
-    def process_data(self, data: pd.DataFrame, **kwargs) -> pd.DataFrame:
-        """
-        处理从API获取的原始数据。
-
-        Args:
-            data: 从API获取的原始DataFrame
-            **kwargs: 额外参数，包含当前批次的年度和报告期信息
-
-        Returns:
-            pd.DataFrame: 处理后的数据
-        """
-        if data is None or data.empty:
-            return data
-
-        # 从 kwargs 获取当前批次的信息
-        batch_info = kwargs.get("batch_info", {})
-        year = batch_info.get("year", self.year)
-        period_code = batch_info.get("period_code", "105")
-        period_name = batch_info.get("period_name", "年报")
-        report_date = batch_info.get("report_date", f"{year}-12-31")
-
-        # 执行字段映射
-        if self.column_mapping:
-            rename_mapping = {}
-            for old_col, new_col in self.column_mapping.items():
-                if old_col in data.columns:
-                    rename_mapping[old_col] = new_col
-
-            if rename_mapping:
-                data = data.rename(columns=rename_mapping)
-                self.logger.debug(f"字段映射完成: {rename_mapping}")
-
-        # 添加年度和报告期信息
-        data['year'] = year
-        data['period'] = period_code
-        data['period_name'] = period_name
-        data['report_date'] = report_date
-        data['indicator'] = "market_forwardlook"
-
-        # 清理空值和无效数据
-        for col in data.columns:
-            if data[col].dtype == 'object':
-                data[col] = data[col].replace(['--', '', 'nan'], None)
-
-        # 过滤掉市场展望为空的记录
-        if 'text' in data.columns:
-            data = data[data['text'].notna()]
-            data = data[data['text'] != '']
-
-        self.logger.info(f"处理完成，{year}年{period_name}有效数据 {len(data)} 条")
-        return data
 
     def get_display_name(self) -> str:
         """返回任务的显示名称"""
@@ -355,21 +324,21 @@ class iFindFundMarketforwardlookTask(iFindTask):
         # 返回最早和最晚的日期
         return (dates[0], dates[-1])
 
-    def supports_incremental_update(self) -> bool:
+    def supports_incremental_update(self) -> Union[bool, str]:
         """
-        明确声明此任务不支持智能增量更新。
+        声明此任务对增量更新的支持级别。
 
-        智能增量更新是基于数据库中已有数据的最新日期来自动推断更新范围。
-        由于本任务的数据是按季度、半年度、年度等报告期发布的，与具体的交易日期无直接关联，
-        因此无法通过最新日期来确定需要补充的数据。
+        - 返回 'manual': 表示仅支持手动增量（需要日期范围）。
+        - 返回 True: 表示同时支持手动和智能增量。
+        - 返回 False: 表示完全不支持增量更新。
 
-        返回 False 会告知任务执行框架，当用户选择"智能增量"模式时，应直接跳过此任务。
-        对于此任务，用户应使用"全量更新"或"手动增量"（指定日期范围）模式。
-
+        对于此任务，数据按报告期发布，不适合基于最新日期的“智能”推断，
+        因此只支持“手动”模式。
+        
         Returns:
-            bool: 始终返回 False。
+            str: 返回 'manual'
         """
-        return False
+        return 'manual'
 
     def get_incremental_skip_reason(self) -> str:
         """
@@ -380,54 +349,38 @@ class iFindFundMarketforwardlookTask(iFindTask):
         """
         return "基金市场展望数据按报告期发布（半年报、年报），不适合按日期进行智能增量更新。建议使用全量更新或手动增量模式。"
 
-    def get_incremental_date_filter(self, start_date: str, end_date: str) -> Dict[str, Any]:
+    def get_incremental_date_filter(self, start_date: str, end_date: str) -> dict:
         """
-        根据日期范围过滤需要更新的年度和报告期（仅用于手动增量模式）
-
-        注意：此任务不支持智能增量更新，此方法仅用于手动增量模式的日期范围过滤
-
-        Args:
-            start_date: 开始日期 "YYYY-MM-DD"
-            end_date: 结束日期 "YYYY-MM-DD"
-
-        Returns:
-            Dict: 过滤后的参数
+        根据给定的日期范围，计算出需要执行的（年份, 报告期）组合。
+        这是手动增量模式的核心过滤逻辑。
         """
-        # 记录日志说明这是手动增量模式
         self.logger.info(f"手动增量模式：根据日期范围 {start_date} 到 {end_date} 过滤报告期")
+        
+        try:
+            start_date_obj = datetime.strptime(start_date, "%Y-%m-%d").date()
+            end_date_obj = datetime.strptime(end_date, "%Y-%m-%d").date()
+        except ValueError:
+            self.logger.error(f"无效的日期格式: {start_date} 或 {end_date}。应为 YYYY-MM-DD。")
+            return {"updates_to_run": [], "fund_codes": self.fund_codes}
 
-        # 从日期中提取年度范围
-        start_year = int(start_date[:4])
-        end_year = int(end_date[:4])
-
-        # 确定需要更新的年度范围
+        start_year = start_date_obj.year
+        end_year = end_date_obj.year
         years_to_update = list(range(start_year, end_year + 1))
 
-        # 根据日期范围确定需要更新的报告期
-        filtered_periods = []
-
-        # 对每个年度检查哪些报告期在日期范围内
+        updates_to_run = []
         for year in years_to_update:
             for period in self.periods:
-                report_date = self._get_report_date(str(year), period)
-                if start_date <= report_date <= end_date:
-                    if period not in filtered_periods:
-                        filtered_periods.append(period)
+                report_date_str = self._get_report_date(str(year), period)
+                report_date_obj = datetime.strptime(report_date_str, "%Y-%m-%d").date()
+                if start_date_obj <= report_date_obj <= end_date_obj:
+                    updates_to_run.append({"year": str(year), "period": period})
 
-        # 如果没有匹配的报告期，使用默认配置
-        if not filtered_periods:
-            filtered_periods = self.periods
-            self.logger.warning(f"日期范围内没有匹配的报告期，使用默认配置: {filtered_periods}")
+        if not updates_to_run:
+            self.logger.warning(f"在指定的日期范围 {start_date} 到 {end_date} 内没有找到匹配的报告期，任务将不会执行。")
         else:
-            self.logger.info(f"匹配的报告期: {filtered_periods}")
-
-        # 使用最新年度作为主要年度，但支持多年度查询
-        target_year = str(max(years_to_update))
+            self.logger.info(f"手动增量模式匹配到 {len(updates_to_run)} 个待更新项: {updates_to_run}")
 
         return {
-            "year": target_year,
-            "start_year": str(start_year),
-            "periods": filtered_periods,
-            "fund_codes": self.fund_codes,
-            "full_mode": len(years_to_update) > 1  # 跨年度时启用全量模式逻辑
+            "updates_to_run": updates_to_run,
+            "fund_codes": self.fund_codes
         }

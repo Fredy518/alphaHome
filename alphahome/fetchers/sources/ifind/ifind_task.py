@@ -4,7 +4,7 @@ import pandas as pd
 from typing import Dict, Any, Optional, List
 import asyncio
 from alphahome.fetchers.base.fetcher_task import FetcherTask
-from alphahome.fetchers.sources.ifind.ifind_api import iFindAPI
+from alphahome.fetchers.sources.ifind.ifind_api import iFindAPI, iFindRequestError
 from alphahome.common.config_manager import ConfigManager
 
 class iFindTask(FetcherTask, ABC):
@@ -42,10 +42,18 @@ class iFindTask(FetcherTask, ABC):
         
         # 内部创建 ConfigManager（而不是要求外部传递）
         self.config_manager = ConfigManager()
-        self.api = iFindAPI(self.config_manager)
+        # 改为懒加载，避免在任务不执行时创建会话
+        self.api: Optional[iFindAPI] = None
         
         # iFind 特有的配置
         self.codes_to_fetch: List[str] = kwargs.get("codes", [])
+
+    async def _get_api(self) -> iFindAPI:
+        """懒加载 iFindAPI 实例，确保只在需要时创建。"""
+        if self.api is None:
+            self.logger.debug("首次使用，创建 iFindAPI 实例...")
+            self.api = iFindAPI(self.config_manager)
+        return self.api
         
     async def get_batch_list(self, **kwargs) -> List[List[str]]:
         """
@@ -92,62 +100,110 @@ class iFindTask(FetcherTask, ABC):
     async def fetch_batch(self, params: Dict[str, Any], stop_event: Optional[asyncio.Event] = None) -> Optional[pd.DataFrame]:
         """
         获取单个批次的数据。
-        通用实现，支持不同的 iFind API 端点。
+        通用实现，支持不同的 iFind API 端点，并增加了中断和超时处理。
         """
+        api = await self._get_api()
         try:
-            endpoint = params["endpoint"]
+            # 创建一个在 stop_event 设置时完成的 future
+            stop_waiter = asyncio.create_task(stop_event.wait()) if stop_event else None
+
+            # 准备API调用协程并将其创建为Task
+            api_call_coro = self._execute_api_call(api, params)
+            api_task = asyncio.create_task(api_call_coro)
+
+            # 等待网络请求或停止信号
+            tasks_to_wait = [api_task]
+            if stop_waiter:
+                tasks_to_wait.append(stop_waiter)
             
-            # 根据不同的端点调用不同的API方法
-            if endpoint == "basic_data_service":
-                codes = params["codes"]
-                indicators = params["indicators"]
-                
-                # 使用改进的 basic_data_service API
-                if isinstance(indicators, str):
-                    indicator_list = indicators.split(';')
-                else:
-                    indicator_list = indicators
-                
-                # 调用改进的 API（自动处理 indipara 构造）
-                json_response = await self.api.basic_data_service(
-                    codes=",".join(codes),
-                    indicators=indicator_list
-                )
-                
-            elif endpoint == "data_pool":
-                # data_pool 端点的参数处理
-                reportname = params.get("reportname", "")
-                functionpara = params.get("functionpara", {})
-                outputpara = params.get("outputpara", "")
-                
-                # 调用 data_pool API
-                json_response = await self.api.data_pool(
-                    reportname=reportname,
-                    functionpara=functionpara,
-                    outputpara=outputpara
-                )
-                
-            else:
-                # 其他端点使用原有逻辑
-                codes = params["codes"]
-                indicators = params["indicators"]
-                indicators_list = indicators.split(';') if isinstance(indicators, str) else indicators
-                indipara_str = json.dumps([{"indicator": ind} for ind in indicators_list])
-                payload = {
-                    "codes": ",".join(codes), 
-                    "indipara": indipara_str
-                }
-                json_response = await self.api.request(endpoint, payload)
-            
+            done, pending = await asyncio.wait(tasks_to_wait, return_when=asyncio.FIRST_COMPLETED)
+
+            if stop_waiter and stop_waiter in done:
+                # 是停止事件触发了返回
+                self.logger.warning(f"任务 {self.name} 在获取批次期间被取消。")
+                api_task.cancel() # 取消网络请求任务
+                return None
+
+            # 检查是否有待处理的任务（即stop_waiter），并取消它
+            if pending:
+                for task in pending:
+                    task.cancel()
+
+            # 网络请求完成
+            result_task = done.pop()
+            json_response = await result_task
+
             if json_response:
                 return self.extract_data(json_response)
                 
+        except asyncio.CancelledError:
+            self.logger.warning(f"任务 {self.name} 的批次获取操作被取消。")
+            return None
+        except iFindRequestError as e:
+            self.logger.error(f"任务 {self.name}: iFind API 请求失败: {e}")
+            return None
         except Exception as e:
-            self.logger.error(f"任务 {self.name}: 获取批次数据失败: {e}")
+            self.logger.error(f"任务 {self.name}: 获取批次数据时发生未知错误: {e}", exc_info=True)
             raise
-            
+        finally:
+            # 确保stop_waiter被取消，防止资源泄漏
+            if 'stop_waiter' in locals() and stop_waiter and not stop_waiter.done():
+                stop_waiter.cancel()
+
         return None
+
+    async def _execute_api_call(self, api: iFindAPI, params: Dict[str, Any]) -> Dict[str, Any]:
+        """封装实际的API调用逻辑，以便于被asyncio.wait管理"""
+        endpoint = params["endpoint"]
         
+        if endpoint == "basic_data_service":
+            codes_param = params["codes"]
+            if isinstance(codes_param, list):
+                codes_str = ",".join(codes_param)
+            else:
+                codes_str = str(codes_param)
+
+            indicators = params["indicators"]
+            indiparams = params.get("indiparams")
+            
+            if isinstance(indicators, str):
+                indicator_list = indicators.split(';')
+            else:
+                indicator_list = indicators
+            
+            return await api.basic_data_service(
+                codes=codes_str,
+                indicators=indicator_list,
+                indiparams=indiparams
+            )
+            
+        elif endpoint == "data_pool":
+            reportname = params.get("reportname", "")
+            functionpara = params.get("functionpara", {})
+            outputpara = params.get("outputpara", "")
+            
+            return await api.data_pool(
+                reportname=reportname,
+                functionpara=functionpara,
+                outputpara=outputpara
+            )
+            
+        else:
+            codes = params["codes"]
+            if isinstance(codes, list):
+                codes_str = ",".join(codes)
+            else:
+                codes_str = str(codes)
+                
+            indicators = params["indicators"]
+            indicators_list = indicators.split(';') if isinstance(indicators, str) else indicators
+            indipara_str = json.dumps([{"indicator": ind} for ind in indicators_list])
+            payload = {
+                "codes": codes_str, 
+                "indipara": indipara_str
+            }
+            return await api.request(endpoint, payload)
+
     def extract_data(self, json_response: Dict[str, Any]) -> Optional[pd.DataFrame]:
         """
         从API响应中提取数据并转换为DataFrame。
@@ -197,7 +253,7 @@ class iFindTask(FetcherTask, ABC):
         # 转换为DataFrame
         if rows:
             df = pd.DataFrame(rows)
-            self.logger.info(f"成功提取到 {len(df)} 行数据")
+            self.logger.debug(f"成功提取到 {len(df)} 行数据")
             return df
         else:
             self.logger.warning("处理后没有有效的数据行。")
@@ -258,7 +314,7 @@ class iFindTask(FetcherTask, ABC):
             df = pd.DataFrame(rows)
             # 过滤掉所有字段都为空的行
             df = df.dropna(how='all')
-            self.logger.info(f"成功提取到 {len(df)} 行数据")
+            self.logger.debug(f"成功提取到 {len(df)} 行数据")
             return df
         except Exception as e:
             self.logger.error(f"转换 data_pool 数据为DataFrame失败: {e}")
@@ -266,5 +322,8 @@ class iFindTask(FetcherTask, ABC):
         
     async def _post_execute(self, result, stop_event: Optional[asyncio.Event] = None, **kwargs):
         """任务执行后的清理工作"""
-        await self.api.close()
+        # 在任务执行完毕后，无论成功、失败还是取消，都尝试关闭API会话
+        if self.api and self.api._session and not self.api._session.closed:
+            await self.api.close()
+            self.logger.debug(f"任务 {self.name}: iFind API 会话已关闭。")
         await super()._post_execute(result, stop_event, **kwargs)

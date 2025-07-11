@@ -86,7 +86,7 @@ class iFindAPI:
                 logger.error(f"刷新 access token 时发生网络或解析错误: {e}", exc_info=True)
                 raise iFindConnectionError(f"刷新 token 失败: {e}") from e
 
-    async def request(self, endpoint: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    async def request(self, endpoint: str, payload: Dict[str, Any], timeout: float = 30.0) -> Dict[str, Any]:
         """
         向指定的 iFind API endpoint 发送一个已认证的请求。
         处理 access_token 的获取和自动重试。
@@ -104,7 +104,9 @@ class iFindAPI:
             logger.debug(f"向 {request_url} 发送请求, payload: {payload}")
 
             try:
-                async with session.post(request_url, json=payload, headers=headers) as response:
+                # 设置请求超时
+                request_timeout = aiohttp.ClientTimeout(total=timeout)
+                async with session.post(request_url, json=payload, headers=headers, timeout=request_timeout) as response:
                     response.raise_for_status()
                     
                     # 获取原始内容用于调试
@@ -128,6 +130,10 @@ class iFindAPI:
                         raise iFindRequestError(f"API Error Code: {result.get('errorcode')}, Msg: {result.get('errmsg')}")
 
                     return result
+            
+            except asyncio.TimeoutError:
+                logger.error(f"请求 endpoint '{endpoint}' 超时（超过 {timeout} 秒）。")
+                raise iFindRequestError(f"请求 endpoint '{endpoint}' 超时。") from asyncio.TimeoutError
 
             except (aiohttp.ClientError, Exception) as e:
                 logger.error(f"请求 endpoint '{endpoint}' 时发生错误: {e}", exc_info=True)
