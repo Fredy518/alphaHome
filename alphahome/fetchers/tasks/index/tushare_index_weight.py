@@ -8,11 +8,12 @@ from pandas.tseries.offsets import YearBegin, YearEnd  # 需要导入
 # 假设 TushareTask 是 Tushare 相关任务的基类。
 # 如果导入路径不同，请相应调整。
 from alphahome.fetchers.sources.tushare.tushare_task import TushareTask
+from alphahome.fetchers.base.smart_batch_mixin import SmartBatchMixin
 from alphahome.common.task_system.task_decorator import task_register
 
 
 @task_register()
-class TushareIndexWeightTask(TushareTask):
+class TushareIndexWeightTask(TushareTask, SmartBatchMixin):
     """
     从Tushare获取指数成分股及其权重的任务。
     API: index_weight (月度数据)
@@ -150,54 +151,55 @@ class TushareIndexWeightTask(TushareTask):
             "end_date": end_date.strftime("%Y%m%d"),
         }
 
+
+
     async def get_batch_list(self, **kwargs: Any) -> List[Dict[str, Any]]:
         """
-        生成批处理列表。每个批次对应一个 index_code 和一个月份的起止日期。
+        使用智能批次拆分策略生成批处理参数列表。
+
+        四级智能拆分策略：
+        - ≤3个月：月度拆分（精细粒度）
+        - 3个月-2年：季度拆分（平衡效率和精度）
+        - 2-10年：半年度拆分（提高长期更新效率）
+        - >10年：年度拆分（超长期数据优化）
         """
+        # 参数提取和验证
         start_date_str = kwargs.get("start_date")
         end_date_str = kwargs.get("end_date")
 
         if not start_date_str or not end_date_str:
-            self.logger.error("get_batch_list 需要 start_date 和 end_date。")
+            self.logger.error(f"任务 {self.name}: 缺少必要的日期参数")
             return []
 
+        # 获取指数代码列表
         index_codes = await self.get_index_codes()
         if not index_codes:
-            self.logger.warning(f"任务 {self.name}: 未找到指数代码以创建批处理。")
+            self.logger.warning(f"任务 {self.name}: 未找到指数代码以创建批处理")
             return []
 
-        try:
-            start_dt = datetime.strptime(start_date_str, '%Y%m%d')
-            end_dt = datetime.strptime(end_date_str, '%Y%m%d')
-            
-            date_ranges = list(
-                pd.date_range(start=start_dt, end=end_dt, freq="MS")
-            )
-        except ValueError as e:
-            self.logger.error(f"无法将日期 {start_date_str}, {end_date_str} 解析为 datetime 对象: {e}")
+        # 生成智能时间批次
+        time_batches = self.generate_smart_time_batches(start_date_str, end_date_str)
+        if not time_batches:
             return []
 
+        # 转换为任务特定的API参数批次
         batches = []
-        date_format = "%Y%m%d"
-
         for index_code in index_codes:
-            for month_start in date_ranges:
-                month_end = month_start + pd.offsets.MonthEnd(1)
-                
-                # 确保我们不会超出总的结束日期
-                if month_end > end_dt:
-                    month_end = end_dt
-                
-                # 确保我们不会在开始日期之前创建批次
-                if month_start < start_dt:
-                    month_start = start_dt
-
+            for time_batch in time_batches:
                 batches.append({
                     "index_code": index_code,
-                    "start_date": month_start.strftime(date_format),
-                    "end_date": month_end.strftime(date_format)
+                    "start_date": time_batch["start_date"],
+                    "end_date": time_batch["end_date"]
                 })
 
-        self.logger.info(f"为 {len(index_codes)} 个指数代码在 {len(date_ranges)} 个月份内生成了 {len(batches)} 个批次。")
+        # 记录优化效果
+        stats = self.get_batch_optimization_stats(start_date_str, end_date_str)
+        self.logger.info(
+            f"任务 {self.name}: 智能批次生成完成 - "
+            f"采用{stats.get('strategy', '未知')}策略，"
+            f"为 {len(index_codes)} 个指数代码生成 {len(batches)} 个批次，"
+            f"相比原始方案减少 {stats.get('reduction_rate', 0):.1f}% 批次数量"
+        )
+
         return batches
     

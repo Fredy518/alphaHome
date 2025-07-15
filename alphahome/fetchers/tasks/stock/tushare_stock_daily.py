@@ -4,11 +4,12 @@ from typing import Dict, List
 import pandas as pd
 
 from ...sources.tushare import TushareTask
+from ...base.smart_batch_mixin import SmartBatchMixin
 from ....common.task_system.task_decorator import task_register
 
 
 @task_register()
-class TushareStockDailyTask(TushareTask):
+class TushareStockDailyTask(TushareTask, SmartBatchMixin):
     """股票日线数据任务
 
     获取股票的日线交易数据，包括开盘价、收盘价、最高价、最低价、成交量、成交额等信息。
@@ -106,17 +107,16 @@ class TushareStockDailyTask(TushareTask):
     batch_trade_days_all_codes = 5  # 全市场查询时，每个批次的交易日数量 (1周)
 
     async def get_batch_list(self, **kwargs) -> List[Dict]:
-        """使用 BatchPlanner 生成批处理参数列表
-
-        BatchPlanner 提供了声明式、可组合的批处理规划方式，
-        将数据源、分区策略和参数映射分离，提高了代码的可读性和可维护性。
-
-        Args:
-            **kwargs: 查询参数，包括start_date、end_date、ts_code等
-
-        Returns:
-            List[Dict]: 批处理参数列表
         """
+        使用智能批次拆分策略生成批处理参数列表。
+
+        四级智能拆分策略：
+        - ≤3个月：月度拆分（精细粒度）
+        - 3个月-2年：季度拆分（平衡效率和精度）
+        - 2-10年：半年度拆分（提高长期更新效率）
+        - >10年：年度拆分（超长期数据优化）
+        """
+        # 参数提取和验证
         start_date = kwargs.get("start_date")
         end_date = kwargs.get("end_date")
         ts_code = kwargs.get("ts_code")
@@ -130,37 +130,39 @@ class TushareStockDailyTask(TushareTask):
             end_date = datetime.now().strftime("%Y%m%d")
             self.logger.info(f"任务 {self.name}: 未提供 end_date，使用当前日期: {end_date}")
 
+        if not start_date or not end_date:
+            self.logger.error(f"任务 {self.name}: 缺少必要的日期参数")
+            return []
+
+        # 生成智能时间批次
+        time_batches = self.generate_smart_time_batches(start_date, end_date)
+        if not time_batches:
+            return []
+
+        # 转换为任务特定的API参数批次
+        batches = []
+        for time_batch in time_batches:
+            batch = {
+                "start_date": time_batch["start_date"],
+                "end_date": time_batch["end_date"]
+            }
+            # 添加任务特有参数
+            if ts_code:
+                batch["ts_code"] = ts_code
+            if exchange:
+                batch["exchange"] = exchange
+
+            batches.append(batch)
+
+        # 记录优化效果
+        stats = self.get_batch_optimization_stats(start_date, end_date)
         self.logger.info(
-            f"任务 {self.name}: 使用 BatchPlanner 生成批处理列表，范围: {start_date} 到 {end_date}"
+            f"任务 {self.name}: 智能批次生成完成 - "
+            f"采用{stats.get('strategy', '未知')}策略，"
+            f"生成 {len(batches)} 个批次，"
+            f"相比原始方案减少 {stats.get('reduction_rate', 0):.1f}% 批次数量"
         )
 
-        try:
-            # 使用标准的交易日批次生成工具
-            from ...sources.tushare.batch_utils import generate_trade_day_batches
-
-            # 根据是否有指定股票代码选择不同的批次大小
-            batch_size = (
-                self.batch_trade_days_single_code
-                if ts_code
-                else self.batch_trade_days_all_codes
-            )
-
-            batch_list = await generate_trade_day_batches(
-                start_date=start_date,
-                end_date=end_date,
-                batch_size=batch_size,
-                ts_code=ts_code,
-                exchange=exchange,
-                logger=self.logger,
-            )
-
-            self.logger.info(f"任务 {self.name}: 成功生成 {len(batch_list)} 个批次")
-            return batch_list
-
-        except Exception as e:
-            self.logger.error(
-                f"任务 {self.name}: 生成批次时出错: {e}", exc_info=True
-            )
-            return []
+        return batches
 
 

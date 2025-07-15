@@ -143,10 +143,24 @@ class TushareFundBasicTask(TushareTask):
 
     async def get_batch_list(self, **kwargs: Any) -> List[Dict]:
         """
-        生成批处理参数列表。对于 fund_basic 全量获取，返回空参数字典列表。
-        可以考虑按 market 分批: return [{'market': 'E'}, {'market': 'O'}]
+        使用 BatchPlanner 生成批处理参数列表，按市场类型(场内/场外)分批。
         """
-        self.logger.info(f"任务 {self.name}: 全量获取模式，生成单一批次。")
-        return [{'market': 'E'}, {'market': 'O'}]
+        from alphahome.common.planning.batch_planner import BatchPlanner, Source, Partition, Map
+
+        self.logger.info(f"任务 {self.name}: 使用 BatchPlanner 生成按市场类型的批次。")
+
+        # 定义市场类型列表
+        markets = ['E', 'O']  # E-场内, O-场外
+
+        # 创建 BatchPlanner
+        planner = BatchPlanner(
+            source=Source.from_list(markets),
+            partition_strategy=Partition.by_size(1),  # 每个市场类型一个批次
+            map_strategy=Map.to_dict("market")  # 映射为{"market": "E"}
+        )
+
+        batch_list = await planner.generate()
+        self.logger.info(f"任务 {self.name}: 成功生成 {len(batch_list)} 个批次。")
+        return batch_list
 
 

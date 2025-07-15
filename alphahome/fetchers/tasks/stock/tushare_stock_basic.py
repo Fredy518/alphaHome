@@ -103,15 +103,28 @@ class TushareStockBasicTask(TushareTask):
 
     async def get_batch_list(self, **kwargs: Any) -> List[Dict]:
         """
-        生成批处理参数列表。对于 stock_basic 全量获取，返回包含不同上市状态的批次。
+        使用 BatchPlanner 生成批处理参数列表，分别获取上市、退市和暂停上市的股票。
         """
-        self.logger.info(f"任务 {self.name}: 全量获取模式，按上市状态生成批次。")
-        # 分别获取上市 (L), 退市 (D), 暂停上市 (P) 的股票数据
-        batch_list = [
-            {"list_status": ApiParams.LIST_STATUS_LISTED},
-            {"list_status": ApiParams.LIST_STATUS_DELISTED},
-            {"list_status": ApiParams.LIST_STATUS_PAUSED},
+        from alphahome.common.planning.batch_planner import BatchPlanner, Source, Partition, Map
+
+        self.logger.info(f"任务 {self.name}: 使用 BatchPlanner 生成按上市状态的批次。")
+
+        # 定义上市状态列表
+        statuses = [
+            ApiParams.LIST_STATUS_LISTED,  # 上市
+            ApiParams.LIST_STATUS_DELISTED, # 退市
+            ApiParams.LIST_STATUS_PAUSED # 暂停上市
         ]
+
+        # 创建 BatchPlanner
+        planner = BatchPlanner(
+            source=Source.from_list(statuses),
+            partition_strategy=Partition.by_size(1),  # 每个状态一个批次
+            map_strategy=Map.to_dict("list_status")  # 映射为{"list_status": "L"}
+        )
+
+        batch_list = await planner.generate()
+        self.logger.info(f"任务 {self.name}: 成功生成 {len(batch_list)} 个批次。")
         return batch_list
 
     # 验证规则：使用 validations 列表（真正生效的验证机制）

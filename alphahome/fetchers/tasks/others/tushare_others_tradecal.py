@@ -78,16 +78,25 @@ class TushareOthersTradecalTask(TushareTask):
         {"name": "idx_shared_cal_update", "columns": ["update_time"]},
     ]
 
-    def get_batch_list(
+    async def get_batch_list(
         self, start_date: str, end_date: str, **kwargs: Any
     ) -> List[Dict]:
-        """为每个中国大陆交易所生成批处理参数。"""
-        batches: List[Dict] = []
-        for ex_code in self._EXCHANGES_TO_FETCH:
-            batches.append({"exchange": ex_code})
+        """使用 BatchPlanner 为每个中国大陆交易所生成批处理参数。"""
+        from alphahome.common.planning.batch_planner import BatchPlanner, Source, Partition, Map
+
         self.logger.info(
-            f"任务 {self.name}: 生成 {len(batches)} 个批次。全局日期范围: {start_date} - {end_date}"
+            f"任务 {self.name}: 使用 BatchPlanner 生成交易所批次。全局日期范围: {start_date} - {end_date}"
         )
+
+        # 创建 BatchPlanner
+        planner = BatchPlanner(
+            source=Source.from_list(self._EXCHANGES_TO_FETCH),
+            partition_strategy=Partition.by_size(1),  # 每个交易所一个批次
+            map_strategy=Map.to_dict("exchange")  # 映射为{"exchange": "SSE"}
+        )
+
+        batches = await planner.generate()
+        self.logger.info(f"任务 {self.name}: 成功生成 {len(batches)} 个批次。")
         return batches
 
     def process_data(self, df: pd.DataFrame, **kwargs: Any) -> pd.DataFrame:
