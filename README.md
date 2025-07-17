@@ -1,757 +1,33 @@
 # AlphaHome - 智能量化投研系统
 
-**专业级量化投研平台，集成数据获取、处理、回测和分析的完整解决方案**
+**专业级量化投研平台，专注于数据分析和策略研究的简洁高效工具**
 
-## 🎯 **系统架构**
+## 🎯 **设计理念**
 
-AlphaHome 采用模块化设计，提供从数据获取到策略研究的完整工具链：
+AlphaHome 遵循 **"Simple over Complex, Practical over Perfect"** 的设计原则：
+
+- **实用至上**：专注解决真实的量化研究痛点
+- **简洁高效**：避免过度工程化，保持代码简单易懂
+- **快速原型**：支持研究人员快速验证想法和策略
+- **数据驱动**：统一的数据访问层，告别分散的数据源
+
+## 🏗️ **核心架构**
 
 ```
 alphahome/
-├── 📊 fetchers/          # 数据获取模块 - 支持多源、自动化的数据抓取
-├── 🔧 processors/        # 数据处理模块 - 清洗、转换和特征工程  
-├── 📈 bt_extensions/     # Backtrader增强插件 - 专业回测引擎
-├── 🧮 factors/          # 因子计算模块 - 标准化量化因子库
+├── 📊 fetchers/          # 数据获取 - 多源自动化数据抓取
+├── 🔧 processors/        # 数据处理 - 清洗转换和特征工程
+├── 📈 bt_extensions/     # 回测引擎 - Backtrader专业增强
+├── 🧮 factors/          # 因子计算 - 标准化量化因子库
 ├── 🖥️ gui/              # 图形界面 - 可视化投研工作站
-└── ⚙️ common/           # 核心工具 - 数据库、配置、日志
+├── 🔍 providers/        # 数据提供 - 统一数据访问接口
+├── 🔬 research/         # 研究模块 - 项目模板和工具
+└── ⚙️ common/           # 核心工具 - 数据库配置日志
 ```
 
-## 📊 **Fetchers - 强大的数据获取引擎**
+## 🚀 **快速开始**
 
-### **设计理念**
-`fetchers` 模块是 AlphaHome 的数据基石，旨在提供一个**稳定、高效、可扩展**的数据获取框架。
-- **任务驱动**: 每个数据项（如日线、财报）都是一个独立的、可复用的任务。
-- **多源支持**: 已接入 Tushare，并设计为可轻松扩展至 Wind、JQData 等多种数据源。
-- **自动化**: 支持增量更新、定时调度和错误重试，实现无人值守的数据中心。
-- **高质量**: 内置数据验证、清洗和标准化流程，确保数据准确性。
-
-### **核心工作流程**
-```mermaid
-graph TD
-    A[任务调度器] --> B{选择任务: 日线数据};
-    B --> C[Tushare API];
-    C --> D[数据转换与标准化];
-    D --> E[数据验证与清洗];
-    E --> F[存入PostgreSQL数据库];
-    A --> G{选择任务: 财务报表};
-    G --> C;
-```
-
-## 🖥️ **GUI - 可视化投研工作站**
-
-### **设计理念**
-`gui` 模块提供了一个**直观、易用**的图形化界面，让投研工作流更加顺畅。
-- **任务控制**: 可视化管理和监控所有数据获取任务的运行状态。
-- **结果洞察**: 交互式图表展示回测结果和数据分析。
-- **配置中心**: 动态调整系统参数，无需修改代码。
-- **日志追踪**: 实时查看系统运行状态，快速定位问题。
-
-### **重构后的模块化架构**
-
-GUI采用重构后的模块化架构，通过功能域分离实现了清晰的职责划分：
-
-```
-alphahome/gui/
-├── controller.py          # 简化的协调器 - 委托具体业务逻辑
-├── main_window.py        # Tkinter应用入口和主窗口管理
-├── controller_logic/     # 后台逻辑层 - 异步业务逻辑处理器
-│   ├── task_execution.py    # 任务执行逻辑
-│   ├── storage_settings.py  # 配置管理
-│   ├── data_collection.py   # 数据收集逻辑
-│   └── data_processing.py   # 数据处理逻辑
-├── handlers/            # UI事件处理层 - UI事件响应逻辑
-│   ├── task_execution.py   # 任务执行UI事件
-│   ├── storage_settings.py # 设置界面事件
-│   ├── data_collection.py  # 数据收集事件
-│   ├── data_processing.py  # 数据处理事件
-│   └── task_log.py         # 日志界面事件
-├── ui/                  # UI组件层 - 纯UI组件创建逻辑
-│   ├── task_execution_tab.py
-│   ├── storage_settings_tab.py
-│   ├── data_collection_tab.py
-│   ├── data_processing_tab.py
-│   └── task_log_tab.py
-└── utils/               # 通用工具 - 共享的工具函数
-    └── common.py
-```
-
-### **架构优势**
-
-**核心特性：**
-- **单一职责**: 每个模块职责明确，便于维护和测试
-- **职责分离**: UI创建、事件处理、业务逻辑完全分离
-- **异步通信**: 通过 `asyncio` 和回调机制实现前后端通信
-- **事件驱动**: UI事件通过专门的处理器响应，业务逻辑在后台异步执行
-
-**通信机制：**
-- **异步消息传递**: 前端UI与后台逻辑通过异步消息队列通信
-- **事件驱动**: UI操作触发事件，由专门的处理器响应
-- **回调机制**: 后台任务完成后通过回调更新UI状态
-
-### **界面概览**
-- **数据收集**: 管理和执行各类数据获取任务
-- **数据处理**: 控制数据清洗和转换流程
-- **任务执行**: 监控任务运行状态和进度
-- **存储设置**: 配置数据库连接和API密钥
-- **任务日志**: 实时查看系统运行日志和错误信息
-
-## 🚀 **BT Extensions - 专业回测引擎**
-
-### **设计理念**
-
-`bt_extensions` 是为 Backtrader 设计的专业增强插件，专注于：
-
-- 🔗 **数据库桥梁**：无缝连接本地数据库到 Backtrader
-- ⚡ **性能优化**：批量加载、智能缓存、并行处理
-- 📊 **分析增强**：更丰富的回测结果分析
-- 🛠️ **研究就绪**：为大规模、可重复的策略研究提供企业级稳定性
-
-### **核心工作流程**
-
-```mermaid
-graph TD
-    A[股票代码列表] --> B[PostgreSQLDataFeed]
-    B --> C[批量数据加载]
-    C --> D[智能缓存系统]
-    D --> E[Backtrader Cerebro]
-    E --> F[策略执行]
-    F --> G[增强分析器]
-    G --> H[性能监控]
-    H --> I[结果汇总]
-    
-    J[并行执行器] --> E
-    K[配置管理] --> B
-    L[错误处理] --> F
-```
-
-### **1. 数据源系统 (PostgreSQLDataFeed)**
-
-#### **工作原理**
-- 直接从 PostgreSQL 数据库查询 OHLCV 数据
-- 支持多种时间周期和股票代码
-- 内置缓存机制，避免重复查询
-- 自动数据验证和错误处理
-
-#### **使用示例**
-```python
-from alphahome.bt_extensions import PostgreSQLDataFeed
-from alphahome.common.db_manager import create_sync_manager
-
-# 1. 创建数据库连接
-db_manager = create_sync_manager("postgresql://user:pass@localhost/db")
-
-# 2. 创建数据源
-data_feed = PostgreSQLDataFeed(
-    db_manager=db_manager,
-    ts_code='000001.SZ',                    # 股票代码
-    table_name='tushare_stock_daily',       # 数据表名
-    start_date=date(2023, 1, 1),           # 开始日期
-    end_date=date(2023, 12, 31)            # 结束日期
-)
-
-# 3. 添加到Cerebro
-cerebro = bt.Cerebro()
-cerebro.adddata(data_feed)
-```
-
-### **2. 批量数据加载系统 (BatchDataLoader)**
-
-#### **工作原理**
-- 批量SQL查询，减少数据库连接次数
-- 智能分块处理，避免内存溢出
-- LRU缓存 + 磁盘持久化
-- 支持多股票数据预加载
-
-#### **使用示例**
-```python
-from alphahome.bt_extensions import BatchDataLoader, CacheManager
-
-# 1. 创建缓存管理器
-cache_manager = CacheManager(
-    max_memory_mb=512,                      # 最大内存使用
-    disk_cache_dir="./cache",               # 磁盘缓存目录
-    enable_compression=True                 # 启用压缩
-)
-
-# 2. 创建批量加载器
-batch_loader = BatchDataLoader(db_manager, cache_manager)
-
-# 3. 批量加载多只股票数据
-stock_data = batch_loader.load_stocks_data(
-    stock_codes=['000001.SZ', '000002.SZ', '600000.SH'],
-    start_date=date(2023, 1, 1),
-    end_date=date(2023, 12, 31),
-    batch_size=100                          # 批量大小
-)
-
-# 4. 创建数据源
-for ts_code, df in stock_data.items():
-    data_feed = PostgreSQLDataFeed.from_dataframe(df, ts_code)
-    cerebro.adddata(data_feed)
-```
-
-### **3. 并行回测系统 (ParallelBacktestRunner)**
-
-#### **工作原理**
-- 多进程并行执行，充分利用 CPU 资源
-- 智能任务分配和负载均衡
-- 实时进度监控和性能统计
-- 自动结果汇总和错误处理
-
-#### **使用示例**
-```python
-from alphahome.bt_extensions import ParallelBacktestRunner
-
-# 1. 定义策略类
-class DualMovingAverageStrategy(bt.Strategy):
-    params = (
-        ('fast_period', 5),
-        ('slow_period', 20),
-    )
-    
-    def __init__(self):
-        self.fast_ma = bt.indicators.SMA(period=self.p.fast_period)
-        self.slow_ma = bt.indicators.SMA(period=self.p.slow_period)
-        self.crossover = bt.indicators.CrossOver(self.fast_ma, self.slow_ma)
-    
-    def next(self):
-        if self.crossover > 0:  # 金叉买入
-            self.buy()
-        elif self.crossover < 0:  # 死叉卖出
-            self.sell()
-
-# 2. 创建并行执行器
-runner = ParallelBacktestRunner(
-    max_workers=4,                          # 4个进程
-    batch_size=50,                          # 每批50只股票
-    db_config={'url': 'postgresql://...'}   # 数据库配置
-)
-
-# 3. 执行并行回测
-results = runner.run_parallel_backtests(
-    stock_codes=['000001.SZ', '000002.SZ', '600000.SH', '600036.SH'],
-    strategy_class=DualMovingAverageStrategy,
-    strategy_params={'fast_period': 5, 'slow_period': 20},
-    start_date=date(2023, 1, 1),
-    end_date=date(2023, 12, 31),
-    initial_cash=100000.0,
-    commission=0.001
-)
-
-# 4. 查看结果
-print(f"成功回测: {len(results['results'])} 只股票")
-print(f"总耗时: {results['performance']['duration']:.2f} 秒")
-print(f"平均收益率: {results['summary']['avg_return']:.2%}")
-```
-
-### **4. 性能监控系统 (PerformanceMonitor)**
-
-#### **工作原理**
-- 实时监控 CPU、内存、I/O 使用情况
-- 自动统计执行时间和资源消耗
-- 提供详细的性能报告
-- 支持性能瓶颈分析
-
-#### **使用示例**
-```python
-from alphahome.bt_extensions import PerformanceMonitor
-
-# 1. 创建性能监控器
-monitor = PerformanceMonitor()
-
-# 2. 开始监控
-monitor.start_monitoring()
-
-# 3. 执行回测任务
-cerebro = bt.Cerebro()
-cerebro.addstrategy(MyStrategy)
-cerebro.adddata(data_feed)
-results = cerebro.run()
-
-# 4. 停止监控并获取统计
-stats = monitor.stop_monitoring()
-
-# 5. 打印性能报告
-monitor.print_stats(stats)
-"""
-输出示例：
-性能监控报告
-====================
-执行时间: 45.23 秒
-CPU使用率: 78.5% (平均)
-内存使用: 245.6 MB (峰值)
-磁盘I/O: 读取 1.2GB, 写入 45MB
-"""
-```
-
-### **5. 增强分析系统 (EnhancedAnalyzer)**
-
-#### **工作原理**
-- 扩展 Backtrader 原生分析功能
-- 提供更丰富的风险指标
-- 自动策略评级和建议
-- 支持自定义分析指标
-
-#### **使用示例**
-```python
-from alphahome.bt_extensions import EnhancedAnalyzer
-
-# 1. 添加增强分析器
-cerebro.addanalyzer(EnhancedAnalyzer, _name='enhanced')
-
-# 2. 运行回测
-results = cerebro.run()
-
-# 3. 获取增强分析结果
-enhanced_analysis = results[0].analyzers.enhanced.get_analysis()
-
-# 4. 查看详细指标
-print("=== 风险指标 ===")
-print(f"夏普比率: {enhanced_analysis['risk']['sharpe_ratio']:.3f}")
-print(f"最大回撤: {enhanced_analysis['risk']['max_drawdown']:.2%}")
-print(f"卡玛比率: {enhanced_analysis['risk']['calmar_ratio']:.3f}")
-
-print("=== 收益指标 ===")
-print(f"总收益率: {enhanced_analysis['returns']['total_return']:.2%}")
-print(f"年化收益率: {enhanced_analysis['returns']['annual_return']:.2%}")
-print(f"月度胜率: {enhanced_analysis['returns']['monthly_win_rate']:.2%}")
-
-print("=== 策略评级 ===")
-print(f"综合评级: {enhanced_analysis['performance']['grade']}")
-print(f"风险等级: {enhanced_analysis['performance']['risk_level']}")
-```
-
-## 🔄 **完整工作流程详解**
-
-### **Step 1: 数据源准备**
-```python
-# 数据库连接 -> 数据查询 -> 缓存优化 -> 数据验证
-db_manager = create_sync_manager(db_url)
-data_feed = PostgreSQLDataFeed(db_manager, ts_code, start_date, end_date)
-```
-
-### **Step 2: 策略配置**
-```python
-# 策略类定义 -> 参数配置 -> 指标计算 -> 信号生成
-class MyStrategy(bt.Strategy):
-    def __init__(self):
-        # 技术指标初始化
-    def next(self):
-        # 交易逻辑执行
-```
-
-### **Step 3: 回测执行**
-```python
-# Cerebro引擎 -> 数据加载 -> 策略运行 -> 订单执行
-cerebro = bt.Cerebro()
-cerebro.adddata(data_feed)
-cerebro.addstrategy(MyStrategy)
-results = cerebro.run()
-```
-
-### **Step 4: 结果分析**
-```python
-# 性能计算 -> 风险分析 -> 图表生成 -> 报告输出
-analyzer = results[0].analyzers.enhanced.get_analysis()
-performance_report = generate_report(analyzer)
-```
-
-### **并行处理工作流程**
-
-```mermaid
-sequenceDiagram
-    participant User as 用户
-    participant Runner as ParallelRunner
-    participant Pool as 进程池
-    participant Worker as 工作进程
-    participant DB as 数据库
-    
-    User->>Runner: 提交回测任务
-    Runner->>Runner: 创建任务批次
-    Runner->>Pool: 分配任务到进程池
-    
-    loop 每个工作进程
-        Pool->>Worker: 分配股票批次
-        Worker->>DB: 查询股票数据
-        DB->>Worker: 返回OHLCV数据
-        Worker->>Worker: 执行Backtrader回测
-        Worker->>Pool: 返回回测结果
-    end
-    
-    Pool->>Runner: 汇总所有结果
-    Runner->>Runner: 性能统计和分析
-    Runner->>User: 返回完整报告
-```
-
-## 📋 **完整使用示例**
-
-### **基础单股票回测**
-
-```python
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
-
-import backtrader as bt
-from datetime import date
-
-from alphahome.bt_extensions import (
-    PostgreSQLDataFeed,
-    EnhancedAnalyzer,
-    PerformanceMonitor
-)
-from alphahome.common.db_manager import create_sync_manager
-
-class SimpleStrategy(bt.Strategy):
-    """简单移动平均策略"""
-    params = (('period', 20),)
-    
-    def __init__(self):
-        self.sma = bt.indicators.SMA(period=self.p.period)
-    
-    def next(self):
-        if self.data.close[0] > self.sma[0]:
-            if not self.position:
-                self.buy()
-        else:
-            if self.position:
-                self.sell()
-
-def main():
-    # 1. 创建数据库连接
-    db_manager = create_sync_manager("postgresql://user:pass@localhost/db")
-    
-    # 2. 创建性能监控
-    monitor = PerformanceMonitor()
-    monitor.start_monitoring()
-    
-    # 3. 创建Cerebro引擎
-    cerebro = bt.Cerebro()
-    
-    # 4. 添加数据源
-    data_feed = PostgreSQLDataFeed(
-        db_manager=db_manager,
-        ts_code='000001.SZ',
-        start_date=date(2023, 1, 1),
-        end_date=date(2023, 12, 31)
-    )
-    cerebro.adddata(data_feed)
-    
-    # 5. 添加策略和分析器
-    cerebro.addstrategy(SimpleStrategy, period=20)
-    cerebro.addanalyzer(EnhancedAnalyzer, _name='enhanced')
-    
-    # 6. 设置broker
-    cerebro.broker.setcash(100000.0)
-    cerebro.broker.setcommission(commission=0.001)
-    
-    # 7. 运行回测
-    print("开始回测...")
-    results = cerebro.run()
-    
-    # 8. 分析结果
-    strat = results[0]
-    analysis = strat.analyzers.enhanced.get_analysis()
-    
-    print(f"最终资金: {cerebro.broker.getvalue():.2f}")
-    print(f"总收益率: {analysis['returns']['total_return']:.2%}")
-    print(f"夏普比率: {analysis['risk']['sharpe_ratio']:.3f}")
-    
-    # 9. 性能统计
-    stats = monitor.stop_monitoring()
-    monitor.print_stats(stats)
-    
-    # 10. 绘制结果
-    cerebro.plot(style='candlestick')
-
-if __name__ == '__main__':
-    main()
-```
-
-### **多股票并行回测**
-
-```python
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
-
-from datetime import date
-from alphahome.bt_extensions import ParallelBacktestRunner
-import backtrader as bt
-
-class MomentumStrategy(bt.Strategy):
-    """动量策略"""
-    params = (
-        ('lookback', 20),
-        ('threshold', 0.02),
-    )
-    
-    def __init__(self):
-        self.momentum = (self.data.close(-self.p.lookback) / self.data.close) - 1
-    
-    def next(self):
-        if self.momentum[0] > self.p.threshold:
-            if not self.position:
-                self.buy()
-        elif self.momentum[0] < -self.p.threshold:
-            if self.position:
-                self.sell()
-
-def main():
-    # 1. 股票列表 (沪深300部分股票)
-    stock_codes = [
-        '000001.SZ', '000002.SZ', '000858.SZ', '000876.SZ',
-        '600000.SH', '600036.SH', '600519.SH', '600887.SH'
-    ]
-    
-    # 2. 创建并行执行器
-    runner = ParallelBacktestRunner(
-        max_workers=4,
-        batch_size=2,
-        db_config={'url': 'postgresql://user:pass@localhost/db'}
-    )
-    
-    # 3. 执行并行回测
-    results = runner.run_parallel_backtests(
-        stock_codes=stock_codes,
-        strategy_class=MomentumStrategy,
-        strategy_params={'lookback': 20, 'threshold': 0.02},
-        start_date=date(2023, 1, 1),
-        end_date=date(2023, 12, 31),
-        initial_cash=100000.0,
-        commission=0.001
-    )
-    
-    # 4. 分析汇总结果
-    summary = results['summary']
-    print("=== 并行回测汇总 ===")
-    print(f"成功股票数: {summary['successful_stocks']}")
-    print(f"平均收益率: {summary['avg_return']:.2%}")
-    print(f"最佳股票: {summary['best_stock']['code']} ({summary['best_stock']['return']:.2%})")
-    print(f"最差股票: {summary['worst_stock']['code']} ({summary['worst_stock']['return']:.2%})")
-    print(f"胜率: {summary['win_rate']:.2%}")
-    
-    # 5. 详细结果
-    for stock_code, result in results['results'].items():
-        print(f"{stock_code}: 收益率 {result['total_return']:.2%}, "
-              f"夏普 {result['sharpe_ratio']:.3f}")
-
-if __name__ == '__main__':
-    main()
-```
-
-### **策略对比分析**
-
-```python
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
-
-from alphahome.bt_extensions import ParallelBacktestRunner
-
-def main():
-    # 1. 定义多个策略配置
-    strategy_configs = [
-        {
-            'name': '快速均线策略',
-            'class': DualMovingAverageStrategy,
-            'params': {'fast_period': 5, 'slow_period': 20}
-        },
-        {
-            'name': '慢速均线策略', 
-            'class': DualMovingAverageStrategy,
-            'params': {'fast_period': 10, 'slow_period': 30}
-        },
-        {
-            'name': '动量策略',
-            'class': MomentumStrategy,
-            'params': {'lookback': 20, 'threshold': 0.02}
-        }
-    ]
-    
-    # 2. 测试股票
-    test_stocks = ['000001.SZ', '000002.SZ', '600000.SH']
-    
-    # 3. 执行策略比较
-    runner = ParallelBacktestRunner(max_workers=4)
-    
-    comparison = runner.run_strategy_comparison(
-        stock_codes=test_stocks,
-        strategy_configs=strategy_configs,
-        start_date=date(2023, 1, 1),
-        end_date=date(2023, 12, 31)
-    )
-    
-    # 4. 比较结果
-    print("=== 策略比较结果 ===")
-    for strategy_name, results in comparison.items():
-        summary = results['summary']
-        print(f"\n{strategy_name}:")
-        print(f"  平均收益率: {summary['avg_return']:.2%}")
-        print(f"  平均夏普比率: {summary['avg_sharpe']:.3f}")
-        print(f"  胜率: {summary['win_rate']:.2%}")
-
-if __name__ == '__main__':
-    main()
-```
-
-## ⚡ **性能特点**
-
-- **批量优化**: 批量SQL查询减少数据库连接次数 90%
-- **智能缓存**: LRU内存缓存 + 磁盘持久化，提升重复查询性能 10倍
-- **并行处理**: 多进程并行回测，充分利用多核CPU资源
-- **内存管理**: 智能内存监控和清理，避免内存溢出
-- **错误恢复**: 完善的错误处理和重试机制
-
-## 💡 **使用技巧和最佳实践**
-
-### **1. 数据源优化**
-```python
-# ✅ 好的做法：使用缓存和批量加载
-cache_manager = CacheManager(max_memory_mb=1024)
-batch_loader = BatchDataLoader(db_manager, cache_manager)
-
-# ❌ 避免：频繁创建单个数据源
-# for code in stock_codes:
-#     data_feed = PostgreSQLDataFeed(db_manager, code, ...)  # 效率低
-
-# ✅ 推荐：批量加载多只股票
-stock_data = batch_loader.load_stocks_data(stock_codes, start_date, end_date)
-```
-
-### **2. 并行回测优化**
-```python
-# ✅ 合理设置进程数和批次大小
-cpu_count = os.cpu_count()
-runner = ParallelBacktestRunner(
-    max_workers=min(cpu_count - 1, 8),      # 不超过8个进程
-    batch_size=max(50, len(stock_codes)//10)  # 动态调整批次大小
-)
-
-# ✅ 内存限制设置
-import psutil
-available_memory = psutil.virtual_memory().available // (1024**3)  # GB
-cache_size = min(512, available_memory // 4)  # 使用1/4可用内存
-```
-
-### **3. 策略开发建议**
-```python
-class OptimizedStrategy(bt.Strategy):
-    """优化的策略示例"""
-    
-    def __init__(self):
-        # ✅ 在__init__中计算指标，避免在next()中重复计算
-        self.sma_fast = bt.indicators.SMA(period=self.p.fast_period)
-        self.sma_slow = bt.indicators.SMA(period=self.p.slow_period)
-        self.crossover = bt.indicators.CrossOver(self.sma_fast, self.sma_slow)
-        
-        # ✅ 预计算信号，提高性能
-        self.signal = self.crossover > 0
-    
-    def next(self):
-        # ✅ 简化next()逻辑，提高执行效率
-        if self.signal[0] and not self.position:
-            self.buy()
-        elif not self.signal[0] and self.position:
-            self.sell()
-```
-
-### **4. 错误处理和监控**
-```python
-def robust_backtest(stock_codes, strategy_class, **kwargs):
-    """带错误处理的回测函数"""
-    
-    monitor = PerformanceMonitor()
-    monitor.start_monitoring()
-    
-    try:
-        # 检查数据库连接
-        if not db_manager.test_connection():
-            raise ConnectionError("数据库连接失败")
-        
-        # 分批处理大量股票
-        batch_size = 100
-        all_results = {}
-        
-        for i in range(0, len(stock_codes), batch_size):
-            batch_codes = stock_codes[i:i+batch_size]
-            
-            try:
-                results = runner.run_parallel_backtests(
-                    stock_codes=batch_codes,
-                    strategy_class=strategy_class,
-                    **kwargs
-                )
-                all_results.update(results['results'])
-                
-            except Exception as e:
-                logger.warning(f"批次 {i//batch_size + 1} 失败: {e}")
-                continue
-        
-        return all_results
-        
-    finally:
-        stats = monitor.stop_monitoring()
-        logger.info(f"回测完成，耗时: {stats['duration']:.2f}秒")
-```
-
-### **5. 结果分析和可视化**
-```python
-def analyze_results(results):
-    """结果分析和可视化"""
-    import matplotlib.pyplot as plt
-    import seaborn as sns
-    
-    # 提取关键指标
-    returns = [r['total_return'] for r in results.values()]
-    sharpe_ratios = [r['sharpe_ratio'] for r in results.values()]
-    max_drawdowns = [r['max_drawdown'] for r in results.values()]
-    
-    # 创建分析图表
-    fig, axes = plt.subplots(2, 2, figsize=(15, 10))
-    
-    # 收益率分布
-    axes[0, 0].hist(returns, bins=30, alpha=0.7)
-    axes[0, 0].set_title('收益率分布')
-    axes[0, 0].axvline(np.mean(returns), color='red', linestyle='--', 
-                       label=f'平均: {np.mean(returns):.2%}')
-    axes[0, 0].legend()
-    
-    # 夏普比率vs收益率
-    axes[0, 1].scatter(returns, sharpe_ratios, alpha=0.6)
-    axes[0, 1].set_xlabel('总收益率')
-    axes[0, 1].set_ylabel('夏普比率')
-    axes[0, 1].set_title('风险收益关系')
-    
-    # 最大回撤分布
-    axes[1, 0].hist(max_drawdowns, bins=30, alpha=0.7, color='orange')
-    axes[1, 0].set_title('最大回撤分布')
-    
-    # 策略表现评级
-    grades = ['A', 'B', 'C', 'D', 'F']
-    grade_counts = [sum(1 for r in results.values() 
-                       if r.get('grade', 'C') == g) for g in grades]
-    axes[1, 1].bar(grades, grade_counts)
-    axes[1, 1].set_title('策略评级分布')
-    
-    plt.tight_layout()
-    plt.show()
-    
-    # 生成总结报告
-    print("=== 回测总结报告 ===")
-    print(f"总股票数: {len(results)}")
-    print(f"平均收益率: {np.mean(returns):.2%}")
-    print(f"收益率标准差: {np.std(returns):.2%}")
-    print(f"胜率: {sum(1 for r in returns if r > 0) / len(returns):.2%}")
-    print(f"最佳股票收益: {max(returns):.2%}")
-    print(f"最差股票收益: {min(returns):.2%}")
-```
-
-## 🔧 **安装配置**
-
-### **系统要求**
-- Python >= 3.10
-- PostgreSQL >= 12
-- 推荐: 8GB+ RAM, 4+ CPU核心
-
-### **快速开始**
+### **安装配置**
 ```bash
 # 1. 克隆项目
 git clone https://github.com/your-repo/alphahome.git
@@ -760,83 +36,231 @@ cd alphahome
 # 2. 安装依赖
 pip install -r requirements.txt
 
-# 3. 配置数据库
-# 编辑 config.json 设置数据库连接
+# 3. 配置数据库（复制并编辑配置文件）
+cp config.example.json ~/.config/alphahome/config.json
 
 # 4. 运行测试
 make test-unit
 
 # 5. 启动GUI
-python -m alphahome.gui.main_window
+python run.py
 ```
 
-## 📚 **模块详解**
+### **基础使用示例**
+```python
+from research.tools.context import ResearchContext
 
-### **🔧 Common - 核心工具模块**
-- **重构后的数据库管理器**: Mix-in模式，支持异步/同步双模式
-- **配置管理器**: 统一配置管理，支持环境变量和热重载
-- **日志工具**: 结构化日志记录和性能监控
+# 使用统一的研究上下文
+with ResearchContext() as context:
+    # 获取数据访问工具
+    data_tool = context.data_tool
 
-### **📊 Fetchers - 数据获取模块**
-- **多源数据支持**: Tushare、Wind、同花顺等
-- **任务调度系统**: 自动化数据更新和增量同步
-- **数据质量验证**: 完整性检查和异常处理
+    # 获取股票数据
+    stock_data = data_tool.get_stock_data(
+        symbols=['000001.SZ', '000002.SZ'],
+        start_date='2024-01-01',
+        end_date='2024-01-31'
+    )
 
-### **📈 BT Extensions - 回测引擎**
-- **企业级稳定性**: 生产环境验证，支持大规模回测
-- **灵活的策略框架**: 支持多种策略类型和参数优化
-- **丰富的分析工具**: 风险指标、归因分析、策略评级
+    # 获取指数权重
+    weights = data_tool.get_index_weights(
+        index_code='000300.SH',
+        start_date='2024-01-31'
+    )
+```
 
-### **🧮 Factors - 因子计算模块**  
-- **量化因子库**: 技术、基本面、另类数据因子
-- **因子工程**: 标准化、中性化、组合优化
-- **回测验证**: 因子有效性测试和衰减分析
+## 🔍 **Providers - 统一数据访问层**
 
-### **🖥️ GUI - 图形界面**
-- **可视化管理**: 任务监控、结果展示、参数配置
-- **交互式分析**: 策略调试、因子分析、风险监控
-- **报告生成**: 自动化报告和图表导出
+### **设计理念**
+基于 **80/20 原则** 的极简数据提供层：
+- **80% 的研究需求** 通过 5 个核心方法满足
+- **20% 的特殊需求** 通过灵活接口处理
+- **单一入口** + 内部模块化：对外暴露简洁 API，内部采用模块化架构
+
+### **核心方法**
+```python
+# 5个核心方法覆盖80%的研究需求
+data_tool.get_stock_data()      # 股票行情数据
+data_tool.get_index_weights()   # 指数权重数据
+data_tool.get_stock_info()      # 股票基本信息
+data_tool.get_trade_dates()     # 交易日历
+data_tool.get_industry_data()   # 行业分类数据
+
+# 灵活接口处理20%的特殊需求
+data_tool.custom_query()        # 自定义SQL查询
+data_tool.get_raw_db_manager()  # 直接数据库访问
+```
+
+## 🔬 **Research - 量化研究模块**
+
+### **设计理念**
+遵循 **"快速原型，避免过度抽象"** 原则：
+- **统一入口**：通过 `ResearchContext` 标准化访问数据和工具
+- **项目模板**：提供即用型研究项目骨架
+- **流程自动化**：`ResearchPipeline` 将研究流程代码化
+- **交互探索**：无缝集成 Jupyter Notebook
+
+### **快速创建研究项目**
+```python
+# 创建新研究项目
+python research/tools/project_manager.py
+
+# 项目结构
+research/projects/my_project/
+├── main.py              # 主要研究流程
+├── src/                 # 研究代码
+├── notebooks/           # 交互式分析
+└── README.md           # 项目说明
+```
+
+## 🖥️ **GUI - 可视化投研工作站**
+
+提供直观易用的图形界面，支持：
+- **任务管理**：可视化数据获取和处理任务
+- **配置中心**：数据库连接和API配置
+- **实时监控**：任务状态和日志查看
+- **结果展示**：回测结果和数据分析
+
+启动方式：
+```bash
+python run.py
+```
+
+## 📈 **BT Extensions - 回测引擎增强**
+
+为 Backtrader 提供数据库集成和性能优化：
+
+### **核心功能**
+- **数据库连接**：直接从 PostgreSQL 加载股票数据
+- **批量处理**：支持多股票并行回测
+- **智能缓存**：提升数据加载性能
+- **增强分析**：丰富的回测结果指标
+
+### **基础使用**
+```python
+import backtrader as bt
+from alphahome.bt_extensions import PostgreSQLDataFeed
+from alphahome.common.db_manager import create_sync_manager
+
+# 创建数据源
+db_manager = create_sync_manager()
+data_feed = PostgreSQLDataFeed(
+    db_manager=db_manager,
+    ts_code='000001.SZ',
+    start_date=date(2023, 1, 1),
+    end_date=date(2023, 12, 31)
+)
+
+# 运行回测
+cerebro = bt.Cerebro()
+cerebro.adddata(data_feed)
+cerebro.addstrategy(MyStrategy)
+results = cerebro.run()
+```
+
+## 📚 **文档和支持**
+
+### **核心文档**
+- [安装指南](docs/setup/installation.md) - 环境配置和依赖安装
+- [用户指南](docs/user/user_guide.md) - 完整的使用手册
+- [开发指南](docs/development/contributing.md) - 参与项目开发
+
+### **示例代码**
+- [数据访问示例](alphahome/providers/examples/usage_example.py)
+- [研究工具示例](docs/examples/research_tools_usage.py)
+- [研究项目模板](research/templates/)
+
+### **开发工具**
+```bash
+# 代码质量检查
+make lint
+
+# 运行测试
+make test-unit
+
+# 代码格式化
+make format
+
+# 查看所有命令
+make help
+```
 
 ## 🤝 **贡献指南**
 
 我们采用测试驱动开发(TDD)，欢迎贡献代码：
 
 1. **Fork 项目并创建特性分支**
-2. **编写测试**: `pytest tests/unit/`
-3. **实现功能**: 遵循TDD红-绿-重构循环
-4. **代码质量检查**: `make lint && make test`
+2. **编写测试**：`make test-unit`
+3. **实现功能**：遵循 TDD 红-绿-重构循环
+4. **代码质量检查**：`make lint && make test`
 5. **提交 Pull Request**
 
-详见: [TDD实践指南](docs/development/tdd_guide.md)
+## 📄 **许可证**
 
-## 📚 **文档导航**
+MIT License - 详见 [LICENSE](LICENSE) 文件
 
-完整的文档已重新整理，按功能分类：
+---
 
-### **🚀 快速开始**
+**AlphaHome** - 让量化投研更简单、更专业、更可靠 🚀
+
+
+
+
+
+## 🧮 **Factors - 因子计算模块**
+
+标准化的量化因子库：
+- **技术因子**：价格、成交量、波动率等技术指标
+- **基本面因子**：财务数据、估值指标、盈利质量
+- **另类因子**：情绪指标、宏观数据、行业轮动
+- **因子工程**：标准化、中性化、组合优化
+
+## 📊 **Fetchers - 数据获取模块**
+
+多源数据自动化获取：
+- **数据源支持**：Tushare、Wind、同花顺等主流数据源
+- **任务调度**：自动化数据更新和增量同步
+- **数据质量**：完整性检查和异常处理
+- **批量处理**：高效的大规模数据获取
+
+
+
+## 📚 **文档和支持**
+
+### **核心文档**
 - [安装指南](docs/setup/installation.md) - 环境配置和依赖安装
-- [配置指南](docs/setup/configuration.md) - 数据库连接和API配置
+- [用户指南](docs/user/user_guide.md) - 完整的使用手册
+- [开发指南](docs/development/contributing.md) - 参与项目开发
 
-### **👥 用户文档**
-- [用户指南](docs/user/user_guide.md) - 完整的用户操作手册
-- [常见问题](docs/user/faq.md) - 常见问题解答
+### **示例代码**
+- [数据访问示例](alphahome/providers/examples/usage_example.py)
+- [研究工具示例](docs/examples/research_tools_usage.py)
+- [研究项目模板](research/templates/)
 
-### **🔧 开发文档**
-- [TDD实践指南](docs/development/tdd_guide.md) - 测试驱动开发指南
-- [贡献指南](docs/development/contributing.md) - 如何参与项目开发
+### **开发工具**
+```bash
+# 代码质量检查
+make lint
 
-### **🏗️ 架构文档**
-- [系统架构](docs/architecture/system_overview.md) - 整体架构设计
-- [任务系统设计](docs/architecture/task_system.md) - 四层任务架构详解
+# 运行测试
+make test-unit
 
-### **📊 业务文档**
-- [数据源说明](docs/business/data_sources.md) - 支持的数据源详解
-- [数据质量](docs/business/data_quality.md) - 数据质量检查和验证
+# 代码格式化
+make format
 
-### **🔧 工具文档**
-- [命令行工具](docs/tools/cli.md) - Make命令和脚本使用
+# 查看所有命令
+make help
+```
 
-更多文档请查看 [文档中心](docs/README.md)
+## 🤝 **贡献指南**
+
+我们采用测试驱动开发(TDD)，欢迎贡献代码：
+
+1. **Fork 项目并创建特性分支**
+2. **编写测试**：`make test-unit`
+3. **实现功能**：遵循 TDD 红-绿-重构循环
+4. **代码质量检查**：`make lint && make test`
+5. **提交 Pull Request**
 
 ## 📄 **许可证**
 

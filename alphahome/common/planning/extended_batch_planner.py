@@ -23,14 +23,11 @@ BatchResult = Dict[str, Any]
 
 class SmartTimePartition:
     """
-    智能时间分区策略，集成四级智能拆分算法
-    
-    四级智能拆分策略：
-    - ≤31天：单批次策略（边界条件优化）
-    - 32天-3个月：月度拆分（精细粒度）
-    - 4个月-2年：季度拆分（平衡效率和精度）
-    - 2-10年：半年度拆分（提高长期更新效率）
-    - >10年：年度拆分（超长期数据优化）
+    智能时间分区策略，使用1年拆分算法
+
+    1年拆分策略：
+    - 按1年为单位进行批次拆分（每个批次包含12个月的时间范围）
+    - 适用于长期数据处理，提供良好的性能优化效果
     """
     
     @staticmethod
@@ -90,22 +87,8 @@ class SmartTimePartition:
     @staticmethod
     def _determine_batch_frequency(start_dt: datetime, end_dt: datetime) -> tuple[str, str]:
         """确定批次频率"""
-        total_days = (end_dt - start_dt).days
-        total_months = (end_dt.year - start_dt.year) * 12 + (end_dt.month - start_dt.month)
-        
-        # 边界条件处理：对于小于1个完整月的时间跨度，使用单批次策略
-        if total_days <= 31:
-            return "SINGLE", "单批次"
-        
-        # 四级智能批次大小策略
-        if total_months <= 3:
-            return "MS", "月度"
-        elif total_months <= 24:
-            return "QS", "季度"
-        elif total_months <= 120:
-            return "6MS", "半年度"
-        else:
-            return "YS", "年度"
+        # 1年拆分策略：统一使用1年为单位进行拆分
+        return "YS", "1年拆分策略"
     
     @staticmethod
     def _generate_smart_time_batches(
@@ -139,18 +122,7 @@ class SmartTimePartition:
     @staticmethod
     def _generate_date_ranges(start_dt: datetime, end_dt: datetime, freq: str) -> List[datetime]:
         """生成日期范围"""
-        if freq == "6MS":
-            # 半年度：手动生成
-            date_ranges = []
-            current = start_dt.replace(day=1)
-            while current <= end_dt:
-                date_ranges.append(current)
-                if current.month <= 6:
-                    current = current.replace(month=current.month + 6)
-                else:
-                    current = current.replace(year=current.year + 1, month=current.month - 6)
-            return date_ranges
-        elif freq == "YS":
+        if freq == "YS":
             # 年度：手动生成
             date_ranges = []
             current = start_dt.replace(month=1, day=1)
@@ -159,27 +131,19 @@ class SmartTimePartition:
                 current = current.replace(year=current.year + 1)
             return date_ranges
         else:
-            # 月度和季度：使用pandas
-            date_ranges = list(pd.date_range(start=start_dt, end=end_dt, freq=freq))
-            return date_ranges if date_ranges else [start_dt]
+            # 其他频率（保持扩展性）
+            return [start_dt]
     
     @staticmethod
     def _calculate_period_end(period_start: datetime, freq: str, end_dt: datetime) -> datetime:
         """计算批次结束日期"""
-        if freq == "MS":
-            period_end = period_start + pd.offsets.MonthEnd(1)
-        elif freq == "QS":
-            period_end = period_start + pd.offsets.QuarterEnd(1)
-        elif freq == "6MS":
-            if period_start.month <= 6:
-                period_end = period_start.replace(month=6, day=30)
-            else:
-                period_end = period_start.replace(month=12, day=31)
-        elif freq == "YS":
+        if freq == "YS":
+            # 年度批次：计算年末，但不能超过实际结束日期
             period_end = period_start.replace(month=12, day=31)
         else:
-            period_end = period_start + pd.offsets.MonthEnd(1)
-        
+            # 对于其他情况，使用实际结束日期
+            period_end = end_dt
+
         return min(period_end, end_dt)
 
 

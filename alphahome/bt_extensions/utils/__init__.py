@@ -2,15 +2,27 @@
 # -*- coding: utf-8 -*-
 
 """
-Utility Components for Backtesting Module
-
-工具组件
+工具集 - Backtrader增强工具
 """
 
-from .exceptions import BacktestError, ConfigError, DataError
+from .cache_manager import CacheManager
+from .performance_monitor import PerformanceMonitor
+from .exceptions import (
+    BtExtensionsError,
+    DataFeedError,
+    RunnerExecutionError,
+    CacheOperationError,
+    BatchLoadingError,
+    StrategyParameterError,
+)
 
 __all__ = [
-    "BacktestError",
-    "DataError",
-    "ConfigError",
+    "CacheManager",
+    "PerformanceMonitor",
+    "BtExtensionsError",
+    "DataFeedError",
+    "RunnerExecutionError",
+    "CacheOperationError",
+    "BatchLoadingError",
+    "StrategyParameterError",
 ]

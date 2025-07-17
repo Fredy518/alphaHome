@@ -11,12 +11,16 @@ import hashlib
 import os
 import pickle
 import time
+import json
 from collections import OrderedDict
 from typing import Any, Dict, List, Optional
+from functools import wraps
+import logging
 
 import pandas as pd
 
 from ...common.logging_utils import get_logger
+from .exceptions import CacheOperationError
 
 
 class CacheManager:
@@ -38,6 +42,7 @@ class CacheManager:
         disk_cache_dir: str = "cache/backtrader_data",
         disk_cache_ttl: int = 86400 * 7,  # 7天
         enable_disk_cache: bool = True,
+        log_level: int = logging.INFO,
     ):
         """
         初始化缓存管理器
@@ -48,6 +53,7 @@ class CacheManager:
             disk_cache_dir: 磁盘缓存目录
             disk_cache_ttl: 磁盘缓存过期时间（秒）
             enable_disk_cache: 是否启用磁盘缓存
+            log_level: 日志级别
         """
         self.max_memory_items = max_memory_items
         self.max_memory_mb = max_memory_mb
@@ -70,11 +76,79 @@ class CacheManager:
         }
 
         self.logger = get_logger("cache_manager")
+        self.log_level = log_level
+        self.logger.setLevel(self.log_level)
 
         # 创建磁盘缓存目录
         if self.enable_disk_cache:
             os.makedirs(self.disk_cache_dir, exist_ok=True)
             self._cleanup_expired_disk_cache()
+
+    def _get_cache_key(self, *args, **kwargs) -> str:
+        """
+        Generates a stable cache key from function arguments using JSON or Pickle.
+        """
+        try:
+            # Sort kwargs to ensure key consistency
+            sorted_kwargs = OrderedDict(sorted(kwargs.items()))
+            payload = {'args': args, 'kwargs': sorted_kwargs}
+            # Use compact, sorted JSON for a stable, readable key
+            key_data = json.dumps(payload, sort_keys=True, separators=(',', ':')).encode('utf-8')
+        except TypeError:
+            # Fallback to pickle for non-JSON serializable objects
+            try:
+                payload = {'args': args, 'kwargs': kwargs}
+                key_data = pickle.dumps(payload, protocol=pickle.HIGHEST_PROTOCOL)
+            except Exception as e:
+                self.logger.error(f"Failed to serialize cache key arguments with pickle: {e}", exc_info=True)
+                # As a last resort, use a potentially unstable key but log a warning
+                key_data = str((args, kwargs)).encode('utf-8')
+                self.logger.warning("Cache key was generated using unstable str() serialization.")
+
+        return hashlib.md5(key_data).hexdigest()
+
+    def memoize(self, func):
+        """
+        Decorator to cache the results of a function based on its arguments.
+        """
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            if not self.enable_disk_cache and not self.max_memory_items > 0: # A more robust check
+                return func(*args, **kwargs)
+
+            key = self._get_cache_key(*args, **kwargs)
+            
+            # 1. Check memory cache
+            if key in self._memory_cache:
+                # LRU: move to end
+                self._memory_cache.move_to_end(key)
+                self._stats["memory_hits"] += 1
+                self.logger.debug(f"Memory cache hit: {key}")
+                return self._memory_cache[key]
+
+            self._stats["memory_misses"] += 1
+
+            # 2. Check disk cache
+            if self.enable_disk_cache:
+                disk_value = self._get_from_disk(key)
+                if disk_value is not None:
+                    # Load disk data into memory
+                    self._set_memory(key, disk_value)
+                    self._stats["disk_hits"] += 1
+                    self.logger.debug(f"Disk cache hit: {key}")
+                    return disk_value
+
+            self._stats["disk_misses"] += 1
+
+            # 3. Calculate result and cache it
+            result = func(*args, **kwargs)
+            self._set_memory(key, result)
+            if self.enable_disk_cache:
+                self._set_disk(key, result)
+
+            return result
+
+        return wrapper
 
     def get(self, key: str) -> Optional[Any]:
         """
@@ -89,11 +163,10 @@ class CacheManager:
         # 1. 检查内存缓存
         if key in self._memory_cache:
             # LRU: 移到最后
-            value = self._memory_cache.pop(key)
-            self._memory_cache[key] = value
+            self._memory_cache.move_to_end(key)
             self._stats["memory_hits"] += 1
             self.logger.debug(f"内存缓存命中: {key}")
-            return value
+            return self._memory_cache[key]
 
         self._stats["memory_misses"] += 1
 
@@ -135,10 +208,14 @@ class CacheManager:
         # 估算数据大小（简化版本）
         size_mb = self._estimate_size_mb(value)
 
-        # 如果已存在，先删除旧的
+        # 如果键已存在，直接更新值，不改变其LRU位置
+        # 只有'get'操作才应将项标记为“最近使用”
         if key in self._memory_cache:
-            old_value = self._memory_cache.pop(key)
+            old_value = self._memory_cache[key]
             self._memory_size_mb -= self._estimate_size_mb(old_value)
+            self._memory_cache[key] = value
+            self._memory_size_mb += size_mb
+            return
 
         # 检查是否需要清理空间
         while (
@@ -169,7 +246,8 @@ class CacheManager:
             # 简化估算：使用pickle后的大小
             try:
                 return len(pickle.dumps(value)) / 1024 / 1024
-            except:
+            except pickle.PicklingError as e:
+                self.logger.warning(f"Could not estimate size for value of type {type(value)}. Defaulting to 1.0 MB. Error: {e}")
                 return 1.0  # 默认1MB
 
     def _get_disk_path(self, key: str) -> str:
@@ -186,7 +264,8 @@ class CacheManager:
             if os.path.exists(cache_file):
                 # 检查是否过期
                 file_time = os.path.getmtime(cache_file)
-                if time.time() - file_time > self.disk_cache_ttl:
+                if (time.time() - file_time) > self.disk_cache_ttl:
+                    self.logger.debug(f"磁盘缓存已过期: {key}")
                     os.remove(cache_file)
                     return None
 
@@ -194,13 +273,15 @@ class CacheManager:
                 with open(cache_file, "rb") as f:
                     data = pickle.load(f)
                 return data
-        except Exception as e:
-            self.logger.warning(f"磁盘缓存读取失败: {cache_file}, {e}")
+        except (pickle.UnpicklingError, EOFError) as e:
+            self.logger.warning(f"磁盘缓存读取或反序列化失败: {cache_file}, {e}")
             # 删除损坏的缓存文件
             try:
                 os.remove(cache_file)
-            except:
-                pass
+            except OSError as remove_error:
+                self.logger.error(f"无法删除损坏的缓存文件 {cache_file}: {remove_error}")
+        except Exception as e:
+            self.logger.error(f"从磁盘获取缓存时发生未知错误: {cache_file}", exc_info=True)
 
         return None
 
@@ -211,8 +292,12 @@ class CacheManager:
         try:
             with open(cache_file, "wb") as f:
                 pickle.dump(value, f)
+        except pickle.PicklingError as e:
+            self.logger.error(f"磁盘缓存序列化失败: {cache_file}, {e}", exc_info=True)
+            raise CacheOperationError(f"无法序列化值以存入磁盘缓存: {key}") from e
         except Exception as e:
-            self.logger.warning(f"磁盘缓存写入失败: {cache_file}, {e}")
+            self.logger.error(f"磁盘缓存写入时发生未知错误: {cache_file}", exc_info=True)
+            raise CacheOperationError(f"无法将值写入磁盘缓存: {key}") from e
 
     def _cleanup_expired_disk_cache(self):
         """清理过期的磁盘缓存"""
@@ -230,17 +315,24 @@ class CacheManager:
                     if current_time - file_time > self.disk_cache_ttl:
                         os.remove(filepath)
                         removed_count += 1
+                except FileNotFoundError:
+                    # 文件可能在列出和处理之间被删除，这不是一个错误
+                    continue
                 except Exception as e:
                     self.logger.warning(f"清理缓存文件失败: {filepath}, {e}")
 
         if removed_count > 0:
             self.logger.info(f"清理了 {removed_count} 个过期的磁盘缓存文件")
 
-    def clear(self):
-        """清理所有缓存"""
-        # 清理内存缓存
+    def clear_memory(self):
+        """仅清理内存缓存（主要用于测试）"""
         self._memory_cache.clear()
         self._memory_size_mb = 0
+        self.logger.info("内存缓存已清理")
+
+    def clear(self):
+        """清理所有缓存（内存和磁盘）并重置统计信息"""
+        self.clear_memory()
 
         # 清理磁盘缓存
         if self.enable_disk_cache and os.path.exists(self.disk_cache_dir):
@@ -249,13 +341,27 @@ class CacheManager:
                     filepath = os.path.join(self.disk_cache_dir, filename)
                     try:
                         os.remove(filepath)
-                    except Exception as e:
-                        self.logger.warning(f"删除缓存文件失败: {filepath}, {e}")
-
+                    except OSError as e:
+                        self.logger.warning(f"清理磁盘缓存文件失败: {filepath}, {e}")
+        
+        self._reset_stats()
         self.logger.info("所有缓存已清理")
 
+    def _reset_stats(self):
+        """重置所有统计数据"""
+        self._stats = {
+            "memory_hits": 0,
+            "memory_misses": 0,
+            "disk_hits": 0,
+            "disk_misses": 0,
+            "evictions": 0,
+            "total_sets": 0,
+        }
+
     def get_stats(self) -> Dict[str, Any]:
-        """获取缓存统计信息"""
+        """
+        获取缓存统计信息
+        """
         total_requests = self._stats["memory_hits"] + self._stats["memory_misses"]
         memory_hit_rate = (
             (self._stats["memory_hits"] / total_requests * 100)

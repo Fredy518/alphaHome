@@ -3,6 +3,7 @@ import collections
 import logging
 import os
 import time
+from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Union
 
 import aiohttp
@@ -302,6 +303,28 @@ class TushareAPI:
                                             raise asyncio.CancelledError
                                         await asyncio.sleep(1)
                                     continue  # 继续外层循环以重试
+                                elif result.get("code") == 50101:
+                                    self.logger.warning(
+                                        f"Tushare API 返回offset限制错误 ({api_name}): {error_msg}。"
+                                        f"将启动智能时间拆分处理。"
+                                    )
+                                    # 调用智能时间拆分处理方法
+                                    try:
+                                        split_result = await self._handle_offset_limit_error(
+                                            api_name=api_name,
+                                            fields=fields,
+                                            max_retries=max_retries,
+                                            stop_event=stop_event,
+                                            **params
+                                        )
+                                        return split_result
+                                    except Exception as split_error:
+                                        self.logger.error(
+                                            f"智能时间拆分处理失败 ({api_name}): {split_error}"
+                                        )
+                                        raise ValueError(
+                                            f"Tushare API 50101错误且智能拆分失败 ({api_name}): {split_error}"
+                                        )
                                 raise ValueError(
                                     f"Tushare API 返回错误 ({api_name}): Code: {result.get('code')}, Msg: {error_msg}"
                                 )
@@ -376,6 +399,215 @@ class TushareAPI:
             f"API {api_name} (参数: {params}) 通过分页共获取 {len(combined_data)} 条记录。"
         )
         return combined_data
+
+    async def _handle_offset_limit_error(
+        self,
+        api_name: str,
+        fields: Optional[List[str]],
+        max_retries: int,
+        stop_event: Optional[asyncio.Event],
+        **params,
+    ) -> Optional[pd.DataFrame]:
+        """
+        处理50101错误（offset不能大于100000）的智能时间拆分逻辑。
+
+        当检测到50101错误时，自动将当前查询批次按时间维度拆分为更小的子批次，
+        递归执行相同的查询逻辑，直到成功或达到最小时间粒度。
+
+        Args:
+            api_name: API名称
+            fields: 查询字段列表
+            max_retries: 最大重试次数
+            stop_event: 停止事件
+            **params: 查询参数，必须包含start_date和end_date
+
+        Returns:
+            合并后的DataFrame结果，如果失败则返回None
+
+        Raises:
+            ValueError: 当缺少时间参数或已达到最小时间粒度时
+        """
+        self.logger.warning(
+            f"Tushare API ({api_name}) 触发50101错误，开始智能时间拆分处理。"
+            f"原始参数: {params}"
+        )
+
+        # 1. 检查是否包含时间范围参数
+        if 'start_date' not in params or 'end_date' not in params:
+            error_msg = f"50101错误但无法拆分：缺少时间范围参数 (start_date/end_date)。参数: {params}"
+            self.logger.error(error_msg)
+            raise ValueError(error_msg)
+
+        start_date = params['start_date']
+        end_date = params['end_date']
+
+        # 2. 检查是否已达到最小粒度（1个月）
+        if self._is_minimal_date_range(start_date, end_date):
+            error_msg = (
+                f"50101错误且已达到最小时间粒度（1个月），无法继续拆分。"
+                f"时间范围: {start_date} 到 {end_date}"
+            )
+            self.logger.error(error_msg)
+            raise ValueError(error_msg)
+
+        # 3. 拆分时间范围为两个子区间
+        try:
+            sub_ranges = self._split_date_range(start_date, end_date)
+            self.logger.info(
+                f"时间范围拆分成功: {start_date}-{end_date} → "
+                f"{sub_ranges[0]['start_date']}-{sub_ranges[0]['end_date']} 和 "
+                f"{sub_ranges[1]['start_date']}-{sub_ranges[1]['end_date']}"
+            )
+        except Exception as e:
+            error_msg = f"时间范围拆分失败: {e}"
+            self.logger.error(error_msg)
+            raise ValueError(error_msg)
+
+        # 4. 递归处理每个子范围
+        all_results = []
+        for i, sub_range in enumerate(sub_ranges):
+            sub_params = params.copy()
+            sub_params.update(sub_range)
+
+            self.logger.debug(
+                f"处理子批次 {i+1}/{len(sub_ranges)}: "
+                f"{sub_range['start_date']} 到 {sub_range['end_date']}"
+            )
+
+            try:
+                result = await self._fetch_with_pagination(
+                    api_name=api_name,
+                    fields=fields,
+                    max_retries=max_retries,
+                    stop_event=stop_event,
+                    **sub_params
+                )
+
+                if result is not None and not result.empty:
+                    all_results.append(result)
+                    self.logger.debug(
+                        f"子批次 {i+1} 成功获取 {len(result)} 条记录"
+                    )
+                else:
+                    self.logger.debug(f"子批次 {i+1} 无数据返回")
+
+            except Exception as e:
+                self.logger.error(
+                    f"子批次 {i+1} 处理失败: {e}，将跳过此批次"
+                )
+                # 继续处理下一个子批次，不中断整个流程
+                continue
+
+        # 5. 合并结果
+        if all_results:
+            combined_result = pd.concat(all_results, ignore_index=True)
+            self.logger.info(
+                f"智能时间拆分处理完成，共获取 {len(combined_result)} 条记录 "
+                f"(来自 {len(all_results)} 个有效子批次)"
+            )
+            return combined_result
+        else:
+            self.logger.warning("所有子批次均无有效数据返回")
+            return pd.DataFrame()
+
+    def _split_date_range(self, start_date: str, end_date: str) -> List[Dict[str, str]]:
+        """
+        将日期范围拆分为两个相等的子区间。
+
+        Args:
+            start_date: 开始日期，YYYYMMDD格式
+            end_date: 结束日期，YYYYMMDD格式
+
+        Returns:
+            包含两个子区间的列表，每个子区间包含start_date和end_date
+
+        Raises:
+            ValueError: 日期格式错误或逻辑错误时
+        """
+        try:
+            # 解析日期
+            start_dt = datetime.strptime(start_date, "%Y%m%d")
+            end_dt = datetime.strptime(end_date, "%Y%m%d")
+
+            if start_dt > end_dt:
+                raise ValueError(f"开始日期 {start_date} 晚于结束日期 {end_date}")
+
+            # 计算中点日期
+            total_days = (end_dt - start_dt).days
+            mid_days = total_days // 2
+            mid_dt = start_dt + timedelta(days=mid_days)
+
+            # 第二个区间的开始日期是中点的下一天
+            second_start_dt = mid_dt + timedelta(days=1)
+
+            # 构造两个子区间
+            sub_ranges = [
+                {
+                    "start_date": start_dt.strftime("%Y%m%d"),
+                    "end_date": mid_dt.strftime("%Y%m%d")
+                },
+                {
+                    "start_date": second_start_dt.strftime("%Y%m%d"),
+                    "end_date": end_dt.strftime("%Y%m%d")
+                }
+            ]
+
+            # 验证第二个区间是否有效（开始日期不能晚于结束日期）
+            if second_start_dt > end_dt:
+                # 如果第二个区间无效，只返回第一个区间
+                return [sub_ranges[0]]
+
+            return sub_ranges
+
+        except ValueError as e:
+            if "time data" in str(e):
+                raise ValueError(f"日期格式错误，期望YYYYMMDD格式: {e}")
+            else:
+                raise
+
+    def _is_minimal_date_range(self, start_date: str, end_date: str) -> bool:
+        """
+        判断日期范围是否已达到最小粒度（1个月）。
+
+        Args:
+            start_date: 开始日期，YYYYMMDD格式
+            end_date: 结束日期，YYYYMMDD格式
+
+        Returns:
+            如果日期范围小于等于1个月则返回True，否则返回False
+        """
+        try:
+            start_dt = datetime.strptime(start_date, "%Y%m%d")
+            end_dt = datetime.strptime(end_date, "%Y%m%d")
+
+            # 计算天数差
+            days_diff = (end_dt - start_dt).days
+
+            # 如果小于等于31天，认为已达到最小粒度
+            return days_diff <= 31
+
+        except ValueError:
+            # 如果日期格式错误，为了安全起见返回True，避免无限递归
+            self.logger.warning(f"日期格式错误，无法判断最小粒度: {start_date}, {end_date}")
+            return True
+
+    def _calculate_date_range_days(self, start_date: str, end_date: str) -> int:
+        """
+        计算日期范围的天数。
+
+        Args:
+            start_date: 开始日期，YYYYMMDD格式
+            end_date: 结束日期，YYYYMMDD格式
+
+        Returns:
+            日期范围的天数
+        """
+        try:
+            start_dt = datetime.strptime(start_date, "%Y%m%d")
+            end_dt = datetime.strptime(end_date, "%Y%m%d")
+            return (end_dt - start_dt).days
+        except ValueError:
+            return 0
 
     # 旧的 set_api_rate_limit 和 set_default_rate_limit 需要更新或移除
     # @classmethod

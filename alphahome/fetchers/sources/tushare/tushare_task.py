@@ -88,6 +88,9 @@ class TushareTask(FetcherTask, abc.ABC):
         super()._apply_config(task_config) # 调用父类的配置应用
         
         cls = type(self)
+        self.page_size = int(
+            task_config.get("page_size", cls.default_page_size)
+        )
         self.rate_limit_delay = int(
             task_config.get("rate_limit_delay", cls.default_rate_limit_delay)
         )
@@ -120,6 +123,7 @@ class TushareTask(FetcherTask, abc.ABC):
             data = await self.api.query(
                 api_name=self.api_name,
                 fields=self.fields,
+                limit=self.page_size,
                 stop_event=stop_event,
                 **clean_params  # 将清理后的批处理参数解包传递
             )

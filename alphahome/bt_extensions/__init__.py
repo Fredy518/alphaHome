@@ -44,31 +44,37 @@ __all__ = [
 
 # 使用说明
 """
-基本使用方式（直接使用backtrader）：
+核心用例：大规模并行回测
 
-import backtrader as bt
-from alphahome.backtesting import PostgreSQLDataFeed
-from alphahome.backtesting.strategies.examples.dual_moving_average import DualMovingAverageStrategy
+该插件最核心的价值是提供大规模并行回测能力。
 
-# 创建Cerebro引擎
-cerebro = bt.Cerebro()
+完整示例请参考 `alphahome/bt_extensions/README.md`。
 
-# 添加数据源 (我们提供的核心价值)
-data_feed = PostgreSQLDataFeed(
-    ts_code='000001.SZ', 
-    db_manager=db_manager,
-    start_date=date(2023, 1, 1),
-    end_date=date(2023, 12, 31)
-)
-cerebro.adddata(data_feed)
+基本启动代码片段:
 
-# 添加策略
-cerebro.addstrategy(DualMovingAverageStrategy, fast_period=5, slow_period=20)
+if __name__ == '__main__':
+    import multiprocessing as mp
+    from datetime import date
+    from alphahome.bt_extensions.execution.parallel_runner import ParallelBacktestRunner
+    # from your_project.strategies import MyStrategy # 导入你的策略
 
-# 设置broker
-cerebro.broker.setcash(100000.0)
-cerebro.broker.setcommission(commission=0.001)
+    # 确保在Windows上多进程正常工作
+    mp.freeze_support()
 
-# 运行回测
-results = cerebro.run()
+    # 定义回测参数
+    stock_codes = ['000001.SZ', '000002.SZ', '600036.SH', '600519.SH']
+    start_date = date(2023, 1, 1)
+    end_date = date(2023, 12, 31)
+
+    # 初始化并运行
+    runner = ParallelBacktestRunner()
+    results = runner.run_parallel_backtests(
+        stock_codes=stock_codes,
+        strategy_class=MyStrategy, # 替换为你的策略
+        start_date=start_date,
+        end_date=end_date
+    )
+
+    # 查看摘要
+    print(results.get('summary'))
 """

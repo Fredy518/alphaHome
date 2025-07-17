@@ -17,6 +17,9 @@ import backtrader as bt
 
 from ...common.db_manager import create_sync_manager
 from ...common.logging_utils import get_logger
+from ...common.config_manager import ConfigManager
+from ...providers import AlphaDataTool
+from ..data.feeds import PostgreSQLDataFeed
 from ..utils.performance_monitor import PerformanceMonitor
 from .batch_loader import BatchDataLoader
 
@@ -36,22 +39,37 @@ class ParallelBacktestRunner:
     def __init__(
         self,
         max_workers: Optional[int] = None,
-        batch_size: int = 50,
-        db_config: Optional[Dict[str, Any]] = None,
+        batch_size: Optional[int] = None,
+        config_manager: Optional[ConfigManager] = None,
     ):
         """
         初始化并行回测执行器
 
         Args:
-            max_workers: 最大工作进程数，None表示使用CPU核心数
-            batch_size: 每个批次的股票数量
-            db_config: 数据库配置，用于创建进程内的数据库连接
+            max_workers: 最大工作进程数。如果为None，则从配置或CPU核心数确定。
+            batch_size: 每个批次的股票数量。如果为None，则从配置或默认值确定。
+            config_manager: 配置管理器实例，用于获取默认值。
         """
-        self.max_workers = max_workers or max(1, mp.cpu_count() - 1)
-        self.batch_size = batch_size
-        self.db_config = db_config
+        cm = config_manager or ConfigManager()
+        config = cm.load_config()
+
+        # 确定 max_workers
+        if max_workers is not None:
+            self.max_workers = max_workers
+        else:
+            self.max_workers = config.get('bt_extensions', {}).get('parallel_runner', {}).get('max_workers', mp.cpu_count() - 1)
+
+        # 确定 batch_size
+        if batch_size is not None:
+            self.batch_size = batch_size
+        else:
+            self.batch_size = config.get('bt_extensions', {}).get('parallel_runner', {}).get('batch_size', 50)
+        
+        self.max_workers = max(1, self.max_workers) # 确保至少有一个worker
+
         self.logger = get_logger("parallel_runner")
         self.performance_monitor = PerformanceMonitor()
+        self.db_config = config.get('database') # 预先加载数据库配置
 
     def run_parallel_backtests(
         self,
@@ -100,7 +118,7 @@ class ParallelBacktestRunner:
                     "end_date": end_date,
                     "initial_cash": initial_cash,
                     "commission": commission,
-                    "db_config": self.db_config,
+                    "db_config": self.db_config,  # 将数据库配置传递给子进程
                     **cerebro_kwargs,
                 }
             )
@@ -311,87 +329,103 @@ class ParallelBacktestRunner:
 
 def _run_batch_backtest(args: Dict[str, Any]) -> Dict[str, Any]:
     """
-    单个批次回测执行函数（用于多进程）
+    在单个进程中运行一个批次回测
 
-    注意：这个函数必须在模块级别，以便pickle序列化
+    Args:
+        args: 包含所有回测参数的字典
+
+    Returns:
+        该批次所有股票的回测结果字典
     """
-    from ..data.feeds import PostgreSQLDataFeed
-
     batch_idx = args["batch_idx"]
     stock_codes = args["stock_codes"]
     strategy_class = args["strategy_class"]
     strategy_params = args["strategy_params"]
     start_date = args["start_date"]
     end_date = args["end_date"]
-    initial_cash = args["initial_cash"]
-    commission = args["commission"]
-    db_config = args["db_config"]
+    db_config = args["db_config"] # 从参数中获取数据库配置
 
-    logger = get_logger(f"batch_{batch_idx}")
+    logger = get_logger(f"batch_worker_{batch_idx}")
+    logger.info(f"批次 {batch_idx + 1} 开始处理 {len(stock_codes)} 只股票")
+
+    # 在子进程中创建依赖项
+    try:
+        if not db_config:
+            raise ValueError("数据库配置未提供给工作进程")
+            
+        db_manager = create_sync_manager(db_config)
+        alpha_data_tool = AlphaDataTool(db_manager)
+        batch_loader = BatchDataLoader(alpha_data_tool)
+    except Exception as e:
+        logger.error(f"批次 {batch_idx + 1} 初始化失败: {e}")
+        return {}
+
+
+    # 1. 批量预加载数据
+    try:
+        all_stocks_data = batch_loader.load_stocks_data(
+            stock_codes, start_date, end_date, use_cache=True, adjust=True
+        )
+        logger.info(f"批次 {batch_idx + 1} 数据加载完成")
+    except Exception as e:
+        logger.error(f"批次 {batch_idx + 1} 数据加载失败: {e}")
+        return {}
+
     batch_results = {}
 
-    try:
-        # 创建数据库连接（每个进程独立）
-        db_manager = create_sync_manager(db_config)
+    # 2. 逐个运行回测
+    for stock_code in stock_codes:
+        stock_data = all_stocks_data.get(stock_code)
+        if stock_data is None or stock_data.empty:
+            logger.warning(f"股票 {stock_code} 无数据，跳过回测")
+            continue
 
-        for stock_code in stock_codes:
-            try:
-                # 创建Cerebro实例
-                cerebro = bt.Cerebro()
+        try:
+            cerebro = bt.Cerebro(stdstats=False)  # 禁用默认统计，使用我们的增强分析器
 
-                # 添加策略
-                cerebro.addstrategy(strategy_class, **strategy_params)
+            # 添加预加载的数据
+            data_feed = PostgreSQLDataFeed(
+                ts_code=stock_code,
+                preloaded_data=stock_data,
+                start_date=start_date,
+                end_date=end_date,
+            )
+            cerebro.adddata(data_feed)
 
-                # 添加数据源
-                data_feed = PostgreSQLDataFeed(
-                    db_manager=db_manager,
-                    ts_code=stock_code,
-                    start_date=start_date,
-                    end_date=end_date,
-                )
-                cerebro.adddata(data_feed)
+            # 添加策略和分析器
+            cerebro.addstrategy(strategy_class, **strategy_params)
+            cerebro.addanalyzer(bt.analyzers.Sharpe, _name="sharpe")
+            cerebro.addanalyzer(bt.analyzers.DrawDown, _name="drawdown")
+            cerebro.addanalyzer(bt.analyzers.Returns, _name="returns")
 
-                # 设置初始资金和手续费
-                cerebro.broker.setcash(initial_cash)
-                cerebro.broker.setcommission(commission=commission)
+            # 设置初始资金和手续费
+            cerebro.broker.setcash(args.get("initial_cash", 100000.0))
+            cerebro.broker.setcommission(commission=args.get("commission", 0.001))
 
-                # 添加分析器
-                cerebro.addanalyzer(bt.analyzers.TradeAnalyzer, _name="trades")
-                cerebro.addanalyzer(bt.analyzers.DrawDown, _name="drawdown")
-                cerebro.addanalyzer(bt.analyzers.Returns, _name="returns")
+            # 运行回测
+            results = cerebro.run()
+            strategy_instance = results[0]
 
-                # 运行回测
-                initial_value = cerebro.broker.getvalue()
-                results = cerebro.run()
-                final_value = cerebro.broker.getvalue()
+            # 提取结果
+            final_value = cerebro.broker.getvalue()
+            pnl = final_value - args.get("initial_cash", 100000.0)
 
-                # 提取分析结果
-                strat = results[0]
-                trades_analysis = strat.analyzers.trades.get_analysis()
-                drawdown_analysis = strat.analyzers.drawdown.get_analysis()
-                returns_analysis = strat.analyzers.returns.get_analysis()
+            batch_results[stock_code] = {
+                "final_value": final_value,
+                "pnl": pnl,
+                "sharpe_ratio": strategy_instance.analyzers.sharpe.get_analysis().get(
+                    "sharperatio", 0.0
+                ),
+                "max_drawdown": strategy_instance.analyzers.drawdown.get_analysis().get(
+                    "max", {}
+                ).get("drawdown", 0.0),
+                "total_return": strategy_instance.analyzers.returns.get_analysis().get(
+                    "rtot", 0.0
+                ),
+            }
 
-                # 存储结果
-                batch_results[stock_code] = {
-                    "initial_value": initial_value,
-                    "final_value": final_value,
-                    "total_return": (final_value / initial_value - 1) * 100,
-                    "trades": trades_analysis,
-                    "max_drawdown": drawdown_analysis.get("max", {}).get("drawdown", 0),
-                    "returns": returns_analysis,
-                }
+        except Exception as e:
+            logger.error(f"股票 {stock_code} 回测失败: {e}")
 
-                logger.debug(f"股票 {stock_code} 回测完成")
-
-            except Exception as e:
-                logger.error(f"股票 {stock_code} 回测失败: {e}")
-                continue
-
-        logger.info(
-            f"批次 {batch_idx} 完成: {len(batch_results)}/{len(stock_codes)} 只股票"
-        )
-
-    except Exception as e:
-        logger.error(f"批次 {batch_idx} 执行失败: {e}")
-
+    logger.info(f"批次 {batch_idx + 1} 完成处理")
     return batch_results

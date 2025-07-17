@@ -1,57 +1,441 @@
-# Strategy Research Project: [YOUR STRATEGY NAME]
+# AlphaHome 策略研究项目模板
 
-**ID:** `my_research_project` | **Version:** `0.1.0`
+这是 AlphaHome 生态系统的策略研究项目模板，专为量化研究人员和策略开发者设计。它提供了完整的回测框架，支持 AlphaHome 数据库集成和传统 CSV 数据源，让您能够快速验证和优化交易策略。
 
----
+## 📁 项目结构
 
-## 1. Overview
+```
+strategy_research/
+├── config.yml                         # 策略配置文件
+├── main.py                           # 回测执行入口
+├── README.md                         # 本文件
+├── notebooks/
+│   └── 01_strategy_performance_analysis.ipynb  # 策略性能分析
+├── src/
+│   ├── __init__.py
+│   ├── data_loader.py                # 统一数据加载器
+│   └── strategies.py                 # 策略定义
+└── data/                            # 数据目录（自动创建）
+    ├── backtest_results.csv         # 回测结果
+    └── market_data.csv              # CSV数据源（可选）
+```
 
-This project template provides a complete, out-of-the-box environment for backtesting trading strategies using the `backtrader` library. It is designed to quickly test a strategy idea against historical data and evaluate its performance.
+## 🎯 项目概述
 
-The example strategy implemented is a simple Moving Average Crossover.
+### 核心特性
 
-## 2. Project Structure
+- **双数据源支持**：无缝集成 AlphaHome 数据库 + 传统 CSV 文件
+- **统一数据接口**：`UnifiedDataLoader` 提供一致的数据访问体验
+- **并行回测**：支持多股票并行策略验证
+- **灵活配置**：通过 YAML 文件控制所有回测参数
+- **专业分析**：内置 Jupyter Notebook 进行深度策略分析
+- **向后兼容**：完全支持传统 CSV 工作流
 
--   **/data**: Contains the historical market data (OHLCV format) required for the backtest.
--   **/notebooks**: Use `01_strategy_performance_analysis.ipynb` to perform in-depth analysis and visualization of the backtest results.
--   **/src**: For defining more complex strategies or custom `backtrader` components (e.g., analyzers, indicators) in separate Python files.
--   **config.yml**: **Crucial for this template.** Configure the backtest period, initial capital, commission, slippage, and strategy-specific parameters.
--   **main.py**: The main backtest runner. It loads the configuration, sets up the `backtrader` engine, runs the strategy, and prints a summary of performance metrics.
+### 使用场景
 
-## 3. How to Run
+1. **策略原型验证**：快速测试新策略想法
+2. **参数优化**：系统性调整策略参数
+3. **多资产回测**：同时测试多个股票/资产
+4. **性能对比**：比较不同策略的表现
+5. **实盘前验证**：在真实交易前全面测试
 
-### a. Implement Your Strategy
-1.  Open `main.py`.
-2.  Locate the `MovingAverageCrossStrategy` class (or whichever strategy class is defined).
-3.  **Replace the example logic within this class with your own trading strategy.** You can modify the `__init__` method to define your indicators and the `next` method to define your entry/exit logic.
+## 🚀 快速开始
 
-### b. Configure Your Backtest
-1.  Open `config.yml`.
-2.  Update the `project_id` and `description`.
-3.  Under `backtest_settings`, define the `start_date`, `end_date`, `initial_cash`, and other broker settings.
-4.  Under `parameters`, adjust the parameters for your strategy. These are passed directly to your strategy class.
+### 1. 环境准备
 
-### c. Execute the Backtest
-
-Run the following command from this project's root directory:
+确保已安装 AlphaHome 项目依赖：
 
 ```bash
+# 在项目根目录执行
+pip install -e .
+# 或
+pip install backtrader pandas numpy matplotlib seaborn jupyter
+```
+
+### 2. 配置数据源
+
+编辑 `config.yml` 文件，选择您的数据源：
+
+#### 方案 A：AlphaHome 数据库（推荐）
+
+```yaml
+# 使用 AlphaHome 数据库作为数据源
+data_source:
+  type: "alphahome"                    # 数据源类型
+  symbols: ["000001.SZ", "600519.SH"]  # 股票代码列表
+  start_date: "2023-01-01"            # 开始日期
+  end_date: "2023-12-31"              # 结束日期
+  adjust_type: "hfq"                  # 复权类型：qfq(前复权)/hfq(后复权)/None
+```
+
+#### 方案 B：CSV 文件（传统方式）
+
+```yaml
+# 使用本地 CSV 文件
+data_source:
+  type: "csv"
+  csv_path: "data/market_data.csv"    # CSV文件路径
+  date_column: "trade_date"           # 日期列名
+  symbol_column: "ts_code"            # 股票代码列名
+```
+
+### 3. 配置回测参数
+
+```yaml
+backtest_settings:
+  start_date: "2023-01-01"
+  end_date: "2023-12-31"
+  initial_cash: 100000               # 初始资金
+  commission: 0.0003                 # 手续费率
+  stake: 100                         # 每笔交易股数
+  
+strategy_parameters:
+  fast_period: 5                     # 快速均线周期
+  slow_period: 20                    # 慢速均线周期
+  stop_loss: 0.05                    # 止损比例
+  take_profit: 0.10                  # 止盈比例
+```
+
+### 4. 运行回测
+
+```bash
+# 在项目目录下执行
 python main.py --config config.yml
 ```
 
-## 4. How to Interpret the Results
+回测将自动：
+- 加载指定股票的历史数据
+- 执行策略逻辑
+- 生成交易信号
+- 计算回测结果
+- 保存详细报告到 `data/backtest_results.csv`
 
-The script will print a summary of the backtest results to the console, including:
+### 5. 策略分析
 
--   **Starting/Ending Portfolio Value**: The absolute change in your portfolio's value.
--   **Sharpe Ratio**: A measure of risk-adjusted return. Higher is generally better.
--   **Annualized Return**: The geometric average amount of money earned by an investment each year over a given time period.
--   **Max Drawdown**: The maximum observed loss from a peak to a trough of a portfolio, before a new peak is attained. This is a key measure of risk.
+使用 Jupyter Notebook 进行深度分析：
 
-For more detailed analysis, use the provided notebook.
+```bash
+# 启动 Jupyter
+jupyter notebook notebooks/01_strategy_performance_analysis.ipynb
 
-## 5. Next Steps
+# 或使用 JupyterLab
+jupyter lab notebooks/01_strategy_performance_analysis.ipynb
+```
 
--   Implement a more sophisticated strategy in `main.py`.
--   Use the `notebooks/` to plot the equity curve and trade history.
--   Run parameter optimization sweeps by modifying `main.py` to loop through different strategy parameters. 
+## 📊 核心组件
+
+### UnifiedDataLoader - 统一数据加载器
+
+`UnifiedDataLoader` 是 AlphaHome 策略研究的核心组件，提供统一的数据访问接口：
+
+```python
+from src.data_loader import UnifiedDataLoader
+
+# 初始化数据加载器
+loader = UnifiedDataLoader(config)
+
+# 加载数据
+data = loader.load_data(
+    symbols=["000001.SZ", "600519.SH"],
+    start_date="2023-01-01",
+    end_date="2023-12-31"
+)
+
+# 数据源自动选择
+# - 如果配置为 alphahome，从数据库加载
+# - 如果配置为 csv，从文件加载
+```
+
+### 数据源选择机制
+
+系统自动根据配置选择最优数据源：
+
+1. **AlphaHome 模式**：
+   - 直接连接 AlphaHome 数据库
+   - 支持实时数据更新
+   - 自动处理复权、停牌等细节
+   - 支持批量股票并行加载
+
+2. **CSV 模式**：
+   - 读取本地 CSV 文件
+   - 兼容传统工作流
+   - 支持自定义列名映射
+   - 适合离线分析
+
+### 多股票并行回测
+
+支持同时对多个股票进行策略回测：
+
+```yaml
+# 多股票配置示例
+data_source:
+  type: "alphahome"
+  symbols: 
+    - "000001.SZ"    # 平安银行
+    - "600519.SH"    # 贵州茅台
+    - "000858.SZ"    # 五粮液
+    - "601318.SH"    # 中国平安
+  start_date: "2023-01-01"
+  end_date: "2023-12-31"
+```
+
+## 🛠️ 策略开发指南
+
+### 创建自定义策略
+
+在 `src/strategies.py` 中定义您的策略：
+
+```python
+from backtrader import Strategy, indicators
+
+class MyCustomStrategy(Strategy):
+    """自定义策略示例"""
+    
+    params = (
+        ('fast_period', 5),
+        ('slow_period', 20),
+        ('stop_loss', 0.05),
+    )
+    
+    def __init__(self):
+        # 定义技术指标
+        self.fast_ma = indicators.SMA(period=self.p.fast_period)
+        self.slow_ma = indicators.SMA(period=self.p.slow_period)
+        
+    def next(self):
+        # 策略逻辑
+        if self.fast_ma > self.slow_ma and not self.position:
+            self.buy()
+        elif self.fast_ma < self.slow_ma and self.position:
+            self.sell()
+```
+
+### 策略参数优化
+
+使用配置文件进行参数扫描：
+
+```yaml
+strategy_parameters:
+  fast_period: [5, 10, 15]           # 测试多个值
+  slow_period: [20, 30, 60]
+  stop_loss: [0.03, 0.05, 0.08]
+```
+
+### 添加技术指标
+
+```python
+def add_indicators(self):
+    """添加自定义技术指标"""
+    self.rsi = indicators.RSI(period=14)
+    self.macd = indicators.MACD()
+    self.bollinger = indicators.BollingerBands(period=20)
+```
+
+## 📈 性能分析工具
+
+### 内置分析指标
+
+回测结果包含以下关键指标：
+
+- **收益指标**：总收益率、年化收益率、夏普比率
+- **风险指标**：最大回撤、波动率、VaR
+- **交易指标**：胜率、盈亏比、交易频率
+- **相对表现**：相对基准的超额收益
+
+### 可视化分析
+
+Jupyter Notebook 提供丰富的可视化：
+
+1. **收益曲线**：策略 vs 基准对比
+2. **回撤分析**：最大回撤期间识别
+3. **交易分布**：盈亏交易统计分析
+4. **月度表现**：时间序列收益分解
+5. **相关性分析**：策略与市场的相关性
+
+### 输出文件结构
+
+运行回测后，`data/` 目录将包含：
+
+```
+data/
+├── backtest_results.csv              # 详细回测结果
+├── performance_summary.json          # 性能摘要
+├── trade_log.csv                     # 交易记录
+├── equity_curve.png                  # 收益曲线图
+└── strategy_analysis_report.html     # 完整分析报告
+```
+
+## 🔧 高级配置
+
+### AlphaHome 集成配置
+
+```yaml
+# AlphaHome 数据库配置
+alphahome:
+  db_config:
+    host: "localhost"
+    port: 3306
+    database: "alphahome"
+    user: "your_username"
+    password: "your_password"
+  
+  data_options:
+    adjust_type: "hfq"          # 复权方式
+    include_st: false           # 是否包含ST股票
+    min_listing_days: 60        # 最小上市天数
+    price_limit_filter: true    # 是否过滤涨跌停
+```
+
+### 并行处理配置
+
+```yaml
+performance:
+  max_workers: 4                # 并行线程数
+  chunk_size: 50               # 每批处理股票数
+  cache_enabled: true          # 启用数据缓存
+  cache_ttl: 3600             # 缓存有效期（秒）
+```
+
+## ❓ 常见问题解答
+
+### Q1: 如何选择数据源？
+
+**A**: 
+- **AlphaHome 数据库**：适合需要大量历史数据、实时更新的场景
+- **CSV 文件**：适合离线分析、数据已准备好的场景
+- **混合模式**：可以先使用CSV快速验证，再切换到AlphaHome进行大规模测试
+
+### Q2: 如何处理停牌数据？
+
+**A**: 
+- AlphaHome 模式：自动跳过停牌日，保持数据连续性
+- CSV 模式：需要手动处理缺失数据，建议使用前向填充
+
+### Q3: 如何优化回测性能？
+
+**A**:
+1. 减少股票数量进行初步测试
+2. 缩短回测时间窗口
+3. 使用并行处理配置
+4. 启用数据缓存
+
+### Q4: 如何添加新的技术指标？
+
+**A**:
+```python
+# 在策略类中添加
+def __init__(self):
+    # 添加RSI指标
+    self.rsi = bt.indicators.RSI(self.data.close, period=14)
+    
+    # 添加自定义指标
+    self.custom_indicator = MyCustomIndicator(self.data)
+```
+
+## 🐛 故障排除
+
+### 数据库连接问题
+
+**错误信息**：`Database connection failed`
+
+**解决方案**：
+1. 检查数据库服务是否运行
+2. 验证连接参数是否正确
+3. 确认网络连接正常
+4. 检查用户权限
+
+```bash
+# 测试数据库连接
+mysql -h localhost -u your_username -p alphahome
+```
+
+### 数据加载问题
+
+**错误信息**：`No data found for symbol XXX`
+
+**解决方案**：
+1. 检查股票代码格式（如：000001.SZ）
+2. 确认日期范围有效
+3. 验证股票是否在指定期间交易
+4. 检查是否被退市或停牌
+
+### 内存不足问题
+
+**错误信息**：`MemoryError during backtest`
+
+**解决方案**：
+1. 减少同时回测的股票数量
+2. 缩短回测时间窗口
+3. 增加系统内存
+4. 使用分批处理模式
+
+### CSV 格式问题
+
+**错误信息**：`CSV format error`
+
+**解决方案**：
+确保CSV文件包含必要列：
+- trade_date: 交易日期
+- ts_code: 股票代码
+- open: 开盘价
+- high: 最高价
+- low: 最低价
+- close: 收盘价
+- vol: 成交量
+
+## 📚 最佳实践
+
+### 策略开发流程
+
+1. **数据探索**：先分析数据特征
+2. **简单策略**：从基础策略开始
+3. **参数优化**：系统性测试参数
+4. **风险控制**：添加止损止盈
+5. **实盘模拟**：模拟真实交易环境
+
+### 代码组织建议
+
+```
+your_strategy/
+├── config.yml
+├── main.py
+├── src/
+│   ├── strategies/
+│   │   ├── __init__.py
+│   │   ├── moving_average.py
+│   │   └── breakout.py
+│   └── indicators/
+│       ├── __init__.py
+│       └── custom_indicators.py
+└── results/
+    ├── backtests/
+    └── analysis/
+```
+
+### 版本控制
+
+- 使用 Git 管理策略版本
+- 为每个策略创建独立分支
+- 记录参数变更历史
+- 保存重要回测结果
+
+## 🤝 贡献指南
+
+欢迎提交改进建议：
+
+1. Fork 项目仓库
+2. 创建功能分支
+3. 提交改进代码
+4. 创建 Pull Request
+
+## 📞 技术支持
+
+- **文档**：查看 AlphaHome 官方文档
+- **社区**：加入量化交易讨论群
+- **Issue**：在 GitHub 提交问题
+
+---
+
+**最后更新**：2025年7月16日  
+**版本**：v2.0.0  
+**维护**：AlphaHome 开发团队

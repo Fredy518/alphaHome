@@ -1,0 +1,7 @@
+# Generated data
+data/backtest_results.csv
+
+# Python cache
+__pycache__/
+*.pyc
+.ipynb_checkpoints/ 

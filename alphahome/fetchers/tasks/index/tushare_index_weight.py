@@ -8,12 +8,11 @@ from pandas.tseries.offsets import YearBegin, YearEnd  # 需要导入
 # 假设 TushareTask 是 Tushare 相关任务的基类。
 # 如果导入路径不同，请相应调整。
 from alphahome.fetchers.sources.tushare.tushare_task import TushareTask
-from alphahome.fetchers.base.smart_batch_mixin import SmartBatchMixin
 from alphahome.common.task_system.task_decorator import task_register
 
 
 @task_register()
-class TushareIndexWeightTask(TushareTask, SmartBatchMixin):
+class TushareIndexWeightTask(TushareTask):
     """
     从Tushare获取指数成分股及其权重的任务。
     API: index_weight (月度数据)
@@ -32,7 +31,7 @@ class TushareIndexWeightTask(TushareTask, SmartBatchMixin):
 
     # --- 代码级别的默认配置 (可被 config.json 文件覆盖) ---
     default_concurrent_limit = 2 # 恢复并发数
-    default_rate_limit_delay = 10 # 设置一个更短的速率限制延迟
+    default_rate_limit_delay = 10 
     default_page_size = (
         6000  # TushareAPI 处理分页；index_weight 是月度数据，此限制通常不触发
     )
@@ -92,10 +91,10 @@ class TushareIndexWeightTask(TushareTask, SmartBatchMixin):
 
     async def get_index_codes(self) -> List[str]:
         """
-        使用 'index_basic' API 获取所有唯一的Tushare指数代码。
+        使用 'etf_index' API 获取所有唯一的Tushare指数代码。
         """
         self.logger.debug(
-            f"任务 {self.name} 正在从 'index_basic' API 获取所有指数代码。"
+            f"任务 {self.name} 正在从 'etf_index' API 获取所有指数代码。"
         )
         try:
             if not self.api:
@@ -103,7 +102,7 @@ class TushareIndexWeightTask(TushareTask, SmartBatchMixin):
                 return []
 
             df_codes = await self.api.query(
-                api_name="index_basic", fields=["ts_code"]
+                api_name="etf_index", fields=["ts_code"]
             )
 
             if df_codes is not None and not df_codes.empty:
@@ -112,7 +111,7 @@ class TushareIndexWeightTask(TushareTask, SmartBatchMixin):
                 return unique_codes
             else:
                 self.logger.warning(
-                    "从 'index_basic' API 返回的指数代码为空或DataFrame为空。"
+                    "从 'etf_index' API 返回的指数代码为空或DataFrame为空。"
                 )
                 return []
         except Exception as e:
@@ -155,13 +154,11 @@ class TushareIndexWeightTask(TushareTask, SmartBatchMixin):
 
     async def get_batch_list(self, **kwargs: Any) -> List[Dict[str, Any]]:
         """
-        使用智能批次拆分策略生成批处理参数列表。
+        使用 ExtendedBatchPlanner 的智能时间分区策略生成批处理参数列表。
 
-        四级智能拆分策略：
-        - ≤3个月：月度拆分（精细粒度）
-        - 3个月-2年：季度拆分（平衡效率和精度）
-        - 2-10年：半年度拆分（提高长期更新效率）
-        - >10年：年度拆分（超长期数据优化）
+        半年拆分策略：
+        - 按半年为单位进行批次拆分（每个批次包含6个月的时间范围）
+        - 适用于各种时间跨度的数据处理，提供良好的性能和精度平衡
         """
         # 参数提取和验证
         start_date_str = kwargs.get("start_date")
@@ -177,9 +174,36 @@ class TushareIndexWeightTask(TushareTask, SmartBatchMixin):
             self.logger.warning(f"任务 {self.name}: 未找到指数代码以创建批处理")
             return []
 
-        # 生成智能时间批次
-        time_batches = self.generate_smart_time_batches(start_date_str, end_date_str)
-        if not time_batches:
+        # 使用 ExtendedBatchPlanner 生成智能时间批次
+        try:
+            from alphahome.common.planning.extended_batch_planner import (
+                ExtendedBatchPlanner, SmartTimePartition, ExtendedMap, TimeRangeSource
+            )
+
+            # 创建智能时间批处理规划器
+            planner = ExtendedBatchPlanner(
+                source=TimeRangeSource.create(start_date_str, end_date_str),
+                partition_strategy=SmartTimePartition.create(),
+                map_strategy=ExtendedMap.to_smart_time_range(),
+                enable_stats=True
+            )
+
+            time_batches = await planner.generate()
+            stats = planner.get_stats()
+
+            if not time_batches:
+                self.logger.warning(f"任务 {self.name}: 未生成任何时间批次")
+                return []
+
+            # 记录优化效果
+            self.logger.info(
+                f"任务 {self.name}: 智能批次生成完成 - "
+                f"生成 {len(time_batches)} 个时间批次，"
+                f"生成耗时：{stats.get('generation_time', 0):.3f}s"
+            )
+
+        except Exception as e:
+            self.logger.error(f"任务 {self.name}: 生成智能时间批次时出错: {e}", exc_info=True)
             return []
 
         # 转换为任务特定的API参数批次
@@ -192,14 +216,9 @@ class TushareIndexWeightTask(TushareTask, SmartBatchMixin):
                     "end_date": time_batch["end_date"]
                 })
 
-        # 记录优化效果
-        stats = self.get_batch_optimization_stats(start_date_str, end_date_str)
         self.logger.info(
-            f"任务 {self.name}: 智能批次生成完成 - "
-            f"采用{stats.get('strategy', '未知')}策略，"
-            f"为 {len(index_codes)} 个指数代码生成 {len(batches)} 个批次，"
-            f"相比原始方案减少 {stats.get('reduction_rate', 0):.1f}% 批次数量"
+            f"任务 {self.name}: 成功生成 {len(batches)} 个批次 "
+            f"({len(index_codes)} 个指数 × {len(time_batches)} 个时间批次)"
         )
-
         return batches
     
