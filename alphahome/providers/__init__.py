@@ -6,9 +6,6 @@ AlphaHome 数据提供者模块
 
 from .data_access import (
     AlphaDataTool,
-    BaseDataAccessor,
-    IndexAccessor,
-    StockAccessor,
     DataAccessError,
     ValidationError,
     CacheError
@@ -16,9 +13,6 @@ from .data_access import (
 
 __all__ = [
     'AlphaDataTool',
-    'BaseDataAccessor',
-    'IndexAccessor',
-    'StockAccessor',
     'DataAccessError',
     'ValidationError',
     'CacheError'

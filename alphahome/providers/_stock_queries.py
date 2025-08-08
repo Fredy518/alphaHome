@@ -78,12 +78,6 @@ class StockQueries:
         candidate_tables = [
             'tushare.stock_daily',     # Tushare schema中的标准表名
             'stock_daily',             # 默认schema中的标准表名
-            'tushare.tushare_stock_daily',  # Tushare schema中的完整表名
-            'tushare_stock_daily',     # 默认schema中的Tushare表名
-            'tushare.stock_daily_qfq', # Tushare schema中的前复权表
-            'stock_daily_qfq',         # 默认schema中的前复权表
-            'tushare.stock_daily_hfq', # Tushare schema中的后复权表
-            'stock_daily_hfq'          # 默认schema中的后复权表
         ]
         
         for table in candidate_tables:
@@ -133,8 +127,6 @@ class StockQueries:
         candidate_tables = [
             'tushare.stock_basic',     # Tushare schema中的标准表名
             'stock_basic',             # 默认schema中的标准表名
-            'tushare.tushare_stock_basic',  # Tushare schema中的完整表名
-            'tushare_stock_basic',     # 默认schema中的Tushare表名
             'tushare.stock_info',      # Tushare schema中的备选表名
             'stock_info'               # 默认schema中的备选表名
         ]

@@ -57,8 +57,18 @@ class ConfigManager:
         # 读取配置文件
         if os.path.exists(self.config_file):
             try:
+                # 尝试使用UTF-8编码读取
                 with open(self.config_file, "r", encoding="utf-8") as f:
                     config_data = json.load(f)
+            except UnicodeDecodeError:
+                # 如果UTF-8解码失败，尝试使用系统默认编码或其他编码
+                try:
+                    with open(self.config_file, "r", encoding="gbk") as f:
+                        config_data = json.load(f)
+                    logger.warning("配置文件使用GBK编码，建议转换为UTF-8编码")
+                except Exception as e2:
+                    logger.warning(f"尝试GBK编码也失败: {e2}，使用环境变量或默认值")
+                    config_data = {}
             except Exception as e:
                 logger.warning(
                     f"读取配置文件 {self.config_file} 失败: {e}，使用环境变量或默认值"

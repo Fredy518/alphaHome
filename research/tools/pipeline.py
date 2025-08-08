@@ -177,7 +177,7 @@ class ResearchPipeline:
         with open(filepath, 'w', encoding='utf-8') as f:
             json.dump(clean_summary, f, indent=2, ensure_ascii=False)
 
-        logger.info(f"Pipeline results saved to {filepath}")
+        logger.info(f"流水线结果已保存至 {filepath}")
 
 
 # 简化的基础步骤类

@@ -57,12 +57,6 @@ class IndexQueries:
         candidate_tables = [
             'tushare.index_weight',     # Tushare schema中的标准表名
             'index_weight',             # 默认schema中的标准表名
-            'tushare.tushare_index_weight',  # Tushare schema中的完整表名
-            'tushare_index_weight',     # 默认schema中的Tushare表名
-            'tushare.index_weights',    # Tushare schema中的复数形式
-            'index_weights',            # 默认schema中的复数形式
-            'tushare.idx_weight',       # Tushare schema中的简化表名
-            'idx_weight'                # 默认schema中的简化表名
         ]
         
         for table in candidate_tables:
@@ -111,8 +105,6 @@ class IndexQueries:
         candidate_tables = [
             'tushare.index_basic',     # Tushare schema中的标准表名
             'index_basic',             # 默认schema中的标准表名
-            'tushare.tushare_index_basic',  # Tushare schema中的完整表名
-            'tushare_index_basic',     # 默认schema中的Tushare表名
             'tushare.index_info',      # Tushare schema中的备选表名
             'index_info'               # 默认schema中的备选表名
         ]

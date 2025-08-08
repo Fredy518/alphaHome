@@ -61,12 +61,9 @@ class DataHelpers:
         
         # 按优先级检查可用的表（基于实际数据库结构）
         candidate_tables = [
-            'tushare.tushare_others_tradecal',  # 实际存在的交易日历表
             'tushare.others_calendar',          # 其他日历表
             'tushare.trade_cal',                # 标准表名（可能不存在）
             'trade_cal',                        # 默认schema中的标准表名
-            'tushare.tushare_trade_cal',        # Tushare schema中的完整表名
-            'tushare_trade_cal',                # 默认schema中的Tushare表名
             'tushare.trading_calendar',         # Tushare schema中的英文表名
             'trading_calendar',                 # 默认schema中的英文表名
             'tushare.calendar',                 # Tushare schema中的简化表名
@@ -119,8 +116,6 @@ class DataHelpers:
         candidate_tables = [
             'tushare.stock_industry',   # Tushare schema中的标准表名
             'stock_industry',           # 默认schema中的标准表名
-            'tushare.tushare_stock_industry',  # Tushare schema中的完整表名
-            'tushare_stock_industry',   # 默认schema中的Tushare表名
             'tushare.industry_classify', # Tushare schema中的分类表名
             'industry_classify',        # 默认schema中的分类表名
             'tushare.sw_industry',      # Tushare schema中的申万行业表名

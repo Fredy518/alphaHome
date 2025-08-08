@@ -1,0 +1,185 @@
+# P/G/S因子计算系统配置文件
+# =========================
+
+# 数据源配置
+data_source:
+  # 财务报表
+  balance_sheet: "tushare.fina_balancesheet"
+  income_statement: "tushare.fina_income"
+  cash_flow: "tushare.fina_cashflow"
+  
+  # 财务预测和快报
+  forecast: "tushare.fina_forecast"
+  express: "tushare.fina_express"
+  
+  # 市场数据
+  daily_basic: "tushare.stock_dailybasic"
+  daily_price: "tushare.stock_daily"
+  
+  # 指数数据
+  index_daily: "tushare.index_daily"
+  # 市场指数（用于Beta等市场基准）：按要求改为使用 index_factor_pro 表
+  market_index: "tushare.index_factor_pro"
+  # 交易日历（用于按真实交易日筛选）：按要求改为使用 others_calendar 表
+  trading_calendar: "tushare.others_calendar"
+
+# 字段映射（数据库实际字段名）
+field_mapping:
+  # 资产负债表字段
+  total_assets: "total_assets"
+  total_liabilities: "total_liab"
+  total_equity: "total_hldr_eqy_inc_min_int"
+  
+  # 利润表字段
+  net_income: "n_income_attr_p"
+  revenue: "revenue"
+  operating_profit: "operate_profit"  # 注意：不是oper_profit
+  total_profit: "total_profit"
+  income_tax: "income_tax"
+  
+  # 现金流量表字段
+  operating_cash_flow: "n_cashflow_act"
+  
+  # 业绩预告字段
+  forecast_net_profit_min: "net_profit_min"  # 注意：不是p_profit_min
+  forecast_net_profit_max: "net_profit_max"  # 注意：不是p_profit_max
+  
+  # 业绩快报字段
+  express_revenue: "actual_revenue"
+  express_net_profit: "actual_net_profit"
+  
+  # 市场数据字段
+  total_market_value: "total_mv"
+  circulating_market_value: "circ_mv"
+  pe_ttm: "pe_ttm"
+  pb: "pb"
+
+# P因子（盈利能力）配置
+p_factor:
+  indicators:
+    - name: "roe_ttm"
+      weight: 0.3
+      description: "净资产收益率（TTM）"
+    - name: "roa_ttm"
+      weight: 0.2
+      description: "总资产收益率（TTM）"
+    - name: "gross_margin"
+      weight: 0.2
+      description: "毛利率"
+    - name: "net_margin"
+      weight: 0.15
+      description: "净利率"
+    - name: "operating_margin"
+      weight: 0.15
+      description: "营业利润率"
+
+# G因子（成长能力）配置
+g_factor:
+  indicators:
+    - name: "revenue_growth_yoy"
+      weight: 0.25
+      description: "营收同比增长率"
+    - name: "profit_growth_yoy"
+      weight: 0.25
+      description: "净利润同比增长率"
+    - name: "revenue_growth_3y"
+      weight: 0.2
+      description: "三年营收复合增长率"
+    - name: "profit_growth_3y"
+      weight: 0.2
+      description: "三年净利润复合增长率"
+    - name: "growth_acceleration"
+      weight: 0.1
+      description: "成长加速度"
+
+# S因子（安全能力）配置
+s_factor:
+  indicators:
+    - name: "current_ratio"
+      weight: 0.2
+      description: "流动比率"
+    - name: "quick_ratio"
+      weight: 0.2
+      description: "速动比率"
+    - name: "debt_to_equity"
+      weight: 0.2
+      description: "资产负债率"
+      inverse: true  # 负向指标
+    - name: "interest_coverage"
+      weight: 0.2
+      description: "利息保障倍数"
+    - name: "cash_flow_ratio"
+      weight: 0.2
+      description: "现金流比率"
+
+# 因子计算参数
+calculation:
+  # TTM计算
+  ttm:
+    use_smart_ttm: true  # 使用智能TTM（融合快报和预告）
+    quarters_required: 4  # TTM需要的季度数
+    
+  # 历史数据
+  history:
+    min_periods: 8  # 最少需要的历史季度数
+    growth_periods: 12  # 计算增长率的历史季度数
+    
+  # 分位数计算
+  quantile:
+    rolling_window: 20  # 历史分位数滚动窗口（季度）
+    percentiles: [0.1, 0.25, 0.5, 0.75, 0.9]
+    
+  # 标准化
+  normalization:
+    method: "z-score"  # 可选：z-score, min-max, rank
+    clip_outliers: true
+    outlier_std: 3  # 超过3倍标准差的值进行截断
+    
+  # 中性化
+  neutralization:
+    industry: true  # 行业中性化
+    market_cap: true  # 市值中性化
+
+# 输出配置
+output:
+  # 输出目录
+  directory: "output/pgs_factors"
+  
+  # 文件格式
+  formats:
+    - csv
+    - pickle
+    - parquet
+  
+  # 保存选项
+  save_intermediate: false  # 是否保存中间结果
+  compress: true  # 是否压缩输出文件
+  
+  # 报告
+  generate_report: true  # 是否生成分析报告
+  report_format: "html"  # 报告格式：html, pdf, markdown
+
+# 日志配置
+logging:
+  level: "INFO"  # DEBUG, INFO, WARNING, ERROR
+  file: "logs/pgs_factor.log"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
+# 性能配置
+performance:
+  # 并行处理
+  parallel:
+    enabled: true
+    max_workers: 4
+    chunk_size: 100
+    
+  # 缓存
+  cache:
+    enabled: true
+    directory: "cache/pgs_factor"
+    ttl_hours: 24
+    
+  # 内存管理
+  memory:
+    max_memory_gb: 8
+    gc_threshold: 1000  # 每处理1000只股票进行一次垃圾回收

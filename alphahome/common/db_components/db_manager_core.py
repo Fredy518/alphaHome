@@ -145,34 +145,51 @@ class DBManagerCore:
 
     def _parse_connection_string(self):
         """解析连接字符串为psycopg2连接参数（仅同步模式）
-        
+
         将PostgreSQL标准连接字符串解析为psycopg2.connect()所需的参数字典。
         这个方法只在同步模式下使用，用于准备psycopg2连接参数。
-        
+
         解析格式：
             postgresql://username:password@host:port/database
-            
+
         默认值：
             - host: localhost
-            - port: 5432  
+            - port: 5432
             - user: postgres
             - password: "" (空字符串)
             - database: postgres
-            
+
         内部属性：
             设置 self._conn_params 字典，包含所有连接参数
-            
+
         Note:
             此方法为内部方法，不应直接调用
         """
-        parsed = urlparse(self.connection_string)
-        self._conn_params = {
-            "host": parsed.hostname or "localhost",
-            "port": parsed.port or 5432,
-            "user": parsed.username or "postgres",
-            "password": parsed.password or "",
-            "database": parsed.path.lstrip("/") if parsed.path else "postgres",
-        }
+        try:
+            # 直接解析连接字符串
+            parsed = urlparse(self.connection_string)
+
+            self._conn_params = {
+                "host": parsed.hostname or "localhost",
+                "port": parsed.port or 5432,
+                "user": parsed.username or "postgres",
+                "password": parsed.password or "",
+                "database": parsed.path.lstrip("/") if parsed.path else "postgres",
+                "client_encoding": "utf8"
+            }
+            
+        except Exception as e:
+            self.logger.error(f"解析连接字符串失败: {e}")
+            # 使用默认参数
+            self._conn_params = {
+                "host": "localhost",
+                "port": 5432,
+                "user": "postgres",
+                "password": "",
+                "database": "postgres",
+                "client_encoding": "utf8",
+                "options": "-c client_encoding=utf8"
+            }
 
     def _get_sync_connection(self):
         """获取线程本地的数据库连接（仅同步模式）
@@ -207,10 +224,43 @@ class DBManagerCore:
 
         if not hasattr(self._local, "connection") or self._local.connection.closed:
             try:
-                self._local.connection = psycopg2.connect(**self._conn_params)
-                self.logger.debug("创建新的同步数据库连接")
+                # 创建连接参数副本
+                conn_params = {}
+                
+                # 使用明确的参数名称，避免psycopg2的参数解析问题
+                conn_params['host'] = self._conn_params.get('host', 'localhost')
+                conn_params['port'] = self._conn_params.get('port', 5432)
+                conn_params['database'] = self._conn_params.get('database', 'postgres')
+                conn_params['user'] = self._conn_params.get('user', 'postgres')
+                conn_params['password'] = self._conn_params.get('password', '')
+                
+                # 设置客户端编码
+                conn_params['client_encoding'] = 'utf8'
+                
+                # 记录连接参数（隐藏密码）
+                log_params = conn_params.copy()
+                log_params['password'] = '***' if conn_params['password'] else ''
+                self.logger.debug(f"尝试创建同步连接: {log_params}")
+
+                # 创建连接 - 直接使用连接参数
+                self._local.connection = psycopg2.connect(
+                    host=conn_params['host'],
+                    port=conn_params['port'],
+                    database=conn_params['database'],
+                    user=conn_params['user'],
+                    password=conn_params['password'],
+                    client_encoding=conn_params['client_encoding']
+                )
+
+                # 连接后设置编码
+                self._local.connection.set_client_encoding('UTF8')
+
+                self.logger.debug("创建新的同步数据库连接成功")
             except Exception as e:
                 self.logger.error(f"创建同步数据库连接失败: {e}")
+                # 记录更详细的错误信息
+                import traceback
+                self.logger.error(f"错误详情: {traceback.format_exc()}")
                 raise
         return self._local.connection
 

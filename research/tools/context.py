@@ -9,6 +9,7 @@ import yaml
 import logging
 from pathlib import Path
 from typing import Optional, Dict, Any
+import pandas as pd # Added for query_dataframe
 
 # 设置日志
 logger = logging.getLogger(__name__)
@@ -145,9 +146,9 @@ class ResearchContext:
     def _get_merged_db_config(self):
         """获取合并后的数据库配置
 
-        简化的配置优先级：
-        1. AlphaHome主配置文件（如果存在）
-        2. 研究项目配置文件（覆盖特定参数）
+        配置优先级（从高到低）：
+        1. 研究项目配置文件（如果存在config.yml且有明确配置）
+        2. AlphaHome主配置文件（如果存在）  
         3. 默认值（兜底）
 
         Returns:
@@ -163,20 +164,22 @@ class ResearchContext:
             'db_name': 'alphadb'
         }
 
-        # 加载主配置（优先级最高）
+        # 先加载主配置
         main_config = self._load_alphahome_config()
         if main_config:
             config.update(main_config)
             logger.info("使用AlphaHome主配置文件")
 
-        # 研究项目配置覆盖（如果有）
-        research_config = self.config.get('db_manager', {})
-        if research_config:
-            # 只覆盖非空值
-            for key, value in research_config.items():
-                if value is not None and value != '':
-                    config[key] = value
-            logger.info("研究项目配置覆盖了部分参数")
+        # 只有当研究项目有真实的config.yml文件时才覆盖
+        # 不使用默认配置覆盖主配置
+        if self.config_path.exists():
+            research_config = self.config.get('db_manager', {})
+            if research_config:
+                # 只覆盖非空值
+                for key, value in research_config.items():
+                    if value is not None and value != '':
+                        config[key] = value
+                logger.info("研究项目配置覆盖了部分参数")
 
         logger.debug(f"最终数据库配置: {self._mask_sensitive_config(config)}")
         return config
@@ -184,44 +187,32 @@ class ResearchContext:
     def _load_alphahome_config(self):
         """加载AlphaHome主配置文件
 
-        简化版本：直接加载已知位置的配置文件
+        使用ConfigManager来处理配置文件的加载和编码问题
         """
-        import json
-        import os
-
-        # AlphaHome主配置文件的标准位置
-        config_path = Path(os.path.expanduser("~")) / "AppData" / "Local" / "trademaster" / "alphahome" / "config.json"
-
         try:
-            if not config_path.exists():
-                logger.debug(f"主配置文件不存在: {config_path}")
-                return None
-
-            # 直接加载JSON配置文件
-            with open(config_path, 'r', encoding='utf-8') as f:
-                main_config = json.load(f)
-
-            # 解析数据库配置
-            database_config = main_config.get('database', {})
+            # 使用ConfigManager加载配置
+            from alphahome.common.config_manager import ConfigManager
+            config_manager = ConfigManager()
+            config = config_manager.load_config()
+            
+            # 获取数据库配置
+            database_config = config.get('database', {})
             if database_config and 'url' in database_config:
                 db_config = self._parse_database_url(database_config['url'])
-                logger.info(f"成功加载AlphaHome主配置: {config_path}")
+                logger.info(f"成功通过ConfigManager加载数据库配置")
                 return db_config
-
+            
             # 兼容旧格式
-            db_config = main_config.get('db_manager', {})
+            db_config = config.get('db_manager', {})
             if db_config:
-                logger.info(f"成功加载AlphaHome主配置 (旧格式): {config_path}")
+                logger.info(f"成功加载AlphaHome主配置 (旧格式)")
                 return db_config
-
+                
             logger.debug("主配置文件中未找到数据库配置")
             return None
-
-        except json.JSONDecodeError as e:
-            logger.warning(f"主配置文件JSON格式错误: {e}")
-            return None
+            
         except Exception as e:
-            logger.warning(f"加载主配置文件失败: {e}")
+            logger.warning(f"通过ConfigManager加载配置失败: {e}")
             return None
 
     def _parse_database_url(self, database_url):
@@ -236,13 +227,36 @@ class ResearchContext:
         import urllib.parse
 
         try:
-            parsed = urllib.parse.urlparse(database_url)
+            # 确保URL是正确编码的字符串
+            if isinstance(database_url, bytes):
+                database_url = database_url.decode('utf-8', errors='replace')
+
+            # 处理可能包含非ASCII字符的URL
+            try:
+                # 尝试直接解析
+                parsed = urllib.parse.urlparse(database_url)
+            except Exception:
+                # 如果解析失败，尝试URL编码
+                database_url = urllib.parse.quote(database_url, safe=':/?#[]@!$&\'()*+,;=')
+                parsed = urllib.parse.urlparse(database_url)
+
+            # 处理密码中的特殊字符
+            password = parsed.password or ''
+            if password:
+                try:
+                    # URL解码密码
+                    password = urllib.parse.unquote(password)
+                    # 确保密码是UTF-8编码
+                    password = password.encode('utf-8', errors='replace').decode('utf-8')
+                except Exception:
+                    logger.warning("密码包含特殊字符，可能影响连接")
+
             return {
                 'db_type': 'postgresql',
                 'host': parsed.hostname or 'localhost',
                 'port': parsed.port or 5432,
                 'user': parsed.username or 'postgres',
-                'password': parsed.password or '',
+                'password': password,
                 'db_name': parsed.path.lstrip('/') if parsed.path else 'alphadb'
             }
         except Exception as e:
@@ -284,22 +298,41 @@ class ResearchContext:
     def _create_planner(self):
         """创建批处理计划器实例"""
         try:
-            from alphahome.common.planning.extended_batch_planner import ExtendedBatchPlanner
+            from alphahome.common.planning.extended_batch_planner import ExtendedBatchPlanner, StockListSource, TimeRangeSource, create_smart_time_planner
+            from alphahome.common.planning.batch_planner import Source, Partition, Map
 
             planner_config = self.config.get('planner', {})
 
+            # 根据planner_config中的类型或业务逻辑，选择合适的创建方式
+            # 这里以通用股票列表批处理为例，如果需要智能时间批处理，可以使用create_smart_time_planner
+            
+            # 1. 定义数据源 (Source)
+            # 假设批处理是针对股票列表
+            stock_source = StockListSource.create(db_manager=self.db_manager) 
+            
+            # 2. 定义分区策略 (PartitionStrategy)
+            # 使用batch_size进行按大小分区
+            partition_strategy = Partition.by_size(planner_config.get('batch_size', 50))
+            
+            # 3. 定义映射策略 (MapStrategy)
+            # 假设每个批次需要映射为包含 'ts_code' 的字典
+            map_strategy = Map.to_dict(field_name="ts_code")
+
             # 创建ExtendedBatchPlanner实例
             planner = ExtendedBatchPlanner(
-                db_manager=self.db_manager,
-                batch_size=planner_config.get('batch_size', 50),
-                max_workers=planner_config.get('max_workers', 4)
+                source=stock_source,
+                partition_strategy=partition_strategy,
+                map_strategy=map_strategy,
+                # max_workers 不是直接参数，通常由执行引擎处理，而非计划器本身
+                # batch_size 现在由 partition_strategy 处理
+                # db_manager 现在传递给 source
             )
 
-            logger.info("ExtendedBatchPlanner created successfully")
+            logger.info("ExtendedBatchPlanner 创建成功")
             return planner
 
         except Exception as e:
-            logger.error(f"Failed to create ExtendedBatchPlanner: {e}")
+            logger.error(f"创建 ExtendedBatchPlanner 失败: {e}")
             raise
 
     def _create_data_tool(self):
@@ -314,18 +347,23 @@ class ResearchContext:
             from alphahome.providers import AlphaDataTool
 
             # 创建AlphaDataTool实例
-            data_tool = AlphaDataTool(self.db_manager)
+            data_tool = AlphaDataTool(self.db_manager) # noinspection PyUnusedLocal
 
-            logger.info("AlphaDataTool created successfully")
+            logger.info("AlphaDataTool 创建成功")
             return data_tool
 
         except Exception as e:
-            logger.error(f"Failed to create AlphaDataTool: {e}")
+            logger.error(f"创建 AlphaDataTool 失败: {e}")
             raise
 
     def query_dataframe(self, query: str, params=None):
         """执行SQL查询并返回DataFrame"""
-        return self.db_manager.query_dataframe(query, params)
+        # 使用db_manager的同步fetch方法，并将结果转换为DataFrame
+        records = self.db_manager.fetch_sync(query, params)
+        if records:
+            # 将记录列表转换为DataFrame
+            return pd.DataFrame(records)
+        return pd.DataFrame()
 
     def get_stock_list(self, market: Optional[str] = None):
         """获取股票列表
@@ -333,7 +371,7 @@ class ResearchContext:
         使用providers数据提供层获取股票列表，替代直接SQL查询
         """
         # 使用data_tool获取股票基本信息
-        stock_info = self.data_tool.get_stock_info(list_status='L')
+        stock_info = self.data_tool.get_stock_info() # 移除 list_status='L'
 
         if market:
             # 如果指定了市场，进行过滤
@@ -357,11 +395,11 @@ class ResearchContext:
 
     def get_stock_data(self, symbols, start_date: str, end_date: str, adjust: bool = True):
         """获取股票行情数据的便捷方法"""
-        return self.data_tool.get_stock_data(symbols, start_date, end_date, adjust)
+        return self.data_tool.get_stock_data(symbols, start_date, end_date, adjust=adjust) # 明确传递 adjust
 
     def get_index_weights(self, index_code: str, start_date: str, end_date: str, monthly: bool = False):
         """获取指数权重数据的便捷方法"""
-        return self.data_tool.get_index_weights(index_code, start_date, end_date, monthly)
+        return self.data_tool.get_index_weights(index_code, start_date, end_date, monthly=monthly) # 明确传递 monthly
 
     def get_industry_data(self, symbols=None, level: str = 'sw_l1'):
         """获取行业分类数据的便捷方法"""
@@ -371,8 +409,8 @@ class ResearchContext:
         """关闭所有连接"""
         if self._db_manager:
             try:
-                self._db_manager.close()
-                logger.info("DBManager connection closed")
+                self._db_manager.close_sync()
+                logger.info("数据库管理器连接已关闭")
             except:
                 pass
 

@@ -1,0 +1,224 @@
+# AlphaHome 策略研究项目配置文件
+# 基于AlphaHome主配置的策略回测和研究模板
+
+# ============================================================================
+# 项目基本信息
+# ============================================================================
+project:
+  name: "AlphaHome策略研究"
+  description: "基于AlphaHome数据库的策略回测研究项目"
+  version: "2.0.0"
+  author: "研究员"
+
+# ============================================================================
+# 数据库配置（与database_research保持一致）
+# ============================================================================
+# 注意：通常不需要在这里配置数据库连接
+# ResearchContext会自动使用AlphaHome的主配置文件
+# 如果需要覆盖特定参数，可以在这里设置
+
+database:
+  # 连接池配置
+  pool_size: 10
+  max_overflow: 20
+
+  # 查询优化
+  query_timeout: 30
+  batch_size: 1000
+
+# ============================================================================
+# 研究参数配置（统一使用research节）
+# ============================================================================
+research:
+  # 股票池配置（与database_research保持一致）
+  stock_pool:
+    # 默认股票列表
+    default_symbols:
+      - "000001.SZ"    # 平安银行
+      - "600519.SH"    # 贵州茅台
+      - "000858.SZ"    # 五粮液
+      - "601318.SH"    # 中国平安
+
+    # 股票池筛选条件
+    filters:
+      market_cap_min: 1000000000    # 最小市值（元）
+      list_days_min: 252            # 最小上市天数
+      exclude_st: true              # 排除ST股票
+
+  # 时间范围配置
+  time_range:
+    default_start: "2023-01-01"
+    default_end: "2023-12-31"
+    lookback_days: 252              # 回看天数
+
+# ============================================================================
+# 数据源配置（策略研究特有）
+# ============================================================================
+data:
+  # CSV备用数据源（当数据库不可用时）
+  fallback_csv:
+    file_path: "data/market_data.csv"
+    date_column: "trade_date"
+    symbol_column: "ts_code"
+    price_columns:
+      open: "open"
+      high: "high"
+      low: "low"
+      close: "close"
+      volume: "vol"
+
+# ============================================================================
+# 数据处理配置（与database_research保持一致）
+# ============================================================================
+data_processing:
+  # 数据清洗
+  cleaning:
+    remove_outliers: true
+    outlier_method: "iqr"          # iqr, zscore, isolation_forest
+    outlier_threshold: 3.0
+
+    fill_missing: true
+    fill_method: "forward"         # forward, backward, interpolate
+
+  # 数据标准化
+  normalization:
+    enabled: false
+    method: "zscore"               # zscore, minmax, robust
+
+  # 数据采样
+  sampling:
+    frequency: "daily"             # daily, weekly, monthly
+    resample_method: "last"        # last, mean, sum
+
+# ============================================================================
+# 策略参数配置（匹配模板期望的结构）
+# ============================================================================
+parameters:
+  strategy_a:
+    fast_ma: 10      # 快速移动平均线周期
+    slow_ma: 50      # 慢速移动平均线周期
+
+# ============================================================================
+# 回测配置（匹配模板期望的结构）
+# ============================================================================
+backtest_settings:
+  # 回测时间范围
+  start_date: "2023-01-01"
+  end_date: "2023-12-31"
+
+  # 初始资金
+  initial_cash: 100000.0
+
+  # 交易费用
+  commission: 0.001    # 手续费率 (0.1%)
+
+  # 滑点设置
+  slippage: 0.0001     # 滑点 (0.01%)
+
+# ============================================================================
+# 输出配置
+# ============================================================================
+output:
+  # 保存路径
+  results_dir: "data"
+  
+  # 输出文件
+  files:
+    backtest_results: "backtest_results.csv"
+    performance_summary: "performance_summary.json"
+    trade_log: "trade_log.csv"
+    equity_curve: "equity_curve.png"
+    analysis_report: "strategy_analysis_report.html"
+  
+  # 图表配置
+  charts:
+    save_plots: true
+    plot_format: "png"
+    plot_dpi: 300
+
+# ============================================================================
+# 分析配置
+# ============================================================================
+analysis:
+  # 基准指数
+  benchmark: "000300.SH"  # 沪深300指数
+  
+  # 分析指标
+  metrics:
+    - "total_return"      # 总收益率
+    - "annual_return"     # 年化收益率
+    - "sharpe_ratio"      # 夏普比率
+    - "max_drawdown"      # 最大回撤
+    - "calmar_ratio"      # 卡玛比率
+    - "win_rate"          # 胜率
+    - "profit_loss_ratio" # 盈亏比
+  
+  # 时间序列分析
+  time_series:
+    monthly_returns: true
+    rolling_sharpe: true
+    rolling_window: 252   # 滚动窗口（交易日）
+
+# ============================================================================
+# 日志配置
+# ============================================================================
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  file: "logs/strategy_research.log"
+
+# ============================================================================
+# 可视化配置（与database_research保持一致）
+# ============================================================================
+visualization:
+  # 图表主题
+  theme: "default"                 # default, seaborn, ggplot
+
+  # 图表尺寸
+  figure_size: [12, 8]
+  dpi: 300
+
+  # 颜色配置
+  colors:
+    primary: "#1f77b4"
+    secondary: "#ff7f0e"
+    success: "#2ca02c"
+    warning: "#d62728"
+
+  # 图表类型配置
+  charts:
+    time_series: true
+    correlation_heatmap: true
+    distribution_plots: true
+    factor_ic_plots: true
+
+# ============================================================================
+# 性能配置（与database_research保持一致）
+# ============================================================================
+performance:
+  # 并行处理
+  parallel:
+    enabled: true
+    max_workers: 4
+    chunk_size: 100
+
+  # 内存管理
+  memory:
+    max_memory_usage: "4GB"
+    gc_threshold: 0.8              # 垃圾回收阈值
+
+  # 缓存配置
+  cache:
+    enabled: true
+    cache_dir: ".cache"
+    max_cache_size: "1GB"
+    ttl: 86400                     # 缓存有效期（秒）
+
+# ============================================================================
+# 调试配置（与database_research保持一致）
+# ============================================================================
+debug:
+  enabled: false
+  profiling: false
+  memory_profiling: false
+  sql_echo: false                  # 是否打印SQL语句

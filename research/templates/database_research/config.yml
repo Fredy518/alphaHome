@@ -1,0 +1,232 @@
+# AlphaHome 数据库驱动研究项目配置文件
+# 这是数据库驱动量化研究的核心配置文件
+
+# ============================================================================
+# 项目基本信息
+# ============================================================================
+project:
+  name: "数据库驱动因子研究"
+  description: "基于AlphaHome数据库的量化因子研究项目"
+  version: "1.0.0"
+  author: "研究员"
+
+# ============================================================================
+# 数据库配置（可选，会使用AlphaHome主配置）
+# ============================================================================
+# 注意：通常不需要在这里配置数据库连接
+# ResearchContext会自动使用AlphaHome的主配置文件
+# 如果需要覆盖特定参数，可以在这里设置
+
+database:
+  # 连接池配置
+  pool_size: 10
+  max_overflow: 20
+  
+  # 查询优化
+  query_timeout: 30
+  batch_size: 1000
+
+# ============================================================================
+# 研究参数配置
+# ============================================================================
+research:
+  # 股票池配置
+  stock_pool:
+    # 默认股票列表
+    default_symbols:
+      - "000001.SZ"  # 平安银行
+      - "000002.SZ"  # 万科A
+      - "000858.SZ"  # 五粮液
+      - "600000.SH"  # 浦发银行
+      - "600036.SH"  # 招商银行
+      - "600519.SH"  # 贵州茅台
+    
+    # 股票池筛选条件
+    filters:
+      market_cap_min: 1000000000    # 最小市值（元）
+      list_days_min: 252            # 最小上市天数
+      exclude_st: true              # 排除ST股票
+  
+  # 时间范围配置
+  time_range:
+    default_start: "2024-01-01"
+    default_end: "2024-12-31"
+    lookback_days: 252              # 回看天数
+  
+  # 因子计算配置
+  factors:
+    # 移动平均线
+    moving_averages:
+      windows: [5, 10, 20, 60, 120]
+      types: ["sma", "ema"]         # 简单移动平均、指数移动平均
+    
+    # 技术指标
+    technical_indicators:
+      rsi:
+        window: 14
+      macd:
+        fast: 12
+        slow: 26
+        signal: 9
+      bollinger_bands:
+        window: 20
+        std_dev: 2
+    
+    # 成交量指标
+    volume_indicators:
+      volume_ma: [5, 20, 60]
+      volume_ratio: true
+      turnover_rate: true
+    
+    # 价格形态
+    price_patterns:
+      price_momentum: [5, 10, 20]
+      price_reversal: true
+      gap_analysis: true
+
+# ============================================================================
+# 数据处理配置
+# ============================================================================
+data_processing:
+  # 数据清洗
+  cleaning:
+    remove_outliers: true
+    outlier_method: "iqr"          # iqr, zscore, isolation_forest
+    outlier_threshold: 3.0
+    
+    fill_missing: true
+    fill_method: "forward"         # forward, backward, interpolate
+  
+  # 数据标准化
+  normalization:
+    enabled: false
+    method: "zscore"               # zscore, minmax, robust
+    
+  # 数据采样
+  sampling:
+    frequency: "daily"             # daily, weekly, monthly
+    resample_method: "last"        # last, mean, sum
+
+# ============================================================================
+# 分析配置
+# ============================================================================
+analysis:
+  # 统计分析
+  statistics:
+    descriptive_stats: true
+    correlation_analysis: true
+    distribution_analysis: true
+  
+  # 因子分析
+  factor_analysis:
+    ic_analysis: true              # 信息系数分析
+    factor_decay: true             # 因子衰减分析
+    factor_turnover: true          # 因子换手率分析
+  
+  # 回测分析
+  backtest:
+    enabled: false                 # 是否进行简单回测
+    rebalance_freq: "monthly"      # 调仓频率
+    top_quantile: 0.2              # 选股比例
+
+# ============================================================================
+# 输出配置
+# ============================================================================
+output:
+  # 输出目录
+  base_dir: "output"
+  
+  # 子目录结构
+  directories:
+    data: "data"                   # 处理后的数据
+    factors: "factors"             # 因子计算结果
+    analysis: "analysis"           # 分析结果
+    charts: "charts"               # 图表文件
+    reports: "reports"             # 报告文件
+  
+  # 文件格式
+  formats:
+    data_format: "csv"             # csv, parquet, hdf5
+    chart_format: "png"            # png, jpg, svg, pdf
+    report_format: "html"          # html, pdf, markdown
+  
+  # 保存选项
+  save_options:
+    save_raw_data: false           # 是否保存原始数据
+    save_intermediate: true        # 是否保存中间结果
+    save_final_results: true       # 是否保存最终结果
+    compress_files: false          # 是否压缩文件
+
+# ============================================================================
+# 可视化配置
+# ============================================================================
+visualization:
+  # 图表主题
+  theme: "default"                 # default, seaborn, ggplot
+  
+  # 图表尺寸
+  figure_size: [12, 8]
+  dpi: 300
+  
+  # 颜色配置
+  colors:
+    primary: "#1f77b4"
+    secondary: "#ff7f0e"
+    success: "#2ca02c"
+    warning: "#d62728"
+  
+  # 图表类型配置
+  charts:
+    time_series: true
+    correlation_heatmap: true
+    distribution_plots: true
+    factor_ic_plots: true
+
+# ============================================================================
+# 性能配置
+# ============================================================================
+performance:
+  # 并行处理
+  parallel:
+    enabled: true
+    max_workers: 4
+    chunk_size: 100
+  
+  # 内存管理
+  memory:
+    max_memory_usage: "4GB"
+    gc_threshold: 0.8              # 垃圾回收阈值
+  
+  # 缓存配置
+  cache:
+    enabled: true
+    cache_dir: ".cache"
+    max_cache_size: "1GB"
+    ttl: 86400                     # 缓存有效期（秒）
+
+# ============================================================================
+# 日志配置
+# ============================================================================
+logging:
+  level: "INFO"                    # DEBUG, INFO, WARNING, ERROR
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  
+  # 日志文件
+  files:
+    main_log: "logs/research.log"
+    error_log: "logs/error.log"
+    performance_log: "logs/performance.log"
+  
+  # 日志轮转
+  rotation:
+    max_size: "10MB"
+    backup_count: 5
+
+# ============================================================================
+# 调试配置
+# ============================================================================
+debug:
+  enabled: false
+  profiling: false
+  memory_profiling: false
+  sql_echo: false                  # 是否打印SQL语句
