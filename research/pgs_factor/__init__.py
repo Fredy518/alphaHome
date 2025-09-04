@@ -1,21 +1,38 @@
 """
-P/G/S因子计算模块
-================
+P/G/S因子计算模块 - 全新架构
+============================
 
-极简高效的A股P/G/S因子计算系统，基于PIT数据库表的纯SQL实现
+轻量级、高性能的A股P/G/S因子计算系统
 
-模块结构：
-- data_loader.py: 数据加载与预处理
-- database/: 数据库管理和PIT数据处理
-- examples/: 使用示例和工具脚本
+🏗️ 三层数据流架构：
+```
+AlphaHome原始数据 → PIT数据库 → 因子存储
+        ↑              ↑           ↑
+   SourceLoader   PITManager  Production*Calculator
+        ↑              ↑           ↑
+            DataPipeline (统一协调)
+```
 
-核心理念：
-- 无类包装，直接SQL计算
-- 最大化数据库性能
-- 最小化代码复杂度
+🎯 设计原则：
+- 简单胜过复杂
+- 清晰的数据流和职责分离
+- 高性能和可扩展性
+- 统一的架构模式
+
+📦 核心组件：
+- DataPipeline: 统一数据流协调器
+- PITManager: PIT数据转换枢纽
+- SourceLoader: 原始数据加载器
 """
 
-# 纯SQL实现，无需导出任何计算类
-__all__ = []
+# 核心组件导出
+# from .core import PITManager, DataPipeline  # TODO: 暂时注释，等待core模块实现
+# from .data import SourceLoader  # TODO: 暂时注释，等待data模块实现
 
-__version__ = '1.0.0'
+__all__ = [
+    'DataPipeline',    # 统一入口
+    'PITManager',      # PIT数据管理
+    'SourceLoader'     # 数据加载
+]
+
+__version__ = '2.0.0-clean'

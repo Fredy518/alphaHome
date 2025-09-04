@@ -17,6 +17,7 @@
 - [TDD实践指南](./development/tdd_guide.md) - 测试驱动开发指南
 - [贡献指南](./development/contributing.md) - 如何参与项目开发
 - [财务数据处理技术指南](./development/financial_data_processing_guide.md) - 财务数据处理逻辑、边界情况和单位差异处理 🆕
+- [G因子简化改造说明](./development/g_factor_simplification.md) - G因子v1.1版本权重系统简化说明 🆕
 
 ### **🏗️ 架构文档**
 - [系统架构](./architecture/system_overview.md) - 整体架构设计

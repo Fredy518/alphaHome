@@ -434,7 +434,7 @@ CREATE TABLE pgs_factors.pit_income_quarterly (
     ts_code VARCHAR(10) NOT NULL,
     end_date DATE NOT NULL,
     ann_date DATE NOT NULL,
-    data_source VARCHAR(20) NOT NULL,  -- 'report', 'express', 'forecast_direct', 'forecast_calculated'
+    data_source VARCHAR(20) NOT NULL,  -- 'report', 'express', 'forecast'
     year INTEGER,
     quarter INTEGER,
     
@@ -538,11 +538,10 @@ def calculate_smart_ttm_profit(self, ts_code: str, as_of_date: str) -> float:
         SELECT DISTINCT ON (ts_code, end_date)
             ts_code, end_date, ann_date, 
             n_income_attr_p as profit,
-            CASE data_source 
+            CASE data_source
                 WHEN 'report' THEN 1
-                WHEN 'express' THEN 2  
-                WHEN 'forecast_direct' THEN 3
-                WHEN 'forecast_calculated' THEN 4
+                WHEN 'express' THEN 2
+                WHEN 'forecast' THEN 3
                 ELSE 5
             END as priority
         FROM pgs_factors.pit_income_quarterly

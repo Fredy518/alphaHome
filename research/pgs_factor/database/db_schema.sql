@@ -42,39 +42,63 @@ CREATE INDEX idx_p_factor_ranks ON pgs_factors.p_factor(calc_date, rank_gpa, ran
 CREATE INDEX idx_p_factor_created ON pgs_factors.p_factor(created_at);
 
 -- ========================================
--- G因子表
+-- G因子表 (基于README.md规范的完整结构)
 -- ========================================
 DROP TABLE IF EXISTS pgs_factors.g_factor CASCADE;
 CREATE TABLE pgs_factors.g_factor (
-    id SERIAL PRIMARY KEY,
-    ts_code VARCHAR(10) NOT NULL,
-    calc_date DATE NOT NULL,
-    
-    -- G因子核心指标
-    g_score FLOAT,
-    factor_a FLOAT,  -- 惊喜因子
-    factor_b FLOAT,  -- 动量因子
-    rank_a FLOAT,
-    rank_b FLOAT,
-    
-    -- P_score变化
-    p_score_yoy FLOAT,
-    p_score_yoy_pct FLOAT,
-    
-    -- 元数据
-    data_periods INT,  -- 使用的历史数据期数
-    data_quality VARCHAR(10),
-    
+    -- 主键字段
+    ts_code VARCHAR(20) NOT NULL,                    -- 股票代码
+    calc_date DATE NOT NULL,                         -- 计算日期 (PIT截止日期)
+
+    -- PIT时间轴字段
+    ann_date DATE NOT NULL,                          -- 真实公告日期 (保持不变)
+    data_source VARCHAR(20) NOT NULL,                -- 原始数据源标识 (express/forecast/report)
+
+    -- G因子四个子因子原始值
+    g_efficiency_surprise DECIMAL(15,6),             -- 效率惊喜因子
+    g_efficiency_momentum DECIMAL(15,6),             -- 效率动量因子
+    g_revenue_momentum DECIMAL(15,6),                -- 营收动量因子
+    g_profit_momentum DECIMAL(15,6),                 -- 利润动量因子
+
+    -- G因子四个子因子排名 (0-100百分位)
+    rank_es DECIMAL(15,6),                           -- 效率惊喜排名 (0-100)
+    rank_em DECIMAL(15,6),                           -- 效率动量排名 (0-100)
+    rank_rm DECIMAL(15,6),                           -- 营收动量排名 (0-100)
+    rank_pm DECIMAL(15,6),                           -- 利润动量排名 (0-100)
+
+    -- G因子综合评分
+    g_score DECIMAL(15,6),                           -- G因子综合评分 (0-100)
+
+    -- 时效性权重系统
+    data_timeliness_weight DECIMAL(15,6),            -- 数据时效性权重 (express:1.2, forecast:1.1, report:1.0)
+
+    -- 数据质量和状态
+    calculation_status VARCHAR(20) DEFAULT 'success', -- 计算状态 (success/failed/partial)
+
     -- 时间戳
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    
-    -- 唯一约束
-    UNIQUE(ts_code, calc_date)
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+    -- 主键约束
+    CONSTRAINT pk_g_factor PRIMARY KEY (ts_code, calc_date),
+
+    -- 检查约束
+    CONSTRAINT chk_g_factor_calc_status CHECK (calculation_status IN ('success', 'failed', 'partial')),
+    CONSTRAINT chk_g_factor_data_source CHECK (data_source IN ('express', 'forecast', 'report')),
+    CONSTRAINT chk_g_factor_pit_logic CHECK (ann_date <= calc_date) -- PIT原则: 公告日期不能晚于计算日期
 );
 
 -- 创建索引
-CREATE INDEX idx_g_factor_stock_date ON pgs_factors.g_factor(ts_code, calc_date);
-CREATE INDEX idx_g_factor_score ON pgs_factors.g_factor(g_score);
+CREATE INDEX idx_g_factor_ann_date ON pgs_factors.g_factor (ann_date);
+CREATE INDEX idx_g_factor_calc_date ON pgs_factors.g_factor (calc_date);
+CREATE INDEX idx_g_factor_g_score ON pgs_factors.g_factor (g_score DESC);
+CREATE INDEX idx_g_factor_data_source ON pgs_factors.g_factor (data_source);
+CREATE INDEX idx_g_factor_timeliness_weight ON pgs_factors.g_factor (data_timeliness_weight);
+
+-- 复合索引
+CREATE INDEX idx_g_factor_calc_date_g_score ON pgs_factors.g_factor (calc_date, g_score DESC);
+CREATE INDEX idx_g_factor_ts_code_calc_date ON pgs_factors.g_factor (ts_code, calc_date DESC);
+CREATE INDEX idx_g_factor_data_source_calc_date ON pgs_factors.g_factor (data_source, calc_date);
 
 -- ========================================
 -- S因子表
@@ -326,18 +350,39 @@ BEGIN
 END;
 $$ language 'plpgsql';
 
-CREATE TRIGGER update_p_factor_updated_at 
-    BEFORE UPDATE ON pgs_factors.p_factor 
+CREATE TRIGGER update_p_factor_updated_at
+    BEFORE UPDATE ON pgs_factors.p_factor
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
-CREATE TRIGGER update_processing_log_updated_at 
-    BEFORE UPDATE ON pgs_factors.processing_log 
+CREATE TRIGGER update_g_factor_updated_at
+    BEFORE UPDATE ON pgs_factors.g_factor
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_processing_log_updated_at
+    BEFORE UPDATE ON pgs_factors.processing_log
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 -- 添加注释
 COMMENT ON TABLE pgs_factors.p_factor IS 'P因子（盈利能力）数据表';
-COMMENT ON TABLE pgs_factors.g_factor IS 'G因子（成长能力）数据表';
+COMMENT ON TABLE pgs_factors.g_factor IS 'G因子（成长能力）数据表 - 基于P因子历史数据计算，集成时效性权重系统';
 COMMENT ON TABLE pgs_factors.s_factor IS 'S因子（安全能力）数据表';
 COMMENT ON TABLE pgs_factors.quality_metrics IS '数据质量监控指标表';
 COMMENT ON TABLE pgs_factors.processing_log IS '数据处理日志表';
 COMMENT ON VIEW pgs_factors.factor_summary IS 'P/G/S因子综合视图';
+
+-- G因子表字段注释
+COMMENT ON COLUMN pgs_factors.g_factor.ts_code IS '股票代码';
+COMMENT ON COLUMN pgs_factors.g_factor.calc_date IS '计算日期 - PIT截止日期';
+COMMENT ON COLUMN pgs_factors.g_factor.ann_date IS '真实公告日期 - 来源P因子数据的公告时间';
+COMMENT ON COLUMN pgs_factors.g_factor.data_source IS '原始数据源标识 - express/forecast/report';
+COMMENT ON COLUMN pgs_factors.g_factor.g_efficiency_surprise IS '效率惊喜因子 - (ΔP_score_YoY / Std(ΔP_score_YoY)) * Timeliness_Weight';
+COMMENT ON COLUMN pgs_factors.g_factor.g_efficiency_momentum IS '效率动量因子 - ΔP_score_YoY * Timeliness_Weight';
+COMMENT ON COLUMN pgs_factors.g_factor.g_revenue_momentum IS '营收动量因子 - Revenue_Growth_TTM * Timeliness_Weight';
+COMMENT ON COLUMN pgs_factors.g_factor.g_profit_momentum IS '利润动量因子 - Profit_Growth_TTM * Timeliness_Weight';
+COMMENT ON COLUMN pgs_factors.g_factor.rank_es IS '效率惊喜排名 - 0-100百分位';
+COMMENT ON COLUMN pgs_factors.g_factor.rank_em IS '效率动量排名 - 0-100百分位';
+COMMENT ON COLUMN pgs_factors.g_factor.rank_rm IS '营收动量排名 - 0-100百分位';
+COMMENT ON COLUMN pgs_factors.g_factor.rank_pm IS '利润动量排名 - 0-100百分位';
+COMMENT ON COLUMN pgs_factors.g_factor.g_score IS 'G因子综合评分 - 0.25×Rank_ES + 0.25×Rank_EM + 0.25×Rank_RM + 0.25×Rank_PM';
+COMMENT ON COLUMN pgs_factors.g_factor.data_timeliness_weight IS '数据时效性权重 - Express:1.2, Forecast:1.1, Report:1.0';
+COMMENT ON COLUMN pgs_factors.g_factor.calculation_status IS '计算状态 - success/failed/partial';
