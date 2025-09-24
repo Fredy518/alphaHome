@@ -5,7 +5,7 @@ G因子季度并行计算脚本
 支持按季度分割计算，实现"土法"并行
 
 使用方法：
-python scripts/production/g_factor_parallel_by_quarter.py --worker_id 0 --total_workers 16 --quarter 2020Q1 --quarter 2020Q2
+python scripts/production/factor_calculators/g_factor/g_factor_parallel_by_quarter.py --worker_id 0 --total_workers 16 --quarter 2020Q1 --quarter 2020Q2
 """
 
 import sys

@@ -166,7 +166,7 @@ class TushareStockDividendTask(TushareTask):
                     db_connection=self.db,
                     logger=self.logger,
                     additional_params={"fields": ",".join(self.fields or [])},
-                    filter_condition="list_status = 'L'", # 仅获取上市状态的股票
+                    filter_condition="", # 获取全部历史数据
                 )
             else:
                 # 策略2: 增量模式 - 按日期分批

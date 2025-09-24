@@ -193,6 +193,86 @@ async def generate_natural_day_batches(
         raise RuntimeError(f"生成自然日批次失败: {e}") from e
 
 
+async def generate_quarter_range_batches(
+    start_date: str,
+    end_date: str,
+    ts_code: Optional[str] = None,
+    date_format: str = "%Y%m%d",
+    additional_params: Optional[Dict[str, Any]] = None,
+    logger: Optional[logging.Logger] = None,
+) -> List[Dict[str, str]]:
+    """
+    生成基于季度日期范围的批次，每个批次包含季度的开始和结束日期。
+
+    参数:
+        start_date: 开始日期字符串（YYYYMMDD格式）
+        end_date: 结束日期字符串（YYYYMMDD格式）
+        ts_code: 可选的股票代码，如果提供则会添加到每个批次参数中
+        date_format: 日期格式字符串，默认为'%Y%m%d'
+        additional_params: 可选的附加参数字典，将合并到每个批次中
+        logger: 可选的日志记录器
+
+    返回:
+        批次参数列表，每个批次包含'start_date'、'end_date'和'quarter'的字典
+    """
+    _logger = logger or logging.getLogger(__name__)
+    _logger.info(f"生成季度范围批次: {start_date} 到 {end_date}")
+
+    try:
+        # 1. 定义数据源：获取季度范围列表
+        async def get_quarter_ranges_callable() -> List[Dict[str, str]]:
+            quarters = []
+            # 生成季度末日期，然后计算对应的季度首日
+            quarter_ends = pd.date_range(start=start_date, end=end_date, freq="QE")
+            
+            for quarter_end in quarter_ends:
+                # 计算季度首日 (月份-2，日期设为1)
+                quarter_start = quarter_end.replace(day=1, month=quarter_end.month - 2)
+                
+                quarters.append({
+                    "start_date": quarter_start.strftime(date_format),
+                    "end_date": quarter_end.strftime(date_format),
+                    "quarter": f"{quarter_end.year}Q{quarter_end.quarter}"
+                })
+            
+            return quarters
+        
+        quarter_ranges_source = Source.from_callable(get_quarter_ranges_callable)
+
+        # 2. 定义分区策略：每个季度范围一个批次
+        partition_strategy = Partition.by_size(1)
+
+        # 3. 定义映射策略：直接使用季度范围字典
+        def map_quarter_range(batch: List[Dict[str, str]]) -> Dict[str, str]:
+            """将包含单个季度范围的批次转换为参数字典。"""
+            if not batch:
+                return {}
+            return batch[0]  # 直接返回季度范围字典
+
+        map_strategy = Map.with_custom_func(map_quarter_range)
+
+        # 4. 创建 BatchPlanner 实例
+        planner = BatchPlanner(
+            source=quarter_ranges_source,
+            partition_strategy=partition_strategy,
+            map_strategy=map_strategy
+        )
+
+        # 5. 生成批次列表，并添加可选的 ts_code 参数和 additional_params
+        final_additional_params = (additional_params or {}).copy()
+        if ts_code:
+            final_additional_params["ts_code"] = ts_code
+
+        batch_list = await planner.generate(additional_params=final_additional_params)
+
+        _logger.info(f"成功生成 {len(batch_list)} 个季度范围批次")
+        return batch_list
+
+    except Exception as e:
+        _logger.error(f"生成季度范围批次时出错: {e}", exc_info=True)
+        raise RuntimeError(f"生成季度范围批次失败: {e}") from e
+
+
 async def generate_quarter_end_batches(
     start_date: str,
     end_date: str,

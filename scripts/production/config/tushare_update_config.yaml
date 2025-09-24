@@ -1,0 +1,59 @@
+# Tushare 数据源智能增量更新配置文件
+# 用于生产环境的参数配置
+
+# 基本配置
+production:
+  # 并发控制
+  max_workers: 3          # 最大并发进程数，建议根据系统性能调整
+  max_retries: 3          # 单个任务最大重试次数
+  retry_delay: 5          # 重试间隔秒数
+
+  # 日志配置
+  log_level: INFO         # 日志级别: DEBUG, INFO, WARNING, ERROR
+  log_file: logs/tushare_production_update.log  # 日志文件路径
+
+  # 执行控制
+  timeout_minutes: 120    # 单次执行超时时间（分钟）
+  enable_dry_run: false   # 是否启用试运行模式（只显示将要执行的任务，不实际执行）
+
+# 任务筛选配置
+task_filter:
+  # 包含的任务类型
+  include_sources: ["tushare"]  # 只执行 tushare 数据源的任务
+  include_types: ["fetch"]      # 只执行 fetch 类型任务
+
+  # 排除的任务列表（如果需要跳过某些任务）
+  exclude_tasks: []
+    # - "tushare_task_name"  # 示例：排除某个特定任务
+
+# 性能监控配置
+monitoring:
+  enable_performance_log: true   # 启用性能日志
+  enable_task_status_log: true   # 启用任务状态日志
+
+  # 告警阈值
+  alert_thresholds:
+    success_rate: 0.8           # 成功率告警阈值（80%）
+    max_execution_time: 3600    # 单任务最大执行时间（秒）
+
+# 数据库配置（会自动从主配置文件读取）
+database:
+  connection_pool_size: 10      # 数据库连接池大小
+  connection_timeout: 30        # 连接超时时间（秒）
+
+# 网络配置
+network:
+  request_timeout: 60          # HTTP 请求超时时间（秒）
+  max_concurrent_requests: 20   # 最大并发请求数
+
+# 开发环境配置（仅用于开发测试）
+development:
+  max_workers: 1               # 开发环境使用单进程
+  log_level: DEBUG             # 开发环境使用详细日志
+  enable_dry_run: true         # 开发环境默认启用试运行
+
+# 生产环境配置（覆盖基本配置）
+production_override:
+  max_workers: 5               # 生产环境使用更多并发
+  log_level: WARNING           # 生产环境减少日志输出
+  enable_dry_run: false        # 生产环境禁用试运行

@@ -68,7 +68,7 @@ def start_worker_process(worker_id: int, start_year: int, end_year: int, total_w
     if os.name == 'nt':
         # Windows系统 - 使用更简单的命令结构
         title = f"Worker-{worker_id}"
-        cmd = f'python scripts/production/g_factor_parallel_by_year.py --start_year {start_year} --end_year {end_year} --worker_id {worker_id} --total_workers {total_workers}'
+        cmd = f'python scripts/production/factor_calculators/g_factor/g_factor_parallel_by_year.py --start_year {start_year} --end_year {end_year} --worker_id {worker_id} --total_workers {total_workers}'
         
         # 使用os.system，避免复杂的subprocess调用
         system_cmd = f'start "{title}" cmd /k "cd /d {os.getcwd()} && {cmd}"'
@@ -77,7 +77,7 @@ def start_worker_process(worker_id: int, start_year: int, end_year: int, total_w
         # Linux/Mac系统
         cmd = [
             sys.executable,
-            "scripts/production/g_factor_parallel_by_year.py",
+            "scripts/production/factor_calculators/g_factor/g_factor_parallel_by_year.py",
             "--start_year", str(start_year),
             "--end_year", str(end_year),
             "--worker_id", str(worker_id),

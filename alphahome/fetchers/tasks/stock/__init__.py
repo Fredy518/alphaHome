@@ -7,6 +7,8 @@ from .tushare_stock_dailybasic import TushareStockDailyBasicTask
 from .tushare_stock_dividend import TushareStockDividendTask
 from .tushare_stock_factor import TushareStockFactorProTask
 from .tushare_stock_report_rc import TushareStockReportRcTask
+from .tushare_stock_holdernumber import TushareStockHolderNumberTask
+from .tushare_stock_moneyflow import TushareStockMoneyFlowTask
 # from .ifind_stock_basic import iFindStockBasicTask
 
 __all__ = [
@@ -18,5 +20,7 @@ __all__ = [
     "TushareStockFactorProTask",
     "TushareStockChipsTask",
     "TushareStockDividendTask",
+    "TushareStockHolderNumberTask",
+    "TushareStockMoneyFlowTask",
     # "iFindStockBasicTask",
 ]

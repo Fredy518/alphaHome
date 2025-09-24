@@ -1,11 +1,11 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-G因子季度并行计算启动器
+P因子季度并行计算启动器
 自动启动多个终端窗口，每个负责不同季度的计算
 
 使用方法：
-python scripts/production/start_parallel_g_factor_calculation_quarterly.py --start_year 2020 --end_year 2024 --workers 16
+python scripts/production/factor_calculators/p_factor/start_parallel_p_factor_calculation_quarterly.py --start_year 2020 --end_year 2024 --workers 16
 """
 
 import argparse
@@ -115,14 +115,14 @@ def start_worker_process(worker_id: int, quarters: List[Tuple[int, int]], total_
     """启动单个工作进程"""
     if os.name == 'nt':
         # Windows系统 - 使用更简单的命令结构
-        title = f"G-Factor-Q-Worker-{worker_id}"
+        title = f"P-Factor-Q-Worker-{worker_id}"
         
         # 构建季度参数
         quarter_args = []
         for year, quarter in quarters:
             quarter_args.extend(["--quarter", f"{year}Q{quarter}"])
         
-        cmd = f'python scripts/production/g_factor_parallel_by_quarter.py --worker_id {worker_id} --total_workers {total_workers} {" ".join(quarter_args)}'
+        cmd = f'python scripts/production/factor_calculators/p_factor/p_factor_parallel_by_quarter.py --worker_id {worker_id} --total_workers {total_workers} {" ".join(quarter_args)}'
         
         # 使用os.system，避免复杂的subprocess调用
         system_cmd = f'start "{title}" cmd /k "cd /d {os.getcwd()} && {cmd}"'
@@ -135,19 +135,19 @@ def start_worker_process(worker_id: int, quarters: List[Tuple[int, int]], total_
         
         cmd = [
             sys.executable,
-            "scripts/production/g_factor_parallel_by_quarter.py",
+            "scripts/production/factor_calculators/p_factor/p_factor_parallel_by_quarter.py",
             "--worker_id", str(worker_id),
             "--total_workers", str(total_workers)
         ] + quarter_args
         
         subprocess.Popen([
-            "gnome-terminal", "--title", f"G-Factor-Q-Worker-{worker_id}",
+            "gnome-terminal", "--title", f"P-Factor-Q-Worker-{worker_id}",
             "--", "bash", "-c", f"cd {os.getcwd()} && {' '.join(cmd)}; exec bash"
         ])
 
 
 def main():
-    parser = argparse.ArgumentParser(description='G因子季度并行计算启动器')
+    parser = argparse.ArgumentParser(description='P因子季度并行计算启动器')
     parser.add_argument('--start_year', type=int, default=2020, help='开始年份 (默认: 2020)')
     parser.add_argument('--end_year', type=int, default=2024, help='结束年份 (默认: 2024)')
     parser.add_argument('--workers', type=int, default=16, help='工作进程数 (默认: 16)')
@@ -174,7 +174,7 @@ def main():
         print(f"🔧 自动调整工作进程数为: {total_quarters}")
         args.workers = total_quarters
     
-    print("🚀 G因子季度并行计算启动器")
+    print("🚀 P因子季度并行计算启动器")
     print("=" * 50)
     print(f"📅 计算年份范围: {args.start_year}-{args.end_year}")
     print(f"📊 总季度数: {total_quarters}")
@@ -213,10 +213,10 @@ def main():
     print("📊 监控说明:")
     print("   - 每个终端窗口显示一个工作进程的进度")
     print("   - 可以随时关闭单个终端窗口来停止对应进程")
-    print("   - 所有进程完成后，G因子数据将保存到数据库")
+    print("   - 所有进程完成后，P因子数据将保存到数据库")
     print()
     print("💡 性能预期:")
-    estimated_time_per_quarter = 0.5  # 假设每季度需要30分钟
+    estimated_time_per_quarter = 0.4  # 假设每季度需要24分钟
     total_estimated_time = total_quarters * estimated_time_per_quarter / args.workers
     print(f"   - 预计总耗时: {total_estimated_time:.1f}小时 (并行)")
     print(f"   - 串行耗时: {total_quarters * estimated_time_per_quarter:.1f}小时")

@@ -67,19 +67,44 @@ class PGSFactorSystem:
         return logger
     
     def sync_pit_data(self, mode: str = 'incremental', sources: List[str] = None):
-        """同步PIT数据"""
-        self.logger.info(f"开始同步PIT数据 - 模式: {mode}")
-        
-        if sources is None:
-            sources = ['report', 'express', 'forecast']
-        
-        result = self.pipeline.sync_pit_data(
-            sources=sources,
-            mode=mode
-        )
-        
-        self.logger.info(f"PIT数据同步完成: {result}")
-        return result
+        """同步PIT数据
+
+        注意：此方法已迁移到生产脚本系统
+        新位置：scripts/production/data_updaters/pit/pit_data_update_production.py
+        """
+        self.logger.warning("⚠️  PIT数据同步功能已迁移到生产脚本系统")
+        self.logger.warning("   新位置: scripts/production/data_updaters/pit/")
+        self.logger.warning("   建议使用: python scripts/production/data_updaters/pit/pit_data_update_production.py")
+
+        # 调用新的生产脚本
+        import subprocess
+        import sys
+        import os
+
+        try:
+            # 构建命令
+            cmd = [
+                sys.executable,
+                os.path.join(os.path.dirname(os.path.dirname(__file__)), 'scripts', 'production', 'data_updaters', 'pit', 'pit_data_update_production.py'),
+                '--target', 'all',
+                '--mode', mode
+            ]
+
+            self.logger.info(f"执行命令: {' '.join(cmd)}")
+
+            # 执行命令
+            result = subprocess.run(cmd, capture_output=True, text=True, cwd=os.path.dirname(os.path.dirname(__file__)))
+
+            if result.returncode == 0:
+                self.logger.info("PIT数据同步成功完成")
+                return {"status": "success", "message": "PIT数据同步成功"}
+            else:
+                self.logger.error(f"PIT数据同步失败: {result.stderr}")
+                return {"status": "error", "message": result.stderr}
+
+        except Exception as e:
+            self.logger.error(f"PIT数据同步异常: {e}")
+            return {"status": "error", "message": str(e)}
     
     def calculate_factors(self, calc_date: str, factors: List[str] = None, stocks: List[str] = None):
         """计算因子"""
