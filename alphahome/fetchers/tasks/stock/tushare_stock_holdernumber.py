@@ -101,34 +101,6 @@ class TushareStockHolderNumberTask(TushareTask):
     # 8. 验证模式配置 - 使用过滤模式自动移除不符合验证规则的数据
     validation_mode = "filter"  # 强制执行验证规则，过滤不合格数据
 
-    def _expand_to_quarter_boundaries(self, start_date: str, end_date: str) -> tuple[str, str]:
-        """将日期扩展到季度边界
-        
-        Args:
-            start_date: 开始日期 (YYYYMMDD)
-            end_date: 结束日期 (YYYYMMDD)
-            
-        Returns:
-            tuple: (quarter_start, quarter_end) 扩展后的季度边界日期
-        """
-        import pandas as pd
-        
-        start_dt = pd.to_datetime(start_date, format='%Y%m%d')
-        end_dt = pd.to_datetime(end_date, format='%Y%m%d')
-        
-        # 扩展开始日期到季度初
-        quarter_start = pd.Timestamp(year=start_dt.year, month=((start_dt.month-1)//3)*3+1, day=1)
-        
-        # 扩展结束日期到季度末
-        quarter_num = (end_dt.month-1)//3 + 1
-        if quarter_num == 4:
-            quarter_end = pd.Timestamp(year=end_dt.year, month=12, day=31)
-        else:
-            next_quarter_start = pd.Timestamp(year=end_dt.year, month=quarter_num*3+1, day=1)
-            quarter_end = next_quarter_start - pd.Timedelta(days=1)
-            
-        return quarter_start.strftime('%Y%m%d'), quarter_end.strftime('%Y%m%d')
-
     async def get_batch_list(self, **kwargs) -> List[Dict]:
         """使用 BatchPlanner 生成批处理参数列表
 
@@ -201,14 +173,13 @@ class TushareStockHolderNumberTask(TushareTask):
                         "end_date": end_date,
                         "fields": ",".join(self.fields or [])
                     }]
-                else:  # 长期更新，扩展到季度边界后分批
-                    expanded_start, expanded_end = self._expand_to_quarter_boundaries(start_date, end_date)
+                else:  # 长期更新，使用季度分批（自动扩展到季度边界）
                     self.logger.info(
-                        f"增量模式：时间跨度 {days_span} 天 >= 30天，扩展到季度边界 {expanded_start} - {expanded_end} 后分批"
+                        f"增量模式：时间跨度 {days_span} 天 >= 30天，使用季度分批（将自动扩展到季度边界）"
                     )
                     return await generate_quarter_range_batches(
-                        start_date=expanded_start,
-                        end_date=expanded_end,
+                        start_date=start_date,
+                        end_date=end_date,
                         logger=self.logger,
                         additional_params={"fields": ",".join(self.fields or [])}
                     )

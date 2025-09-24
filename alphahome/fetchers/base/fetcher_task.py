@@ -256,6 +256,9 @@ class FetcherTask(BaseTask, ABC):
             if self.end_date:
                 kwargs['end_date'] = self.end_date
 
+            # 确保 update_type 被传递给 get_batch_list
+            kwargs['update_type'] = self.update_type
+
             # 将计算出的日期范围和 kwargs 合并，传递给 get_batch_list
             batch_gen_params = {**kwargs, **{"start_date": start_date, "end_date": end_date}}
             batches = await self.get_batch_list(**batch_gen_params)

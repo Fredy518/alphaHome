@@ -193,6 +193,105 @@ async def generate_natural_day_batches(
         raise RuntimeError(f"生成自然日批次失败: {e}") from e
 
 
+async def generate_month_range_batches(
+    start_date: str,
+    end_date: str,
+    ts_code: Optional[str] = None,
+    date_format: str = "%Y%m%d",
+    additional_params: Optional[Dict[str, Any]] = None,
+    logger: Optional[logging.Logger] = None,
+) -> List[Dict[str, str]]:
+    """
+    生成基于月份日期范围的批次，每个批次包含月份的开始和结束日期。
+
+    参数:
+        start_date: 开始日期字符串（YYYYMMDD格式）
+        end_date: 结束日期字符串（YYYYMMDD格式）
+        ts_code: 可选的股票代码，如果提供则会添加到每个批次参数中
+        date_format: 日期格式字符串，默认为'%Y%m%d'
+        additional_params: 可选的附加参数字典，将合并到每个批次中
+        logger: 可选的日志记录器
+
+    返回:
+        批次参数列表，每个批次包含'start_date'、'end_date'和'month'的字典
+    """
+    _logger = logger or logging.getLogger(__name__)
+    _logger.info(f"生成月份范围批次: {start_date} 到 {end_date} (将扩展到完整月份边界)")
+
+    try:
+        # 1. 定义数据源：获取月份范围列表
+        async def get_month_ranges_callable() -> List[Dict[str, str]]:
+            months = []
+
+            # 扩展start_date到所在月份的月初，确保包含起始月份
+            start_dt = pd.to_datetime(start_date, format='%Y%m%d')
+            start_month_begin = pd.Timestamp(year=start_dt.year, month=start_dt.month, day=1)
+            extended_start_date = start_month_begin.strftime('%Y%m%d')
+
+            # 扩展end_date到所在月份的月末，确保包含当前月份
+            end_dt = pd.to_datetime(end_date, format='%Y%m%d')
+            if end_dt.month == 12:
+                next_month_start = pd.Timestamp(year=end_dt.year+1, month=1, day=1)
+            else:
+                next_month_start = pd.Timestamp(year=end_dt.year, month=end_dt.month+1, day=1)
+            end_month_end = next_month_start - pd.Timedelta(days=1)
+            extended_end_date = end_month_end.strftime('%Y%m%d')
+
+            # 记录扩展后的日期范围
+            if extended_start_date != start_date or extended_end_date != end_date:
+                _logger.info(f"日期已扩展到月份边界: {extended_start_date} 到 {extended_end_date}")
+
+            # 使用扩展后的日期生成月份末日期
+            month_ends = pd.date_range(start=extended_start_date, end=extended_end_date, freq="ME")
+
+            for month_end in month_ends:
+                # 计算月份首日
+                month_start = month_end.replace(day=1)
+
+                months.append({
+                    "start_date": month_start.strftime(date_format),
+                    "end_date": month_end.strftime(date_format),
+                    "month": f"{month_end.year}{month_end.month:02d}"
+                })
+
+            return months
+
+        month_ranges_source = Source.from_callable(get_month_ranges_callable)
+
+        # 2. 定义分区策略：每个月份范围一个批次
+        partition_strategy = Partition.by_size(1)
+
+        # 3. 定义映射策略：直接使用月份范围字典
+        def map_month_range(batch: List[Dict[str, str]]) -> Dict[str, str]:
+            """将包含单个月份范围的批次转换为参数字典。"""
+            if not batch:
+                return {}
+            return batch[0]  # 直接返回月份范围字典
+
+        map_strategy = Map.with_custom_func(map_month_range)
+
+        # 4. 创建 BatchPlanner 实例
+        planner = BatchPlanner(
+            source=month_ranges_source,
+            partition_strategy=partition_strategy,
+            map_strategy=map_strategy
+        )
+
+        # 5. 生成批次列表，并添加可选的 ts_code 参数和 additional_params
+        final_additional_params = (additional_params or {}).copy()
+        if ts_code:
+            final_additional_params["ts_code"] = ts_code
+
+        batch_list = await planner.generate(additional_params=final_additional_params)
+
+        _logger.info(f"成功生成 {len(batch_list)} 个月份范围批次")
+        return batch_list
+
+    except Exception as e:
+        _logger.error(f"生成月份范围批次时出错: {e}", exc_info=True)
+        raise RuntimeError(f"生成月份范围批次失败: {e}") from e
+
+
 async def generate_quarter_range_batches(
     start_date: str,
     end_date: str,
@@ -216,14 +315,35 @@ async def generate_quarter_range_batches(
         批次参数列表，每个批次包含'start_date'、'end_date'和'quarter'的字典
     """
     _logger = logger or logging.getLogger(__name__)
-    _logger.info(f"生成季度范围批次: {start_date} 到 {end_date}")
+    _logger.info(f"生成季度范围批次: {start_date} 到 {end_date} (将扩展到完整季度边界)")
 
     try:
         # 1. 定义数据源：获取季度范围列表
         async def get_quarter_ranges_callable() -> List[Dict[str, str]]:
             quarters = []
-            # 生成季度末日期，然后计算对应的季度首日
-            quarter_ends = pd.date_range(start=start_date, end=end_date, freq="QE")
+            
+            # 扩展start_date到所在季度的季度初，确保包含起始季度
+            start_dt = pd.to_datetime(start_date, format='%Y%m%d')
+            start_quarter_num = (start_dt.month - 1) // 3 + 1
+            start_quarter_begin = pd.Timestamp(year=start_dt.year, month=(start_quarter_num-1)*3+1, day=1)
+            extended_start_date = start_quarter_begin.strftime('%Y%m%d')
+            
+            # 扩展end_date到所在季度的季度末，确保包含当前季度
+            end_dt = pd.to_datetime(end_date, format='%Y%m%d')
+            end_quarter_num = (end_dt.month - 1) // 3 + 1
+            if end_quarter_num == 4:
+                end_quarter_end = pd.Timestamp(year=end_dt.year, month=12, day=31)
+            else:
+                next_quarter_start = pd.Timestamp(year=end_dt.year, month=end_quarter_num*3+1, day=1)
+                end_quarter_end = next_quarter_start - pd.Timedelta(days=1)
+            extended_end_date = end_quarter_end.strftime('%Y%m%d')
+            
+            # 记录扩展后的日期范围
+            if extended_start_date != start_date or extended_end_date != end_date:
+                _logger.info(f"日期已扩展到季度边界: {extended_start_date} 到 {extended_end_date}")
+            
+            # 使用扩展后的日期生成季度末日期
+            quarter_ends = pd.date_range(start=extended_start_date, end=extended_end_date, freq="QE")
             
             for quarter_end in quarter_ends:
                 # 计算季度首日 (月份-2，日期设为1)

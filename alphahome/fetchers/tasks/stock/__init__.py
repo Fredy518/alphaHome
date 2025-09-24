@@ -9,6 +9,9 @@ from .tushare_stock_factor import TushareStockFactorProTask
 from .tushare_stock_report_rc import TushareStockReportRcTask
 from .tushare_stock_holdernumber import TushareStockHolderNumberTask
 from .tushare_stock_moneyflow import TushareStockMoneyFlowTask
+from .tushare_stock_limitlist import TushareStockLimitListTask
+from .tushare_stock_margin import TushareStockMarginTask
+from .tushare_stock_margindetail import TushareStockMarginDetailTask
 # from .ifind_stock_basic import iFindStockBasicTask
 
 __all__ = [
@@ -22,5 +25,8 @@ __all__ = [
     "TushareStockDividendTask",
     "TushareStockHolderNumberTask",
     "TushareStockMoneyFlowTask",
+    "TushareStockLimitListTask",
+    "TushareStockMarginTask",
+    "TushareStockMarginDetailTask",
     # "iFindStockBasicTask",
 ]
