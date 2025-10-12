@@ -122,7 +122,10 @@ class TushareDataTransformer:
         """
         # 检查 self.task 是否具有 transformations 属性
         if not hasattr(self.task, "transformations") or not self.task.transformations:
+            self.logger.debug("任务没有定义transformations，跳过转换")
             return data
+
+        self.logger.debug(f"开始应用 {len(self.task.transformations)} 个转换规则")
 
         for column, transform_func in self.task.transformations.items():
             if column in data.columns:
@@ -134,9 +137,23 @@ class TushareDataTransformer:
                     # 定义一个安全的转换函数，处理np.nan值
                     def safe_transform(x):
                         if pd.isna(x):
-                            return np.nan  # 保持np.nan
+                            # 对于文本字段，保持为None而不是np.nan，避免PostgreSQL类型错误
+                            # 检查schema_def来确定是否为文本字段
+                            if hasattr(self.task, 'schema_def') and column in self.task.schema_def:
+                                col_def = self.task.schema_def[column]
+                                col_type = col_def.get('type', '').upper()
+                                if 'VARCHAR' in col_type or 'TEXT' in col_type:
+                                    return None  # 文本字段使用None
+                            return np.nan  # 其他字段保持np.nan
                         try:
-                            return transform_func(x)  # 应用原始转换
+                            result = transform_func(x)  # 应用原始转换
+                            # 如果转换结果是None，确保文本字段返回None而不是np.nan
+                            if result is None and hasattr(self.task, 'schema_def') and column in self.task.schema_def:
+                                col_def = self.task.schema_def[column]
+                                col_type = col_def.get('type', '').upper()
+                                if 'VARCHAR' in col_type or 'TEXT' in col_type:
+                                    return None
+                            return result
                         except Exception as e:
                             self.logger.warning(
                                 f"转换值 '{x}' (类型: {type(x)}) 到列 '{column}' 时失败: {str(e)}"
@@ -147,13 +164,23 @@ class TushareDataTransformer:
                     original_dtype = data[column].dtype
                     data[column] = data[column].apply(safe_transform)
 
-                    # 尝试恢复原始数据类型
+                    # 尝试恢复原始数据类型，但不恢复文本字段
                     try:
                         if (
                             data[column].dtype == "object"
                             and original_dtype != "object"
                         ):
-                            data[column] = pd.to_numeric(data[column], errors="coerce")
+                            # 检查是否为文本字段，如果是则不恢复类型
+                            should_restore_type = True
+                            if hasattr(self.task, 'schema_def') and column in self.task.schema_def:
+                                col_def = self.task.schema_def[column]
+                                col_type = col_def.get('type', '').upper()
+                                if 'VARCHAR' in col_type or 'TEXT' in col_type:
+                                    should_restore_type = False
+                                    self.logger.debug(f"列 '{column}' 是文本字段，跳过类型恢复")
+
+                            if should_restore_type:
+                                data[column] = pd.to_numeric(data[column], errors="coerce")
                     except Exception as type_e:
                         self.logger.debug(
                             f"尝试恢复列 '{column}' 类型失败: {str(type_e)}"

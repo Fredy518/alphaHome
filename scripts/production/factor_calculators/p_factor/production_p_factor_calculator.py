@@ -347,16 +347,20 @@ class ProductionPFactorCalculator:
 
         try:
             # 查询已有数据的日期
-            query = """
-            SELECT DISTINCT calc_date
-            FROM pgs_factors.p_factor
-            WHERE calc_date = ANY(%s)
-            """
+            if dates:
+                placeholders = ','.join(['%s'] * len(dates))
+                query = f"""
+                SELECT DISTINCT calc_date
+                FROM pgs_factors.p_factor
+                WHERE calc_date IN ({placeholders})
+                """
 
-            results = self.db_manager.fetch_sync(query, (dates,))
-            existing_dates = {row[0].strftime('%Y-%m-%d') for row in results}
+                results = self.db_manager.fetch_sync(query, dates)
+                existing_dates = {row[0].strftime('%Y-%m-%d') for row in results}
 
-            missing_dates = [date for date in dates if date not in existing_dates]
+                missing_dates = [date for date in dates if date not in existing_dates]
+            else:
+                missing_dates = []
 
             self.logger.info(f"总日期: {len(dates)}, 已有数据: {len(existing_dates)}, 缺失数据: {len(missing_dates)}")
 
@@ -376,6 +380,17 @@ class ProductionPFactorCalculator:
             在交易股票代码列表
         """
         try:
+            # 直接使用psycopg2进行同步查询，避免DBManager的复杂性
+            import psycopg2
+
+            connection_string = self.config_manager.get_database_url()
+            if not connection_string:
+                self.logger.error("无法获取数据库连接字符串")
+                return []
+
+            conn = psycopg2.connect(connection_string)
+            cursor = conn.cursor()
+
             query = """
             SELECT ts_code
             FROM tushare.stock_basic
@@ -384,8 +399,12 @@ class ProductionPFactorCalculator:
             ORDER BY ts_code
             """
 
-            results = self.db_manager.fetch_sync(query, (calc_date, calc_date))
+            cursor.execute(query, (calc_date, calc_date))
+            results = cursor.fetchall()
             stock_codes = [row[0] for row in results]
+
+            cursor.close()
+            conn.close()
 
             self.logger.info(f"{calc_date} 获取到 {len(stock_codes)} 只在交易股票")
             return stock_codes

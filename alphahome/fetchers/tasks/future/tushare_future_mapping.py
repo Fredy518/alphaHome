@@ -2,123 +2,94 @@
 # -*- coding: utf-8 -*-
 
 """
-Tushare 融资融券交易明细数据任务
+Tushare 期货主力与连续合约映射数据任务
 
-接口文档: https://tushare.pro/document/2?doc_id=59
+接口文档: https://tushare.pro/document/2?doc_id=189
 数据说明:
-- 获取融资融券每日交易明细数据
-- 包含各股票的融资融券交易详情
+- 获取期货主力（或连续）合约与月合约映射数据
+- 支持按日期范围查询合约映射关系
 - 支持多种批处理策略:
   1. 历史全量模式: 按月份范围分批获取
   2. 手动增量模式: 按月份范围分批获取
-  3. 智能增量模式: 按交易日分批获取
+  3. 智能增量模式: 直接单一批次获取指定日期范围
 
-权限要求: 需要至少2000积分，单次请求最大返回6000行数据
+权限要求: 需要至少2000积分，单次请求最大返回2000行数据
 """
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
 import asyncio
 
 from ...sources.tushare.tushare_task import TushareTask
-from ...sources.tushare.batch_utils import (
-    generate_month_range_batches,
-    generate_single_date_batches
-)
+from ...sources.tushare.batch_utils import generate_month_range_batches
 from ....common.task_system.task_decorator import task_register
 
 logger = logging.getLogger(__name__)
 
 @task_register()
-class TushareStockMarginDetailTask(TushareTask):
-    """获取融资融券交易明细数据 (margin_detail)
+class TushareFutureMappingTask(TushareTask):
+    """获取期货主力与连续合约映射数据 (fut_mapping)
 
     实现要求:
     - 历史全量模式: 按月份范围分批获取
     - 手动增量模式: 按月份范围分批获取
-    - 智能增量模式: 按交易日分批获取
+    - 智能增量模式: 直接单一批次使用start_date和end_date更新
     """
 
     # 1. 核心属性
-    name = "tushare_stock_margindetail"
-    description = "获取融资融券每日交易明细数据"
-    table_name = "stock_margindetail"
+    name = "tushare_future_mapping"
+    description = "获取期货主力与连续合约映射数据"
+    table_name = "future_mapping"
     primary_keys = ["ts_code", "trade_date"]
-    date_column = "trade_date"  # 交易日期
-    default_start_date = "20100301"  # 默认开始日期
+    date_column = "trade_date"  # 起始日期
+    default_start_date = "20010101"  # 默认开始日期
     data_source = "tushare"
-    domain = "stock"  # 业务域标识
+    domain = "future"  # 业务域标识
     smart_lookback_days = 3  # 智能增量模式下，回看3天
 
     # --- 代码级默认配置 (会被 config.json 覆盖) --- #
-    default_concurrent_limit = 1  # 降低并发，避免频率限制
-    default_page_size = 6000  # API限制单次最大6000条
+    default_concurrent_limit = 3  # 降低并发，避免频率限制
+    default_page_size = 2000  # API限制单次最大2000条
 
     # 2. TushareTask 特有属性
-    api_name = "margin_detail"
-    # Tushare margin_detail 接口返回的字段
+    api_name = "fut_mapping"
+    # Tushare fut_mapping 接口返回的字段
     fields = [
-        "trade_date",     # 交易日期
-        "ts_code",        # TS股票代码
-        "rzye",           # 融资余额(元)
-        "rqye",           # 融券余额(元)
-        "rzmre",          # 融资买入额(元)
-        "rqyl",           # 融券余量(股)
-        "rzche",          # 融资偿还额(元)
-        "rqchl",          # 融券偿还量(股)
-        "rqmcl",          # 融券卖出量(股)
-        "rzrqye",         # 融资融券余额(元)
+        "ts_code",          # 连续合约代码
+        "trade_date",       # 起始日期
+        "mapping_ts_code",  # 期货合约代码
     ]
 
     # 3. 列名映射 (API字段名与数据库列名一致，为空)
     column_mapping = {}
 
     # 4. 数据类型转换
-    transformations = {
-        "rzye": float,
-        "rqye": float,
-        "rzmre": float,
-        "rqyl": float,
-        "rzche": float,
-        "rqchl": float,
-        "rqmcl": float,
-        "rzrqye": float,
-    }
+    transformations = {}
 
     # 5. 数据库表结构
     schema_def = {
+        "ts_code": {"type": "VARCHAR(20)", "constraints": "NOT NULL"},
         "trade_date": {"type": "DATE", "constraints": "NOT NULL"},
-        "ts_code": {"type": "VARCHAR(15)", "constraints": "NOT NULL"},
-        "rzye": {"type": "NUMERIC(20,2)"},        # 融资余额(元)
-        "rqye": {"type": "NUMERIC(20,2)"},        # 融券余额(元)
-        "rzmre": {"type": "NUMERIC(20,2)"},       # 融资买入额(元)
-        "rqyl": {"type": "NUMERIC(20,2)"},        # 融券余量(股)
-        "rzche": {"type": "NUMERIC(20,2)"},       # 融资偿还额(元)
-        "rqchl": {"type": "NUMERIC(20,2)"},       # 融券偿还量(股)
-        "rqmcl": {"type": "NUMERIC(20,2)"},       # 融券卖出量(股)
-        "rzrqye": {"type": "NUMERIC(20,2)"},      # 融资融券余额(元)
+        "mapping_ts_code": {"type": "VARCHAR(20)"},  # 映射的期货合约代码
         # update_time 会自动添加
     }
 
     # 6. 自定义索引
     indexes = [
-        {"name": "idx_stock_margindetail_trade_date", "columns": "trade_date"},
-        {"name": "idx_stock_margindetail_ts_code", "columns": "ts_code"},
-        {"name": "idx_stock_margindetail_rzrqye", "columns": "rzrqye"},  # 融资融券余额索引
-        {"name": "idx_stock_margindetail_update_time", "columns": "update_time"},
+        {"name": "idx_future_mapping_ts_code", "columns": "ts_code"},
+        {"name": "idx_future_mapping_trade_date", "columns": "trade_date"},
+        {"name": "idx_future_mapping_mapping_ts_code", "columns": "mapping_ts_code"},
+        {"name": "idx_future_mapping_update_time", "columns": "update_time"},
     ]
 
     # 7. 数据验证规则
     validations = [
-        (lambda df: df['ts_code'].notna(), "股票代码不能为空"),
-        (lambda df: df['trade_date'].notna(), "交易日期不能为空"),
-        (lambda df: df['rzye'] >= 0, "融资余额必须非负"),
-        (lambda df: df['rqye'] >= 0, "融券余额必须非负"),
-        (lambda df: df['rzrqye'] >= 0, "融资融券余额必须非负"),
-        (lambda df: df['rqyl'] >= 0, "融券余量必须非负"),
+        (lambda df: df['ts_code'].notna(), "连续合约代码不能为空"),
+        (lambda df: df['trade_date'].notna(), "起始日期不能为空"),
+        (lambda df: df['mapping_ts_code'].notna(), "映射合约代码不能为空"),
     ]
 
     # 8. 验证模式配置 - 使用报告模式记录验证结果
@@ -130,7 +101,7 @@ class TushareStockMarginDetailTask(TushareTask):
         策略说明:
         1. 历史全量模式: 按月份范围分批获取
         2. 手动增量模式: 按月份范围分批获取
-        3. 智能增量模式: 按交易日分批获取
+        3. 智能增量模式: 直接单一批次使用start_date和end_date更新
 
         Args:
             **kwargs: 包含start_date, end_date, update_type等参数
@@ -153,7 +124,7 @@ class TushareStockMarginDetailTask(TushareTask):
         try:
             if is_full_mode:
                 # 策略1: 历史全量模式 - 按月份范围分批获取
-                self.logger.info(f"历史全量模式：按月份范围分批获取融资融券明细数据")
+                self.logger.info(f"历史全量模式：按月份范围分批获取期货映射数据")
                 return await generate_month_range_batches(
                     start_date=start_date,
                     end_date=end_date,
@@ -167,7 +138,7 @@ class TushareStockMarginDetailTask(TushareTask):
                     latest_db_date = await self.get_latest_date()
                     if latest_db_date:
                         # 从数据库最新日期前3天开始获取，确保覆盖可能遗漏的数据
-                        start_date = (latest_db_date - timedelta(days=self.smart_lookback_days)).strftime("%Y%m%d")
+                        start_date = (latest_db_date - pd.Timedelta(days=self.smart_lookback_days)).strftime("%Y%m%d")
                         end_date = current_date
                         self.logger.info(
                             f"智能增量模式：从数据库最新日期({latest_db_date.strftime('%Y%m%d')})前{self.smart_lookback_days}天开始获取: {start_date} 到 {end_date}"
@@ -180,15 +151,12 @@ class TushareStockMarginDetailTask(TushareTask):
                             f"智能增量模式：未找到数据库最新日期，使用默认范围: {start_date} 到 {end_date}"
                         )
 
-                    self.logger.info(f"智能增量模式：按交易日分批获取融资融券明细数据")
-                    return await generate_single_date_batches(
-                        start_date=start_date,
-                        end_date=end_date,
-                        date_field="trade_date",
-                        logger=self.logger,
-                        exchange=kwargs.get("exchange", "SSE"),
-                        additional_params={"fields": ",".join(self.fields or [])}
-                    )
+                    self.logger.info(f"智能增量模式：直接单一批次获取期货映射数据")
+                    return [{
+                        "start_date": start_date,
+                        "end_date": end_date,
+                        "fields": ",".join(self.fields or [])
+                    }]
                 else:
                     # 手动增量模式：按月份范围分批获取
                     if not start_date or not end_date:
@@ -226,4 +194,4 @@ class TushareStockMarginDetailTask(TushareTask):
 
 
 # 导出任务类
-__all__ = ["TushareStockMarginDetailTask"]
+__all__ = ["TushareFutureMappingTask"]

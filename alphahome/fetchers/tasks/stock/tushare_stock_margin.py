@@ -155,15 +155,14 @@ class TushareStockMarginTask(TushareTask):
             else:
                 # 增量模式处理
                 if update_type == "smart":
-                    # 智能增量模式：使用数据库最新日期 - 回看日期的范围
+                    # 智能增量模式：从上次更新日期前3天开始获取，确保覆盖可能遗漏的数据
                     latest_db_date = await self.get_latest_date()
                     if latest_db_date:
-                        # 计算回看日期：最新日期 - 回看天数
-                        lookback_date = latest_db_date - timedelta(days=self.smart_lookback_days)
-                        start_date = lookback_date.strftime("%Y%m%d")
-                        end_date = latest_db_date.strftime("%Y%m%d")
+                        # 从数据库最新日期前3天开始获取，确保覆盖可能遗漏的数据
+                        start_date = (latest_db_date - timedelta(days=self.smart_lookback_days)).strftime("%Y%m%d")
+                        end_date = current_date
                         self.logger.info(
-                            f"智能增量模式：使用数据库最新日期({latest_db_date.strftime('%Y%m%d')}) - 回看{self.smart_lookback_days}天的范围: {start_date} 到 {end_date}"
+                            f"智能增量模式：从数据库最新日期({latest_db_date.strftime('%Y%m%d')})前{self.smart_lookback_days}天开始获取: {start_date} 到 {end_date}"
                         )
                     else:
                         # 如果没有最新日期，使用默认起始日期到当前日期

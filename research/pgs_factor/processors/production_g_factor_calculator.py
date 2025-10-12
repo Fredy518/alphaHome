@@ -836,11 +836,15 @@ class ProductionGFactorCalculator:
         # 基于逐日统计计算成功/失败日期数
         successful_dates = 0
         failed_dates = 0
+        success_threshold = 0.95  # 成功率阈值95%
+        
         for d, s in per_date_stats.items():
             if s['total'] == 0:
                 # 无样本的日期既不算成功也不算失败
                 continue
-            if s['failed'] == 0 and s['success'] > 0:
+            
+            success_rate = s['success'] / s['total'] if s['total'] > 0 else 0
+            if success_rate >= success_threshold:
                 successful_dates += 1
             else:
                 failed_dates += 1
@@ -960,7 +964,7 @@ class ProductionGFactorCalculator:
             query = """
             SELECT DISTINCT calc_date
             FROM pgs_factors.g_factor
-            WHERE calc_date = ANY(%s)
+            WHERE calc_date = ANY(%s::date[])
             """
 
             result = self.context.query_dataframe(query, (dates,))

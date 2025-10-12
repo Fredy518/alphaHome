@@ -17,6 +17,29 @@ from datetime import datetime
 from typing import List, Tuple
 
 
+def parse_quarter(quarter_str: str) -> Tuple[int, int]:
+    """
+    解析季度字符串
+
+    Args:
+        quarter_str: 季度字符串，格式如 "2020Q1"
+
+    Returns:
+        tuple: (年份, 季度)
+    """
+    try:
+        year_str, quarter_str = quarter_str.split('Q')
+        year = int(year_str)
+        quarter = int(quarter_str)
+
+        if quarter < 1 or quarter > 4:
+            raise ValueError(f"季度必须在1-4之间: {quarter}")
+
+        return year, quarter
+    except Exception as e:
+        raise ValueError(f"无效的季度格式: {quarter_str}, 期望格式: YYYYQN")
+
+
 def generate_quarters(start_year: int, end_year: int) -> List[Tuple[int, int]]:
     """
     生成指定年份范围内的所有季度
@@ -148,24 +171,71 @@ def start_worker_process(worker_id: int, quarters: List[Tuple[int, int]], total_
 
 def main():
     parser = argparse.ArgumentParser(description='G因子季度并行计算启动器')
-    parser.add_argument('--start_year', type=int, default=2020, help='开始年份 (默认: 2020)')
-    parser.add_argument('--end_year', type=int, default=2024, help='结束年份 (默认: 2024)')
+
+    # 新增：支持季度范围参数
+    parser.add_argument('--start_quarter', type=str, help='开始季度，格式: YYYYQN (例如: 2025Q3)')
+    parser.add_argument('--end_quarter', type=str, help='结束季度，格式: YYYYQN (例如: 2025Q4)')
+
+    # 保持兼容：仍支持年份范围参数
+    parser.add_argument('--start_year', type=int, help='开始年份 (与季度参数互斥)')
+    parser.add_argument('--end_year', type=int, help='结束年份 (与季度参数互斥)')
+
     parser.add_argument('--workers', type=int, default=16, help='工作进程数 (默认: 16)')
     parser.add_argument('--delay', type=int, default=2, help='进程启动间隔秒数 (默认: 2)')
-    
+
     args = parser.parse_args()
-    
-    # 验证参数
-    if args.start_year > args.end_year:
-        print(f"❌ start_year ({args.start_year}) 必须小于等于 end_year ({args.end_year})")
+
+    # 验证参数互斥性
+    quarter_params = [args.start_quarter, args.end_quarter]
+    year_params = [args.start_year, args.end_year]
+
+    if any(quarter_params) and any(year_params):
+        print(f"❌ 不能同时使用季度参数 (--start_quarter/--end_quarter) 和年份参数 (--start_year/--end_year)")
+        sys.exit(1)
+
+    if not any(quarter_params) and not any(year_params):
+        # 默认使用年份参数（向后兼容）
+        args.start_year = 2020
+        args.end_year = 2024
+
+    # 处理季度参数
+    if args.start_quarter and args.end_quarter:
+        # 使用季度范围
+        try:
+            start_year, start_q = parse_quarter(args.start_quarter)
+            end_year, end_q = parse_quarter(args.end_quarter)
+
+            quarters = []
+            current_year = start_year
+            current_quarter = start_q
+
+            while (current_year < end_year) or (current_year == end_year and current_quarter <= end_q):
+                quarters.append((current_year, current_quarter))
+                current_quarter += 1
+                if current_quarter > 4:
+                    current_quarter = 1
+                    current_year += 1
+
+        except ValueError as e:
+            print(f"❌ {e}")
+            sys.exit(1)
+
+    elif args.start_year is not None and args.end_year is not None:
+        # 使用年份范围
+        if args.start_year > args.end_year:
+            print(f"❌ start_year ({args.start_year}) 必须小于等于 end_year ({args.end_year})")
+            sys.exit(1)
+        quarters = generate_quarters(args.start_year, args.end_year)
+
+    else:
+        print(f"❌ 必须指定完整的参数：使用 --start_quarter 和 --end_quarter，或使用 --start_year 和 --end_year")
         sys.exit(1)
     
     if args.workers <= 0:
         print(f"❌ workers ({args.workers}) 必须大于0")
         sys.exit(1)
-    
-    # 生成季度列表
-    quarters = generate_quarters(args.start_year, args.end_year)
+
+    # 计算季度总数
     total_quarters = len(quarters)
     
     # 智能调整工作进程数
@@ -176,7 +246,13 @@ def main():
     
     print("🚀 G因子季度并行计算启动器")
     print("=" * 50)
-    print(f"📅 计算年份范围: {args.start_year}-{args.end_year}")
+
+    # 显示计算范围
+    if args.start_quarter and args.end_quarter:
+        print(f"📅 计算季度范围: {args.start_quarter} ~ {args.end_quarter}")
+    else:
+        print(f"📅 计算年份范围: {args.start_year}-{args.end_year}")
+
     print(f"📊 总季度数: {total_quarters}")
     print(f"👥 工作进程数: {args.workers}")
     print(f"⏱️ 启动间隔: {args.delay}秒")

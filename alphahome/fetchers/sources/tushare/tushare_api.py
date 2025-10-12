@@ -23,6 +23,8 @@ class TushareAPI:
         "stock_basic": 200,  # 股票基本信息 (示例值)
         "trade_cal": 100,  # 交易日历 (示例值)
         "index_weight": 500,  # 指数成分和权重 (明确设为每分钟500次)
+        "eco_cal": 20,  # 财经日历 (每分钟最多20次)
+        "yc_cb": 20,  # 收益率曲线 (每分钟最多20次)
         # ... 其他API ...
     }
     _default_max_requests_per_minute: int = 100  # 未指定API的默认每分钟请求数
@@ -33,6 +35,8 @@ class TushareAPI:
         "stock_basic": 20,  # 示例并发
         "trade_cal": 10,
         "index_weight": 50,  # 示例并发 (例如，设为50，而不是速率的500)
+        "eco_cal": 1,  # 财经日历 (并发限制为1，避免速率限制冲突)
+        "yc_cb": 1,  # 收益率曲线 (每分钟20次，严格控制并发)
         # ... 其他API ...
     }
     _default_concurrency_limit: int = 20  # 未指定API的默认并发数

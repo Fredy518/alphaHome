@@ -8,3 +8,4 @@ from .macro import *  # 导入所有宏观数据任务类
 from .option import *  # 导入所有期权任务类
 from .others import *  # 导入所有其他任务类
 from .stock import *  # 导入所有股票任务类
+from .cbond import *  # 导入所有可转债任务类

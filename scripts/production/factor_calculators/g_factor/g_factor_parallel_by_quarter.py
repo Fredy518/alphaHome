@@ -177,32 +177,88 @@ def calculate_g_factors_for_quarter(context, year: int, quarter: int, worker_id:
         raise
 
 
+def generate_quarters_range(start_quarter: str, end_quarter: str) -> List[Tuple[int, int]]:
+    """
+    生成季度范围内的所有季度
+
+    Args:
+        start_quarter: 开始季度，格式: YYYYQN
+        end_quarter: 结束季度，格式: YYYYQN
+
+    Returns:
+        所有季度列表 [(year, quarter), ...]
+    """
+    start_year, start_q = parse_quarter(start_quarter)
+    end_year, end_q = parse_quarter(end_quarter)
+
+    quarters = []
+
+    current_year = start_year
+    current_quarter = start_q
+
+    while (current_year < end_year) or (current_year == end_year and current_quarter <= end_q):
+        quarters.append((current_year, current_quarter))
+
+        # 移动到下一个季度
+        current_quarter += 1
+        if current_quarter > 4:
+            current_quarter = 1
+            current_year += 1
+
+    return quarters
+
+
 def main():
     parser = argparse.ArgumentParser(description='G因子季度并行计算')
     parser.add_argument('--worker_id', type=int, required=True, help='工作进程ID (0-based)')
     parser.add_argument('--total_workers', type=int, required=True, help='总工作进程数')
-    parser.add_argument('--quarter', action='append', required=True, help='季度，格式: YYYYQN (可多次指定)')
-    
+
+    # 新增：支持季度范围参数
+    parser.add_argument('--start_quarter', type=str, help='开始季度，格式: YYYYQN (例如: 2025Q3)')
+    parser.add_argument('--end_quarter', type=str, help='结束季度，格式: YYYYQN (例如: 2025Q4)')
+
+    # 保持兼容：仍支持单个季度参数
+    parser.add_argument('--quarter', action='append', help='季度，格式: YYYYQN (可多次指定，与范围参数互斥)')
+
     args = parser.parse_args()
-    
+
     # 验证参数
     if args.worker_id >= args.total_workers:
         print(f"❌ worker_id ({args.worker_id}) 必须小于 total_workers ({args.total_workers})")
         sys.exit(1)
-    
-    if not args.quarter:
-        print(f"❌ 必须指定至少一个季度")
-        sys.exit(1)
-    
-    # 解析季度参数
+
+    # 处理季度参数（新旧格式兼容）
     quarters = []
-    for quarter_str in args.quarter:
+
+    if args.start_quarter and args.end_quarter:
+        # 使用新的范围格式
+        if args.quarter:
+            print(f"❌ 不能同时指定 --quarter 和 --start_quarter/--end_quarter")
+            sys.exit(1)
+
         try:
-            year, quarter = parse_quarter(quarter_str)
-            quarters.append((year, quarter))
+            quarters = generate_quarters_range(args.start_quarter, args.end_quarter)
+            print(f"📅 生成季度范围: {args.start_quarter} ~ {args.end_quarter} (共 {len(quarters)} 个季度)")
         except ValueError as e:
             print(f"❌ {e}")
             sys.exit(1)
+
+    elif args.quarter:
+        # 使用旧的单个季度格式
+        for quarter_str in args.quarter:
+            try:
+                year, quarter = parse_quarter(quarter_str)
+                quarters.append((year, quarter))
+            except ValueError as e:
+                print(f"❌ {e}")
+                sys.exit(1)
+    else:
+        print(f"❌ 必须指定季度参数：使用 --start_quarter 和 --end_quarter 指定范围，或使用 --quarter 指定单个季度")
+        sys.exit(1)
+
+    if not quarters:
+        print(f"❌ 没有有效的季度参数")
+        sys.exit(1)
     
     print(f"🔧 工作进程配置:")
     print(f"   进程ID: {args.worker_id}/{args.total_workers}")

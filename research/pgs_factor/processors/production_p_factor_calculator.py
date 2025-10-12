@@ -396,7 +396,7 @@ class ProductionPFactorCalculator:
             query = """
             SELECT DISTINCT calc_date
             FROM pgs_factors.p_factor
-            WHERE calc_date = ANY(%s)
+            WHERE calc_date = ANY(%s::date[])
             """
 
             result = self.context.query_dataframe(query, (dates,))
