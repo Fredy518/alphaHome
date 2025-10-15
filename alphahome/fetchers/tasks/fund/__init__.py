@@ -6,8 +6,9 @@ from .tushare_fund_etf_index import TushareFundEtfIndexTask
 from .tushare_fund_nav import TushareFundNavTask
 from .tushare_fund_portfolio import TushareFundPortfolioTask
 from .tushare_fund_share import TushareFundShareTask
-from .ifind_fund_market_forwardlook import iFindFundMarketforwardlookTask
-from .ifind_fund_market_outlook import iFindFundMarketOutlookTask
+from .tushare_fund_dividend import TushareFundDividendTask
+# from .ifind_fund_market_forwardlook import iFindFundMarketforwardlookTask
+# from .ifind_fund_market_outlook import iFindFundMarketOutlookTask
 
 __all__ = [
     "TushareFundBasicTask",
@@ -18,6 +19,7 @@ __all__ = [
     "TushareFundPortfolioTask",
     "TushareFundEtfBasicTask",
     "TushareFundEtfIndexTask",
-    "iFindFundMarketforwardlookTask",
-    "iFindFundMarketOutlookTask",
+    "TushareFundDividendTask",
+    # "iFindFundMarketforwardlookTask",
+    # "iFindFundMarketOutlookTask",
 ]

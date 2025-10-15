@@ -600,7 +600,7 @@ async def generate_month_batches(
 
 async def generate_stock_code_batches(
     db_connection,
-    table_name: str = "tushare_stock_basic",
+    table_name: str = "tushare.stock_basic",
     code_column: str = "ts_code",
     filter_condition: Optional[str] = None,
     api_instance=None,
@@ -615,7 +615,7 @@ async def generate_stock_code_batches(
 
     参数:
         db_connection: 数据库连接对象
-        table_name: 股票基础信息表名，默认'tushare_stock_basic'
+        table_name: 股票基础信息表名，默认'tushare.stock_basic'
         code_column: 股票代码列名，默认'ts_code'
         filter_condition: 可选的SQL过滤条件，如'list_status = "L"'
         api_instance: 可选的API实例，用于从API获取股票代码（当数据库方法失败时）
@@ -794,6 +794,151 @@ async def generate_financial_data_batches(
         ts_code=ts_code,
         logger=_logger,
     )
+
+async def generate_fund_code_batches(
+    db_connection,
+    table_name: str = "tushare.fund_basic",
+    code_column: str = "ts_code",
+    filter_condition: Optional[str] = None,
+    api_instance=None,
+    additional_params: Optional[Dict[str, Any]] = None,
+    logger: Optional[logging.Logger] = None,
+) -> List[Dict[str, Any]]:
+    """
+    生成按单个基金代码的批次参数列表，支持从数据库或API获取基金代码。
+
+    这是一个通用的工具函数，可用于需要按基金代码进行批量处理的各种任务，
+    如基金分红数据、基金净值数据、基金持仓数据等。每个批次包含单个基金代码，符合大多数Tushare接口的要求。
+
+    参数:
+        db_connection: 数据库连接对象
+        table_name: 基金基础信息表名，默认'tushare.fund_basic'
+        code_column: 基金代码列名，默认'ts_code'
+        filter_condition: 可选的SQL过滤条件，如'status = "L"'
+        api_instance: 可选的API实例，用于从API获取基金代码（当数据库方法失败时）
+        additional_params: 可选的附加参数字典，将添加到每个批次中
+        logger: 可选的日志记录器
+
+    返回:
+        批次参数列表，每个批次包含单个 'ts_code' 和可选的附加参数
+    """
+    _logger = logger or logging.getLogger(__name__)
+    _logger.info(f"开始生成单基金代码批次 - 表名: {table_name}")
+
+    try:
+        # 1. 定义数据源：从多个来源获取基金代码列表
+        async def get_fund_codes_callable():
+            return await _get_fund_codes_from_sources(
+                db_connection=db_connection,
+                table_name=table_name,
+                code_column=code_column,
+                filter_condition=filter_condition,
+                api_instance=api_instance,
+                logger=_logger,
+            )
+        
+        fund_codes_source = Source.from_callable(get_fund_codes_callable)
+
+        # 2. 定义分区策略：每个基金代码一个批次
+        partition_strategy = Partition.by_size(1)
+
+        # 3. 定义映射策略：将单个基金代码映射到参数字典
+        map_strategy = Map.to_dict(code_column)
+
+        # 4. 创建 BatchPlanner 实例
+        planner = BatchPlanner(
+            source=fund_codes_source,
+            partition_strategy=partition_strategy,
+            map_strategy=map_strategy
+        )
+
+        # 5. 生成批次列表，并添加 additional_params
+        final_additional_params = (additional_params or {}).copy()
+
+        batch_list = await planner.generate(additional_params=final_additional_params)
+
+        _logger.info(f"成功生成 {len(batch_list)} 个单基金代码批次")
+        return batch_list
+
+    except Exception as e:
+        _logger.error(f"生成单基金代码批次时出错: {e}", exc_info=True)
+        raise RuntimeError(f"生成单基金代码批次失败: {e}") from e
+
+
+async def _get_fund_codes_from_sources(
+    db_connection,
+    table_name: str,
+    code_column: str,
+    filter_condition: Optional[str],
+    api_instance,
+    logger: logging.Logger,
+) -> List[str]:
+    """
+    从多个数据源获取基金代码列表的内部方法
+
+    优先级: 数据库 -> API -> 预定义列表
+    """
+
+    # 方法1: 从数据库获取
+    if db_connection:
+        try:
+            # 构建SQL查询
+            query = f"SELECT {code_column} FROM {table_name}"
+            if filter_condition:
+                query += f" WHERE {filter_condition}"
+            query += f" ORDER BY {code_column}"
+
+            logger.info(f"从数据库获取基金代码: {query}")
+            result = await db_connection.fetch(query)
+
+            if result:
+                codes = [row[code_column] for row in result]
+                logger.info(f"从数据库获取到 {len(codes)} 个基金代码")
+                return codes
+
+        except Exception as e:
+            logger.warning(f"从数据库获取基金代码失败: {e}")
+
+    # 方法2: 通过API获取（如果提供了API实例）
+    if api_instance:
+        try:
+            logger.info("尝试通过API获取基金代码列表")
+
+            # 调用fund_basic接口获取基金列表
+            df = await api_instance.query(
+                api_name="fund_basic",
+                fields=[code_column],
+                params={"status": "L"},  # 只获取上市状态的基金
+            )
+
+            if df is not None and not df.empty:
+                codes = df[code_column].tolist()
+                logger.info(f"通过API获取到 {len(codes)} 个基金代码")
+                return codes
+
+        except Exception as e:
+            logger.warning(f"通过API获取基金代码失败: {e}")
+
+    # 方法3: 使用预定义的主要基金代码（兜底方案）
+    logger.warning("无法从数据库或API获取基金列表，使用预定义代码")
+    predefined_codes = [
+        "000001.OF",  # 华夏成长
+        "000002.OF",  # 华夏成长
+        "110022.OF",  # 易方达消费行业
+        "161725.OF",  # 招商中证白酒
+        "161028.OF",  # 富国中证新能源汽车
+        "161725.OF",  # 招商中证白酒
+        "000858.OF",  # 鹏华养老产业
+        "519674.OF",  # 银河创新成长
+        "002594.OF",  # 广发小盘成长
+        "161725.OF",  # 招商中证白酒
+        "161725.OF",  # 招商中证白酒
+        "161725.OF",  # 招商中证白酒
+    ]
+
+    logger.info(f"使用预定义基金代码: {len(predefined_codes)} 个")
+    return predefined_codes
+
 
 async def generate_financial_report_batches(
     start_date: Optional[str] = None,

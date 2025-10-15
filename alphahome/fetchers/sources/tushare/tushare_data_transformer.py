@@ -132,7 +132,9 @@ class TushareDataTransformer:
                 try:
                     # 确保处理前列中没有Python原生的None，统一使用np.nan
                     if data[column].dtype == "object":
-                        data[column] = data[column].fillna(np.nan).infer_objects(copy=False)
+                        # 修复 pandas FutureWarning：避免 fillna 的自动类型推断
+                        # 先处理 None 值，然后安全地推断对象类型
+                        data[column] = data[column].where(data[column].notna(), np.nan).infer_objects(copy=False)
 
                     # 定义一个安全的转换函数，处理np.nan值
                     def safe_transform(x):

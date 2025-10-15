@@ -18,22 +18,24 @@ from typing import List
 from pathlib import Path
 
 # 添加项目根目录到路径
-project_root = Path(__file__).parent.parent.parent.parent
+project_root = Path(__file__).parent.parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
 
 # 添加research路径
 research_path = project_root / "research"
 sys.path.insert(0, str(research_path))
 
-# 导入p因子计算器
+# 导入p因子计算器和上下文
 from pgs_factor.processors.production_p_factor_calculator import ProductionPFactorCalculator
+from research.tools.context import ResearchContext
 
 
 class SpecificDatePFactorCalculator:
     """指定日期P因子计算器"""
 
     def __init__(self):
-        self.calculator = ProductionPFactorCalculator()
+        self.context = ResearchContext()
+        self.calculator = ProductionPFactorCalculator(self.context)
         self.logger = self._setup_logger()
 
     def _setup_logger(self):
