@@ -12,7 +12,15 @@ from .tushare_stock_moneyflow import TushareStockMoneyFlowTask
 from .tushare_stock_limitlist import TushareStockLimitListTask
 from .tushare_stock_margin import TushareStockMarginTask
 from .tushare_stock_margindetail import TushareStockMarginDetailTask
-# from .ifind_stock_basic import iFindStockBasicTask
+from .tushare_stock_thsindex import TushareStockThsIndexTask
+from .tushare_stock_thsdaily import TushareStockThsDailyTask
+from .tushare_stock_thsmember import TushareStockThsMemberTask
+from .tushare_stock_dcindex import TushareStockDcIndexTask
+from .tushare_stock_dcdaily import TushareStockDcDailyTask
+from .tushare_stock_dcmember import TushareStockDcMemberTask
+from .tushare_stock_kpllist import TushareStockKplListTask
+from .tushare_stock_kplconcept import TushareStockKplConceptTask
+from .tushare_stock_kplmember import TushareStockKplMemberTask  
 
 __all__ = [
     "TushareStockBasicTask",
@@ -28,5 +36,13 @@ __all__ = [
     "TushareStockLimitListTask",
     "TushareStockMarginTask",
     "TushareStockMarginDetailTask",
-    # "iFindStockBasicTask",
+    "TushareStockThsIndexTask",
+    "TushareStockThsDailyTask",
+    "TushareStockThsMemberTask",
+    "TushareStockDcIndexTask",
+    "TushareStockDcDailyTask",  
+    "TushareStockDcMemberTask",
+    "TushareStockKplListTask",
+    "TushareStockKplConceptTask",
+    "TushareStockKplMemberTask",
 ]
