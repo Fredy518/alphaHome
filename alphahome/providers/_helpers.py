@@ -409,7 +409,28 @@ class DataHelpers:
                     raise NotImplementedError("异步模式需要在异步环境中调用")
             
             return False
-            
         except Exception as e:
-            self.logger.error(f"检查交易日失败: {e}")
+            # 查询失败时返回 False
             return False
+
+
+# =============================
+# 符号映射辅助函数
+# =============================
+
+def map_ts_code_to_hikyuu(ts_code: str) -> str:
+    """将 Tushare 风格 ts_code（如 '000001.SZ'）映射为 Hikyuu 风格符号（如 'sz000001'）
+
+    Args:
+        ts_code: 形如 '000001.SZ' 的股票代码
+
+    Returns:
+        Hikyuu 符号字符串，例如 'sz000001'
+    """
+    try:
+        code, market = ts_code.split('.')
+        market_prefix = 'sz' if market.upper() == 'SZ' else 'sh'
+        return f"{market_prefix}{code}"
+    except Exception:
+        # 回退：不抛异常，直接返回原始 ts_code，交由上层处理
+        return ts_code

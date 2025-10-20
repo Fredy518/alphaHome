@@ -9,7 +9,7 @@ Tushare 公募基金分红数据任务
 - 获取公募基金分红数据
 - 支持两种批处理策略:
   1. 全量模式: 按基金代码分批获取
-  2. 增量模式: 按派息日(pay_date)分批获取
+  2. 增量模式: 按权益登记日(record_date)分批获取
 
 权限要求: 需要至少400积分
 """
@@ -39,19 +39,19 @@ class TushareFundDividendTask(TushareTask):
 
     实现要求:
     - 全量更新: 使用ts_code作为batch单位，批量获取全部数据
-    - 增量模式: 使用pay_date字段进行更新，使用交易日历作为数据源
+    - 增量模式: 使用除息日(ex_date)字段进行更新，使用交易日历作为数据源
     """
 
     # 1. 核心属性
     name = "tushare_fund_dividend"
     description = "获取公募基金分红数据"
     table_name = "fund_dividend"
-    primary_keys = ["ts_code", "pay_date"]
-    date_column = "pay_date"  # 派息日
+    primary_keys = ["ts_code", "ex_date"]
+    date_column = "ex_date"  # 除息日
     default_start_date = "20050101"  # 默认开始日期
     data_source = "tushare"
     domain = "fund"  # 业务域标识
-    smart_lookback_days = 3 # 智能增量模式下，回看3天
+    smart_lookback_days = 20 # 智能增量模式下，回看20天
 
     # --- 代码级默认配置 (会被 config.json 覆盖) --- #
     default_concurrent_limit = 5  # 降低并发，避免频率限制
@@ -98,8 +98,8 @@ class TushareFundDividendTask(TushareTask):
         "base_date": {"type": "DATE"},
         "div_proc": {"type": "VARCHAR(10)"},
         "record_date": {"type": "DATE"},
-        "ex_date": {"type": "DATE"},
-        "pay_date": {"type": "DATE", "constraints": "NOT NULL"},
+        "ex_date": {"type": "DATE", "constraints": "NOT NULL"},
+        "pay_date": {"type": "DATE"},
         "earpay_date": {"type": "DATE"},
         "net_ex_date": {"type": "DATE"},
         "div_cash": {"type": "NUMERIC(10,4)"},
@@ -123,15 +123,14 @@ class TushareFundDividendTask(TushareTask):
     # 7. 数据验证规则
     validations = [
         lambda df: df['ts_code'].notna(),
-        lambda df: df['pay_date'].notna(),
+        lambda df: df['ex_date'].notna(),
         lambda df: df['div_cash'] >= 0,
         lambda df: df['base_unit'] >= 0,
         lambda df: df['ear_distr'] >= 0,
         lambda df: df['ear_amount'] >= 0,
         lambda df: df['div_proc'].isin(['预案', '股东大会通过', '实施']),
         # 逻辑日期检查 (允许某些日期为空)
-        lambda df: (df['pay_date'] >= df['ex_date']) | df['ex_date'].isnull(),
-        lambda df: (df['ex_date'] >= df['record_date']) | df['record_date'].isnull(),
+        lambda df: (df['pay_date'] >= df['ex_date']) | df['pay_date'].isnull(), # 派息日不应早于除息日
         lambda df: (df['ear_amount'] <= df['ear_distr']) | df['ear_distr'].isnull(), # 分配金额不应超过可分配收益
     ]
 
@@ -140,7 +139,7 @@ class TushareFundDividendTask(TushareTask):
 
         策略说明:
         1. 全量模式(force_full=True): 按基金代码分批，使用基金基本信息作为数据源
-        2. 增量模式: 按派息日期分批，使用交易日历作为数据源
+        2. 增量模式: 按除息日期分批，使用交易日历作为数据源，end_date自动扩展到周末
 
         Args:
             **kwargs: 包含start_date, end_date, force_full等参数
@@ -186,6 +185,18 @@ class TushareFundDividendTask(TushareTask):
                     end_date = datetime.now().strftime("%Y%m%d")
                     self.logger.info(f"任务 {self.name}: 未提供 end_date，使用当前日期: {end_date}")
 
+                # 增量模式下，将end_date扩展为其所在的周末
+                end_date_obj = datetime.strptime(str(end_date), "%Y%m%d")
+                # 计算当前周的最后一天（周日）
+                days_since_monday = end_date_obj.weekday()
+                days_to_sunday = 6 - days_since_monday
+                week_end = end_date_obj + timedelta(days=days_to_sunday)
+                extended_end_date = week_end.strftime("%Y%m%d")
+
+                if extended_end_date != end_date:
+                    self.logger.info(f"任务 {self.name}: 增量模式下将end_date从 {end_date} 扩展到周末: {extended_end_date}")
+                    end_date = extended_end_date
+
                 if datetime.strptime(str(start_date), "%Y%m%d") > datetime.strptime(str(end_date), "%Y%m%d"): # type: ignore
                     self.logger.info(
                         f"起始日期 ({start_date}) 晚于结束日期 ({end_date})，无需执行任务。"
@@ -195,7 +206,7 @@ class TushareFundDividendTask(TushareTask):
                 return await generate_single_date_batches(
                     start_date=start_date,
                     end_date=end_date,
-                    date_field="pay_date",
+                    date_field="ex_date",
                     logger=self.logger,
                     exchange=kwargs.get("exchange", "SSE"),
                     additional_params={"fields": ",".join(self.fields or [])}

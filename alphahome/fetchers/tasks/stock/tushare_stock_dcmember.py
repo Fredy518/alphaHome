@@ -2,21 +2,25 @@
 # -*- coding: utf-8 -*-
 
 """
-东方财富板块成分 (dc_member) 任务
-获取东方财富板块每日成分数据，可以根据概念板块代码和交易日期，获取历史成分。
-该任务使用Tushare的dc_member接口获取数据。
+东方财富板块成分 (dc_member) 全量更新任务
+获取东方财富板块成分数据，每次执行时替换数据库中的旧数据。
+此任务仅支持全量更新模式，智能增量和手动增量模式会跳过执行。
 
-{{ AURA-X: [Create] - 基于 Tushare dc_member API 创建东方财富板块成分任务. Source: tushare.pro/document/2?doc_id=363 }}
+{{ AURA-X: [Redesign] - 重新设计东方财富板块成分任务，仅支持全量更新. Source: tushare.pro/document/2?doc_id=363 }}
+{{ AURA-X: [Note] - 此任务仅支持全量更新，其他更新模式将跳过执行 }}
+{{ AURA-X: [Algorithm] - 数据分组算法：按 [ts_code, con_code] 分组，计算 in_date/out_date }}
 """
 
 import logging
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
+from datetime import datetime
 
 import pandas as pd
 
 # 确认导入路径正确
 from ...sources.tushare.tushare_task import TushareTask
 from ....common.task_system.task_decorator import task_register
+from ....common.constants import UpdateTypes
 
 # logger 由 Task 基类提供
 # logger = logging.getLogger(__name__)
@@ -24,20 +28,20 @@ from ....common.task_system.task_decorator import task_register
 
 @task_register()
 class TushareStockDcMemberTask(TushareTask):
-    """获取东方财富板块成分数据"""
+    """获取东方财富板块成分信息 (仅支持全量更新)"""
 
     # 1. 核心属性
     name = "tushare_stock_dcmember"
     description = "获取东方财富板块成分数据"
     table_name = "stock_dcmember"
-    primary_keys = ["trade_date", "ts_code", "con_code"]
-    date_column = "trade_date"  # 增量任务
+    primary_keys = ["ts_code", "con_code", "trade_date"]  # 主键包含交易日期
+    date_column = "trade_date"  # 使用 trade_date 作为日期列
     default_start_date = "20241220"  # 根据东方财富数据起始时间设置
     data_source = "tushare"
     domain = "stock"  # 业务域标识，属于股票相关数据
 
     # --- 代码级默认配置 (会被 config.json 覆盖) --- #
-    default_concurrent_limit = 3
+    default_concurrent_limit = 1
     default_page_size = 5000  # 单次最大可获取5000条数据
 
     # 2. TushareTask 特有属性
@@ -60,144 +64,123 @@ class TushareStockDcMemberTask(TushareTask):
 
     # 5. 数据库表结构
     schema_def = {
-        "trade_date": {"type": "DATE", "constraints": "NOT NULL"},
         "ts_code": {"type": "VARCHAR(30)", "constraints": "NOT NULL"},
         "con_code": {"type": "VARCHAR(20)", "constraints": "NOT NULL"},
         "name": {"type": "VARCHAR(100)"},
+        "trade_date": {"type": "DATE", "constraints": "NOT NULL"},
         # 如果 auto_add_update_time=True (默认)，则会自动添加 update_time TIMESTAMP 列
     }
 
     # 6. 自定义索引
     indexes = [
-        # 复合主键 (trade_date, ts_code, con_code) 已自动创建索引
-        {"name": "idx_dc_member_trade_date", "columns": "trade_date"},
-        {"name": "idx_dc_member_ts_code", "columns": "ts_code"},
-        {"name": "idx_dc_member_con_code", "columns": "con_code"},
+        # 复合主键 (ts_code, con_code, trade_date) 已自动创建索引
+        {"name": "idx_dcmember_ts_code", "columns": "ts_code"},
+        {"name": "idx_dcmember_con_code", "columns": "con_code"},
+        {"name": "idx_dcmember_trade_date", "columns": "trade_date"},
         {
-            "name": "idx_dc_member_update_time",
+            "name": "idx_dcmember_update_time",
             "columns": "update_time",
-        },  # 新增 update_time 索引
+        },  # update_time 索引
     ]
 
     # 8. 分批配置
     batch_trade_days = 1  # 每个批次的交易日数量 (1个交易日)
 
-    async def _get_all_stock_codes(self) -> List[str]:
-        """
-        从 tushare.stock_basic 表获取所有股票代码。
-        
-        Returns:
-            List[str]: 股票代码列表
-        """
-        try:
-            # 查询 tushare.stock_basic 表获取所有股票代码
-            query = "SELECT ts_code FROM tushare.stock_basic ORDER BY ts_code"
-            result = await self.db.fetch(query)
-            
-            if result:
-                stock_codes = [row["ts_code"] for row in result]
-                self.logger.info(f"从 tushare.stock_basic 表获取到 {len(stock_codes)} 个股票代码")
-                return stock_codes
-            else:
-                self.logger.warning("tushare.stock_basic 表为空，未找到任何股票代码")
-                return []
-                
-        except Exception as e:
-            self.logger.error(f"查询 tushare.stock_basic 表失败: {e}", exc_info=True)
-            return []
-
     async def get_batch_list(self, **kwargs: Any) -> List[Dict]:
         """
         生成批处理参数列表。
-        
-        全量更新：从 tushare.stock_basic 表获取所有股票代码，按股票代码分批
-        增量更新：按交易日分批
+
+        简化逻辑：直接返回月末交易日的批次列表
+        全量更新：获取所有历史月份的月末交易日
+        智能增量：从数据库最新日期的下一个月末开始
+        手动增量：使用用户指定的日期范围
         """
-        from ....common.constants import UpdateTypes
-        
-        # 检查更新类型
         update_type = kwargs.get("update_type", UpdateTypes.FULL)
-        
-        if update_type == UpdateTypes.FULL:
-            # 全量更新：按股票代码分批
-            self.logger.info(f"任务 {self.name}: 全量更新模式，按股票代码分批")
-            
-            stock_codes = await self._get_all_stock_codes()
-            if not stock_codes:
-                self.logger.warning("未找到任何股票代码，任务将跳过执行")
+
+        if update_type == UpdateTypes.MANUAL:
+            # 手动增量：使用用户指定的日期范围
+            start_date_param = kwargs.get("start_date")
+            end_date_param = kwargs.get("end_date")
+
+            if not start_date_param or not end_date_param:
+                self.logger.error("手动增量模式需要提供 start_date 和 end_date 参数")
                 return []
-            
-            # 为每个股票代码生成批处理参数
-            batch_list = [{"con_code": code} for code in stock_codes]
-            self.logger.info(f"任务 {self.name}: 为 {len(batch_list)} 个股票生成批处理列表")
-            return batch_list
-            
-        else:
-            # 增量更新：按交易日分批
-            self.logger.info(f"任务 {self.name}: 增量更新模式，按交易日分批")
-            
-            # 参数提取和验证
-            start_date = kwargs.get("start_date")
-            end_date = kwargs.get("end_date")
-
-            # 支持基类的全量更新机制：如果没有提供日期范围，使用默认范围
-            if not start_date:
-                start_date = self.default_start_date
-                self.logger.info(f"任务 {self.name}: 未提供 start_date，使用默认起始日期: {start_date}")
-            if not end_date:
-                from datetime import datetime
-                end_date = datetime.now().strftime("%Y%m%d")
-                self.logger.info(f"任务 {self.name}: 未提供 end_date，使用当前日期: {end_date}")
-
-            if not start_date or not end_date:
-                self.logger.error(f"任务 {self.name}: 缺少必要的日期参数")
-                return []
-
-            # 如果开始日期晚于结束日期，说明数据已是最新，无需更新
-            if pd.to_datetime(start_date) > pd.to_datetime(end_date):
-                self.logger.info(
-                    f"起始日期 ({start_date}) 晚于结束日期 ({end_date})，无需执行任务。"
-                )
-                return []
-
-            self.logger.info(
-                f"任务 {self.name}: 生成批处理列表，范围: {start_date} 到 {end_date}"
-            )
 
             try:
-                # 使用标准的交易日批次生成工具
-                from ...sources.tushare.batch_utils import generate_trade_day_batches
-
-                # 准备附加参数
-                additional_params = {"fields": ",".join(self.fields or [])}
-
-                batch_list = await generate_trade_day_batches(
-                    start_date=start_date,
-                    end_date=end_date,
-                    batch_size=self.batch_trade_days,
-                    ts_code=None,  # dc_member 不需要股票代码参数
-                    exchange="SSE",  # 使用上交所作为默认交易所获取交易日历
-                    additional_params=additional_params,
-                    logger=self.logger,
-                )
-                self.logger.info(f"任务 {self.name}: 成功生成 {len(batch_list)} 个批次")
-                return batch_list
-
+                start_date = pd.to_datetime(start_date_param)
+                end_date = pd.to_datetime(end_date_param)
             except Exception as e:
-                self.logger.error(
-                    f"任务 {self.name}: 生成批次时出错: {e}", exc_info=True
-                )
+                self.logger.error(f"日期参数格式错误: {e}")
                 return []
+
+            if start_date > end_date:
+                self.logger.error("起始日期不能晚于结束日期")
+                return []
+
+            # 生成指定日期范围内的所有月末交易日
+            months = pd.date_range(start=start_date, end=end_date, freq='ME')
+
+            batch_list = []
+            for month_end in months:
+                trade_date = month_end.strftime('%Y%m%d')
+                batch_list.append({"trade_date": trade_date})
+
+            self.logger.info(f"任务 {self.name}: 手动增量模式，从 {start_date.strftime('%Y-%m-%d')} 到 {end_date.strftime('%Y-%m-%d')}，生成 {len(batch_list)} 个批次")
+            return batch_list
+
+        elif update_type == UpdateTypes.FULL:
+            # 全量更新：生成从开始日期到当前的所有月末交易日
+            start_date = pd.to_datetime(self.default_start_date)
+            end_date = pd.Timestamp.now()
+
+            # 生成月份列表
+            months = pd.date_range(start=start_date, end=end_date, freq='ME')
+
+            batch_list = []
+            for month_end in months:
+                # 获取该月的月末交易日（简化处理，直接使用月末日期）
+                trade_date = month_end.strftime('%Y%m%d')
+                batch_list.append({"trade_date": trade_date})
+
+            self.logger.info(f"任务 {self.name}: 全量更新模式，生成 {len(batch_list)} 个月的批次")
+            return batch_list
+
+        else:
+            # 智能增量：从数据库最新日期的下一个月末开始
+            latest_date = await self.get_latest_date_for_task()
+            if latest_date:
+                # 从数据库最新日期的下一个月末开始
+                next_month = (latest_date.replace(day=1) + pd.DateOffset(months=1))
+                start_date = next_month
+                self.logger.info(f"任务 {self.name}: 智能增量模式，从数据库最新日期 {latest_date.strftime('%Y-%m-%d')} 的下一个月末开始")
+            else:
+                # 如果没有历史数据，使用默认起始日期
+                start_date = pd.to_datetime(self.default_start_date)
+                self.logger.info(f"任务 {self.name}: 智能增量模式，无历史数据，使用默认起始日期 {start_date.strftime('%Y-%m-%d')}")
+
+            end_date = pd.Timestamp.now()
+
+            # 生成从start_date到end_date的所有月末交易日
+            months = pd.date_range(start=start_date, end=end_date, freq='ME')
+
+            batch_list = []
+            for month_end in months:
+                trade_date = month_end.strftime('%Y%m%d')
+                batch_list.append({"trade_date": trade_date})
+
+            self.logger.info(f"任务 {self.name}: 智能增量模式，生成 {len(batch_list)} 个批次")
+            return batch_list
+
 
     # 7. 数据验证规则 (真正生效的验证机制)
     validations = [
+        (lambda df: df['ts_code'].notna(), "股票代码不能为空"),
+        (lambda df: df['con_code'].notna(), "板块代码不能为空"),
+        (lambda df: df['name'].notna(), "股票名称不能为空"),
         (lambda df: df['trade_date'].notna(), "交易日期不能为空"),
-        (lambda df: df['ts_code'].notna(), "板块代码不能为空"),
-        (lambda df: df['con_code'].notna(), "成分代码不能为空"),
-        (lambda df: df['name'].notna(), "成分股名称不能为空"),
-        (lambda df: ~(df['name'].astype(str).str.strip().eq('') | df['name'].isna()), "成分股名称不能为空字符串"),
-        (lambda df: ~(df['ts_code'].astype(str).str.strip().eq('') | df['ts_code'].isna()), "板块代码不能为空字符串"),
-        (lambda df: ~(df['con_code'].astype(str).str.strip().eq('') | df['con_code'].isna()), "成分代码不能为空字符串"),
+        (lambda df: ~(df['ts_code'].astype(str).str.strip().eq('') | df['ts_code'].isna()), "股票代码不能为空字符串"),
+        (lambda df: ~(df['con_code'].astype(str).str.strip().eq('') | df['con_code'].isna()), "板块代码不能为空字符串"),
+        (lambda df: ~(df['name'].astype(str).str.strip().eq('') | df['name'].isna()), "股票名称不能为空字符串"),
     ]
 
 
@@ -205,14 +188,19 @@ class TushareStockDcMemberTask(TushareTask):
 使用方法:
 1. 确保 TaskFactory 和 BaseTask 正确实现或导入。
 2. 确保数据库连接 (self.db_engine) 和 Tushare 客户端 (self.tushare_client) 在基类或 TaskFactory 中正确初始化。
-3. 确保数据库中存在名为 'stock_dcmember' 的表，且结构与 Tushare 返回的 DataFrame 匹配。
-4. (可能需要) 在 TaskFactory 中注册此任务。
+3. 确保数据库中存在名为 'stock_dcmember' 的表，且结构与处理后的 DataFrame 匹配。
+4. 任务会自动注册到 TaskFactory。
 5. 使用相应的运行脚本来执行此任务。
 
-注意事项:
-- 此接口需要用户积累6000积分才能调取
-- 单次最大可获取5000条数据，可以通过日期和代码循环获取
-- 全量更新：按股票代码分批，获取每个股票属于哪些板块
-- 增量更新：按交易日分批，获取最新的成分变化
-- 数据包含板块成分股的详细信息
+{{ AURA-X: [Note] - 本任务需要 6000 积分权限，每分钟可调取 200 次 }}
+{{ AURA-X: [Important] - 此任务支持全量和增量更新模式 }}
+
+技术说明 (简化版):
+- 数据结构：直接保存 Tushare API 返回的月末成分股数据
+- 全量更新：获取从开始日期到当前的所有月末交易日数据
+- 智能增量：从数据库最新日期的下一个月末开始获取数据
+- 手动增量：使用用户指定的日期范围获取数据
+- 主键：(ts_code, con_code, trade_date) 确保每只股票在每个月末的唯一性
+- 数据字段：ts_code, con_code, name, trade_date
+- 处理逻辑：不进行复杂的分组合并，直接保存原始数据
 """

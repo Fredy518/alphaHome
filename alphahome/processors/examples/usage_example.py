@@ -38,7 +38,7 @@ class DataCleaningOperation(Operation):
         result = result.drop_duplicates()
         
         # 填充缺失值
-        result = result.fillna(method='ffill')
+        result = result.ffill()
         
         self.logger.info(f"数据清洗完成，原始行数: {original_len}，清洗后: {len(result)}")
         return result

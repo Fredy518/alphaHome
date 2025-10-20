@@ -10,10 +10,12 @@ from .data_access import (
     ValidationError,
     CacheError
 )
+from ._helpers import map_ts_code_to_hikyuu
 
 __all__ = [
     'AlphaDataTool',
     'DataAccessError',
     'ValidationError',
-    'CacheError'
+    'CacheError',
+    'map_ts_code_to_hikyuu'
 ]

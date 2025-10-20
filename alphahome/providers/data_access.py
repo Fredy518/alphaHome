@@ -21,6 +21,11 @@ import pandas as pd
 import logging
 
 logger = logging.getLogger(__name__)
+try:
+    # 仅在导出器使用时导入，避免循环依赖
+    from ._helpers import map_ts_code_to_hikyuu
+except Exception:
+    map_ts_code_to_hikyuu = None  # type: ignore
 
 
 # ============================================================================
@@ -222,35 +227,109 @@ class AlphaDataTool:
             raise DataAccessError(f"获取指数权重失败: {e}") from e
 
     # ========================================================================
-    # 核心方法 3: 股票基本信息
+    # 核心方法 3: 复权因子数据
+    # ========================================================================
+
+    def get_adj_factor_data(
+        self,
+        symbols: Optional[Union[str, List[str]]] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None
+    ) -> pd.DataFrame:
+        """获取复权因子数据
+        
+        Args:
+            symbols: 股票代码或代码列表，为空则获取所有股票
+            start_date: 开始日期，格式 YYYY-MM-DD
+            end_date: 结束日期，格式 YYYY-MM-DD
+            
+        Returns:
+            包含复权因子数据的 DataFrame
+        """
+        query = """
+        SELECT ts_code, trade_date, adj_factor
+        FROM tushare.stock_adjfactor
+        """
+        
+        conditions = []
+        params = []
+        
+        if symbols:
+            if isinstance(symbols, str):
+                symbols = [symbols]
+            placeholders = ','.join(['%s'] * len(symbols))
+            conditions.append(f"ts_code IN ({placeholders})")
+            params.extend(symbols)
+        
+        if start_date:
+            conditions.append("trade_date >= %s")
+            params.append(start_date)
+            
+        if end_date:
+            conditions.append("trade_date <= %s")
+            params.append(end_date)
+        
+        if conditions:
+            query += " WHERE " + " AND ".join(conditions)
+        
+        query += " ORDER BY ts_code, trade_date"
+        
+        try:
+            result = self.db_manager.fetch_sync(query, params)
+            df = pd.DataFrame(result)
+            
+            if not df.empty:
+                df['trade_date'] = pd.to_datetime(df['trade_date'])
+                df['adj_factor'] = pd.to_numeric(df['adj_factor'], errors='coerce')
+            
+            self.logger.info(f"获取复权因子成功: {len(df)} 条记录")
+            return df
+            
+        except Exception as e:
+            self.logger.error(f"获取复权因子失败: {e}")
+            raise DataAccessError(f"获取复权因子失败: {e}") from e
+
+    # ========================================================================
+    # 核心方法 4: 股票基本信息
     # ========================================================================
 
     def get_stock_info(
         self,
         symbols: Optional[Union[str, List[str]]] = None,
-        fields: Optional[List[str]] = None  # 保持兼容性
+        fields: Optional[List[str]] = None,  # 保持兼容性
+        active_only: bool = False  # 新增参数：是否只获取上市股票
     ) -> pd.DataFrame:
         """获取股票基本信息
 
         Args:
             symbols: 股票代码或代码列表，为空则获取所有股票
             fields: 字段列表（保持兼容性，实际忽略）
+            active_only: 是否只获取上市股票（list_status='L'），默认False获取所有股票
 
         Returns:
             包含股票基本信息的 DataFrame
         """
         query = """
-        SELECT ts_code, symbol, name, area, industry, market, list_date
+        SELECT ts_code, symbol, name, area, industry, market, list_date, list_status
         FROM tushare.stock_basic
-        WHERE status = 'L'
         """
+        
+        # 根据 active_only 参数决定是否筛选上市状态
+        if active_only:
+            query += " WHERE list_status = 'L'"
+            has_where = True
+        else:
+            has_where = False
         params = None
 
         if symbols:
             if isinstance(symbols, str):
                 symbols = [symbols]
             placeholders = ','.join(['%s'] * len(symbols))
-            query += f" AND ts_code IN ({placeholders})"
+            if has_where:
+                query += f" AND ts_code IN ({placeholders})"
+            else:
+                query += f" WHERE ts_code IN ({placeholders})"
             params = tuple(symbols)
 
         query += " ORDER BY ts_code"
@@ -323,13 +402,15 @@ class AlphaDataTool:
     def get_industry_data(
         self,
         symbols: Optional[Union[str, List[str]]] = None,
-        industry_type: str = 'SW2021'  # 保持兼容性
+        industry_type: str = 'SW2021',  # 保持兼容性
+        active_only: bool = False  # 新增参数：是否只获取上市股票
     ) -> pd.DataFrame:
         """获取行业分类数据
 
         Args:
             symbols: 股票代码或代码列表，为空则获取所有股票
             industry_type: 行业分类标准（保持兼容性）
+            active_only: 是否只获取上市股票（list_status='L'），默认False获取所有股票
 
         Returns:
             包含行业分类数据的 DataFrame
@@ -337,15 +418,24 @@ class AlphaDataTool:
         query = """
         SELECT ts_code, industry as industry_name, industry as industry_code
         FROM tushare.stock_basic
-        WHERE status = 'L'
         """
+        
+        # 根据 active_only 参数决定是否筛选上市状态
+        if active_only:
+            query += " WHERE list_status = 'L'"
+            has_where = True
+        else:
+            has_where = False
         params = None
 
         if symbols:
             if isinstance(symbols, str):
                 symbols = [symbols]
             placeholders = ','.join(['%s'] * len(symbols))
-            query += f" AND ts_code IN ({placeholders})"
+            if has_where:
+                query += f" AND ts_code IN ({placeholders})"
+            else:
+                query += f" WHERE ts_code IN ({placeholders})"
             params = tuple(symbols)
 
         query += " ORDER BY ts_code"
@@ -433,6 +523,33 @@ class AlphaDataTool:
         self._table_cache['stock_daily'] = default_table
         self.logger.warning(f"未找到股票表，使用默认: {default_table}")
         return default_table
+
+    # ========================================================================
+    # 导出辅助：按 Hikyuu 需要的列顺序/命名标准化 DataFrame
+    # ========================================================================
+
+    @staticmethod
+    def standardize_to_hikyuu_ohlcv(df: pd.DataFrame) -> pd.DataFrame:
+        """将 AlphaHome 行情数据标准化为 Hikyuu 期望的 OHLCV 列
+
+        期望列：['ts_code','trade_date','open','high','low','close','vol','amount']
+        - trade_date: pandas.Timestamp（或可格式化为 YYYY-MM-DD）
+        - 数值列：float/int
+        """
+        if df.empty:
+            return df
+        cols = ['ts_code','trade_date','open','high','low','close','vol','amount']
+        keep = [c for c in cols if c in df.columns]
+        sdf = df.loc[:, keep].copy()
+        # 确保 trade_date 为 datetime
+        if 'trade_date' in sdf.columns:
+            try:
+                sdf['trade_date'] = pd.to_datetime(sdf['trade_date'])
+            except Exception:
+                pass
+        # 保证顺序
+        sdf = sdf.reindex(columns=cols, fill_value=pd.NA)
+        return sdf
 
     def _get_index_table(self) -> str:
         """获取指数权重表名（智能检测）"""
