@@ -32,8 +32,8 @@ class ConfigManager:
         if self._initialized:
             return
 
-        # 配置文件路径
-        self.config_dir = appdirs.user_config_dir(self.APP_NAME, self.APP_AUTHOR)
+        # 配置文件路径 - 使用用户主目录下的 .alphahome 目录
+        self.config_dir = os.path.expanduser("~/.alphahome")
         self.config_file = os.path.join(self.config_dir, "config.json")
 
         # 配置缓存
@@ -122,13 +122,13 @@ class ConfigManager:
     def _migrate_old_config(self):
         """迁移旧配置文件到新路径"""
         try:
-            # 定义旧路径组件
+            # 第一步：从旧的alphaHomeApp路径迁移（向后兼容）
             OLD_APP_NAME = "alphaHomeApp"
             OLD_APP_AUTHOR = "YourAppNameOrAuthor"
             old_config_dir = appdirs.user_config_dir(OLD_APP_NAME, OLD_APP_AUTHOR)
             old_config_file_path = os.path.join(old_config_dir, "config.json")
 
-            # 检查是否需要迁移
+            # 检查是否需要从旧路径迁移
             if os.path.exists(old_config_file_path) and not os.path.exists(
                 self.config_file
             ):
@@ -139,11 +139,31 @@ class ConfigManager:
                     os.makedirs(self.config_dir, exist_ok=True)
                     # 移动文件
                     shutil.move(old_config_file_path, self.config_file)
-                    logger.info("配置文件已成功迁移到新路径。")
+                    logger.info("配置文件已成功从旧路径迁移到新路径。")
+                    return  # 迁移完成，直接返回
                 except (IOError, OSError, shutil.Error) as move_err:
                     logger.warning(f"迁移旧配置文件失败: {move_err}")
+
+            # 第二步：从旧的trademaster/alphahome路径迁移到新的~/.alphahome路径
+            legacy_config_dir = appdirs.user_config_dir(self.APP_NAME, self.APP_AUTHOR)
+            legacy_config_file = os.path.join(legacy_config_dir, "config.json")
+
+            # 检查是否需要从遗留路径迁移
+            if os.path.exists(legacy_config_file) and not os.path.exists(self.config_file):
+                logger.info(f"检测到遗留配置文件: {legacy_config_file}")
+                logger.info(f"将尝试迁移到新路径: {self.config_file}")
+                try:
+                    # 确保新目录存在
+                    os.makedirs(self.config_dir, exist_ok=True)
+                    # 复制文件而不是移动，以防万一出现问题
+                    shutil.copy2(legacy_config_file, self.config_file)
+                    logger.info("配置文件已成功从遗留路径迁移到新路径。")
+                    logger.info("保留原文件以防需要回滚。如确认迁移成功，可手动删除旧配置文件。")
+                except (IOError, OSError, shutil.Error) as move_err:
+                    logger.warning(f"迁移遗留配置文件失败: {move_err}")
+
         except Exception as migration_err:
-            logger.error(f"检查或迁移旧配置文件时发生意外错误: {migration_err}")
+            logger.error(f"检查或迁移配置文件时发生意外错误: {migration_err}")
 
     def get_database_url(self) -> Optional[str]:
         """获取数据库连接URL"""

@@ -31,6 +31,7 @@ dependencies = [
     "appdirs>=1.4.4",
     "zipline-reloaded>=3.0.0",
     "tushare>=1.4.0",  # 启用 Tushare 依赖
+    "pytdx>=1.72",     # 启用 pytdx 依赖
 ]
 
 # 定义如何找到您的包
@@ -145,6 +146,7 @@ module = [
     "numpy.*",
     "matplotlib.*",
     "backtrader.*",
-    "tushare.*"
+    "tushare.*",
+    "pytdx.*"
 ]
 ignore_missing_imports = true 

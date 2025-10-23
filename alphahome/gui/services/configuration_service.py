@@ -19,9 +19,8 @@ from ...common.db_manager import create_async_manager
 logger = get_logger(__name__)
 
 # --- 配置路径管理 ---
-APP_NAME = "alphahome"
-APP_AUTHOR = "trademaster"
-CONFIG_DIR = appdirs.user_config_dir(APP_NAME, APP_AUTHOR)
+# 使用用户主目录下的 .alphahome 目录作为配置目录
+CONFIG_DIR = os.path.expanduser("~/.alphahome")
 CONFIG_FILE_PATH = os.path.join(CONFIG_DIR, "config.json")
 
 # --- 回调函数 ---
