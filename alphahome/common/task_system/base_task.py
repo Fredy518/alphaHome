@@ -109,6 +109,32 @@ class BaseTask(ABC):
         # 最后回退到数据源
         return self.data_source or "unknown"
 
+    def get_display_name(self) -> str:
+        """获取任务的显示名称
+
+        Returns:
+            str: 任务的显示名称
+        """
+        # 如果子类有自定义的显示名称，使用它
+        if hasattr(self, 'display_name') and self.display_name:
+            return self.display_name
+
+        # 否则基于任务属性构造显示名称
+        if self.description:
+            return self.description
+
+        # 回退到任务名称的格式化版本
+        if self.name:
+            # 将下划线替换为空格，并首字母大写
+            display_name = self.name.replace('_', ' ').title()
+            # 添加数据源信息（如果有的话）
+            if self.data_source:
+                display_name = f"{display_name}({self.data_source})"
+            return display_name
+
+        # 最后的回退
+        return f"任务 {self.name or 'unknown'}"
+
     async def execute(
         self, stop_event: Optional[asyncio.Event] = None, **kwargs
     ):

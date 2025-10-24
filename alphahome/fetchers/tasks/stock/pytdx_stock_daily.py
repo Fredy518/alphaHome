@@ -1,9 +1,10 @@
 from datetime import datetime
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Tuple, Optional
 
 import pandas as pd
 
-from ...sources.pytdx import PytdxTask
+from ...sources.pytdx import PytdxTask, PytdxConnectionPool
+from ...sources.pytdx.pytdx_api import PytdxAPI
 from ....common.task_system.task_decorator import task_register
 
 
@@ -28,7 +29,7 @@ class PytdxStockDailyTask(PytdxTask):
     smart_lookback_days = 3  # 智能增量模式下，回看3天
 
     # --- 代码级默认配置 (会被 config.json 覆盖) --- #
-    default_concurrent_limit = 3  # pytdx并发限制较小
+    default_concurrent_limit = 20  # pytdx并发限制较小
     default_batch_size = 800  # pytdx每次最多获取800条记录
 
     # 2.数据类型转换
@@ -76,6 +77,64 @@ class PytdxStockDailyTask(PytdxTask):
     # 7.批次配置
     batch_records_all_codes = 800    # 全市场查询时，每个批次的记录数量 (pytdx限制)
 
+    def __init__(self, db_connection, host=None, port=None, api=None,
+                 connection_pool=None, use_connection_pool=True, **kwargs):
+        """
+        初始化 PytdxStockDailyTask。
+
+        默认使用连接池模式，但可以通过参数控制。
+        如果需要传统模式，可以设置 use_connection_pool=False 并传入 api。
+
+        Args:
+            db_connection: 数据库连接。
+            host (str, optional): Pytdx服务器地址。
+            port (int, optional): Pytdx服务器端口。
+            api (PytdxAPI, optional): 已初始化的 PytdxAPI 实例（传统模式）。
+            connection_pool (PytdxConnectionPool, optional): 连接池实例。
+            use_connection_pool (bool, optional): 是否使用连接池模式，默认True。
+            **kwargs: 传递给基类的其他参数。
+        """
+        # 调用基类初始化，传递连接池控制参数
+        super().__init__(
+            db_connection=db_connection,
+            host=host,
+            port=port,
+            api=api,
+            connection_pool=connection_pool,
+            use_connection_pool=use_connection_pool,
+            **kwargs
+        )
+
+    def _calculate_smart_batch_size(self, last_update_date: str = None) -> int:
+        """
+        股票日线数据的智能批次计算
+
+        重写基类的通用方法，考虑交易日历等股票特定因素
+        """
+        # 调用基类的通用计算方法，指定数据类型为daily
+        return super()._calculate_smart_batch_size(last_update_date, "daily")
+
+    def _validate_basic_data_rules(self, df: pd.DataFrame) -> bool:
+        """
+        股票数据的特殊校验规则
+
+        扩展基类的基本校验，添加股票特有的校验逻辑
+        """
+        # 先调用基类的通用校验
+        if not super()._validate_basic_data_rules(df):
+            return False
+
+        # 添加股票特有的校验逻辑
+        try:
+            # 检查是否有异常的价格变动（可选）
+            # 这里可以添加涨跌停价格校验等股票特有逻辑
+            # 目前暂时使用基类的校验逻辑
+
+            return True
+
+        except Exception as e:
+            self.logger.error(f"股票特殊校验失败: {e}")
+            return False
 
     async def get_batch_list(self, **kwargs: Any) -> List[Dict]:
         """
@@ -154,13 +213,14 @@ class PytdxStockDailyTask(PytdxTask):
             )
             return []
 
-    async def _fetch_raw_data(self, params: Dict) -> List[Dict]:
+    async def _fetch_raw_data_with_api(self, api: PytdxAPI, params: Dict) -> List[Dict]:
         """
-        从pytdx获取日线原始数据
+        使用指定的API连接从pytdx获取日线原始数据
 
-        借鉴hikyuu的实现方式，从stock_record中提取股票信息。
+        支持连接池模式，直接使用传入的API连接实例。
 
         Args:
+            api: PytdxAPI连接实例
             params: 参数字典，包含stock_record等
 
         Returns:
@@ -182,13 +242,16 @@ class PytdxStockDailyTask(PytdxTask):
             return []
 
         try:
-            # 计算需要获取的记录数量
-            batch_size = params.get("batch_size", self.batch_records_all_codes)
+            # 获取股票的最后更新日期，用于智能批次计算（使用基类方法）
+            last_update_date = await self._get_last_update_date(market, code)
 
-            self.logger.info(f"开始获取 {market}{code} 的日线数据，批次大小: {batch_size}")
+            # 使用智能批次策略计算批次大小（使用基类方法）
+            batch_size = self._calculate_smart_batch_size(last_update_date)
 
-            # 获取日线数据
-            raw_data = await self.api.get_stock_daily_bars(
+            self.logger.info(f"开始获取 {market}{code} 的日线数据，智能批次大小: {batch_size} (最后更新: {last_update_date or '无'})")
+
+            # 使用传入的API连接获取日线数据
+            raw_data = await api.get_stock_daily_bars(
                 market=market,
                 code=code,
                 start=0,  # 从最新数据开始
@@ -208,9 +271,27 @@ class PytdxStockDailyTask(PytdxTask):
             self.logger.error(f"错误详情: {traceback.format_exc()}")
             return []
 
+    async def _fetch_raw_data(self, params: Dict) -> List[Dict]:
+        """
+        从pytdx获取日线原始数据（传统模式）
+
+        当不使用连接池时调用此方法。
+        借鉴hikyuu的实现方式，从stock_record中提取股票信息。
+
+        Args:
+            params: 参数字典，包含stock_record等
+
+        Returns:
+            原始日线数据列表
+        """
+        # 传统模式：使用基类的单个连接
+        return await self._fetch_raw_data_with_api(self.api, params)
+
     def _transform_data(self, raw_data: List[Dict], params: Dict) -> pd.DataFrame:
         """
-        转换原始数据为标准格式
+        转换原始数据为标准格式，并进行数据完整性校验
+
+        使用基类的数据完整性校验功能
 
         Args:
             raw_data: pytdx返回的原始数据
@@ -230,4 +311,27 @@ class PytdxStockDailyTask(PytdxTask):
         market_map = {0: 'SZ', 1: 'SH', 2: 'BJ'}
         market = market_map.get(marketid, 'SH')
 
-        return self.data_transformer.transform_daily_bars(raw_data, market, code)
+        # 转换数据
+        df = self.data_transformer.transform_daily_bars(raw_data, market, code)
+
+        if df.empty:
+            return df
+
+        # 获取现有数据用于完整性校验（使用基类方法）
+        existing_data = self._get_existing_data_for_validation(market, code)
+
+        # 进行数据完整性校验（使用基类方法）
+        if not self._validate_data_integrity(df, existing_data):
+            self.logger.error(f"数据完整性校验失败，丢弃 {market}{code} 的新数据")
+            return pd.DataFrame()
+
+        return df
+
+    async def cleanup(self):
+        """
+        清理资源。
+
+        连接池的清理逻辑已在基类中处理，这里只需要调用父类的清理方法。
+        """
+        # 调用基类的清理方法（包含连接池清理逻辑）
+        await super().cleanup()

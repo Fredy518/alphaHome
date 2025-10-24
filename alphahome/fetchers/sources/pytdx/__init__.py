@@ -8,10 +8,11 @@ Pytdx 数据源模块
 
 from .pytdx_api import PytdxAPI
 from .pytdx_data_transformer import PytdxDataTransformer
-from .pytdx_task import PytdxTask
+from .pytdx_task import PytdxTask, PytdxConnectionPool
 
 __all__ = [
     'PytdxAPI',
     'PytdxDataTransformer',
-    'PytdxTask'
+    'PytdxTask',
+    'PytdxConnectionPool'
 ]

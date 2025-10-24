@@ -24,6 +24,7 @@ from .tushare_stock_kpllist import TushareStockKplListTask
 from .tushare_stock_kplconcept import TushareStockKplConceptTask
 from .tushare_stock_kplmember import TushareStockKplMemberTask  
 from .pytdx_stock_daily import PytdxStockDailyTask
+from .akshare_stock_basic import AkshareStockBasicTask
 
 __all__ = [
     "TushareStockBasicTask",
@@ -51,4 +52,5 @@ __all__ = [
     "TushareStockKplConceptTask",
     "TushareStockKplMemberTask",
     "PytdxStockDailyTask",
+    "AkshareStockBasicTask",
 ]
