@@ -173,7 +173,7 @@ class PytdxStockDailyTask(PytdxTask):
 
         try:
             # 获取股票列表 (全市场模式)
-            stock_list = await self.api.get_stock_list_from_db(self.db, market)
+            stock_list = await self._get_stock_list_from_db(market)
             if not stock_list:
                 self.logger.warning("未获取到有效的股票列表")
                 return []
@@ -335,3 +335,89 @@ class PytdxStockDailyTask(PytdxTask):
         """
         # 调用基类的清理方法（包含连接池清理逻辑）
         await super().cleanup()
+
+    async def _get_stock_list_from_db(self, market: str = None) -> List[Tuple]:
+        """
+        从postgresql的tushare.stock_basic表获取股票列表
+
+        借鉴hikyuu的get_stock_list实现，返回格式：
+        (stockid, marketid, code, valid, type)
+
+        Args:
+            market: 市场代码 ('SH', 'SZ', 'BJ')，如果为None则返回所有市场
+
+        Returns:
+            股票列表，格式与hikyuu的get_stock_list一致
+        """
+        try:
+            # 构建查询SQL
+            query = """
+                SELECT ts_code, symbol, name, market, exchange, list_status
+                FROM tushare.stock_basic
+                WHERE list_status = 'L'
+            """
+
+            if market:
+                if market.upper() == 'SH':
+                    query += " AND market = '主板' AND exchange = 'SSE'"
+                elif market.upper() == 'SZ':
+                    query += " AND market IN ('主板', '中小板', '创业板') AND exchange = 'SZSE'"
+                elif market.upper() == 'BJ':
+                    query += " AND exchange = 'BSE'"
+
+            query += " ORDER BY ts_code"
+
+            # 执行查询 (使用正确的异步API)
+            rows = await self.db.fetch(query)
+
+            stock_list = []
+            stockid_counter = 1
+
+            for row in rows:
+                # 处理不同格式的行数据
+                if isinstance(row, dict):
+                    ts_code = row.get('ts_code')
+                    symbol = row.get('symbol')
+                    name = row.get('name')
+                    market_name = row.get('market')
+                    exchange = row.get('exchange')
+                    list_status = row.get('list_status')
+                else:
+                    # 如果是元组或其他格式
+                    ts_code, symbol, name, market_name, exchange, list_status = row
+
+                # 解析市场代码
+                if exchange == 'SSE':
+                    market_code = 'SH'
+                    marketid = 1  # SH
+                elif exchange == 'SZSE':
+                    market_code = 'SZ'
+                    marketid = 0  # SZ
+                elif exchange == 'BSE':
+                    market_code = 'BJ'
+                    marketid = 2  # BJ
+                else:
+                    continue  # 跳过不支持的交易所
+
+                # 解析股票类型 (简化为股票类型)
+                stktype = 1  # 默认股票类型
+
+                # 构建hikyuu格式的元组
+                # (stockid, marketid, code, valid, type)
+                stock_record = (
+                    stockid_counter,  # stockid: 自增ID
+                    marketid,         # marketid: 市场ID (0=SZ, 1=SH, 2=BJ)
+                    symbol,           # code: 股票代码 (如'000001')
+                    1,                # valid: 是否有效 (1=有效)
+                    stktype           # type: 股票类型
+                )
+
+                stock_list.append(stock_record)
+                stockid_counter += 1
+
+            self.logger.info(f"从数据库获取到 {len(stock_list)} 只股票 ({market or '全市场'})")
+            return stock_list
+
+        except Exception as e:
+            self.logger.error(f"获取股票列表时出错: {e}")
+            return []
