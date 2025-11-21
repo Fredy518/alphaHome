@@ -4,6 +4,9 @@
 """
 独立任务：tushare_stock_codemapping（不修改 stock_basic）
 
+!!! 废弃说明 !!!
+该任务已被标记为废弃，不再推荐在生产环境中使用；如需代码映射能力，请评估最新任务体系或与数据团队确认替代方案。
+
 目的：
 - 基于现有 `tushare.stock_basic` 快照数据与 `tushare.stock_daily` 交易日数据，
   推断新旧代码之间的对应关系（旧→新），并写入 `tushare.stock_code_mapping`。
