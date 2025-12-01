@@ -29,6 +29,8 @@ from .tushare_stock_st import TushareStockSTTask
 from .tushare_stock_limitprice import TushareStockLimitPriceTask
 from .tushare_stock_namechange import TushareStockNameChangeTask
 
+from .akshare_stock_limitup_reason import AkShareStockLimitupReasonTask
+
 __all__ = [
     "TushareStockBasicTask",
     "TushareStockDailyTask",
@@ -59,4 +61,5 @@ __all__ = [
     "TushareStockLimitPriceTask",
     "TushareStockNameChangeTask",
     # "PytdxStockDailyTask",
+    "AkShareStockLimitupReasonTask",
 ]

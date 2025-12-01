@@ -6,7 +6,11 @@ from .tushare_macro_yieldcurve import TushareMacroYieldCurveTask
 from .tushare_macro_sf import TushareMacroSFTTask
 from .tushare_macro_cnm import TushareMacroCNMTask
 
+# AkShare 数据源任务
+from .akshare_macro_bond_rate import AkShareMacroBondRateTask
+
 __all__ = [
+    # Tushare 宏观任务
     # "TushareMacroHiborTask", # Hibor 数据源已下线
     "TushareMacroShiborTask",
     "TushareMacroCpiTask",
@@ -14,4 +18,6 @@ __all__ = [
     "TushareMacroYieldCurveTask",
     "TushareMacroSFTTask",
     "TushareMacroCNMTask",
+    # AkShare 宏观任务
+    "AkShareMacroBondRateTask",
 ]

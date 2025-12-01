@@ -101,7 +101,13 @@ def setup_logging(
     formatter = logging.Formatter(log_format, date_format)
 
     # 添加控制台处理器
-    console_handler = logging.StreamHandler(sys.stdout)
+    # Windows 下需要显式设置 UTF-8 编码以避免中文乱码
+    import io
+    if hasattr(sys.stdout, 'buffer'):
+        console_stream = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+    else:
+        console_stream = sys.stdout
+    console_handler = logging.StreamHandler(console_stream)
     console_handler.setFormatter(formatter)
     root_logger.addHandler(console_handler)
 

@@ -118,17 +118,71 @@ class TushareStockNameChangeTask(TushareTask):
             additional_params["start_date"] = start_date
             additional_params["end_date"] = end_date
 
-        # 3）调用批次工具：从 tushare.stock_basic 获取全部股票代码（含退市、暂停）
+        # 3）调用批次工具：在智能增量模式下，优先从 stock_namechange 表获取有变更的股票代码
         try:
-            batch_list = await generate_stock_code_batches(
-                db_connection=self.db,
-                table_name="tushare.stock_basic",
-                code_column="ts_code",
-                filter_condition=None,  # 不过滤，包含已退市/暂停股票
-                api_instance=self.api,
-                additional_params=additional_params,
-                logger=self.logger,
-            )
+            if include_date_filters and start_date and end_date:
+                # 智能增量模式：查询在指定日期范围内有名称变更记录的股票
+                # 查询条件：ann_date 或 start_date 在指定日期范围内
+                # 同时包含新上市股票（list_date 在日期范围内），确保不遗漏新股票
+                filter_query = f"""
+                    SELECT DISTINCT ts_code
+                    FROM "tushare"."stock_namechange"
+                    WHERE (
+                        (ann_date IS NOT NULL AND ann_date BETWEEN '{start_date}' AND '{end_date}')
+                        OR
+                        (start_date BETWEEN '{start_date}' AND '{end_date}')
+                    )
+                    UNION
+                    SELECT DISTINCT ts_code
+                    FROM "tushare"."stock_basic"
+                    WHERE list_date IS NOT NULL
+                      AND list_date BETWEEN '{start_date}' AND '{end_date}'
+                """
+                self.logger.info(
+                    "任务 %s: 智能增量模式，从 stock_namechange 和 stock_basic 表查询日期范围 %s-%s 内有变更或新上市的股票",
+                    self.name,
+                    start_date,
+                    end_date,
+                )
+                existing_records = await self.db.fetch(filter_query)
+                if existing_records:
+                    # 使用查询到的股票代码列表
+                    ts_codes = [row["ts_code"] for row in existing_records]
+                    self.logger.info(
+                        "任务 %s: 找到 %d 个在指定日期范围内有名称变更或新上市的股票，将只查询这些股票",
+                        self.name,
+                        len(ts_codes),
+                    )
+                    # 为每个股票代码创建一个批次
+                    batch_list = [
+                        {**additional_params, "ts_code": code} for code in ts_codes
+                    ]
+                else:
+                    # 如果没有找到任何记录，仍然需要查询所有股票（可能是新股票或新变更）
+                    self.logger.info(
+                        "任务 %s: 未找到指定日期范围内的变更记录，将查询所有股票以确保完整性",
+                        self.name,
+                    )
+                    batch_list = await generate_stock_code_batches(
+                        db_connection=self.db,
+                        table_name="tushare.stock_basic",
+                        code_column="ts_code",
+                        filter_condition=None,
+                        api_instance=self.api,
+                        additional_params=additional_params,
+                        logger=self.logger,
+                    )
+            else:
+                # 全量模式：查询所有股票
+                batch_list = await generate_stock_code_batches(
+                    db_connection=self.db,
+                    table_name="tushare.stock_basic",
+                    code_column="ts_code",
+                    filter_condition=None,  # 不过滤，包含已退市/暂停股票
+                    api_instance=self.api,
+                    additional_params=additional_params,
+                    logger=self.logger,
+                )
         except Exception as exc:
             self.logger.error(
                 "任务 %s: 生成按股票代码分批的批次失败: %s", self.name, exc, exc_info=True

@@ -8,10 +8,6 @@ import pandas as pd
 from tqdm.asyncio import tqdm
 
 from ...common.task_system.base_task import BaseTask
-from ..sources.tushare.batch_utils import (
-    generate_natural_day_batches,
-    generate_trade_day_batches,
-)
 from ...common.constants import UpdateTypes
 
 logger = logging.getLogger(__name__)

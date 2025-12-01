@@ -232,6 +232,8 @@ class DataHelpers:
                               exchange: str = 'SSE') -> List[str]:
         """获取交易日期列表（仅开市日期）
         
+        [已禁用] 此方法已废弃，请使用 alphahome.fetchers.tools.calendar.get_trade_days_between 替代。
+        
         Args:
             start_date: 开始日期，格式 'YYYY-MM-DD'
             end_date: 结束日期，格式 'YYYY-MM-DD'
@@ -239,7 +241,17 @@ class DataHelpers:
             
         Returns:
             交易日期字符串列表
+            
+        .. deprecated::
+            请使用 `alphahome.fetchers.tools.calendar.get_trade_days_between` 替代
         """
+        import warnings
+        warnings.warn(
+            "[已禁用] get_trading_dates_only 已废弃，请使用 "
+            "alphahome.fetchers.tools.calendar.get_trade_days_between 替代",
+            DeprecationWarning,
+            stacklevel=2
+        )
         df = self.get_trade_dates(start_date, end_date, exchange)
         
         if df.empty:
