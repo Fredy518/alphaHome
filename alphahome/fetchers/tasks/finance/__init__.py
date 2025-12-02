@@ -21,6 +21,7 @@ from .tushare_fina_express import TushareFinaExpressTask
 from .tushare_fina_forecast import TushareFinaForecastTask
 from .tushare_fina_income import TushareFinaIncomeTask
 from .tushare_fina_indicator import TushareFinaIndicatorTask
+from .tushare_fina_mainbz import TushareFinaMainbzTask
 
 __all__ = [
     "TushareFinaBalancesheetTask",
@@ -30,4 +31,5 @@ __all__ = [
     "TushareFinaForecastTask",
     "TushareFinaIndicatorTask",
     "TushareFinaDisclosureTask",
+    "TushareFinaMainbzTask",
 ]
