@@ -28,3 +28,4 @@ data_module/config.json
 # Additional rules
 logs/
 dist/ 
+.hypothesis/

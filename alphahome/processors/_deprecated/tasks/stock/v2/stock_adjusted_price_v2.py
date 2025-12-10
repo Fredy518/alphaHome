@@ -103,8 +103,9 @@ class StockAdjustedPriceV2Task(ProcessorTaskBase):
         """
         在任务内部编排操作来处理数据
         """
-        if data.empty:
-            return data
+        if data is None or data.empty:
+            self.logger.warning("输入数据为空，跳过处理。")
+            return pd.DataFrame()
 
         self.logger.info(f"开始处理股票后复权价格数据，输入行数: {len(data)}")
 

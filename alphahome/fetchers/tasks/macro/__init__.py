@@ -1,5 +1,7 @@
 from .tushare_macro_cpi import TushareMacroCpiTask
 # from .tushare_macro_hibor import TushareMacroHiborTask 
+from .tushare_macro_pmi import TushareMacroPmiTask
+from .tushare_macro_ppi import TushareMacroPpiTask
 from .tushare_macro_shibor import TushareMacroShiborTask
 from .tushare_macro_ecocal import TushareMacroEcocalTask
 from .tushare_macro_yieldcurve import TushareMacroYieldCurveTask
@@ -14,6 +16,8 @@ __all__ = [
     # "TushareMacroHiborTask", # Hibor 数据源已下线
     "TushareMacroShiborTask",
     "TushareMacroCpiTask",
+    "TushareMacroPmiTask",
+    "TushareMacroPpiTask",
     "TushareMacroEcocalTask",
     "TushareMacroYieldCurveTask",
     "TushareMacroSFTTask",

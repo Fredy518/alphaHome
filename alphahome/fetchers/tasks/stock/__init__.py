@@ -28,6 +28,13 @@ from .tushare_stock_ahcomparison import TushareStockAHComparisonTask
 from .tushare_stock_st import TushareStockSTTask
 from .tushare_stock_limitprice import TushareStockLimitPriceTask
 from .tushare_stock_namechange import TushareStockNameChangeTask
+from .tushare_stock_sharefloat import TushareStockShareFloatTask
+from .tushare_stock_pledgestat import TushareStockPledgeStatTask
+from .tushare_stock_repurchase import TushareStockRepurchaseTask
+from .tushare_stock_holdertrade import TushareStockHolderTradeTask
+from .tushare_stock_toplist import TushareStockTopListTask
+from .tushare_stock_topinst import TushareStockTopInstTask
+from .tushare_stock_blocktrade import TushareStockBlockTradeTask
 
 from .akshare_stock_limitup_reason import AkShareStockLimitupReasonTask
 
@@ -60,6 +67,13 @@ __all__ = [
     "TushareStockSTTask",
     "TushareStockLimitPriceTask",
     "TushareStockNameChangeTask",
+    "TushareStockShareFloatTask",
+    "TushareStockPledgeStatTask",
+    "TushareStockRepurchaseTask",
+    "TushareStockHolderTradeTask",
+    "TushareStockTopListTask",
+    "TushareStockTopInstTask",
+    "TushareStockBlockTradeTask",
     # "PytdxStockDailyTask",
     "AkShareStockLimitupReasonTask",
 ]

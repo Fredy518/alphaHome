@@ -173,6 +173,23 @@ class OperationPipeline:
                     f"执行操作 {i+1}/{len(self.operations)}: {operation.name}"
                 )
                 result = await operation.apply(result, **kwargs)
+
+                # 防御操作返回值为 None 或非 DataFrame 的情况，避免后续崩溃
+                if result is None:
+                    msg = f"操作 {operation.name} 返回 None，无法继续执行流水线"
+                    self.logger.error(msg)
+                    if self.stop_on_error:
+                        raise ValueError(msg)
+                    result = pd.DataFrame()
+                elif not isinstance(result, pd.DataFrame):
+                    msg = (
+                        f"操作 {operation.name} 返回类型 {type(result)}，"
+                        "预期为 pandas.DataFrame"
+                    )
+                    self.logger.error(msg)
+                    if self.stop_on_error:
+                        raise ValueError(msg)
+                    result = pd.DataFrame()
             except Exception as e:
                 self.logger.error(
                     f"执行操作 {operation.name} 时出错: {str(e)}", exc_info=True

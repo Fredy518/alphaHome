@@ -2,7 +2,9 @@
 
 ## 📋 更新概览
 
-本次文档更新全面反映了processors模块从五层架构到三层架构的重构成果，提供了详细的开发指南和实用示例。
+最近更新（批次1+后续）：
+- 新增数据任务：估值(`index_valuation`)、资金流(`market_money_flow`)、波动率(`index_volatility`)、期权IV简版(`option_iv`)、风格指数收益(`style_index_return`)、申万行业收益/宽度(`industry_return`/`industry_breadth`)、期货基差/席位(`futures_basis`/`member_position`).
+- 归档旧任务：`stock_adjdaily_processor.py`、`stock_adjusted_price_v2.py`、`pit/manager.py` 移至 `_deprecated/`，不再导出。
 
 ## 🔄 主要更新内容
 

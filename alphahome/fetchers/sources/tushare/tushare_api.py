@@ -278,7 +278,13 @@ class TushareAPI:
                         "fields": fields or "",
                     }
 
-                    async with aiohttp.ClientSession() as session:
+                    # 设置合理的超时时间，避免 Windows 信号灯超时错误
+                    timeout = aiohttp.ClientTimeout(
+                        total=120,      # 总超时 120 秒
+                        connect=30,     # 连接超时 30 秒
+                        sock_read=90    # 读取超时 90 秒
+                    )
+                    async with aiohttp.ClientSession(timeout=timeout) as session:
                         async with session.post(self.http_url, json=payload) as response:
                             if response.status != 200:
                                 error_text = await response.text()
@@ -396,6 +402,10 @@ class TushareAPI:
                             f"并发控制 ({api_name}): 已释放 Semaphore 许可"
                         )
 
+        if not all_data:
+            return pd.DataFrame()
+        # 过滤掉空的 DataFrame，避免 FutureWarning
+        all_data = [df for df in all_data if not df.empty]
         if not all_data:
             return pd.DataFrame()
         combined_data = pd.concat(all_data, ignore_index=True)
@@ -571,14 +581,17 @@ class TushareAPI:
 
     def _is_minimal_date_range(self, start_date: str, end_date: str) -> bool:
         """
-        判断日期范围是否已达到最小粒度（1个月）。
+        判断日期范围是否已达到最小粒度（1天）。
+
+        对于数据量特别大的接口（如 share_float），即使按月查询也可能超出 offset 限制，
+        因此将最小粒度设为1天，允许继续拆分到单日级别。
 
         Args:
             start_date: 开始日期，YYYYMMDD格式
             end_date: 结束日期，YYYYMMDD格式
 
         Returns:
-            如果日期范围小于等于1个月则返回True，否则返回False
+            如果日期范围小于等于1天则返回True，否则返回False
         """
         try:
             start_dt = datetime.strptime(start_date, "%Y%m%d")
@@ -587,8 +600,8 @@ class TushareAPI:
             # 计算天数差
             days_diff = (end_dt - start_dt).days
 
-            # 如果小于等于31天，认为已达到最小粒度
-            return days_diff <= 31
+            # 如果小于等于1天，认为已达到最小粒度
+            return days_diff <= 1
 
         except ValueError:
             # 如果日期格式错误，为了安全起见返回True，避免无限递归

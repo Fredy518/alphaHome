@@ -8,12 +8,14 @@
 
 主要组件:
 - ProcessorEngine: 处理引擎，协调和执行任务
-- TaskScheduler: 任务调度器
-- ExecutionMonitor: 执行监控器
+- TaskExecutionResult: 任务执行结果数据类
+- TaskStatus: 任务状态枚举
 """
 
-from .processor_engine import ProcessorEngine
+from .processor_engine import ProcessorEngine, TaskExecutionResult, TaskStatus
 
 __all__ = [
-    "ProcessorEngine"
+    "ProcessorEngine",
+    "TaskExecutionResult",
+    "TaskStatus",
 ]

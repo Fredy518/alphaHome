@@ -22,9 +22,26 @@ AlphaHome 定位为 **量化数据基础设施**，专注于：
 | 📊 `fetchers/` | ✅ **可用** | 数据获取，支持 Tushare、AkShare 等多数据源 |
 | ⚙️ `common/` | ✅ **可用** | 核心工具（数据库、配置、日志、任务系统） |
 | 🔍 `providers/` | 🔶 部分可用 | 数据访问接口，基础功能可用 |
-| 🔧 `processors/` | 🚧 开发中 | 数据处理引擎，功能开发中 |
+| 🔧 `processors/` | 🚧 开发中 | 数据处理引擎，数据分层架构已完成（见下方说明） |
 | 🧮 `factors/` | 🚧 开发中 | 因子计算库，功能开发中 |
 | 🖥️ `gui/` | 🚧 开发中 | 图形界面，基础功能可用但不稳定 |
+
+### 🔧 **Processors 模块 - 数据分层架构**
+
+Processors 模块已完成数据分层架构设计和核心组件实现：
+
+**已完成**：
+- ✅ Clean Layer 组件（Validator, Aligner, Standardizer, LineageTracker）
+- ✅ Feature Layer 纯函数接口
+- ✅ Task Layer 增强（fetch → clean → feature → save 流程）
+- ✅ 18 个正确性属性的属性测试（255 个测试全部通过）
+- ✅ 任务分类表和特征入库白名单
+
+**待生产环境实现**：
+- ⚠️ `_save_to_clean()` 方法需覆盖以实现真正的数据库写入
+- 🔄 `_check_dependencies()` 依赖检查功能（扩展点）
+
+详细文档见：`.kiro/specs/processors-data-layering/`
 
 ## 📊 **Fetchers - 数据获取模块（推荐使用）**
 

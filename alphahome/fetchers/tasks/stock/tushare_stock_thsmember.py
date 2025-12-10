@@ -2,21 +2,26 @@
 # -*- coding: utf-8 -*-
 
 """
-同花顺概念板块成分 (ths_member) 全量更新任务
+同花顺概念板块成分 (ths_member) 更新任务
 获取同花顺概念板块的成分股列表，每次执行时替换数据库中的旧数据。
-此任务仅支持全量更新模式，智能增量和手动增量模式会跳过执行。
+支持全量更新和智能增量：
+- 全量更新：直接执行全量更新
+- 智能增量：检查数据表是否同时满足两个条件：超过1个月未更新且当天为非交易日，如果同时满足则自动转为全量更新，否则跳过执行
+- 手动增量：跳过执行
 
-{{ AURA-X: [Create] - 基于 Tushare ths_member API 创建同花顺概念板块成分任务. Source: tushare.pro/document/2?doc_id=261 }}
-{{ AURA-X: [Note] - 此任务仅支持全量更新，其他更新模式将跳过执行 }}
+{{ AURA-X: [Modify] - 修改智能增量逻辑，支持基于时间+交易日判断的自动更新. Source: context7-mcp }}
+{{ AURA-X: [Note] - 智能增量需要同时满足超过1个月未更新且当天为非交易日两个条件 }}
 """
 
 import logging
+from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
 # 确认导入路径正确
 from ...sources.tushare.tushare_task import TushareTask
+from ...tools.calendar import is_trade_day
 from ....common.task_system.task_decorator import task_register
 from ....common.constants import UpdateTypes
 
@@ -91,22 +96,34 @@ class TushareStockThsMemberTask(TushareTask):
     async def get_batch_list(self, **kwargs: Any) -> List[Dict]:
         """
         生成批处理参数列表。
-        
-        {{ AURA-X: [Important] - 此任务仅支持全量更新模式 }}
-        如果用户选择智能增量或手动增量模式，任务将跳过执行并在日志中给出提示。
-        
-        对于全量更新模式，从 stock_thsindex 表获取所有同花顺板块的 ts_code，
+
+        {{ AURA-X: [Important] - 支持全量更新和智能增量 }}
+        - 全量更新：直接执行全量更新
+        - 智能增量：检查数据表是否同时满足两个条件（超过1个月未更新且当天为非交易日），如果同时满足则转为全量更新，否则跳过执行
+        - 手动增量：跳过执行
+
+        对于需要更新的情况，从 stock_thsindex 表获取所有同花顺板块的 ts_code，
         然后为每个 ts_code 生成批处理参数。
         """
         # 检查更新类型
         update_type = kwargs.get("update_type", UpdateTypes.FULL)
-        
-        # {{ AURA-X: [Check] - 验证更新类型是否为全量更新 }}
-        if update_type != UpdateTypes.FULL:
+
+        # {{ AURA-X: [Check] - 处理不同的更新类型 }}
+        if update_type == UpdateTypes.SMART:
+            # 智能增量：检查是否需要全量更新
+            should_update = await self._should_perform_full_update()
+            if not should_update:
+                self.logger.info(f"任务 {self.name}: 智能增量 - 数据表不满足全量更新条件，跳过执行")
+                return []
+            else:
+                self.logger.info(f"任务 {self.name}: 智能增量 - 数据表满足全量更新条件，转为全量更新")
+                # 继续执行全量更新逻辑
+        elif update_type != UpdateTypes.FULL:
+            # 手动增量或其他不支持的模式
             self.logger.warning(
-                f"任务 {self.name}: 此任务仅支持全量更新模式 (FULL)。"
+                f"任务 {self.name}: 此任务仅支持全量更新 (FULL) 和智能增量 (SMART)。"
                 f"当前更新类型为 '{update_type}'，任务将跳过执行。"
-                f"如需更新此数据，请使用全量更新模式。"
+                f"如需更新此数据，请使用全量更新或智能增量。"
             )
             # 返回空列表，任务会跳过执行
             return []
@@ -148,6 +165,70 @@ class TushareStockThsMemberTask(TushareTask):
             self.logger.error(f"查询 tushare.stock_thsindex 表失败: {e}", exc_info=True)
             return []
 
+    async def _should_perform_full_update(self) -> bool:
+        """
+        检查数据表是否满足全量更新的条件：
+        1. 数据表超过1个月未更新
+        2. 当天为非交易日
+
+        只有同时满足两个条件才返回True。
+
+        Returns:
+            bool: 如果同时满足两个条件返回True，否则返回False
+        """
+        try:
+            # 查询数据表中最大的 update_time
+            query = f"SELECT MAX(update_time) as last_update FROM {self.data_source}.{self.table_name}"
+            result = await self.db.fetch(query)
+
+            if not result or not result[0]["last_update"]:
+                # 如果没有数据或 update_time 为 NULL，认为需要更新
+                self.logger.info(f"表 {self.table_name} 没有更新时间记录，需要执行全量更新")
+                return True
+
+            last_update = result[0]["last_update"]
+            current_time = datetime.now()
+
+            # 计算时间差
+            time_diff = current_time - last_update
+
+            # 检查是否超过1个月 (30天)
+            one_month = timedelta(days=30)
+            is_over_one_month = time_diff > one_month
+
+            # 检查当天是否为非交易日
+            today_str = current_time.strftime("%Y%m%d")
+            is_trading_day = await is_trade_day(today_str)
+            is_non_trading_day = not is_trading_day
+
+            self.logger.info(
+                f"表 {self.table_name} 最后更新时间为 {last_update}，"
+                f"距离现在 {time_diff.days} 天，是否超过1个月: {is_over_one_month}，"
+                f"当天 {today_str} 是否为非交易日: {is_non_trading_day}"
+            )
+
+            # 只有同时满足两个条件才执行全量更新
+            if is_over_one_month and is_non_trading_day:
+                self.logger.info(
+                    f"表 {self.table_name} 满足全量更新条件：超过1个月未更新且当天为非交易日"
+                )
+                return True
+            else:
+                if not is_over_one_month:
+                    self.logger.info(
+                        f"表 {self.table_name} 未超过1个月未更新，跳过更新"
+                    )
+                elif not is_non_trading_day:
+                    self.logger.info(
+                        f"表 {self.table_name} 当天为交易日，跳过更新"
+                    )
+                return False
+
+        except Exception as e:
+            self.logger.error(f"检查表 {self.table_name} 更新时间失败: {e}", exc_info=True)
+            # 如果检查失败，为了安全起见，认为需要更新
+            return True
+
     # 7. 数据验证规则 (真正生效的验证机制)
     validations = [
         (lambda df: df['ts_code'].notna(), "指数代码不能为空"),
@@ -170,11 +251,14 @@ class TushareStockThsMemberTask(TushareTask):
 5. 使用相应的运行脚本来执行此任务。
 
 {{ AURA-X: [Note] - 本任务需要 5000 积分权限，每分钟可调取 200 次 }}
-{{ AURA-X: [Important] - 此任务仅支持全量更新模式，智能增量和手动增量模式会跳过执行 }}
+{{ AURA-X: [Important] - 支持全量更新和智能增量模式，手动增量模式会跳过执行 }}
 
 技术说明:
-- 由于板块成分变动频繁，且 Tushare API 不提供增量查询机制，此任务设计为仅支持全量更新
-- 在 get_batch_list 方法中检查 update_type，如果不是 FULL 模式，则返回空列表跳过执行
+- 由于板块成分变动频繁，且 Tushare API 不提供增量查询机制，此任务支持全量更新和智能增量
+- 全量更新：直接执行全量更新
+- 智能增量：检查数据表是否同时满足两个条件：max(update_time) 超过1个月且当天为非交易日，如果同时满足则自动转为全量更新，否则跳过执行
+- 手动增量：由于 API 限制，不支持手动增量，任务会跳过执行
+- 非交易日判断：通过交易日历表检查当天是否为工作日且开市，避免在交易日频繁更新
 - 全量更新时从 stock_thsindex 表获取所有板块代码，为每个板块生成独立的批处理参数
 - 数据库表使用复合主键 (ts_code, con_code) 确保每个板块-成分股组合的唯一性
 """

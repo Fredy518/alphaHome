@@ -250,7 +250,24 @@ class StockAdjdailyProcessorTask(ProcessorTaskBase):
 
         return {"stock_data": stock_df, "calendar_data": calendar_df}
 
-    async def process_data_logic(
+    async def process_data(
+        self, data: pd.DataFrame, stop_event=None, **kwargs
+    ) -> pd.DataFrame:
+        """
+        处理数据的实现。
+        
+        注意：此任务使用 _fetch_block_data 获取多源数据，
+        因此 data 参数在此任务中未使用，实际数据通过 kwargs 传递。
+        """
+        data_dict = kwargs.get('data_dict', {})
+        if not data_dict:
+            # 如果没有 data_dict，尝试使用传入的 data
+            if data is not None and not data.empty:
+                return data
+            return pd.DataFrame()
+        return await self._process_data_logic(data_dict, **kwargs)
+    
+    async def _process_data_logic(
         self, data_dict: Dict[str, pd.DataFrame], **kwargs
     ) -> pd.DataFrame:
         stock_df_original = data_dict.get("stock_data")
@@ -338,6 +355,58 @@ class StockAdjdailyProcessorTask(ProcessorTaskBase):
                 final_df[col] = np.nan
 
         return final_df[output_columns].copy()
+
+    async def fetch_data(self, **kwargs) -> Optional[pd.DataFrame]:
+        """
+        获取数据的实现。
+        
+        此任务使用 _fetch_block_data 方法获取多源数据（股票数据和日历数据），
+        返回股票数据作为主数据。
+        """
+        block_params = {
+            'codes': kwargs.get('codes'),
+            'start_date': kwargs.get('start_date'),
+            'end_date': kwargs.get('end_date'),
+        }
+        
+        data_dict = await self._fetch_block_data(block_params)
+        
+        # 将 data_dict 存储到 kwargs 中供 process_data 使用
+        # 注意：这是一个临时方案，更好的做法是重构任务执行流程
+        self._cached_data_dict = data_dict
+        
+        return data_dict.get('stock_data', pd.DataFrame())
+    
+    async def save_result(self, data: pd.DataFrame, **kwargs):
+        """
+        保存处理结果的实现。
+        """
+        if data.empty:
+            self.logger.warning("没有数据需要保存。")
+            return
+        
+        self.logger.info(f"准备保存 {len(data)} 条数据到 {self.result_table}...")
+        
+        # 清除旧数据
+        block_params = {
+            'codes': kwargs.get('codes'),
+            'start_date': kwargs.get('start_date'),
+            'end_date': kwargs.get('end_date'),
+        }
+        await self._clear_existing_results(data, block_params)
+        
+        # 保存新数据
+        try:
+            await self.db.save_dataframe(
+                data,
+                self.result_table,
+                primary_keys=[self.code_column, self.date_column],
+                use_insert_mode=True
+            )
+            self.logger.info(f"成功保存 {len(data)} 条数据到 {self.result_table}。")
+        except Exception as e:
+            self.logger.error(f"保存数据到 {self.result_table} 失败: {e}", exc_info=True)
+            raise
 
     async def _clear_existing_results(
         self, data: pd.DataFrame, block_params: Dict[str, Any]

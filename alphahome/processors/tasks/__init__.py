@@ -10,6 +10,11 @@
 主要组件:
 - ProcessorTaskBase: 数据处理任务基类
 - 各种具体的数据处理任务实现
+
+领域子目录:
+- market/: 市场级特征（横截面技术特征、市场情绪等）
+- index/: 指数级特征（指数波动率、成分股特征等）
+- style/: 风格因子（风格动量、风格轮动等）
 """
 
 # 导入基类
@@ -17,10 +22,13 @@ from .base_task import ProcessorTaskBase
 from .block_processing_mixin import BlockProcessingTaskMixin
 
 # 导入具体的处理任务
-from .stock_adjusted_price_v2 import StockAdjustedPriceV2Task
-from .stock_adjdaily_processor import StockAdjdailyProcessorTask
 # 导入旧的 stock_adjusted_price 任务，如果需要保持兼容性
 # from .stock_adjusted_price import StockAdjustedPriceTask
+
+# 导入领域子模块
+from . import market
+from . import index
+from . import style
 
 __all__ = [
     # 基类
@@ -28,7 +36,10 @@ __all__ = [
     "BlockProcessingTaskMixin",
 
     # 具体任务
-    "StockAdjustedPriceV2Task",
-    "StockAdjdailyProcessorTask",
     # "StockAdjustedPriceTask", # 如需兼容，取消此行注释
+    
+    # 领域子模块
+    "market",
+    "index",
+    "style",
 ]

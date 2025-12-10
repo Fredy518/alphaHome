@@ -8,8 +8,11 @@ AkShare 扩展任务 - 同花顺涨停原因
 作为 akshare 风格接口，通过 AkShareTask 统一调度与入库。
 """
 
+import asyncio
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
+
+import pandas as pd
 
 from ...sources.akshare.akshare_task import AkShareTask
 from ...tools.calendar import get_trade_days_between
@@ -74,6 +77,103 @@ class AkShareStockLimitupReasonTask(AkShareTask):
     ]
 
     validation_mode = "report"
+
+    # 缓存股票代码映射表（实例级别）
+    _code_suffix_cache: Optional[Dict[str, str]] = None
+
+    async def _pre_execute(
+        self, stop_event: Optional[asyncio.Event] = None, **kwargs
+    ):
+        """
+        任务执行前的准备工作：预加载股票代码映射。
+        """
+        await super()._pre_execute(stop_event=stop_event, **kwargs)
+        await self._load_code_suffix_mapping()
+
+    async def _load_code_suffix_mapping(self) -> Dict[str, str]:
+        """
+        从 tushare.stock_basic 表加载股票代码后缀映射。
+
+        Returns:
+            Dict[str, str]: 6位代码 -> 完整代码（带后缀）的映射
+            例如: {"000001": "000001.SZ", "600000": "600000.SH"}
+        """
+        if self._code_suffix_cache is not None:
+            return self._code_suffix_cache
+
+        try:
+            query = """
+                SELECT ts_code
+                FROM tushare.stock_basic
+            """
+            rows = await self.db.fetch(query)
+
+            # 构建映射: 6位代码 -> 完整代码
+            mapping = {}
+            for row in rows:
+                ts_code = row["ts_code"]
+                if ts_code and "." in ts_code:
+                    symbol = ts_code.split(".")[0]
+                    mapping[symbol] = ts_code
+
+            self._code_suffix_cache = mapping
+            self.logger.info(f"已加载 {len(mapping)} 条股票代码映射")
+            return mapping
+
+        except Exception as e:
+            self.logger.error(f"加载股票代码映射失败: {e}")
+            return {}
+
+    def process_data(
+        self, data: pd.DataFrame, stop_event: Optional[asyncio.Event] = None, **kwargs
+    ) -> pd.DataFrame:
+        """
+        处理数据，为 ts_code 添加交易所后缀。
+
+        Args:
+            data: 原始数据
+            stop_event: 停止事件
+            **kwargs: 额外参数
+
+        Returns:
+            处理后的数据
+        """
+        # 先调用父类的 process_data 应用基础转换
+        data = super().process_data(data, stop_event=stop_event, **kwargs)
+
+        if data is None or data.empty:
+            return data
+
+        # 使用预加载的映射（在 _pre_execute 中已加载）
+        code_mapping = self._code_suffix_cache or {}
+
+        if not code_mapping:
+            self.logger.warning("股票代码映射为空，ts_code 将保持原样（无后缀）")
+            return data
+
+        # 为 ts_code 添加后缀
+        if "ts_code" in data.columns:
+            original_count = len(data)
+
+            def add_suffix(code):
+                if pd.isna(code):
+                    return code
+                code_str = str(code).strip()
+                # 如果已经有后缀，直接返回
+                if "." in code_str:
+                    return code_str
+                # 从映射中查找
+                return code_mapping.get(code_str, code_str)
+
+            data["ts_code"] = data["ts_code"].apply(add_suffix)
+
+            # 统计添加后缀的情况
+            with_suffix = data["ts_code"].str.contains(r"\.", na=False).sum()
+            self.logger.info(
+                f"ts_code 后缀处理完成: {with_suffix}/{original_count} 条记录已添加后缀"
+            )
+
+        return data
 
     async def get_batch_list(self, **kwargs) -> List[Dict]:
         """

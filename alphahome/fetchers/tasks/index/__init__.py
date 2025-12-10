@@ -6,6 +6,7 @@ from .tushare_index_swdaily import TushareIndexSwDailyTask
 from .tushare_index_swmember import TushareIndexSwmemberTask
 from .tushare_index_weight import TushareIndexWeightTask
 from .tushare_index_dailybasic import TushareIndexDailyBasicTask
+from .tushare_index_global import TushareIndexGlobalTask
 
 __all__ = [
     "TushareIndexBasicTask",
@@ -16,4 +17,5 @@ __all__ = [
     "TushareIndexWeightTask",
     "TushareIndexFactorProTask",
     "TushareIndexDailyBasicTask",
+    "TushareIndexGlobalTask",
 ]
