@@ -23,7 +23,6 @@ from .tushare_stock_dcmember import TushareStockDcMemberTask
 from .tushare_stock_kpllist import TushareStockKplListTask
 from .tushare_stock_kplconcept import TushareStockKplConceptTask
 from .tushare_stock_kplmember import TushareStockKplMemberTask  
-# from .pytdx_stock_daily import PytdxStockDailyTask
 from .tushare_stock_ahcomparison import TushareStockAHComparisonTask
 from .tushare_stock_st import TushareStockSTTask
 from .tushare_stock_limitprice import TushareStockLimitPriceTask
@@ -74,6 +73,5 @@ __all__ = [
     "TushareStockTopListTask",
     "TushareStockTopInstTask",
     "TushareStockBlockTradeTask",
-    # "PytdxStockDailyTask",
     "AkShareStockLimitupReasonTask",
 ]

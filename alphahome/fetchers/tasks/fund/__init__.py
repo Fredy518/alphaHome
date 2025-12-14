@@ -9,6 +9,7 @@ from .tushare_fund_nav import TushareFundNavTask
 from .tushare_fund_portfolio import TushareFundPortfolioTask
 from .tushare_fund_share import TushareFundShareTask
 from .tushare_fund_dividend import TushareFundDividendTask
+from .akshare_fund_cf_em import AkShareFundCfEmTask
 # from .ifind_fund_market_forwardlook import iFindFundMarketforwardlookTask
 # from .ifind_fund_market_outlook import iFindFundMarketOutlookTask
 
@@ -24,6 +25,7 @@ __all__ = [
     "TushareFundFactorProTask",
     "TushareFundManagerTask",
     "TushareFundDividendTask",
+    "AkShareFundCfEmTask",
     # "iFindFundMarketforwardlookTask",
     # "iFindFundMarketOutlookTask",
 ]

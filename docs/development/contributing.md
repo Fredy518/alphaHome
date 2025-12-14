@@ -30,11 +30,9 @@ python -m venv venv
 source venv/bin/activate  # Windows: venv\Scripts\activate
 
 # 5. 安装依赖
-make install
-# 或者: pip install -r requirements.txt
-
-# 6. 安装开发依赖
-pip install -e .
+pip install --upgrade pip
+pip install -r requirements.txt
+pip install -e .  # 开发模式，便于本地调试
 ```
 
 ### **2. 开发工作流**
@@ -52,9 +50,11 @@ git checkout -b feature/your-feature-name
 # 3. 进行开发
 # ... 编写代码 ...
 
-# 4. 运行测试
-make test-unit
-make lint
+# 4. 运行测试与静态检查
+pytest tests/unit/ -v -m "unit and not requires_db and not requires_api"
+flake8 alphahome/
+black --check alphahome/ tests/
+isort --check-only alphahome/ tests/
 
 # 5. 提交代码
 git add .
@@ -75,14 +75,17 @@ git push origin feature/your-feature-name
 
 ```bash
 # 代码格式化
-make format
+black alphahome/ tests/
+isort alphahome/ tests/
 
 # 包含：
 # - black: Python代码格式化
 # - isort: 导入语句排序
 
 # 代码质量检查
-make lint
+flake8 alphahome/ --count --select=E9,F63,F7,F82 --show-source --statistics
+flake8 alphahome/ --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+mypy alphahome/  # 如启用类型检查
 
 # 包含：
 # - flake8: 语法和风格检查
@@ -173,7 +176,7 @@ def new_feature(input_data):
 
 ```bash
 # 运行测试并检查覆盖率
-make test-cov
+pytest tests/ --cov=alphahome --cov-report=html --cov-report=term-missing
 
 # 查看覆盖率报告
 open htmlcov/index.html

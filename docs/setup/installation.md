@@ -98,8 +98,8 @@ pip install --upgrade pip
 # 安装项目依赖
 pip install -r requirements.txt
 
-# 或使用Make命令（如果支持）
-make install
+# 开发模式安装（可选，用于本地调试）
+pip install -e .
 ```
 
 ## 🔧 **详细配置**
@@ -152,10 +152,7 @@ cp config.example.json config.json
 ### **运行测试**
 ```bash
 # 运行单元测试
-make test-unit
-
-# 或直接使用pytest
-pytest tests/unit/ -v
+pytest tests/unit/ -v -m "unit and not requires_db and not requires_api"
 ```
 
 ### **启动GUI**

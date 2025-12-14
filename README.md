@@ -115,8 +115,8 @@ cd alphahome
 # 安装（开发模式）
 pip install -e .
 
-# 运行测试
-make test-unit
+# 运行测试（单元）
+pytest tests/unit/ -v -m "unit and not requires_db and not requires_api"
 ```
 
 ## 📁 **项目结构**

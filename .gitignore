@@ -28,4 +28,6 @@ data_module/config.json
 # Additional rules
 logs/
 dist/ 
+research/
 .hypothesis/
+.kiro/
