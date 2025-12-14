@@ -378,3 +378,133 @@ class SchemaManagementMixin:
         except Exception as e:
             self.logger.error(f"创建视图 '{schema}.{view_name}' 失败: {e}", exc_info=True) # type: ignore
             raise
+
+    async def create_rawdata_view(
+        self,
+        view_name: str,
+        source_schema: str,
+        source_table: str,
+        replace: bool = False
+    ) -> None:
+        """
+        在 rawdata schema 创建跨 schema 的映射视图
+        
+        此方法支持从任意源 schema（tushare, akshare, ifind等）创建映射到 rawdata 的视图。
+        PostgreSQL 会自动在 pg_depend 中记录视图对源表的依赖关系，
+        使用 DROP TABLE ... CASCADE 时会自动删除相应的视图。
+        
+        Args:
+            view_name: 视图名称（通常与源表同名）
+            source_schema: 源表所在 schema（tushare/akshare/ifind等）
+            source_table: 源表名称
+            replace: 是否使用 OR REPLACE（仅 tushare 数据源使用）
+        """
+        if self.pool is None: # type: ignore
+            await self.connect() # type: ignore
+
+        # 确保 rawdata schema 存在
+        await self.ensure_schema_exists('rawdata')
+        
+        replace_clause = "OR REPLACE " if replace else ""
+        
+        # 构建跨 schema 的视图创建语句
+        create_view_sql = f"""
+        CREATE {replace_clause}VIEW rawdata."{view_name}" AS
+        SELECT * FROM {source_schema}."{source_table}";
+        """
+        
+        try:
+            async with self.pool.acquire() as conn: # type: ignore
+                await conn.execute(create_view_sql) # type: ignore
+            
+            self.logger.info( # type: ignore
+                f"成功创建 rawdata 视图 rawdata.{view_name} "
+                f"指向 {source_schema}.{source_table}"
+            )
+            
+            # 添加 COMMENT 标记此视图为自动管理
+            comment_sql = f"""
+            COMMENT ON VIEW rawdata."{view_name}" IS 
+            'AUTO_MANAGED: source={source_schema}.{source_table}';
+            """
+            
+            async with self.pool.acquire() as conn: # type: ignore
+                await conn.execute(comment_sql) # type: ignore
+            
+            self.logger.debug( # type: ignore
+                f"已为视图 rawdata.{view_name} 添加 AUTO_MANAGED 标记"
+            )
+        except Exception as e:
+            self.logger.error( # type: ignore
+                f"创建 rawdata 视图 rawdata.{view_name} 失败: {e}", 
+                exc_info=True
+            )
+            raise
+
+    async def check_table_exists(
+        self,
+        schema: str,
+        table_name: str
+    ) -> bool:
+        """
+        检查指定 schema 中的表是否存在
+        
+        Args:
+            schema: Schema 名称
+            table_name: 表名称
+            
+        Returns:
+            bool: 表存在返回 True，否则返回 False
+        """
+        if self.pool is None: # type: ignore
+            await self.connect() # type: ignore
+
+        query = """
+        SELECT EXISTS (
+            SELECT 1 FROM pg_tables 
+            WHERE schemaname = $1 AND tablename = $2
+        )
+        """
+        
+        try:
+            async with self.pool.acquire() as conn: # type: ignore
+                result = await conn.fetchval(query, schema, table_name) # type: ignore
+            
+            return result if result is not None else False
+        except Exception as e:
+            self.logger.error( # type: ignore
+                f"检查表 {schema}.{table_name} 存在性失败: {e}",
+                exc_info=True
+            )
+            return False
+
+    async def get_tables_in_schema(self, schema: str) -> List[str]:
+        """
+        获取指定 schema 中的所有表名列表
+        
+        Args:
+            schema: Schema 名称
+            
+        Returns:
+            List[str]: 表名列表（仅包含物理表，不包含视图）
+        """
+        if self.pool is None: # type: ignore
+            await self.connect() # type: ignore
+
+        query = """
+        SELECT tablename FROM pg_tables 
+        WHERE schemaname = $1
+        ORDER BY tablename
+        """
+        
+        try:
+            async with self.pool.acquire() as conn: # type: ignore
+                rows = await conn.fetch(query, schema) # type: ignore
+            
+            return [row['tablename'] for row in rows]
+        except Exception as e:
+            self.logger.error( # type: ignore
+                f"获取 schema {schema} 中的表列表失败: {e}",
+                exc_info=True
+            )
+            return []

@@ -668,12 +668,87 @@ class BaseTask(ABC):
 
             self.logger.info(f"表 '{self.table_name}' 在 schema '{self.data_source or 'public'}' 中不存在，正在创建...")
             await self._create_table(stop_event=stop_event)
+        
+        # 表创建完成后，自动创建 rawdata 视图（如果表是新创建的，或者已存在）
+        # 注意：第一次调用时表刚创建，后续调用时表已存在都会尝试创建视图
+        await self._create_rawdata_view_if_needed()
+
 
     async def _create_table(self, stop_event: Optional[asyncio.Event] = None, **kwargs):
         """通过调用DB Manager中的方法来创建数据表和索引"""
         await self.db.create_table_from_schema(self)
         if stop_event and stop_event.is_set():
             raise asyncio.CancelledError("任务在 _create_table 后被取消")
+
+    async def _create_rawdata_view_if_needed(self):
+        """
+        根据数据源优先级自动创建/更新 rawdata 视图
+        
+        策略（基于用户选择）：
+        1. tushare: 总是创建 OR REPLACE VIEW（覆盖任何已存在的视图）
+        2. 其他源: 仅当 tushare 不存在 且 rawdata 视图不存在时才创建
+        
+        为了确保系统稳定性，该方法的失败不会中断主数据采集流程。
+        """
+        # 跳过非主要数据源（rawdata 本身不需要映射）
+        if not self.data_source or self.data_source == 'rawdata':
+            return
+        
+        schema = self.data_source  # 例如 'tushare', 'akshare'
+        table = self.table_name    # 例如 'stock_basic'
+        
+        # tushare 优先：总是创建/替换
+        if self.data_source == 'tushare':
+            try:
+                await self.db.create_rawdata_view(
+                    view_name=table,
+                    source_schema=schema,
+                    source_table=table,
+                    replace=True  # OR REPLACE
+                )
+                self.logger.info(
+                    f"已为 tushare.{table} 创建 rawdata 视图（优先级覆盖）"
+                )
+            except Exception as e:
+                self.logger.warning(
+                    f"创建 rawdata 视图失败（不影响数据采集）: {e}"
+                )
+            return
+        
+        # 非 tushare 源：检查 tushare 是否已有同名表
+        try:
+            tushare_exists = await self.db.check_table_exists(
+                'tushare', table
+            )
+            if tushare_exists:
+                self.logger.info(
+                    f"跳过 {schema}.{table} 的 rawdata 视图创建：tushare 优先"
+                )
+                return
+            
+            # 检查 rawdata 视图是否已存在
+            view_exists = await self.db.view_exists('rawdata', table)
+            if view_exists:
+                self.logger.info(
+                    f"rawdata.{table} 视图已存在，跳过创建"
+                )
+                return
+            
+            # 创建视图
+            await self.db.create_rawdata_view(
+                view_name=table,
+                source_schema=schema,
+                source_table=table,
+                replace=False
+            )
+            self.logger.info(
+                f"已为 {schema}.{table} 创建 rawdata 视图"
+            )
+        except Exception as e:
+            self.logger.warning(
+                f"创建 rawdata 视图时出错（不影响数据采集）: {e}"
+            )
+
 
     async def _save_to_database(self, data, stop_event: Optional[asyncio.Event] = None, **kwargs):
         """将DataFrame保存到数据库（提供给子类重写的高级接口）"""

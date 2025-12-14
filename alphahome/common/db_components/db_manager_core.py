@@ -400,9 +400,48 @@ class DBManagerCore:
                     f"max_size={pool_config.get('max_size', 25)}, "
                     f"command_timeout={pool_config.get('command_timeout', 180)}s)"
                 )
+                
+                # 初始化 rawdata schema（用于统一数据视图映射）
+                await self._initialize_rawdata_schema()
             except Exception as e:
                 self.logger.error(f"异步数据库连接池创建失败: {str(e)}")
                 raise
+
+    async def _initialize_rawdata_schema(self):
+        """
+        系统启动时初始化 rawdata schema
+        
+        该方法在数据库连接建立后自动调用，确保 rawdata schema 存在
+        并为统一数据视图映射做好准备。
+        """
+        try:
+            if self.pool is None:
+                return
+            
+            async with self.pool.acquire() as conn:
+                # 创建 rawdata schema（如果不存在）
+                await conn.execute('CREATE SCHEMA IF NOT EXISTS "rawdata"')
+                
+                # 添加 schema 级别的文档说明
+                comment_sql = """
+                COMMENT ON SCHEMA rawdata IS 
+                '自动管理的统一数据视图层。
+                
+                规则：
+                1. 本 schema 仅包含自动生成的映射视图（通过 COMMENT 标记）
+                2. 禁止手动创建表或视图
+                3. 数据源优先级：tushare > akshare > 其他
+                4. 删除源表时，对应视图自动删除（CASCADE）
+                
+                查询示例：SELECT * FROM rawdata.stock_basic;'
+                """
+                await conn.execute(comment_sql)
+            
+            self.logger.info("rawdata schema 初始化完成")
+        except Exception as e:
+            self.logger.warning(
+                f"初始化 rawdata schema 失败（不影响数据库连接）: {e}"
+            )
 
     async def close(self):
         """关闭数据库连接池（仅异步模式）
