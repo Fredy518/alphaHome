@@ -9,8 +9,12 @@
 
 from .market_technical import MarketTechnicalTask
 from .money_flow import MoneyFlowTask
+from .market_technical_indicators_mv import MarketTechnicalIndicatorsMV
+from .sector_aggregation_mv import SectorAggregationMV
 
 __all__ = [
     "MarketTechnicalTask",
     "MoneyFlowTask",
+    "MarketTechnicalIndicatorsMV",
+    "SectorAggregationMV",
 ]

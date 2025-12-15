@@ -26,6 +26,10 @@ from .db_manager_core import DBManagerCore
 from .schema_management_mixin import SchemaManagementMixin
 from .table_name_resolver import TableNameResolver
 from .utility_mixin import UtilityMixin
+from .materialized_views_schema import (
+    initialize_materialized_views_schema,
+    check_materialized_views_schema_exists,
+)
 
 __all__ = [
     # == 核心组件 ==
@@ -36,6 +40,10 @@ __all__ = [
     "DatabaseOperationsMixin",  # 整合的数据库操作组件
     "SchemaManagementMixin",    # 表结构管理
     "UtilityMixin",             # 实用工具
+    
+    # == 物化视图系统 ==
+    "initialize_materialized_views_schema",
+    "check_materialized_views_schema_exists",
 ]
 
 # 架构信息
