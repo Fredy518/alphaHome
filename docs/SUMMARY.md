@@ -7,11 +7,11 @@ AlphaHome 项目的文档已成功重新整理和归档！本次整理按照功�
 ## 📊 **整理成果**
 
 ### **文档统计**
-- **总文档数**: 12个主要文档
-- **新增文档**: 7个
+- **总文档数**: 15个主要文档
+- **新增文档**: 10个
 - **移动重命名**: 5个
 - **目录分类**: 8个功能目录
-- **链接检查**: 36个链接全部有效 ✅
+- **链接检查**: 39个链接全部有效 ✅
 
 ### **目录结构**
 ```
@@ -74,6 +74,21 @@ docs/
    - 开发工作流程
    - 代码规范要求
    - 提交和审查流程
+
+7. **[rawdata Schema 实施文档](development/rawdata_schema_implementation.md)**
+   - 自动视图映射系统设计
+   - 数据库组件增强实现
+   - 优先级管理和隔离策略
+
+8. **[rawdata 项目完成报告](development/rawdata_implementation_report.md)**
+   - 项目实施总结
+   - 技术指标和性能数据
+   - 使用指南和最佳实践
+
+9. **[rawdata Schema 设计计划](development/rawdata_schema_design_plan.md)**
+   - 原始需求分析和设计方案
+   - 技术选型和架构决策
+   - 实施计划和风险评估
 
 ### **🏗️ 架构文档**
 7. **[系统架构概览](architecture/system_overview.md)**

@@ -38,9 +38,11 @@ logger = get_logger(__name__)
 @pytest.fixture
 async def db_manager():
     """创建数据库管理器"""
-    from alphahome.config import get_db_connection_string
-    
-    connection_string = get_db_connection_string()
+    from alphahome.common.config_manager import get_database_url
+
+    connection_string = get_database_url()
+    if not connection_string:
+        raise ValueError("数据库连接字符串未配置。请检查配置文件中的 database.url 设置。")
     manager = create_async_manager(connection_string)
     await manager.connect()
     

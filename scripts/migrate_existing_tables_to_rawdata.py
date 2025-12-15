@@ -41,9 +41,11 @@ async def migrate_existing_tables():
     按优先级处理：tushare -> akshare -> 其他
     """
     # 获取数据库连接字符串（从环境或配置）
-    from alphahome.config import get_db_connection_string
-    
-    connection_string = get_db_connection_string()
+    from alphahome.common.config_manager import get_database_url
+
+    connection_string = get_database_url()
+    if not connection_string:
+        raise ValueError("数据库连接字符串未配置。请检查配置文件中的 database.url 设置。")
     db_manager = create_async_manager(connection_string)
     
     try:
@@ -80,18 +82,18 @@ async def migrate_existing_tables():
                             replace=True
                         )
                         created_views.append(f"rawdata.{view_name} -> tushare.{table}")
-                        logger.info(f"    ✓ 创建: rawdata.{view_name} -> tushare.{table}")
+                        logger.info(f"    [OK] 创建: rawdata.{view_name} -> tushare.{table}")
                         continue
-                    
+
                     # 其他源：检查是否已有视图
                     view_exists = await db_manager.view_exists('rawdata', view_name)
                     if view_exists:
                         skipped_views.append(
                             f"{schema}.{table} (rawdata.{view_name} 已存在)"
                         )
-                        logger.info(f"    - 跳过: {schema}.{table} (视图已存在)")
+                        logger.info(f"    [SKIP] 跳过: {schema}.{table} (视图已存在)")
                         continue
-                    
+
                     # 创建视图
                     await db_manager.create_rawdata_view(
                         view_name=view_name,
@@ -100,7 +102,7 @@ async def migrate_existing_tables():
                         replace=False
                     )
                     created_views.append(f"rawdata.{view_name} -> {schema}.{table}")
-                    logger.info(f"    ✓ 创建: rawdata.{view_name} -> {schema}.{table}")
+                    logger.info(f"    [OK] 创建: rawdata.{view_name} -> {schema}.{table}")
                 
                 except Exception as e:
                     error_msg = f"{schema}.{table} 创建视图失败: {e}"
@@ -111,29 +113,29 @@ async def migrate_existing_tables():
         print("\n" + "="*70)
         print("迁移完成报告")
         print("="*70)
-        print(f"✓ 成功创建视图: {len(created_views)} 个")
-        print(f"- 跳过的表: {len(skipped_views)} 个")
-        print(f"✗ 失败: {len(failed_views)} 个")
+        print(f"[OK] 成功创建视图: {len(created_views)} 个")
+        print(f"[SKIP] 跳过的表: {len(skipped_views)} 个")
+        print(f"[FAIL] 失败: {len(failed_views)} 个")
         print("="*70)
         
         if created_views:
             print("\n创建的视图:")
             for view in created_views[:20]:  # 只显示前20个
-                print(f"  • {view}")
+                print(f"  + {view}")
             if len(created_views) > 20:
                 print(f"  ... 还有 {len(created_views) - 20} 个视图")
-        
+
         if skipped_views:
             print("\n跳过的表:")
             for skip in skipped_views[:10]:  # 只显示前10个
-                print(f"  • {skip}")
+                print(f"  - {skip}")
             if len(skipped_views) > 10:
                 print(f"  ... 还有 {len(skipped_views) - 10} 个表")
-        
+
         if failed_views:
             print("\n失败的表:")
             for fail in failed_views:
-                print(f"  ✗ {fail}")
+                print(f"  [FAIL] {fail}")
         
         print("="*70)
         logger.info("迁移完成")
