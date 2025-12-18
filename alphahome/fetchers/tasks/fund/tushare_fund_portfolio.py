@@ -37,8 +37,8 @@ class TushareFundPortfolioTask(TushareTask):
     default_start_date = "19980101"  # 基金持仓数据大致起始日期
 
     # --- 代码级默认配置 (会被 config.json 覆盖) --- #
-    default_concurrent_limit = 5
-    default_page_size = 4000
+    default_concurrent_limit = 1
+    default_page_size = 8000
 
     # 2. TushareTask 特有属性
     api_name = "fund_portfolio"  # Tushare API 名称
@@ -98,14 +98,22 @@ class TushareFundPortfolioTask(TushareTask):
 
     async def get_batch_list(self, **kwargs: Any) -> List[Dict]:
         """
-        生成批处理参数列表 (使用自然日批次工具, 基于 ann_date)。
+        生成批处理参数列表。
+
+        fund_portfolio API 的 50101 错误是由于数据量过大导致的 offset 限制。
+        解决方案是按基金代码 (ts_code) 分批，而不是按时间分批。
+
+        策略：
+        1. 从 fund_basic 表获取所有基金代码
+        2. 将基金代码分批（每批约 100-200 个基金）
+        3. 每个批次包含基金代码列表和时间范围参数
         """
         start_date = kwargs.get("start_date")
         end_date = kwargs.get("end_date")
         ts_code = kwargs.get("ts_code")  # 可选参数
 
         if not start_date:
-            latest_db_date = await self.get_latest_date()
+            latest_db_date = await self.get_latest_date_for_task()
             start_date = (
                 (latest_db_date + pd.Timedelta(days=1)).strftime("%Y%m%d")
                 if latest_db_date
@@ -125,27 +133,102 @@ class TushareFundPortfolioTask(TushareTask):
             return []
 
         self.logger.info(
-            f"任务 {self.name}: 生成批处理列表 (基于 ann_date)，范围: {start_date} 到 {end_date}, 代码: {ts_code if ts_code else '所有'}"
+            f"任务 {self.name}: 生成批处理列表 (按基金代码分批)，范围: {start_date} 到 {end_date}, 代码: {ts_code if ts_code else '所有'}"
         )
 
         try:
-            # 使用自然日批次生成函数
-            batch_list = await generate_natural_day_batches(
+            # 按基金代码分批处理，避免 50101 错误
+            batch_list = await self._generate_fund_code_batches(
                 start_date=start_date,
                 end_date=end_date,
-                batch_size=self.batch_size_days,
-                date_format="%Y%m%d",  # 指定API参数中的日期字段名
-                ts_code=ts_code,  # 传递 ts_code (如果提供)
-                logger=self.logger,
+                ts_code=ts_code,
+                batch_size=100  # 每批 100 个基金
             )
-            # generate_natural_day_batches 返回的字典包含 start_date 和 end_date
-            # 需要将其映射到 API 需要的 ann_date 参数 (如果API只接受单个日期)
-            # 或者 start_date/end_date (如果API接受日期范围)
-            # fund_portfolio API 接受 ann_date, start_date, end_date
-            # generate_natural_day_batches 返回的批次参数可以直接使用
             return batch_list
         except Exception as e:
             self.logger.error(f"任务 {self.name}: 生成批次时出错: {e}", exc_info=True)
+            return []
+
+    async def _generate_fund_code_batches(self, start_date: str, end_date: str, ts_code: str = None, batch_size: int = 100) -> List[Dict]:
+        """
+        按基金代码分批生成批次参数。
+
+        策略：
+        1. 如果提供了特定 ts_code，只查询该基金
+        2. 如果没有提供 ts_code，从 fund_basic 表获取所有基金代码，然后分批
+
+        Args:
+            start_date: 开始日期
+            end_date: 结束日期
+            ts_code: 可选的特定基金代码
+            batch_size: 每批基金数量
+
+        Returns:
+            批次参数列表，每个批次包含 ts_code 列表和时间范围
+        """
+        if ts_code:
+            # 如果指定了特定基金，直接返回单个批次
+            return [{
+                "ts_code": ts_code,
+                "start_date": start_date,
+                "end_date": end_date
+            }]
+
+        # 从 fund_basic 表获取所有基金代码
+        try:
+            fund_codes = await self._get_all_fund_codes()
+            if not fund_codes:
+                self.logger.warning("未找到任何基金代码，返回空批次列表")
+                return []
+
+            self.logger.info(f"从 fund_basic 表获取到 {len(fund_codes)} 个基金代码")
+
+            # 将基金代码分批
+            batches = []
+            for i in range(0, len(fund_codes), batch_size):
+                batch_codes = fund_codes[i:i + batch_size]
+
+                # 为每个批次创建参数
+                # 注意：fund_portfolio API 的 ts_code 参数支持多个代码用逗号分隔
+                batch = {
+                    "ts_code": ",".join(batch_codes),  # 用逗号连接多个基金代码
+                    "start_date": start_date,
+                    "end_date": end_date
+                }
+                batches.append(batch)
+
+            self.logger.info(f"生成了 {len(batches)} 个基金代码批次，每批最多 {batch_size} 个基金")
+            return batches
+
+        except Exception as e:
+            self.logger.error(f"获取基金代码列表失败: {e}")
+            raise
+
+    async def _get_all_fund_codes(self) -> List[str]:
+        """
+        从 fund_basic 表获取所有基金代码。
+
+        Returns:
+            基金代码列表
+        """
+        try:
+            # 直接查询数据库获取基金代码
+            query = """
+            SELECT DISTINCT ts_code
+            FROM tushare.fund_basic
+            WHERE status = 'L'  -- 只获取上市状态的基金
+            ORDER BY ts_code
+            """
+
+            # 使用正确的数据库查询方法
+            rows = await self.db.fetch(query)
+            fund_codes = [row['ts_code'] for row in rows]
+
+            return fund_codes
+
+        except Exception as e:
+            self.logger.error(f"查询 fund_basic 表失败: {e}")
+            # 如果查询失败，返回一个空列表，让调用方处理
             return []
 
     # prepare_params 可以使用基类默认实现，它会传递 batch_list 中的所有参数
