@@ -720,20 +720,26 @@ class BaseTask(ABC):
             tushare_exists = await self.db.check_table_exists(
                 'tushare', table
             )
+            self.logger.debug(f"检查 tushare.{table} 存在性: {tushare_exists}")
+
             if tushare_exists:
                 self.logger.info(
                     f"跳过 {schema}.{table} 的 rawdata 视图创建：tushare 优先"
                 )
                 return
-            
+
             # 检查 rawdata 视图是否已存在
             view_exists = await self.db.view_exists('rawdata', table)
+            self.logger.debug(f"检查 rawdata.{table} 视图存在性: {view_exists}")
+
             if view_exists:
-                self.logger.info(
+                self.logger.debug(
                     f"rawdata.{table} 视图已存在，跳过创建"
                 )
                 return
-            
+
+            self.logger.debug(f"准备为 {schema}.{table} 创建 rawdata 视图")
+
             # 创建视图
             await self.db.create_rawdata_view(
                 view_name=table,
