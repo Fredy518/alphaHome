@@ -192,12 +192,27 @@ async def run_tasks(
                 task_instance = await UnifiedTaskFactory.create_task_instance(
                     task_name, **task_init_params
                 )
-            except Exception as factory_e:
-                log_msg = f"任务 {task_name} 实例创建失败: {factory_e}"
-                logger.error(log_msg, exc_info=True)
-                if _send_response_callback:
-                    _send_response_callback("LOG", {"level": "error", "message": log_msg})
-                await _record_task_status(db_manager, task_name, "error", "任务实例创建失败")
+            except Exception as factory                else:
+                    result_status = "success"
+                    result_details = ""
+                    if isinstance(result, dict):
+                        result_status = result.get("status", "success")
+                        rows = result.get("rows", 0)
+                        if result_status == "no_data":
+                            result_details = "没有获取到数据"
+                        elif result_status == "partial_success":
+                            result_details = "部分数据保存，存在验证警告"
+                        else:
+                            result_details = f"处理完成 (行数: {rows})"
+                        if result_status == "skipped":
+                            result_details = result.get("message", "已跳过")
+
+                    log_msg = f"任务 {task_name} 执行完成，状态: {result_status}"
+                    logger.info(log_msg)
+                    if _send_response_callback:
+                        _send_response_callback("LOG", {"level": "info", "message": log_msg})
+
+                    await _record_task_status(db_manager, task_name, result_status, result_details)
                 await get_all_task_status(db_manager)
                 continue
             # --- 重构结束 ---
