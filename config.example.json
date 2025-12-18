@@ -26,6 +26,13 @@
             "refresh_token": "your_ifind_refresh_token_here"
         }
     },
+    "dolphindb": {
+        "_comment": "DolphinDB 单机版连接配置（用于5分钟K线与技术因子加速层）",
+        "host": "localhost",
+        "port": 8848,
+        "username": "your_ddb_username",
+        "password": "your_ddb_password"
+    },
     "performance": {
         "_comment": "性能监控和优化配置",
         "enable_monitoring": true,
@@ -55,6 +62,7 @@
         "default_commission": 0.001,
         "cache_data": true,
         "max_cache_size": 1000,
+        "hikyuu_data_dir": "E:/stock",
         "default_start_date": "2023-01-01",
         "default_end_date": "2023-12-31",
         "default_table": "tushare_stock_daily"

@@ -1,2 +1,0 @@
-[console_scripts]
-alphahome = alphahome.gui.main_window:run_gui

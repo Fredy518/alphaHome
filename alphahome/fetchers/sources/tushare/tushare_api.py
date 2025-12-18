@@ -447,6 +447,7 @@ class TushareAPI:
         )
 
         # 1. 检查是否包含时间范围参数
+
         if 'start_date' not in params or 'end_date' not in params:
             error_msg = f"50101错误但无法拆分：缺少时间范围参数 (start_date/end_date)。参数: {params}"
             self.logger.error(error_msg)
@@ -456,6 +457,7 @@ class TushareAPI:
         end_date = params['end_date']
 
         # 2. 检查是否已达到最小粒度（1个月）
+
         if self._is_minimal_date_range(start_date, end_date):
             error_msg = (
                 f"50101错误且已达到最小时间粒度（1个月），无法继续拆分。"

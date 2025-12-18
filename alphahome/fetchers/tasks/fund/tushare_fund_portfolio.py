@@ -9,7 +9,7 @@
 
 import logging
 from datetime import datetime
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
@@ -98,7 +98,10 @@ class TushareFundPortfolioTask(TushareTask):
 
     async def get_batch_list(self, **kwargs: Any) -> List[Dict]:
         """
-        生成批处理参数列表 (使用自然日批次工具, 基于 ann_date)。
+        生成批处理参数列表。
+
+        fund_portfolio API 需要至少提供 ts_code、ann_date 或 period 中的一个参数。
+        这里我们使用 ann_date (公告日期) 作为主要参数，按时间范围分批处理。
         """
         start_date = kwargs.get("start_date")
         end_date = kwargs.get("end_date")
@@ -129,23 +132,53 @@ class TushareFundPortfolioTask(TushareTask):
         )
 
         try:
-            # 使用自然日批次生成函数
-            batch_list = await generate_natural_day_batches(
-                start_date=start_date,
-                end_date=end_date,
-                batch_size=self.batch_size_days,
-                date_format="%Y%m%d",  # 指定API参数中的日期字段名
-                ts_code=ts_code,  # 传递 ts_code (如果提供)
-                logger=self.logger,
-            )
-            # generate_natural_day_batches 返回的字典包含 start_date 和 end_date
-            # 需要将其映射到 API 需要的 ann_date 参数 (如果API只接受单个日期)
-            # 或者 start_date/end_date (如果API接受日期范围)
-            # fund_portfolio API 接受 ann_date, start_date, end_date
-            # generate_natural_day_batches 返回的批次参数可以直接使用
+            # 生成季度批次，因为基金持仓数据通常按季度披露
+            batch_list = await self._generate_quarterly_batches(start_date, end_date, ts_code)
+
+            self.logger.info(f"生成了 {len(batch_list)} 个季度批次用于 fund_portfolio API")
             return batch_list
         except Exception as e:
             self.logger.error(f"任务 {self.name}: 生成批次时出错: {e}", exc_info=True)
             return []
+
+    async def _generate_quarterly_batches(self, start_date: str, end_date: str, ts_code: Optional[str] = None) -> List[Dict]:
+        """
+        生成按季度的批次参数，每个批次使用 ann_date 参数指定公告日期范围。
+
+        Args:
+            start_date: 开始日期 (YYYYMMDD)
+            end_date: 结束日期 (YYYYMMDD)
+            ts_code: 可选的基金代码
+
+        Returns:
+            批次参数列表，每个批次包含 ann_date 参数
+        """
+        from dateutil.relativedelta import relativedelta
+
+        start_dt = pd.to_datetime(start_date)
+        end_dt = pd.to_datetime(end_date)
+
+        batches = []
+
+        # 从开始日期的季度开始
+        current_start = start_dt.replace(month=((start_dt.month - 1) // 3) * 3 + 1, day=1)
+        current_end = min(current_start + relativedelta(months=3, days=-1), end_dt)
+
+        while current_start <= end_dt:
+            # 为每个季度生成一个批次，使用 ann_date 参数
+            batch = {
+                "ann_date": f"{current_start.strftime('%Y%m%d')},{current_end.strftime('%Y%m%d')}"
+            }
+
+            if ts_code:
+                batch["ts_code"] = ts_code
+
+            batches.append(batch)
+
+            # 移动到下一个季度
+            current_start = current_start + relativedelta(months=3)
+            current_end = min(current_start + relativedelta(months=3, days=-1), end_dt)
+
+        return batches
 
     # prepare_params 可以使用基类默认实现，它会传递 batch_list 中的所有参数

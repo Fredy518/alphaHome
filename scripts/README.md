@@ -5,6 +5,9 @@
 ```
 scripts/
 ├── README.md               # 本文件
+├── tickers/                # Hikyuu 5分钟导入清单（ts_code列表）
+├── import_all_hikyuu_to_ddb.ps1 # 一键导入 Hikyuu 5min -> DolphinDB（可选备份）
+├── generate_hikyuu_5min_tickers.py # 从 Hikyuu HDF5 生成 tickers/*.txt
 ├── pit/                    # PIT相关脚本
 │   ├── analyze_scope.py    # 分析PIT回填范围和预估耗时
 │   ├── staged_backfill.py  # 分阶段执行PIT回填
@@ -101,6 +104,25 @@ python scripts/maintenance/migrate_db_name.py
 ### 日常维护
 - 使用增量更新: 通过 `research.pgs_factor.core.pit_manager` 的增量模式
 - 定期检查: 使用分析脚本监控数据质量
+
+### DolphinDB（导入/备份）
+
+```powershell
+# 生成/更新 scripts/tickers/*.txt（按市场/首位数字分组）
+python scripts/generate_hikyuu_5min_tickers.py --hikyuu-dir E:/stock --output-dir scripts/tickers
+
+# 一键导入（首次建议加 -InitTable）
+./scripts/import_all_hikyuu_to_ddb.ps1 -InitTable
+
+# 增量模式：仅导入比 DolphinDB 当前 max(trade_time) 更新的数据
+./scripts/import_all_hikyuu_to_ddb.ps1 -Incremental
+
+# 重建（会删除 DolphinDB 中的 dfs://kline_5min，谨慎）
+./scripts/import_all_hikyuu_to_ddb.ps1 -ResetDb -InitTable
+
+# 导入 + DFS 目录备份（需要指定/配置 DfsRoot）
+./scripts/import_all_hikyuu_to_ddb.ps1 -InitTable -Backup -DfsRoot "D:/dolphindb/server/data/dfs"
+```
 
 ### 故障恢复
 - 使用 `full_backfill.py` 进行完整重建

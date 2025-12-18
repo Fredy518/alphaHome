@@ -105,6 +105,18 @@ alphahome task list
 }
 ```
 
+## DolphinDB（5分钟K线加速层）
+
+AlphaHome 支持将本地通达信(TDX) 5分钟K线（`vipdoc/*/minline/*.lc5`）导入到 DolphinDB，用于研究/筛选时的快速查询与计算。
+
+```bash
+# 初始化 DolphinDB 分区表（仅首次需要）
+alphahome-ddb init-kline5m --db-path dfs://kline_5min --table kline_5min
+
+# 从 Hikyuu 下载的 5分钟 HDF5 导入（默认读取 HIKYUU_DATA_DIR 或 backtesting.hikyuu_data_dir）
+alphahome-ddb import-hikyuu-5min --codes "000001.SZ,600000.SH" --init
+```
+
 ## 🚀 **安装**
 
 ```bash

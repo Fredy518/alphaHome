@@ -83,6 +83,7 @@ class ConfigManager:
         final_config.setdefault("database", {})
         final_config.setdefault("api", {})
         final_config.setdefault("backtesting", {})
+        final_config.setdefault("dolphindb", {})
 
         # 如果配置文件中缺少，则尝试从环境变量加载
         if not final_config["database"].get("url"):
@@ -106,10 +107,26 @@ class ConfigManager:
                 logger.info("从环境变量 HIKYUU_DATA_DIR 加载 Hikyuu 数据目录。")
                 final_config["backtesting"]["hikyuu_data_dir"] = hikyuu_dir_from_env
 
+
         self._config_cache = final_config
         self._config_loaded = True
         logger.debug(f"配置已加载并缓存: {final_config}")
         return self._config_cache
+
+    def get_dolphindb_config(self) -> Dict[str, Any]:
+        """获取 DolphinDB 连接配置。
+
+        优先读取配置文件中的 dolphindb 段；如缺失可通过环境变量回退：
+        - DOLPHINDB_HOST / DOLPHINDB_PORT / DOLPHINDB_USERNAME / DOLPHINDB_PASSWORD
+        """
+        config = self.load_config()
+        ddb_cfg = config.get("dolphindb", {})
+        return {
+            "host": ddb_cfg.get("host", "localhost"),
+            "port": int(ddb_cfg.get("port", 8848)),
+            "username": ddb_cfg.get("username", ""),
+            "password": ddb_cfg.get("password", ""),
+        }
 
     def reload_config(self):
         """重新加载配置并清空缓存"""
@@ -262,3 +279,5 @@ def get_backtesting_config(key: Optional[str] = None, default: Any = None) -> An
 def get_hikyuu_data_dir() -> Optional[str]:
     """获取 Hikyuu 数据目录"""
     return _config_manager.get_hikyuu_data_dir()
+
+
