@@ -7,9 +7,10 @@
 继承自 TushareTask，按 ann_date (公告日期) 增量更新。
 """
 
+import asyncio
 import logging
 from datetime import datetime
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
@@ -18,7 +19,7 @@ from ...sources.tushare.tushare_task import TushareTask
 from alphahome.common.task_system.task_decorator import task_register
 
 # 导入批处理工具
-from ...sources.tushare.batch_utils import generate_natural_day_batches
+from ...sources.tushare.batch_utils import generate_single_date_batches
 
 
 @task_register()
@@ -93,16 +94,15 @@ class TushareFundPortfolioTask(TushareTask):
         },  # 新增 update_time 索引
     ]
 
-    # 7. 分批配置 (按自然日，约3个月一批)
-    batch_size_days = 90
+    # 7. 分批配置 (按单日期批次，每个公告日期一个批次)
 
     async def get_batch_list(self, **kwargs: Any) -> List[Dict]:
         """
-        生成批处理参数列表 (使用自然日批次工具, 基于 ann_date)。
+        生成批处理参数列表 (使用单日期批次工具, 基于 ann_date)。
 
         处理策略：
-        1. 首先按自然日分批，每个批次只使用 ann_date 参数
-        2. 当遇到 50101 错误时，会在 TushareAPI 中自动处理，按基金代码二次分批
+        1. 为每个公告日期生成单独的批次，使用 ann_date 参数
+        2. 当遇到 50101 错误时，会在任务层自动处理，按基金代码二次分批
         3. 二次分批时使用 ts_code + ann_date 两个参数
         """
         start_date = kwargs.get("start_date")
@@ -134,31 +134,17 @@ class TushareFundPortfolioTask(TushareTask):
         )
 
         try:
-            # 使用自然日批次生成函数，生成基于 ann_date 的批次
-            batch_list = await generate_natural_day_batches(
+            # 使用单日期批次生成函数，为每个公告日期生成单独的批次
+            batch_list = await generate_single_date_batches(
                 start_date=start_date,
                 end_date=end_date,
-                batch_size=self.batch_size_days,
-                date_format="%Y%m%d",  # 指定API参数中的日期字段名
+                date_field="ann_date",  # 指定日期字段名
                 ts_code=ts_code,  # 传递 ts_code (如果提供)
                 logger=self.logger,
             )
 
-            # 转换批次参数：generate_natural_day_batches 返回的是 start_date/end_date
-            # 但我们需要将它们转换为 ann_date 参数
-            converted_batches = []
-            for batch in batch_list:
-                # 将 start_date/end_date 转换为 ann_date 范围
-                ann_date_range = f"{batch['start_date']},{batch['end_date']}"
-                converted_batch = {
-                    "ann_date": ann_date_range
-                }
-                if ts_code:
-                    converted_batch["ts_code"] = ts_code
-                converted_batches.append(converted_batch)
-
-            self.logger.info(f"转换生成了 {len(converted_batches)} 个基于 ann_date 的批次")
-            return converted_batches
+            self.logger.info(f"生成了 {len(batch_list)} 个基于 ann_date 的批次")
+            return batch_list
         except Exception as e:
             self.logger.error(f"任务 {self.name}: 生成批次时出错: {e}", exc_info=True)
             return []
@@ -200,7 +186,7 @@ class TushareFundPortfolioTask(TushareTask):
         按基金代码分批获取数据，用于处理 50101 错误的重试。
 
         Args:
-            ann_date: 公告日期范围
+            ann_date: 公告日期（单一日期）
             stop_event: 停止事件
 
         Returns:
@@ -270,6 +256,28 @@ class TushareFundPortfolioTask(TushareTask):
         except Exception as e:
             self.logger.error(f"基金代码分批重试过程中发生错误: {e}")
             raise
+
+    async def prepare_params(self, batch_params: Dict) -> Dict:
+        """
+        准备 API 调用参数。
+
+        fund_portfolio API 支持以下参数：
+        - ts_code: 基金代码（可选）
+        - ann_date: 公告日期（可选）
+        - period: 报告期（可选）
+
+        至少需要提供其中一个参数。
+        """
+        api_params = {}
+
+        # 传递必要的参数
+        if "ts_code" in batch_params and batch_params["ts_code"]:
+            api_params["ts_code"] = batch_params["ts_code"]
+
+        if "ann_date" in batch_params and batch_params["ann_date"]:
+            api_params["ann_date"] = batch_params["ann_date"]
+
+        return api_params
 
     async def _get_all_fund_codes(self) -> List[str]:
         """
