@@ -192,27 +192,7 @@ async def run_tasks(
                 task_instance = await UnifiedTaskFactory.create_task_instance(
                     task_name, **task_init_params
                 )
-            except Exception as factory                else:
-                    result_status = "success"
-                    result_details = ""
-                    if isinstance(result, dict):
-                        result_status = result.get("status", "success")
-                        rows = result.get("rows", 0)
-                        if result_status == "no_data":
-                            result_details = "没有获取到数据"
-                        elif result_status == "partial_success":
-                            result_details = "部分数据保存，存在验证警告"
-                        else:
-                            result_details = f"处理完成 (行数: {rows})"
-                        if result_status == "skipped":
-                            result_details = result.get("message", "已跳过")
-
-                    log_msg = f"任务 {task_name} 执行完成，状态: {result_status}"
-                    logger.info(log_msg)
-                    if _send_response_callback:
-                        _send_response_callback("LOG", {"level": "info", "message": log_msg})
-
-                    await _record_task_status(db_manager, task_name, result_status, result_details)
+            except Exception as factory_e:
                 await get_all_task_status(db_manager)
                 continue
             # --- 重构结束 ---
@@ -274,21 +254,26 @@ async def run_tasks(
                     # 记录任务取消状态
                     await _record_task_status(db_manager, task_name, "cancelled", "任务被用户取消")
                 else:
-                    log_msg = f"任务 {task_name} 执行成功。"
+                    result_status = "success"
+                    result_details = ""
+                    if isinstance(result, dict):
+                        result_status = result.get("status", "success")
+                        rows = result.get("rows", 0)
+                        if result_status == "no_data":
+                            result_details = "没有获取到数据"
+                        elif result_status == "partial_success":
+                            result_details = "部分数据保存，存在验证警告"
+                        else:
+                            result_details = f"处理完成 (行数: {rows})"
+                        if result_status == "skipped":
+                            result_details = result.get("message", "已跳过")
+
+                    log_msg = f"任务 {task_name} 执行完成，状态: {result_status}"
                     logger.info(log_msg)
                     if _send_response_callback:
                         _send_response_callback("LOG", {"level": "info", "message": log_msg})
-                    
-                    # 记录任务成功状态
-                    success_details = ""
-                    if isinstance(result, dict):
-                        rows = result.get("rows", 0)
-                        status = result.get("status", "success")
-                        success_details = f"处理完成 (行数: {rows})"
-                        if status == 'skipped':
-                            success_details = result.get('message', '已跳过')
 
-                    await _record_task_status(db_manager, task_name, "success", success_details)
+                    await _record_task_status(db_manager, task_name, result_status, result_details)
 
 
             except Exception as e:
