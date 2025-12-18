@@ -359,12 +359,12 @@ class SchemaManagementMixin:
     async def view_exists(self, view_name: str, schema: str = "public") -> bool:
         """检查指定的视图是否存在于数据库中。"""
         query = """
-        SELECT 1 FROM information_schema.views 
+        SELECT 1 FROM information_schema.views
         WHERE table_schema = $1 AND table_name = $2;
         """
         try:
-            result = await self.fetch_one(query, schema, view_name) # type: ignore
-            return result is not None
+            result = await self.fetch(query, schema, view_name) # type: ignore
+            return len(result) > 0
         except Exception as e:
             self.logger.error(f"检查视图 '{schema}.{view_name}' 是否存在时失败: {e}", exc_info=True) # type: ignore
             return False
