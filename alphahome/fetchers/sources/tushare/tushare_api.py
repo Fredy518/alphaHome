@@ -446,12 +446,21 @@ class TushareAPI:
             f"原始参数: {params}"
         )
 
-        # 1. 检查是否包含时间范围参数
-
-        if 'start_date' not in params or 'end_date' not in params:
-            error_msg = f"50101错误但无法拆分：缺少时间范围参数 (start_date/end_date)。参数: {params}"
-            self.logger.error(error_msg)
-            raise ValueError(error_msg)
+        # 1. 检查参数类型，根据不同API采用不同策略
+        if api_name == "fund_portfolio":
+            # fund_portfolio API 的特殊处理：抛出特定异常，让任务层处理基金代码分批
+            error_msg = (
+                f"fund_portfolio 遇到 50101 错误，建议按基金代码分批重试。 "
+                f"ann_date: {params.get('ann_date', 'N/A')}"
+            )
+            self.logger.warning(error_msg)
+            raise ValueError(f"FUND_PORTFOLIO_50101_NEEDS_FUND_CODE_BATCH: {error_msg}")
+        else:
+            # 其他API的原有时间拆分逻辑
+            if 'start_date' not in params or 'end_date' not in params:
+                error_msg = f"50101错误但无法拆分：缺少时间范围参数 (start_date/end_date)。参数: {params}"
+                self.logger.error(error_msg)
+                raise ValueError(error_msg)
 
         start_date = params['start_date']
         end_date = params['end_date']

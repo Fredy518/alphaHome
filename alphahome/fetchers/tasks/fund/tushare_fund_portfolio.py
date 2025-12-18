@@ -98,15 +98,12 @@ class TushareFundPortfolioTask(TushareTask):
 
     async def get_batch_list(self, **kwargs: Any) -> List[Dict]:
         """
-        生成批处理参数列表。
+        生成批处理参数列表 (使用自然日批次工具, 基于 ann_date)。
 
-        fund_portfolio API 的 50101 错误是由于数据量过大导致的 offset 限制。
-        解决方案是按基金代码 (ts_code) 分批，而不是按时间分批。
-
-        策略：
-        1. 从 fund_basic 表获取所有基金代码
-        2. 将基金代码分批（每批约 100-200 个基金）
-        3. 每个批次包含基金代码列表和时间范围参数
+        处理策略：
+        1. 首先按自然日分批，每个批次只使用 ann_date 参数
+        2. 当遇到 50101 错误时，会在 TushareAPI 中自动处理，按基金代码二次分批
+        3. 二次分批时使用 ts_code + ann_date 两个参数
         """
         start_date = kwargs.get("start_date")
         end_date = kwargs.get("end_date")
@@ -133,75 +130,145 @@ class TushareFundPortfolioTask(TushareTask):
             return []
 
         self.logger.info(
-            f"任务 {self.name}: 生成批处理列表 (按基金代码分批)，范围: {start_date} 到 {end_date}, 代码: {ts_code if ts_code else '所有'}"
+            f"任务 {self.name}: 生成批处理列表 (基于 ann_date)，范围: {start_date} 到 {end_date}, 代码: {ts_code if ts_code else '所有'}"
         )
 
         try:
-            # 按基金代码分批处理，避免 50101 错误
-            batch_list = await self._generate_fund_code_batches(
+            # 使用自然日批次生成函数，生成基于 ann_date 的批次
+            batch_list = await generate_natural_day_batches(
                 start_date=start_date,
                 end_date=end_date,
-                ts_code=ts_code,
-                batch_size=100  # 每批 100 个基金
+                batch_size=self.batch_size_days,
+                date_format="%Y%m%d",  # 指定API参数中的日期字段名
+                ts_code=ts_code,  # 传递 ts_code (如果提供)
+                logger=self.logger,
             )
-            return batch_list
+
+            # 转换批次参数：generate_natural_day_batches 返回的是 start_date/end_date
+            # 但我们需要将它们转换为 ann_date 参数
+            converted_batches = []
+            for batch in batch_list:
+                # 将 start_date/end_date 转换为 ann_date 范围
+                ann_date_range = f"{batch['start_date']},{batch['end_date']}"
+                converted_batch = {
+                    "ann_date": ann_date_range
+                }
+                if ts_code:
+                    converted_batch["ts_code"] = ts_code
+                converted_batches.append(converted_batch)
+
+            self.logger.info(f"转换生成了 {len(converted_batches)} 个基于 ann_date 的批次")
+            return converted_batches
         except Exception as e:
             self.logger.error(f"任务 {self.name}: 生成批次时出错: {e}", exc_info=True)
             return []
 
-    async def _generate_fund_code_batches(self, start_date: str, end_date: str, ts_code: str = None, batch_size: int = 100) -> List[Dict]:
+    async def fetch_batch(self, params: Dict[str, Any], stop_event: Optional[asyncio.Event] = None) -> Optional[pd.DataFrame]:
         """
-        按基金代码分批生成批次参数。
+        重写 fetch_batch 方法，处理 fund_portfolio API 的 50101 错误。
 
-        策略：
-        1. 如果提供了特定 ts_code，只查询该基金
-        2. 如果没有提供 ts_code，从 fund_basic 表获取所有基金代码，然后分批
-
-        Args:
-            start_date: 开始日期
-            end_date: 结束日期
-            ts_code: 可选的特定基金代码
-            batch_size: 每批基金数量
-
-        Returns:
-            批次参数列表，每个批次包含 ts_code 列表和时间范围
+        当遇到 FUND_PORTFOLIO_50101_NEEDS_FUND_CODE_BATCH 异常时，
+        自动按基金代码分批重试。
         """
-        if ts_code:
-            # 如果指定了特定基金，直接返回单个批次
-            return [{
-                "ts_code": ts_code,
-                "start_date": start_date,
-                "end_date": end_date
-            }]
-
-        # 从 fund_basic 表获取所有基金代码
         try:
-            fund_codes = await self._get_all_fund_codes()
-            if not fund_codes:
-                self.logger.warning("未找到任何基金代码，返回空批次列表")
-                return []
-
-            self.logger.info(f"从 fund_basic 表获取到 {len(fund_codes)} 个基金代码")
-
-            # 将基金代码分批
-            batches = []
-            for i in range(0, len(fund_codes), batch_size):
-                batch_codes = fund_codes[i:i + batch_size]
-
-                # 为每个批次创建参数
-                # 注意：fund_portfolio API 的 ts_code 参数支持多个代码用逗号分隔
-                batch = {
-                    "ts_code": ",".join(batch_codes),  # 用逗号连接多个基金代码
-                    "start_date": start_date,
-                    "end_date": end_date
-                }
-                batches.append(batch)
-
-            self.logger.info(f"生成了 {len(batches)} 个基金代码批次，每批最多 {batch_size} 个基金")
-            return batches
+            # 先尝试正常的 API 调用
+            return await super().fetch_batch(params, stop_event)
 
         except Exception as e:
-            self.logger.error(f"获取基金代码列表失败: {e}")
+            error_msg = str(e)
+            if "FUND_PORTFOLIO_50101_NEEDS_FUND_CODE_BATCH" in error_msg:
+                # 检测到需要按基金代码分批的特殊异常
+                self.logger.info("检测到 fund_portfolio 50101 错误，开始按基金代码分批重试")
+
+                # 从参数中提取 ann_date
+                ann_date = params.get("ann_date")
+                if not ann_date:
+                    self.logger.error(f"重试参数中缺少 ann_date: {params}")
+                    raise e  # 重新抛出原异常
+
+                # 按基金代码分批重试
+                return await self._fetch_with_fund_code_batches(
+                    ann_date=ann_date,
+                    stop_event=stop_event
+                )
+            else:
+                # 其他异常，正常抛出
+                raise
+
+    async def _fetch_with_fund_code_batches(self, ann_date: str, stop_event: Optional[asyncio.Event] = None) -> Optional[pd.DataFrame]:
+        """
+        按基金代码分批获取数据，用于处理 50101 错误的重试。
+
+        Args:
+            ann_date: 公告日期范围
+            stop_event: 停止事件
+
+        Returns:
+            合并后的数据
+        """
+        try:
+            # 获取基金代码列表
+            fund_codes = await self._get_all_fund_codes()
+            if not fund_codes:
+                self.logger.warning("未找到任何基金代码，无法进行基金代码分批重试")
+                return None
+
+            self.logger.info(f"开始按基金代码分批重试，共 {len(fund_codes)} 个基金")
+
+            batch_size = 50  # 每批50个基金
+            all_results = []
+
+            for i in range(0, len(fund_codes), batch_size):
+                if stop_event and stop_event.is_set():
+                    self.logger.info("检测到停止信号，中断基金代码分批重试")
+                    break
+
+                batch_codes = fund_codes[i:i + batch_size]
+                ts_code_list = ",".join(batch_codes)
+
+                # 构建重试参数：ts_code + ann_date
+                retry_params = {
+                    "ts_code": ts_code_list,
+                    "ann_date": ann_date
+                }
+
+                self.logger.debug(
+                    f"重试批次 {i//batch_size + 1}/{(len(fund_codes) + batch_size - 1)//batch_size}: "
+                    f"{len(batch_codes)} 个基金 ({batch_codes[0]}...{batch_codes[-1]})"
+                )
+
+                try:
+                    # 直接调用父类的 fetch_batch 方法，避免递归
+                    result = await super().fetch_batch(retry_params, stop_event)
+
+                    if result is not None and not result.empty:
+                        all_results.append(result)
+                        self.logger.debug(
+                            f"重试批次 {i//batch_size + 1} 成功获取 {len(result)} 条记录"
+                        )
+                    else:
+                        self.logger.debug(f"重试批次 {i//batch_size + 1} 无数据返回")
+
+                except Exception as batch_error:
+                    self.logger.error(
+                        f"重试批次 {i//batch_size + 1} 处理失败: {batch_error}，继续下一批次"
+                    )
+                    continue
+
+            # 合并所有结果
+            if all_results:
+                combined_result = pd.concat(all_results, ignore_index=True)
+                self.logger.info(
+                    f"基金代码分批重试完成，共获取 {len(combined_result)} 条记录 "
+                    f"(来自 {len(all_results)} 个有效批次)"
+                )
+                return combined_result
+            else:
+                self.logger.warning("所有基金代码批次重试均无有效数据返回")
+                return None
+
+        except Exception as e:
+            self.logger.error(f"基金代码分批重试过程中发生错误: {e}")
             raise
 
     async def _get_all_fund_codes(self) -> List[str]:
