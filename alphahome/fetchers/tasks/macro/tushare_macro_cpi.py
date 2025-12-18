@@ -29,7 +29,7 @@ class TushareMacroCpiTask(TushareTask):
     name = "tushare_macro_cpi"
     description = "获取中国居民消费价格指数(CPI)"
     table_name = "macro_cpi"
-    primary_keys = ["month"]
+    primary_keys = ["month_end_date"]
     date_column = None
     default_start_date = "19960101"
     data_source = "tushare"
