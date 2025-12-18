@@ -729,7 +729,7 @@ class BaseTask(ABC):
                 return
 
             # 检查 rawdata 视图是否已存在
-            view_exists = await self.db.view_exists('rawdata', table)
+            view_exists = await self.db.view_exists(table, 'rawdata')
             self.logger.info(f"[DEBUG] 检查 rawdata.{table} 视图存在性: {view_exists}")
 
             if view_exists:
