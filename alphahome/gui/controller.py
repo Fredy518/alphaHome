@@ -79,16 +79,20 @@ _response_callback: Optional[Callable] = None
 async def initialize_controller(response_callback):
     """
     初始化控制器及所有后端业务逻辑模块
-    
+
     设置响应回调函数，初始化各个服务模块，建立数据库连接，
     确保系统准备好处理来自GUI的请求。
-    
+
     Args:
         response_callback (Callable): GUI响应回调函数，用于向前端发送数据更新
     """
     global _response_callback, db_manager
     _response_callback = response_callback
-    
+
+    # 导入fetchers模块以触发任务注册（修复Phase 1-3中GUI不显示任务的问题）
+    logger.info("正在导入数据采集任务模块...")
+    import alphahome.fetchers  # 触发任务注册
+
     logger.info("正在初始化所有后端控制器逻辑模块...")
     
     # Initialize all controller logic modules
