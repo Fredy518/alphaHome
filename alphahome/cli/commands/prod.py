@@ -6,6 +6,7 @@
 """
 
 import argparse
+import importlib
 import subprocess
 import sys
 import os
@@ -37,10 +38,6 @@ PROD_SCRIPTS = {
         'scripts/production/factor_calculators/g_factor/start_parallel_g_factor_calculation_quarterly.py',
         'G因子季度并行计算启动器'
     ),
-    'p-factor': (
-        'scripts/production/factor_calculators/p_factor/start_parallel_p_factor_calculation.py',
-        'P因子年度并行计算启动器'
-    ),
     'p-factor-quarterly': (
         'scripts/production/factor_calculators/p_factor/start_parallel_p_factor_calculation_quarterly.py',
         'P因子季度并行计算启动器'
@@ -48,11 +45,11 @@ PROD_SCRIPTS = {
 }
 
 # 已改造为包内模块的脚本映射
-# 格式: 别名 -> (模块路径, 函数名, 描述)
+# 格式: 别名 -> (模块路径, 入口函数名, 描述)
 PROD_MODULES = {
     'p-factor': (
         'alphahome.production.factors.p_factor',
-        'run_parallel_p_factor_calculation',
+        'main',
         'P因子年度并行计算启动器 (包内模块)'
     ),
 }
@@ -82,7 +79,7 @@ class ProdCommandGroup(CommandGroup):
         )
         run_parser.add_argument(
             'alias',
-            help=f'脚本别名: {", ".join(PROD_SCRIPTS.keys())}'
+            help=f'脚本别名: {", ".join(sorted(set(PROD_SCRIPTS.keys()) | set(PROD_MODULES.keys())))}'
         )
         run_parser.add_argument(
             'script_args',
@@ -105,26 +102,15 @@ def _run_prod_script(args) -> int:
 
         # 检查是否是已改造的包内模块
         if alias in PROD_MODULES:
-            module_path, func_name, description = PROD_MODULES[alias]
+            module_path, entry_func, description = PROD_MODULES[alias]
 
             logger.info(f"执行包内模块: {description}")
-            logger.info(f"模块路径: {module_path}.{func_name}")
+            logger.info(f"模块路径: {module_path}.{entry_func}")
 
             # 动态导入并调用包内模块
             try:
-                import importlib
                 module = importlib.import_module(module_path)
-                func = getattr(module, func_name)
-
-                # 创建参数解析器来解析脚本参数
-                import argparse
-                parser = argparse.ArgumentParser()
-                # 添加p-factor相关的参数
-                if alias == 'p-factor':
-                    parser.add_argument('--start_year', type=int, default=2020)
-                    parser.add_argument('--end_year', type=int, default=2024)
-                    parser.add_argument('--workers', type=int, default=10)
-                    parser.add_argument('--delay', type=int, default=2)
+                func = getattr(module, entry_func)
 
                 # 准备传递给模块的参数
                 script_args = getattr(args, 'script_args', [])
@@ -135,11 +121,8 @@ def _run_prod_script(args) -> int:
 
                 logger.debug(f"模块参数: {script_args}")
 
-                # 解析参数
-                module_args = parser.parse_args(script_args)
-
-                # 调用模块函数
-                return func(module_args)
+                # 约定：包内模块入口使用 main(argv: list[str] | None) -> int
+                return int(func(script_args))
 
             except Exception as e:
                 logger.error(f"调用包内模块失败: {e}", exc_info=True)
@@ -213,6 +196,9 @@ def _list_prod_scripts(args) -> int:
 
         # 显示传统脚本
         for alias, (script_path, description) in PROD_SCRIPTS.items():
+            # 若已存在同名包内模块，避免重复展示
+            if alias in PROD_MODULES:
+                continue
             output += f"  {alias:<25} {description}\n"
 
         output += "-" * 60 + "\n"

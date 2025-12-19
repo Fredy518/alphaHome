@@ -73,9 +73,8 @@ def setup_logging(
 
     # 已经初始化且不需要重置，则直接返回
     if _logging_initialized and not reset:
-        logging.info(
-            "日志系统已经初始化，跳过重复配置。设置 reset=True 可强制重新配置。"
-        )
+        # 避免在命令行/导入路径中产生噪声日志；需要排查时可通过 DEBUG 级别查看
+        logging.debug("日志系统已经初始化，跳过重复配置。设置 reset=True 可强制重新配置。")
         return
 
     # 转换字符串日志级别到 logging 常量

@@ -570,15 +570,28 @@ async def main(argv: Optional[List[str]] = None) -> int:
     )
     
     args = parser.parse_args(argv)
-    
-    if not args.command:
-        parser.print_help()
-        return 1
-    
+
     logging.basicConfig(
         level=getattr(logging, str(args.log_level).upper(), logging.INFO),
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     )
+
+    if not args.command:
+        parser.print_help()
+        print("\n" + "="*60)
+        print("💡 迁移提示：建议使用统一CLI")
+        print("   refresh-materialized-view 命令将继续可用，但推荐使用:")
+        print("   ah mv refresh <view_name>     # 刷新单个视图")
+        print("   ah mv refresh-all            # 刷新所有视图")
+        print("   ah mv status <view_name>      # 查看视图状态")
+        print("   ah mv status-all             # 查看所有视图状态")
+        print("="*60)
+        return 1
+
+    # 显示迁移提示（仅在非help场景）
+    print("\n💡 提示：推荐使用统一CLI 'ah mv ...' 替代 'refresh-materialized-view ...'")
+    print("   例如: ah mv refresh-all --strategy concurrent")
+    print()
     
     db_manager: Optional[DBManager] = None
     try:
@@ -650,4 +663,8 @@ if __name__ == '__main__':
 
 def main_sync() -> int:
     """Console-script entrypoint."""
+    # 显示全局迁移提示
+    print("提示：推荐使用统一CLI 'ah mv ...' 替代 'refresh-materialized-view ...'")
+    print("      例如: ah mv refresh-all --strategy concurrent")
+    print()
     return asyncio.run(main())

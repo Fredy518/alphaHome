@@ -99,16 +99,16 @@ def main(argv: Optional[List[str]] = None) -> int:
         # 解析命令行参数
         parser = build_parser()
         args = parser.parse_args(argv)
-        
-        # 设置日志级别
-        setup_cli_logging(args.log_level)
-        
-        logger.debug(f"命令行参数: {args}")
-        
+
         # 检查是否指定了子命令
         if not hasattr(args, 'func'):
             parser.print_help()
             return INVALID_ARGS
+
+        # 设置日志级别（仅在真正执行子命令时初始化，避免 --help / 无子命令时产生噪声日志）
+        setup_cli_logging(args.log_level)
+
+        logger.debug(f"命令行参数: {args}")
         
         # 执行子命令
         result = args.func(args)

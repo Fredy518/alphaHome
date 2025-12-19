@@ -17,12 +17,16 @@ def setup_cli_logging(log_level: str = "INFO") -> logging.Logger:
     Returns:
         配置好的 logger 实例
     """
-    # 使用公共的日志配置，仅传递日志级别
-    setup_common_logging(
-        log_level=log_level,
-        log_to_file=False,
-        reset=True  # 强制重置以覆盖任何之前的配置
-    )
+    # 使用公共的日志配置；尽量避免重复 reset（会导致输出多次“初始化完成”）
+    # 但仍需确保 log_level 生效：即使 logging_utils 已初始化，也要更新 root logger 的 level。
+    setup_common_logging(log_level=log_level, log_to_file=False, reset=False)
+
+    # 强制同步 root logger 的 level，避免 setup_logging(reset=False) 时因“已初始化”而跳过更新
+    if isinstance(log_level, str):
+        level = getattr(logging, log_level.upper(), logging.INFO)
+    else:
+        level = int(log_level)
+    logging.getLogger().setLevel(level)
     return logging.getLogger(__name__)
 
 

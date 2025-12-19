@@ -1,0 +1,6 @@
+[console_scripts]
+ah = alphahome.cli.main:main_sync
+alphahome = alphahome.gui.main_window:run_gui
+alphahome-cli = alphahome.cli.main:main_sync
+alphahome-ddb = alphahome.integrations.dolphindb.cli:main_sync
+refresh-materialized-view = alphahome.processors.materialized_views.cli:main_sync

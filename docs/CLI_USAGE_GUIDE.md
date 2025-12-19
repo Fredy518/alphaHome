@@ -2,7 +2,12 @@
 
 ## 概述
 
-`ah` 命令是 AlphaHome 的统一命令行界面入口，整合了所有生产脚本、数据库工具和系统功能到一个统一的命令体系中。
+`ah` 命令是 AlphaHome 的**推荐统一命令行界面入口**，整合了所有生产脚本、数据库工具和系统功能到一个统一的命令体系中。
+
+> **📋 迁移提示**：如果您还在使用旧的命令，请考虑迁移到统一的 `ah` 命令：
+> - `alphahome-ddb` → `ah ddb`
+> - `refresh-materialized-view` → `ah mv`
+> - `alphahome` (GUI) 保持不变
 
 ## 安装
 
@@ -13,11 +18,15 @@ pip install -e .
 ```
 
 安装后，以下命令都会可用：
+
+**推荐使用（统一CLI）：**
 - `ah` - 主要统一入口（推荐使用）
 - `alphahome-cli` - `ah` 的别名
+
+**传统命令（仍可用，但建议迁移）：**
 - `alphahome` - GUI 启动（保持现有行为）
-- `alphahome-ddb` - DolphinDB 工具（保持现有行为）
-- `refresh-materialized-view` - 物化视图管理（保持现有行为）
+- `alphahome-ddb` - DolphinDB 工具 → 建议使用 `ah ddb`
+- `refresh-materialized-view` - 物化视图管理 → 建议使用 `ah mv`
 
 ## 快速开始
 

@@ -216,11 +216,22 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
 
+    setup_logging(log_level=str(args.log_level).upper())
+
     if not getattr(args, "command", None):
         parser.print_help()
+        print("\n" + "="*60)
+        print("💡 迁移提示：建议使用统一CLI")
+        print("   alphahome-ddb 命令将继续可用，但推荐使用:")
+        print("   ah ddb ...")
+        print("   例如: ah ddb init-kline5m --db-path dfs://kline_5min")
+        print("="*60)
         return 1
 
-    setup_logging(log_level=str(args.log_level).upper())
+    # 显示迁移提示（仅在非help场景）
+    print("\n💡 提示：推荐使用统一CLI 'ah ddb ...' 替代 'alphahome-ddb ...'")
+    print("   例如: ah ddb init-kline5m --db-path dfs://kline_5min")
+    print()
     logging.getLogger(__name__).debug("Args: %s", args)
 
     try:
@@ -232,6 +243,10 @@ def main(argv: Optional[List[str]] = None) -> int:
 
 
 def main_sync() -> int:
+    # 显示全局迁移提示
+    print("提示：推荐使用统一CLI 'ah ddb ...' 替代 'alphahome-ddb ...'")
+    print("      例如: ah ddb init-kline5m --db-path dfs://kline_5min")
+    print()
     return main()
 
 

@@ -12,7 +12,12 @@ import sys
 import os
 import time
 from datetime import datetime
-from typing import List, Dict, Any, Optional
+from pathlib import Path
+from typing import List, Optional
+
+# 统一项目根目录（避免从非仓库根目录运行时 os.getcwd() 不一致导致脚本找不到）
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+WORKER_SCRIPT = PROJECT_ROOT / "scripts" / "production" / "factor_calculators" / "p_factor" / "p_factor_parallel_by_year.py"
 
 
 def smart_year_allocation(years: List[int], workers: int) -> List[List[int]]:
@@ -67,16 +72,20 @@ def start_worker_process(worker_id: int, start_year: int, end_year: int, total_w
     if os.name == 'nt':
         # Windows系统 - 使用更简单的命令结构
         title = f"P-Factor-Worker-{worker_id}"
-        cmd = f'python scripts/production/factor_calculators/p_factor/p_factor_parallel_by_year.py --start_year {start_year} --end_year {end_year} --worker_id {worker_id} --total_workers {total_workers}'
+        cmd = (
+            f"\"{sys.executable}\" \"{WORKER_SCRIPT}\" "
+            f"--start_year {start_year} --end_year {end_year} "
+            f"--worker_id {worker_id} --total_workers {total_workers}"
+        )
 
         # 使用os.system，避免复杂的subprocess调用
-        system_cmd = f'start "{title}" cmd /k "cd /d {os.getcwd()} && {cmd}"'
+        system_cmd = f'start "{title}" cmd /k "cd /d \\"{PROJECT_ROOT}\\" && {cmd}"'
         os.system(system_cmd)
     else:
         # Linux/Mac系统
         cmd = [
             sys.executable,
-            "scripts/production/factor_calculators/p_factor/p_factor_parallel_by_year.py",
+            str(WORKER_SCRIPT),
             "--start_year", str(start_year),
             "--end_year", str(end_year),
             "--worker_id", str(worker_id),
@@ -84,7 +93,7 @@ def start_worker_process(worker_id: int, start_year: int, end_year: int, total_w
         ]
         subprocess.Popen([
             "gnome-terminal", "--title", f"P-Factor-Worker-{worker_id}",
-            "--", "bash", "-c", f"cd {os.getcwd()} && {' '.join(cmd)}; exec bash"
+            "--", "bash", "-c", f"cd \"{PROJECT_ROOT}\" && {' '.join(cmd)}; exec bash"
         ])
 
 
