@@ -46,8 +46,10 @@ include = ["alphahome", "alphahome.*"]
 # 定义 GUI 启动脚本
 [project.scripts]
 alphahome = "alphahome.gui.main_window:run_gui" # 当用户安装后，可以运行 alphahome 命令启动 GUI
-refresh-materialized-view = "alphahome.processors.tasks.materialized_views.cli:main_sync"
+refresh-materialized-view = "alphahome.processors.materialized_views.cli:main_sync"
 alphahome-ddb = "alphahome.integrations.dolphindb.cli:main_sync"
+ah = "alphahome.cli.main:main_sync" # AlphaHome 统一命令行界面
+alphahome-cli = "alphahome.cli.main:main_sync" # ah 的别名
 
 [project.optional-dependencies]
 research = [
