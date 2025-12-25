@@ -1,6 +1,7 @@
 # 任务包
 from .finance import *  # 导入所有财务任务类
 from .fund import *  # 导入所有基金任务类
+from .fastrategy import *  # 导入所有基金投顾策略任务类
 from .future import *  # 导入所有期货任务类
 from .hk import *  # 导入所有港股任务类
 from .index import *  # 导入所有指数任务类

@@ -5,7 +5,7 @@ G因子指定日期计算脚本
 支持为指定日期列表计算G因子，常用于补算非交易日的因子数据
 
 使用方法：
-python scripts/production/factor_calculators/g_factor/calculate_g_factor_for_specific_dates.py --dates 2025-12-5
+python scripts/production/factor_calculators/g_factor/calculate_g_factor_for_specific_dates.py --dates 2025-12-19
 """
 
 import sys

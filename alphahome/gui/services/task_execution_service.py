@@ -197,27 +197,50 @@ async def run_tasks(
                 continue
             # --- 重构结束 ---
 
-            # 检查任务是否支持选择的执行模式，如果不支持智能增量则自动切换到全量更新
+            # 检查任务是否支持选择的执行模式
+            # Excel 任务在智能增量模式下直接跳过，其他任务自动切换到全量更新
             actual_exec_mode = exec_mode
             if exec_mode == "智能增量" and not task_instance.supports_incremental_update():
-                # 不支持智能增量的任务在智能增量模式下自动切换到全量更新
-                actual_exec_mode = "全量更新"
-                skip_reason = "该任务不支持智能增量更新，已自动切换到全量更新模式"
-                if hasattr(task_instance, 'get_incremental_skip_reason'):
-                    try:
-                        custom_reason = task_instance.get_incremental_skip_reason()
-                        if custom_reason:
-                            skip_reason = f"{skip_reason}。{custom_reason}"
-                    except Exception as e:
-                        logger.error(f"获取任务 {task_name} 的跳过原因时出错: {e}")
+                # Excel 任务专门处理：直接跳过
+                if hasattr(task_instance, 'data_source') and task_instance.data_source == "excel":
+                    skip_reason = "该任务不支持智能增量更新，已跳过"
+                    if hasattr(task_instance, 'get_incremental_skip_reason'):
+                        try:
+                            custom_reason = task_instance.get_incremental_skip_reason()
+                            if custom_reason:
+                                skip_reason = f"{skip_reason}。{custom_reason}"
+                        except Exception as e:
+                            logger.error(f"获取任务 {task_name} 的跳过原因时出错: {e}")
+                    
+                    log_msg = f"任务 '{task_instance.get_display_name()}': {skip_reason}"
+                    logger.info(log_msg)
+                    if _send_response_callback:
+                        _send_response_callback("LOG", {"level": "info", "message": log_msg})
+                    
+                    # 记录任务为跳过状态
+                    await _record_task_status(db_manager, task_name, "skipped", skip_reason)
+                    # 立即刷新任务状态显示
+                    await get_all_task_status(db_manager)
+                    continue
+                else:
+                    # 其他不支持增量的任务自动切换到全量更新
+                    actual_exec_mode = "全量更新"
+                    skip_reason = "该任务不支持智能增量更新，已自动切换到全量更新模式"
+                    if hasattr(task_instance, 'get_incremental_skip_reason'):
+                        try:
+                            custom_reason = task_instance.get_incremental_skip_reason()
+                            if custom_reason:
+                                skip_reason = f"{skip_reason}。{custom_reason}"
+                        except Exception as e:
+                            logger.error(f"获取任务 {task_name} 的跳过原因时出错: {e}")
 
-                log_msg = f"任务 '{task_instance.get_display_name()}': {skip_reason}"
-                logger.info(log_msg)
-                if _send_response_callback:
-                    _send_response_callback("LOG", {"level": "info", "message": log_msg})
+                    log_msg = f"任务 '{task_instance.get_display_name()}': {skip_reason}"
+                    logger.info(log_msg)
+                    if _send_response_callback:
+                        _send_response_callback("LOG", {"level": "info", "message": log_msg})
 
-                # 更新任务初始化参数为全量更新模式
-                task_init_params['update_type'] = UpdateTypes.FULL
+                    # 更新任务初始化参数为全量更新模式
+                    task_init_params['update_type'] = UpdateTypes.FULL
 
             if not task_instance:
                 log_msg = f"任务 {task_name} 创建失败，跳过。"
