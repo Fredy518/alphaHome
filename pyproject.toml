@@ -57,6 +57,11 @@ research = [
     "papermill>=2.4.0",
     "nbconvert>=7.16.0",
 ]
+test = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "hypothesis>=6.0.0",
+]
 
 [tool.black]
 line-length = 88

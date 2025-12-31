@@ -213,7 +213,7 @@ ah prod run <script-alias> -- <args>
 
 ```python
 # 未来：将脚本改造为可导入的模块
-alphahome/production/
+scripts/production/
 ├── updaters/
 │   ├── data_collection.py      # 核心逻辑
 │   └── ...
@@ -223,7 +223,7 @@ alphahome/production/
 ah prod run data-collection  # 直接调用，无 subprocess 开销
 ```
 
-详见 `alphahome/production/__init__.py` 中的改造指南。
+详见 `alphahome/cli/commands/prod.py` 中的 `ah prod` 透传机制说明。
 
 ---
 

@@ -1,49 +1,117 @@
-# AlphaHome - 量化数据基础设施
+# AlphaHome - 量化投研一体化平台
 
-**专注于金融数据获取、处理和管理的量化数据平台**
-
-> ⚠️ **当前状态**：项目处于活跃开发中，**目前仅 `fetchers` 模块完整可用**。其他模块（processors、factors、gui 等）仍在开发或重构中，暂不建议在生产环境使用。
+**集数据获取、处理、分析与回测于一体的量化投研系统**
 
 ## 🎯 **项目定位**
 
-AlphaHome 定位为 **量化数据基础设施**，专注于：
+AlphaHome 是一个完整的量化投研平台，提供从数据到策略的全流程支持：
 
-- **数据获取**：多源数据自动化抓取（Tushare、AkShare、同花顺等）
-- **数据处理**：清洗、转换、标准化
-- **数据存储**：PostgreSQL 数据库管理
-- **数据访问**：统一的数据查询接口
-
-**不在范围内**：回测引擎、策略开发、交易执行等功能。
+- **数据获取**：多源数据自动化抓取（Tushare、AkShare、通达信等）
+- **数据处理**：清洗、转换、标准化、PIT 时点数据
+- **数据存储**：PostgreSQL + DolphinDB 双引擎
+- **基金分析**：绩效指标、回撤分析、归因分析、可视化
+- **组合回测**：场外基金组合回测框架
+- **风险模型**：Barra 多因子风险模型
+- **统一 CLI**：生产脚本、数据库工具一站式管理
 
 ## 🏗️ **模块状态**
 
 | 模块 | 状态 | 说明 |
 |------|------|------|
-| 📊 `fetchers/` | ✅ **可用** | 数据获取，支持 Tushare、AkShare 等多数据源 |
+| 📊 `fetchers/` | ✅ **可用** | 数据获取，支持 Tushare、AkShare、PyTDX 等多数据源 |
 | ⚙️ `common/` | ✅ **可用** | 核心工具（数据库、配置、日志、任务系统） |
+| 🖥️ `cli/` | ✅ **可用** | 统一命令行界面 `ah`，整合所有生产脚本和工具 |
+| 📈 `fund_analysis/` | ✅ **可用** | 基金绩效分析（指标计算、回撤、归因、可视化） |
+| 🔄 `fund_backtest/` | ✅ **可用** | 场外基金组合回测框架 |
+| 📉 `barra/` | ✅ **可用** | Barra 多因子风险模型（协方差估计、归因连接） |
+| 🔗 `integrations/` | ✅ **可用** | 外部系统集成（DolphinDB 5分钟K线加速层） |
 | 🔍 `providers/` | 🔶 部分可用 | 数据访问接口，基础功能可用 |
-| 🔧 `processors/` | 🚧 开发中 | 数据处理引擎，数据分层架构已完成（见下方说明） |
-| 🧮 `factors/` | 🚧 开发中 | 因子计算库，功能开发中 |
+| 🔧 `processors/` | 🔶 部分可用 | 数据处理引擎，三层架构已完成 |
+| 🧮 `factors/` | 🚧 开发中 | 因子计算库，G/P因子已可用 |
 | 🖥️ `gui/` | 🚧 开发中 | 图形界面，基础功能可用但不稳定 |
 
-### 🔧 **Processors 模块 - 数据分层架构**
+---
 
-Processors 模块已完成数据分层架构设计和核心组件实现：
+## 📈 **fund_analysis - 基金绩效分析（新增）**
 
-**已完成**：
-- ✅ Clean Layer 组件（Validator, Aligner, Standardizer, LineageTracker）
-- ✅ Feature Layer 纯函数接口
-- ✅ Task Layer 增强（fetch → clean → feature → save 流程）
-- ✅ 18 个正确性属性的属性测试（255 个测试全部通过）
-- ✅ 任务分类表和特征入库白名单
+独立的基金绩效分析模块，可用于分析单只基金或回测结果。
 
-**待生产环境实现**：
-- ⚠️ `_save_to_clean()` 方法需覆盖以实现真正的数据库写入
-- 🔄 `_check_dependencies()` 依赖检查功能（扩展点）
+### **核心功能**
+- ✅ 累计/年化收益、波动率、夏普/索提诺/卡玛比率
+- ✅ 最大回撤、水下曲线、Top-N 回撤周期
+- ✅ 月/季/年度收益、滚动收益/波动率/夏普
+- ✅ VaR/CVaR、Beta、跟踪误差、信息比率
+- ✅ 贡献分析、Brinson 归因
+- ✅ 净值曲线、回撤图、月度热力图
 
-详细文档见：`.kiro/specs/processors-data-layering/`
+### **快速开始**
 
-## 📊 **Fetchers - 数据获取模块（推荐使用）**
+```python
+from alphahome.fund_analysis import PerformanceAnalyzer
+
+analyzer = PerformanceAnalyzer()
+
+# 计算绩效指标
+metrics = analyzer.calculate_metrics(returns, nav_series, benchmark=benchmark_nav)
+print(f"年化收益: {metrics['annualized_return']:.2%}")
+print(f"最大回撤: {metrics['max_drawdown']:.2%}")
+print(f"夏普比率: {metrics['sharpe_ratio']:.2f}")
+
+# 回撤分析
+drawdowns = analyzer.analyze_drawdowns(nav_series)
+
+# 生成报告
+report = analyzer.to_dict(nav_series)  # JSON 可序列化
+```
+
+---
+
+## 🔄 **fund_backtest - 基金组合回测（新增）**
+
+专为场外基金组合设计的回测框架。
+
+### **核心功能**
+- ✅ 按调仓记录生成组合净值
+- ✅ 支持 T+N 申购/赎回确认
+- ✅ 可配置申购费、赎回费、管理费
+- ✅ 支持复权净值（分红再投资）
+- ✅ 多组合并行回测
+- ✅ 自动集成 fund_analysis 生成绩效指标
+
+### **快速开始**
+
+```python
+from alphahome.fund_backtest import BacktestEngine, MemoryDataProvider, PortfolioConfig
+from alphahome.fund_analysis import PerformanceAnalyzer
+
+# 创建数据提供者
+provider = MemoryDataProvider(nav_panel=nav_df)
+provider.set_rebalance_records('portfolio_1', rebalance_df)
+
+# 配置组合
+config = PortfolioConfig(
+    portfolio_id='portfolio_1',
+    portfolio_name='测试组合',
+    initial_cash=1000000.0,
+    setup_date='2024-01-01',
+    rebalance_delay=2,        # T+2 申购确认
+    purchase_fee_rate=0.0015, # 0.15% 申购费
+    management_fee=0.005,     # 0.5% 年化管理费
+)
+
+# 运行回测
+engine = BacktestEngine(provider)
+engine.add_portfolio(config)
+results = engine.run('2024-01-01', '2024-12-31')
+
+# 结果已包含绩效指标
+result = results['portfolio_1']
+print(f"累计收益: {result.metrics['cumulative_return']:.2%}")
+```
+
+---
+
+## 📊 **fetchers - 数据获取模块**
 
 ### **支持的数据源**
 
@@ -75,16 +143,69 @@ python run.py
 alphahome task run tushare_stock_daily --update-type smart
 ```
 
-### **任务示例**
+---
+
+## 🖥️ **cli - 统一命令行界面**
+
+AlphaHome 提供统一的 `ah` 命令作为所有工具的入口。
+
+### **主要命令**
+
+```bash
+# 查看帮助
+ah --help
+
+# 生产脚本管理
+ah prod list                    # 列出可用脚本
+ah prod run data-collection     # 运行数据采集
+ah prod run g-factor -- --start_year 2020 --end_year 2024
+
+# DolphinDB 工具
+ah ddb init-kline5m             # 初始化5分钟K线表
+ah ddb import-hikyuu-5min       # 导入Hikyuu数据
+
+# 物化视图管理
+ah mv refresh --view fund_nav_latest
+
+# GUI 启动
+ah gui
+```
+
+详细文档见：[CLI 使用指南](docs/CLI_USAGE_GUIDE.md)
+
+---
+
+## 📉 **barra - 多因子风险模型**
+
+Barra 风格的多因子风险模型，支持风险归因和组合优化。
+
+### **核心功能**
+- ✅ 因子协方差矩阵估计
+- ✅ 特质方差估计
+- ✅ 组合风险分解
+- ✅ 多期收益归因连接（Carino/Menchero）
+
+### **快速开始**
 
 ```python
-# 命令行运行任务
-alphahome task run tushare_stock_daily --start-date 20240101 --end-date 20241231
-alphahome task run akshare_stock_limitup_reason --update-type smart
+from alphahome.barra import RiskModel, RiskModelConfig
 
-# 查看可用任务
-alphahome task list
+# 配置风险模型
+config = RiskModelConfig(
+    half_life_factor=60,
+    half_life_specific=120,
+)
+
+# 估计协方差
+model = RiskModel(config)
+factor_cov = model.estimate_factor_covariance(factor_returns)
+specific_var = model.estimate_specific_variance(residuals)
+
+# 计算组合风险
+portfolio_risk = model.compute_portfolio_risk(weights, exposures)
 ```
+
+---
 
 ## ⚙️ **配置说明**
 
@@ -101,20 +222,14 @@ alphahome task list
   },
   "tushare": {
     "token": "your_tushare_token"
+  },
+  "dolphindb": {
+    "host": "localhost",
+    "port": 8848,
+    "username": "admin",
+    "password": "123456"
   }
 }
-```
-
-## DolphinDB（5分钟K线加速层）
-
-AlphaHome 支持将本地通达信(TDX) 5分钟K线（`vipdoc/*/minline/*.lc5`）导入到 DolphinDB，用于研究/筛选时的快速查询与计算。
-
-```bash
-# 初始化 DolphinDB 分区表（仅首次需要）
-alphahome-ddb init-kline5m --db-path dfs://kline_5min --table kline_5min
-
-# 从 Hikyuu 下载的 5分钟 HDF5 导入（默认读取 HIKYUU_DATA_DIR 或 backtesting.hikyuu_data_dir）
-alphahome-ddb import-hikyuu-5min --codes "000001.SZ,600000.SH" --init
 ```
 
 ## 🚀 **安装**
@@ -127,7 +242,13 @@ cd alphahome
 # 安装（开发模式）
 pip install -e .
 
-# 运行测试（单元）
+# 安装 CLI 入口
+pip install -e ".[cli]"
+
+# 验证安装
+ah --version
+
+# 运行测试
 pytest tests/unit/ -v -m "unit and not requires_db and not requires_api"
 ```
 
@@ -136,15 +257,32 @@ pytest tests/unit/ -v -m "unit and not requires_db and not requires_api"
 ```
 alphahome/
 ├── common/           # 核心工具（数据库、配置、日志、任务系统）
-├── fetchers/         # ✅ 数据获取模块（推荐使用）
+├── cli/              # ✅ 统一命令行界面（ah 命令）
+│   └── commands/     #    prod/ddb/mv/gui 子命令
+├── fetchers/         # ✅ 数据获取模块
 │   ├── sources/      #    数据源实现（Tushare、AkShare、PyTDX）
 │   ├── tasks/        #    数据任务定义
 │   └── tools/        #    辅助工具（交易日历等）
+├── fund_analysis/    # ✅ 基金绩效分析模块
+│   └── analyzers/    #    各类分析器（绩效/风险/归因）
+├── fund_backtest/    # ✅ 场外基金组合回测
+│   ├── engine/       #    回测引擎
+│   └── examples/     #    示例策略
+├── barra/            # ✅ Barra 多因子风险模型
+├── integrations/     # ✅ 外部系统集成（DolphinDB）
 ├── processors/       # 🚧 数据处理模块（开发中）
 ├── factors/          # 🚧 因子计算模块（开发中）
 ├── providers/        # 🔶 数据访问接口（部分可用）
 └── gui/              # 🚧 图形界面（开发中）
 ```
+
+## 📚 **文档**
+
+- [CLI 使用指南](docs/CLI_USAGE_GUIDE.md)
+- [任务开发指南](docs/new_task_development_guide.md)
+- [回测框架设计](docs/backtest_framework_design.md)
+- [Hikyuu 集成](docs/hikyuu_integration_guide.md)
+- [更多文档](docs/README.md)
 
 ## 📄 **许可证**
 
@@ -152,4 +290,4 @@ MIT License - 详见 [LICENSE](LICENSE) 文件
 
 ---
 
-**AlphaHome** - 量化数据，简单可靠 🚀
+**AlphaHome** - 量化投研，简单可靠 🚀

@@ -104,7 +104,6 @@ $ python -m compileall alphahome -q
 ```python
 # 测试关键模块导入
 import alphahome.cli.main          # ✅
-import alphahome.production.factors.p_factor  # ✅
 import alphahome.integrations.dolphindb.cli   # ✅
 import alphahome.processors.materialized_views.cli  # ✅
 ```

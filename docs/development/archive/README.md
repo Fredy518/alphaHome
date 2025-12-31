@@ -5,17 +5,38 @@
 
 ## 归档文档列表
 
-### domain_attribute_implementation.md
-- **归档时间**: 2025-12-15
-- **归档原因**: 该文档记录了早期domain属性实现的细节，当前系统已重构
-- **参考价值**: 可了解GUI任务筛选机制的演进历史
+### 项目规划类
+| 文档 | 归档时间 | 说明 |
+|------|----------|------|
+| `CAREER_TRANSITION_ROADMAP.md` | 2025-12-31 | 个人职业转型路线图 |
+| `SUMMARY.md` | 2025-12-31 | 旧版文档整理总结 |
 
-### g_factor_simplification.md  
-- **归档时间**: 2025-12-15
-- **归档原因**: 该文档记录了特定版本的g因子简化改造，已是历史实现
-- **参考价值**: 可了解因子计算逻辑的演进过程
+### CLI 实施记录
+| 文档 | 归档时间 | 说明 |
+|------|----------|------|
+| `CLI_IMPLEMENTATION_SUMMARY.md` | 2025-12-31 | CLI 统一实施完成总结 |
+
+### rawdata Schema 相关
+| 文档 | 归档时间 | 说明 |
+|------|----------|------|
+| `rawdata_schema_design_plan.md` | 2025-12-31 | rawdata 视图映射设计方案 |
+| `rawdata_implementation_report.md` | 2025-12-31 | rawdata 项目完成报告 |
+| `rawdata_schema_implementation.md` | 2025-12-31 | rawdata 实施文档 |
+
+### 开发计划类
+| 文档 | 归档时间 | 说明 |
+|------|----------|------|
+| `pit_materialized_view_plan.md` | 2025-12-31 | PIT 物化视图开发计划 |
+| `smart_update_strategy_recommendations.md` | 2025-12-31 | 智能增量更新策略建议 |
+
+### 模块设计草稿
+| 文档 | 归档时间 | 说明 |
+|------|----------|------|
+| `processors/` | 2025-12-31 | processors 分层设计草稿（Draft） |
+| `domain_attribute_implementation.md` | 2025-12-15 | domain 属性实现记录 |
+| `g_factor_simplification.md` | 2025-12-15 | G因子简化改造说明 |
 
 ---
 
-如需查看当前有效的开发文档，请访问 [../README.md](../README.md) 或 [../SUMMARY.md](../SUMMARY.md)
+如需查看当前有效的开发文档，请访问 [docs/README.md](../../README.md)
 

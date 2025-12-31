@@ -26,7 +26,7 @@
   - p-factor 和 p-factor-quarterly
 
 #### Phase 4: 代码治理
-- [x] 创建 `alphahome/production/` 包和改造指南
+- [x] 建立 `ah prod` 统一入口（脚本透传），并沉淀使用说明
 - [x] 提供脚本改造的路线图
 - [x] 当前采用轻量级设计（subprocess 透传），为未来改造预留扩展点
 

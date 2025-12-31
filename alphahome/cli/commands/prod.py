@@ -42,17 +42,19 @@ PROD_SCRIPTS = {
         'scripts/production/factor_calculators/p_factor/start_parallel_p_factor_calculation_quarterly.py',
         'P因子季度并行计算启动器'
     ),
-}
-
-# 已改造为包内模块的脚本映射
-# 格式: 别名 -> (模块路径, 入口函数名, 描述)
-PROD_MODULES = {
     'p-factor': (
-        'alphahome.production.factors.p_factor',
-        'main',
-        'P因子年度并行计算启动器 (包内模块)'
+        'scripts/production/factor_calculators/p_factor/start_parallel_p_factor_calculation.py',
+        'P因子年度并行计算启动器'
+    ),
+    'barra-daily': (
+        'scripts/production/barra/barra_daily.py',
+        'Barra 每日流水线（默认 --last-n 1，可传 --parallel/--no-lag 等参数）'
     ),
 }
+
+# 已改造为包内模块的脚本映射（已完成回迁，当前为空）
+# 格式: 别名 -> (模块路径, 入口函数名, 描述)
+PROD_MODULES = {}
 
 
 class ProdCommandGroup(CommandGroup):

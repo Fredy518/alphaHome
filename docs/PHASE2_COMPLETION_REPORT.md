@@ -16,7 +16,7 @@
 
 ### 治理层：改造脚本为包内模块
 - ✅ **目标**：选择 3-5 个最高频/最高价值的脚本作为首批改造试点
-- ✅ **实现**：将核心逻辑提取到 `alphahome/production/` 包内
+- ✅ **实现**：生产脚本通过 `ah prod` 统一入口调度（后续已回迁为脚本透传）
 - ✅ **优势**：消除 subprocess 开销，提升性能和可维护性
 
 ---
@@ -55,7 +55,7 @@ ah prod run p-factor -- --start_year 2020 --end_year 2022 --workers 2
 **改造结果**：
 
 ```
-alphahome/production/factors/
+scripts/production/factor_calculators/
 ├── __init__.py                     # 包初始化，导出 run_parallel_p_factor_calculation
 └── p_factor.py                     # 核心逻辑模块 (150+ 行)
     ├── smart_year_allocation()     # 智能年份分配算法
@@ -95,20 +95,17 @@ alphahome/production/factors/
 ```
 CLI 调用链：
 ah prod run <alias> --> {
-  if alias in PROD_MODULES:     # 包内模块（高性能）
-    直接调用 alphahome.production.* 模块
-  else:                        # 传统脚本（兼容性）
-    subprocess 调用 scripts/production/* 脚本
+   subprocess 调用 scripts/production/* 脚本
 }
 ```
 
 ### 未来状态（Phase 2+）
 
-随着更多脚本改造为包内模块，subprocess 调用将逐步减少：
+随着生产脚本治理推进，可以逐步收敛脚本入口与统一的调度方式：
 
 ```
 CLI 调用链（目标）：
-ah prod run <alias> --> 直接调用 alphahome.production.* 模块
+ah prod run <alias> --> subprocess 调用 scripts/production/* 脚本
 ```
 
 ---
@@ -120,14 +117,8 @@ ah prod run <alias> --> 直接调用 alphahome.production.* 模块
 ```python
 # alphahome/cli/commands/prod.py
 
-# 已改造为包内模块的脚本映射
-PROD_MODULES = {
-    'p-factor': (
-        'alphahome.production.factors.p_factor',
-        'run_parallel_p_factor_calculation',
-        'P因子年度并行计算启动器 (包内模块)'
-    ),
-}
+# 已改造为包内模块的脚本映射（已回迁，当前为空）
+PROD_MODULES = {}
 
 # 传统脚本映射（逐步迁移）
 PROD_SCRIPTS = {
