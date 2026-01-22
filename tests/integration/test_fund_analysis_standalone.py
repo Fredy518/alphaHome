@@ -12,7 +12,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from alphahome.fund_analysis import (
+from fund_analysis import (
     PerformanceAnalyzer,
     MetricsAnalyzer,
     DrawdownAnalyzer,
@@ -365,12 +365,12 @@ class TestFundAnalysisModuleImports:
 
     def test_import_performance_analyzer(self):
         """测试导入 PerformanceAnalyzer"""
-        from alphahome.fund_analysis import PerformanceAnalyzer
+        from fund_analysis import PerformanceAnalyzer
         assert PerformanceAnalyzer is not None
 
     def test_import_all_analyzers(self):
         """测试导入所有分析器"""
-        from alphahome.fund_analysis import (
+        from fund_analysis import (
             PerformanceAnalyzer,
             MetricsAnalyzer,
             DrawdownAnalyzer,
@@ -390,7 +390,7 @@ class TestFundAnalysisModuleImports:
 
     def test_import_constants(self):
         """测试导入常量"""
-        from alphahome.fund_analysis import (
+        from fund_analysis import (
             DEFAULT_PERIODS_PER_YEAR,
             DEFAULT_RISK_FREE_RATE,
             FFILL_LIMIT,
@@ -402,7 +402,7 @@ class TestFundAnalysisModuleImports:
 
     def test_import_schemas(self):
         """测试导入 schema 定义"""
-        from alphahome.fund_analysis import (
+        from fund_analysis import (
             METRICS_SCHEMA,
             DRAWDOWN_SCHEMA,
             PERIODIC_SCHEMA,

@@ -164,23 +164,6 @@ def decompose_risk(model, weights, exposures, factor_cov, specific_var):
     }
 ```
 
-## 与其他模块集成
-
-### 与 fund_analysis 集成
-
-```python
-from alphahome.fund_analysis import RiskAnalyzer
-from alphahome.barra import RiskModel
-
-# fund_analysis 提供历史风险指标
-risk_analyzer = RiskAnalyzer(nav_data)
-historical_vol = risk_analyzer.annualized_volatility
-
-# barra 提供前瞻风险预测
-risk_model = RiskModel(config)
-predicted_vol = risk_model.predict_volatility(exposures, factor_cov)
-```
-
 ## 注意事项
 
 1. **数据频率**：模型默认假设日频数据，其他频率需调整半衰期参数
@@ -189,6 +172,3 @@ predicted_vol = risk_model.predict_volatility(exposures, factor_cov)
 4. **内存使用**：大规模股票池的特质风险估计可能消耗较多内存
 
 ## 相关文档
-
-- [基金绩效分析](./fund_analysis.md)
-- [组合回测框架](../backtest_framework_design.md)

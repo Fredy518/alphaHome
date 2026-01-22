@@ -192,7 +192,7 @@ class TushareAPI:
     async def query(
         self,
         api_name: str,
-        fields: Optional[List[str]] = None,
+        fields: Optional[Union[str, List[str]]] = None,
         max_retries: int = 3,
         stop_event: Optional[asyncio.Event] = None,
         **params,
@@ -211,7 +211,231 @@ class TushareAPI:
     async def _fetch_with_pagination(
         self,
         api_name: str,
-        fields: Optional[List[str]],
+        fields: Optional[Union[str, List[str]]],
+        max_retries: int,
+        stop_event: Optional[asyncio.Event] = None,
+        **params,
+    ) -> Optional[pd.DataFrame]:
+        """
+        执行查询并自动处理分页（增强版）：
+        - 复用单个 aiohttp session 覆盖整个分页过程
+        - 针对 `ServerDisconnectedError`/连接异常/超时等做页内重试
+        """
+
+        def _fields_to_str(value: Optional[Union[str, List[str]]]) -> str:
+            if not value:
+                return ""
+            if isinstance(value, list):
+                return ",".join(value)
+            return value
+
+        def _retry_delay_seconds(attempt: int) -> float:
+            # 指数退避：1s, 2s, 4s... 上限 30s（不加抖动，便于可预测与测试）
+            return min(2 ** (attempt - 1), 30)
+
+        async def _sleep_with_stop(seconds: float):
+            end_time = time.monotonic() + seconds
+            while True:
+                if stop_event and stop_event.is_set():
+                    raise asyncio.CancelledError
+                remaining = end_time - time.monotonic()
+                if remaining <= 0:
+                    return
+                await asyncio.sleep(min(1.0, remaining))
+
+        all_data: List[pd.DataFrame] = []
+        offset = 0
+
+        limit = params.get("limit")
+        effective_page_size = limit if limit is not None and limit > 0 else 5000
+
+        has_more = True
+        consecutive_empty_pages = 0
+        max_consecutive_empty_before_stop = 3
+        request_count = 0
+
+        fields_str = _fields_to_str(fields)
+
+        timeout = aiohttp.ClientTimeout(
+            total=120,
+            connect=30,
+            sock_read=90,
+        )
+
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            while has_more:
+                request_count += 1
+                self.logger.debug(
+                    f"TushareAPI.query ({api_name}): 开始第 {request_count} 次分页请求. Offset: {offset}, EffectivePageSize: {effective_page_size}, Params: {params}"
+                )
+
+                page_params = params.copy()
+                if "limit" not in page_params:
+                    page_params["limit"] = effective_page_size
+                if "offset" not in page_params:
+                    page_params["offset"] = offset
+
+                payload = {
+                    "api_name": api_name,
+                    "token": self.token,
+                    "params": page_params,
+                    "fields": fields_str,
+                }
+
+                result: Optional[Dict[str, Any]] = None
+                last_error: Optional[BaseException] = None
+
+                for attempt in range(1, max_retries + 1):
+                    if stop_event and stop_event.is_set():
+                        raise asyncio.CancelledError
+
+                    try:
+                        # 允许 40203（速率限制）在内部等待并继续请求，不计入连接层重试策略
+                        while True:
+                            await self._wait_for_rate_limit_slot(api_name)
+                            current_semaphore = self._get_semaphore_for_api(api_name)
+                            async with current_semaphore:
+                                if self.logger:
+                                    self.logger.debug(
+                                        f"并发控制 ({api_name}): 获取 Semaphore 许可 (当前并发上限: {current_semaphore._value if hasattr(current_semaphore, '_value') else 'N/A'})"
+                                    )
+
+                                async with session.post(self.http_url, json=payload) as response:
+                                    if response.status != 200:
+                                        error_text = await response.text()
+                                        self.logger.error(
+                                            f"Tushare API 请求失败 ({api_name}): 状态码: {response.status}, URL: {self.http_url}, Payload: {payload}, 响应: {error_text}"
+                                        )
+                                        if 500 <= response.status < 600 and attempt < max_retries:
+                                            delay = _retry_delay_seconds(attempt)
+                                            self.logger.warning(
+                                                f"Tushare API 服务器错误 ({api_name})，将重试 {attempt}/{max_retries}，等待 {delay:.1f}s。状态码: {response.status}"
+                                            )
+                                            await _sleep_with_stop(delay)
+                                            continue
+                                        raise ValueError(
+                                            f"Tushare API 请求失败({api_name})，状态码: {response.status}, 响应: {error_text}"
+                                        )
+
+                                    result = await response.json()
+
+                            if result.get("code") == 40203:
+                                error_msg = result.get("msg", "未知错误")
+                                self.logger.warning(
+                                    f"Tushare API 返回速率限制错误 ({api_name}): {error_msg}。将等待 {self.rate_limit_delay} 秒后重试当前页面的请求。"
+                                )
+                                await _sleep_with_stop(float(self.rate_limit_delay))
+                                result = None
+                                continue
+
+                            break
+
+                        if result is None:
+                            raise RuntimeError(f"Tushare API ({api_name}) 未获得有效响应。参数: {params}")
+
+                        if result.get("code") != 0:
+                            error_msg = result.get("msg", "未知错误")
+                            self.logger.error(
+                                f"Tushare API 返回错误 ({api_name}): Code: {result.get('code')}, Msg: {error_msg}, Payload: {payload}"
+                            )
+                            if result.get("code") == 50101:
+                                self.logger.warning(
+                                    f"Tushare API 返回offset限制错误 ({api_name}): {error_msg}。将启动智能时间拆分处理。"
+                                )
+                                try:
+                                    split_result = await self._handle_offset_limit_error(
+                                        api_name=api_name,
+                                        fields=fields,
+                                        max_retries=max_retries,
+                                        stop_event=stop_event,
+                                        **params,
+                                    )
+                                    return split_result
+                                except Exception as split_error:
+                                    self.logger.error(
+                                        f"智能时间拆分处理失败 ({api_name}): {split_error}"
+                                    )
+                                    raise ValueError(
+                                        f"Tushare API 50101错误且智能拆分失败 ({api_name}): {split_error}"
+                                    )
+                            raise ValueError(
+                                f"Tushare API 返回错误 ({api_name}): Code: {result.get('code')}, Msg: {error_msg}"
+                            )
+
+                        break
+
+                    except (
+                        aiohttp.client_exceptions.ServerDisconnectedError,
+                        aiohttp.ClientConnectionError,
+                        aiohttp.ClientPayloadError,
+                        aiohttp.ClientOSError,
+                        asyncio.TimeoutError,
+                    ) as e:
+                        last_error = e
+                        if attempt >= max_retries:
+                            raise
+                        delay = _retry_delay_seconds(attempt)
+                        self.logger.warning(
+                            f"Tushare API 连接异常 ({api_name})，将重试 {attempt}/{max_retries}，等待 {delay:.1f}s。错误: {e}"
+                        )
+                        await _sleep_with_stop(delay)
+                        continue
+
+                if result is None and last_error is not None:
+                    raise last_error
+
+                if result is None:
+                    return pd.DataFrame()
+
+                data = result.get("data", {})
+                if not data:
+                    break
+
+                columns = data.get("fields", [])
+                items = data.get("items", [])
+
+                self.logger.debug(
+                    f"TushareAPI.query ({api_name}): 第 {request_count} 次分页请求返回 {len(items)} 条记录."
+                )
+
+                if not items:
+                    consecutive_empty_pages += 1
+                    self.logger.debug(
+                        f"({api_name}) 本次分页获取 0 条记录. Offset: {offset}. 已连续空页: {consecutive_empty_pages}"
+                    )
+                    if not all_data and consecutive_empty_pages >= 1:
+                        has_more = False
+                    elif consecutive_empty_pages >= max_consecutive_empty_before_stop:
+                        has_more = False
+
+                    if not has_more:
+                        break
+                else:
+                    consecutive_empty_pages = 0
+                    all_data.append(pd.DataFrame(items, columns=columns))
+
+                if len(items) < effective_page_size:
+                    has_more = False
+                else:
+                    offset += len(items)
+
+        if not all_data:
+            return pd.DataFrame()
+
+        all_data = [df for df in all_data if not df.empty]
+        if not all_data:
+            return pd.DataFrame()
+
+        combined_data = pd.concat(all_data, ignore_index=True)
+        self.logger.debug(
+            f"API {api_name} (参数: {params}) 通过分页共获取 {len(combined_data)} 条记录。"
+        )
+        return combined_data
+
+    async def _fetch_with_pagination_legacy(
+        self,
+        api_name: str,
+        fields: Optional[Union[str, List[str]]],
         max_retries: int,
         stop_event: Optional[asyncio.Event] = None,
         **params,
@@ -417,7 +641,7 @@ class TushareAPI:
     async def _handle_offset_limit_error(
         self,
         api_name: str,
-        fields: Optional[List[str]],
+        fields: Optional[Union[str, List[str]]],
         max_retries: int,
         stop_event: Optional[asyncio.Event],
         **params,

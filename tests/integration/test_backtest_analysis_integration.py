@@ -10,13 +10,13 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from alphahome.fund_backtest import (
+from fund_backtest import (
     BacktestEngine,
     PortfolioConfig,
     BacktestResult,
     MemoryDataProvider,
 )
-from alphahome.fund_analysis import (
+from fund_analysis import (
     PerformanceAnalyzer,
     MetricsAnalyzer,
     DrawdownAnalyzer,
@@ -398,7 +398,7 @@ class TestBacktestEngineUsesAnalyzer:
         engine = BacktestEngine(provider)
         
         # 验证引擎使用的是 fund_analysis 的 PerformanceAnalyzer
-        from alphahome.fund_analysis import PerformanceAnalyzer
+        from fund_analysis import PerformanceAnalyzer
         assert isinstance(engine.analyzer, PerformanceAnalyzer)
 
     def test_engine_result_metrics_match_analyzer(self, simple_setup):

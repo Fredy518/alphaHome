@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from alphahome.fund_analysis import PeriodicAnalyzer
+from fund_analysis import PeriodicAnalyzer
 
 
 class TestPeriodicAnalyzer:

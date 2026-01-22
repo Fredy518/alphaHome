@@ -14,11 +14,13 @@
 import abc
 import asyncio
 import logging
+from datetime import datetime, timedelta
 from typing import Any, Callable, Dict, List, Optional
 
 import pandas as pd
 
 from alphahome.fetchers.base.fetcher_task import FetcherTask
+from alphahome.common.constants import UpdateTypes
 from .akshare_api import AkShareAPI
 from .akshare_data_transformer import AkShareDataTransformer
 
@@ -231,6 +233,44 @@ class AkShareTask(FetcherTask, abc.ABC):
             跳过原因说明
         """
         return ""
+
+    async def _should_skip_by_recent_update_time(
+        self,
+        update_type: str,
+        *,
+        max_age_days: int = 30,
+    ) -> bool:
+        """
+        对于无法通过 API 参数限定时间范围的任务：
+        - SMART 模式下，如果数据库表最近更新在 max_age_days 内，自动跳过
+        - 否则允许执行“全量/覆盖式”获取
+        """
+        if update_type != UpdateTypes.SMART:
+            return False
+
+        try:
+            table_exists = await self.db.table_exists(self)
+            if not table_exists:
+                return False
+
+            latest_update_time = await self.db.get_latest_update_time(self)
+            if not latest_update_time:
+                return False
+
+            age = datetime.now() - latest_update_time
+            if age <= timedelta(days=max_age_days):
+                self.logger.info(
+                    f"{self.name}: SMART 模式检测到表最近更新时间 {latest_update_time}，"
+                    f"{max_age_days} 天内无需重复拉取，自动跳过。"
+                )
+                return True
+
+            return False
+        except Exception as e:
+            self.logger.warning(
+                f"{self.name}: SMART 模式更新时间跳过判断失败，将继续执行: {e}"
+            )
+            return False
 
 
 class AkShareSingleBatchTask(AkShareTask):

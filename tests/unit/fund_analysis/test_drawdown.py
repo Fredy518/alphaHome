@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from alphahome.fund_analysis import DrawdownAnalyzer
+from fund_analysis import DrawdownAnalyzer
 
 
 class TestDrawdownAnalyzer:

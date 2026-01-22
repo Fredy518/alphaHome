@@ -1,3 +1,4 @@
+import re
 from typing import Any, Dict, List, Optional, Union
 
 import asyncpg
@@ -128,17 +129,19 @@ class SchemaManagementMixin:
         simple_name = simple_name.strip('"')
         
         query = """
-        SELECT 
-            column_name, 
-            data_type, 
-            is_nullable, 
-            column_default
-        FROM 
-            information_schema.columns
-        WHERE 
-            table_schema = $1 AND table_name = $2
-        ORDER BY 
-            ordinal_position;
+        SELECT
+            column_name,
+            data_type,
+            udt_name,
+            is_nullable,
+            column_default,
+            character_maximum_length,
+            numeric_precision,
+            numeric_scale,
+            datetime_precision
+        FROM information_schema.columns
+        WHERE table_schema = $1 AND table_name = $2
+        ORDER BY ordinal_position;
         """
         result = await self.fetch(query, schema, simple_name) # type: ignore
 
@@ -149,13 +152,292 @@ class SchemaManagementMixin:
                 {
                     "column_name": row["column_name"],
                     "data_type": row["data_type"],
+                    "udt_name": row["udt_name"],
                     "is_nullable": row["is_nullable"]
                     == "YES",  # 将 'YES'/'NO' 转换为布尔值
                     "default": row["column_default"],
+                    "character_maximum_length": row["character_maximum_length"],
+                    "numeric_precision": row["numeric_precision"],
+                    "numeric_scale": row["numeric_scale"],
+                    "datetime_precision": row["datetime_precision"],
                 }
             )
 
         return schema_info
+
+    _VARCHAR_LEN_RE = re.compile(
+        r"^\s*(?:character\s+varying|varchar)\s*\(\s*(\d+)\s*\)\s*$",
+        flags=re.IGNORECASE,
+    )
+
+    def _quote_ident(self, name: str) -> str:
+        return '"' + str(name).replace('"', '""') + '"'
+
+    def _parse_varchar_length(self, type_str: str) -> Optional[int]:
+        match = self._VARCHAR_LEN_RE.match(type_str or "")
+        if not match:
+            return None
+        try:
+            return int(match.group(1))
+        except Exception:
+            return None
+
+    def _build_safe_text_to_timestamp_using_expr(self, col_name: str) -> str:
+        col = f'"{col_name}"'
+        # 兼容常见格式：
+        # - YYYYMMDD
+        # - YYYY-MM-DD
+        # - YYYY-MM-DD HH:MM:SS[.MS]
+        # 解析失败则置 NULL，避免迁移被异常值阻断。
+        return f"""
+        CASE
+            WHEN {col} IS NULL OR btrim({col}) = '' THEN NULL
+            WHEN {col} ~ '^[0-9]{{8}}$' THEN to_date({col}, 'YYYYMMDD')::timestamp
+            WHEN {col} ~ '^[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}$' THEN to_date({col}, 'YYYY-MM-DD')::timestamp
+            WHEN {col} ~ '^[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}[ T][0-9]{{2}}:[0-9]{{2}}:[0-9]{{2}}(\\.[0-9]{{1,6}})?$' THEN {col}::timestamp
+            ELSE NULL
+        END
+        """.strip()
+
+    async def _get_relation_oid(self, conn: asyncpg.Connection, schema: str, name: str) -> Optional[int]:
+        sql = """
+            SELECT c.oid
+            FROM pg_class c
+            JOIN pg_namespace n ON n.oid = c.relnamespace
+            WHERE n.nspname = $1 AND c.relname = $2
+        """
+        return await conn.fetchval(sql, schema, name)
+
+    async def _get_direct_dependent_relations(self, conn: asyncpg.Connection, parent_oid: int):
+        sql = """
+            SELECT DISTINCT
+                v.oid AS oid,
+                nv.nspname AS schema,
+                v.relname AS name,
+                v.relkind AS kind
+            FROM pg_depend d
+            JOIN pg_rewrite r ON r.oid = d.objid
+            JOIN pg_class v ON v.oid = r.ev_class
+            JOIN pg_namespace nv ON nv.oid = v.relnamespace
+            WHERE d.refobjid = $1
+              AND v.relkind IN ('v','m')
+        """
+        return await conn.fetch(sql, parent_oid)
+
+    async def _collect_dependent_views_closure(
+        self, conn: asyncpg.Connection, base_schema: str, base_table: str
+    ):
+        base_oid = await self._get_relation_oid(conn, base_schema, base_table)
+        if base_oid is None:
+            return base_oid, {}, [], {}
+
+        edges: Dict[int, set[int]] = {base_oid: set()}
+        rels: Dict[int, Dict[str, Any]] = {}
+        queue = [base_oid]
+        visited = {base_oid}
+
+        while queue:
+            current = queue.pop(0)
+            edges.setdefault(current, set())
+            for row in await self._get_direct_dependent_relations(conn, current):
+                oid = row["oid"]
+                kind = row["kind"]
+                if isinstance(kind, (bytes, bytearray)):
+                    kind = kind.decode("utf-8")
+                kind = str(kind)
+
+                edges[current].add(oid)
+                rels[oid] = {
+                    "oid": oid,
+                    "schema": row["schema"],
+                    "name": row["name"],
+                    "kind": kind,
+                }
+
+                edges.setdefault(oid, set())
+                if oid not in visited:
+                    visited.add(oid)
+                    queue.append(oid)
+
+        matviews = [r for r in rels.values() if r["kind"] == "m"]
+        if matviews:
+            return base_oid, rels, [], {}
+
+        drop_order: List[int] = []
+        seen: set[int] = set()
+
+        def dfs(node: int):
+            if node in seen:
+                return
+            seen.add(node)
+            for child in edges.get(node, set()):
+                dfs(child)
+            if node != base_oid and rels.get(node, {}).get("kind") == "v":
+                drop_order.append(node)
+
+        dfs(base_oid)
+
+        view_defs: Dict[int, str] = {}
+        for oid in drop_order:
+            view_defs[oid] = await conn.fetchval(
+                "SELECT pg_get_viewdef($1::oid, true)", oid
+            )
+
+        return base_oid, rels, drop_order, view_defs
+
+    async def ensure_table_schema_compatible(self, target: Any) -> Dict[str, Any]:
+        """
+        对已存在的表执行“安全范围内”的结构兼容处理：
+        1) 自动确保 update_time 为 timestamp（历史版本可能是 varchar(10)）
+        2) 仅对 VARCHAR 长度执行“增大”调整（不会缩小）
+
+        该方法不会尝试进行有风险的通用迁移（例如 NUMERIC 精度变更、NOT NULL 强化等）。
+        """
+        if self.pool is None:  # type: ignore
+            await self.connect()  # type: ignore
+
+        schema_def = getattr(target, "schema_def", None)
+        if not schema_def:
+            return {"status": "skipped", "reason": "no_schema_def", "actions": []}
+
+        schema, table = self.resolver.get_schema_and_table(target)  # type: ignore
+        resolved_table_name = f'"{schema}"."{table}"'
+
+        existing_cols = await self.get_table_schema(target)
+        existing_by_name = {c["column_name"]: c for c in existing_cols}
+
+        actions: List[str] = []
+
+        auto_add_update_time = getattr(target, "auto_add_update_time", True)
+        desired_types: Dict[str, str] = {}
+        for col_name, col_def_item in schema_def.items():
+            if isinstance(col_def_item, dict):
+                desired_types[col_name] = str(col_def_item.get("type", "TEXT"))
+            else:
+                desired_types[col_name] = str(col_def_item)
+
+        if auto_add_update_time and "update_time" not in desired_types:
+            desired_types["update_time"] = "TIMESTAMP WITHOUT TIME ZONE"
+
+        # 0) Add missing columns (safe: only add with type, no NOT NULL enforcement here)
+        missing_cols = [c for c in desired_types.keys() if c not in existing_by_name]
+        if missing_cols:
+            async with self.pool.acquire() as conn:  # type: ignore
+                async with conn.transaction():
+                    for col_name in missing_cols:
+                        col_type = desired_types[col_name]
+                        # update_time handled later as well; ADD COLUMN here is safe and idempotent
+                        sql = (
+                            f'ALTER TABLE {resolved_table_name} '
+                            f'ADD COLUMN IF NOT EXISTS "{col_name}" {col_type};'
+                        )
+                        await conn.execute(sql)
+                        actions.append(f"add_column:{col_name}")
+
+            # refresh schema snapshot for subsequent type/length adjustments
+            existing_cols = await self.get_table_schema(target)
+            existing_by_name = {c["column_name"]: c for c in existing_cols}
+
+        pending_ddls: List[tuple[str, str]] = []
+
+        # 1) Ensure update_time exists + correct type
+        if "update_time" in desired_types:
+            existing = existing_by_name.get("update_time")
+            if not existing:
+                sql = (
+                    f'ALTER TABLE {resolved_table_name} '
+                    f'ADD COLUMN IF NOT EXISTS "update_time" '
+                    f'TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP;'
+                )
+                pending_ddls.append(("add_column:update_time", sql))
+            else:
+                existing_type = (existing.get("data_type") or "").lower()
+                desired_type = desired_types["update_time"].strip().lower()
+                if desired_type.startswith("timestamp") and existing_type != "timestamp without time zone":
+                    if existing_type in ("character varying", "text", "character"):
+                        using_expr = self._build_safe_text_to_timestamp_using_expr("update_time")
+                        sql = (
+                            f'ALTER TABLE {resolved_table_name} '
+                            f'ALTER COLUMN "update_time" TYPE TIMESTAMP WITHOUT TIME ZONE '
+                            f'USING ({using_expr});'
+                        )
+                    elif existing_type == "date":
+                        sql = (
+                            f'ALTER TABLE {resolved_table_name} '
+                            f'ALTER COLUMN "update_time" TYPE TIMESTAMP WITHOUT TIME ZONE '
+                            f'USING ("update_time"::timestamp);'
+                        )
+                    else:
+                        sql = (
+                            f'ALTER TABLE {resolved_table_name} '
+                            f'ALTER COLUMN "update_time" TYPE TIMESTAMP WITHOUT TIME ZONE '
+                            f'USING ("update_time"::timestamp);'
+                        )
+
+                    pending_ddls.append(
+                        (f"alter_type:update_time:{existing_type}->timestamp", sql)
+                    )
+
+        # 2) Widen VARCHAR columns when schema_def requires larger size
+        for col_name, desired_type in desired_types.items():
+            desired_len = self._parse_varchar_length(desired_type)
+            if desired_len is None:
+                continue
+
+            existing = existing_by_name.get(col_name)
+            if not existing:
+                continue
+
+            existing_type = (existing.get("data_type") or "").lower()
+            if existing_type != "character varying":
+                continue
+
+            existing_len = existing.get("character_maximum_length")
+            if isinstance(existing_len, int) and existing_len < desired_len:
+                sql = (
+                    f'ALTER TABLE {resolved_table_name} '
+                    f'ALTER COLUMN "{col_name}" TYPE VARCHAR({desired_len});'
+                )
+                pending_ddls.append(
+                    (f"widen_varchar:{col_name}:{existing_len}->{desired_len}", sql)
+                )
+
+        if not pending_ddls:
+            return {"status": "ok", "actions": []}
+
+        async with self.pool.acquire() as conn:  # type: ignore
+            async with conn.transaction():
+                base_oid, rels, drop_order, view_defs = await self._collect_dependent_views_closure(
+                    conn, schema, table
+                )
+
+                if base_oid is None:
+                    return {"status": "skipped", "reason": "table_not_found", "actions": []}
+
+                if not drop_order and any(r.get("kind") == "m" for r in rels.values()):
+                    return {
+                        "status": "skipped",
+                        "reason": "dependent_materialized_views",
+                        "actions": [],
+                    }
+
+                for oid in drop_order:
+                    r = rels[oid]
+                    fq = f'{self._quote_ident(r["schema"])}.{self._quote_ident(r["name"])}'
+                    await conn.execute(f"DROP VIEW IF EXISTS {fq};")
+
+                for action, sql in pending_ddls:
+                    await conn.execute(sql)
+                    actions.append(action)
+
+                for oid in reversed(drop_order):
+                    r = rels[oid]
+                    fq = f'{self._quote_ident(r["schema"])}.{self._quote_ident(r["name"])}'
+                    view_def = view_defs.get(oid)
+                    if view_def:
+                        await conn.execute(f"CREATE OR REPLACE VIEW {fq} AS {view_def};")
+
+        return {"status": "ok", "actions": actions}
 
     async def create_table_from_schema(self, target: Any):
         """根据任务对象定义的 schema (结构) 创建数据库表和相关索引。"""

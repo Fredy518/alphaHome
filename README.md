@@ -21,8 +21,6 @@ AlphaHome 是一个完整的量化投研平台，提供从数据到策略的全�
 | 📊 `fetchers/` | ✅ **可用** | 数据获取，支持 Tushare、AkShare、PyTDX 等多数据源 |
 | ⚙️ `common/` | ✅ **可用** | 核心工具（数据库、配置、日志、任务系统） |
 | 🖥️ `cli/` | ✅ **可用** | 统一命令行界面 `ah`，整合所有生产脚本和工具 |
-| 📈 `fund_analysis/` | ✅ **可用** | 基金绩效分析（指标计算、回撤、归因、可视化） |
-| 🔄 `fund_backtest/` | ✅ **可用** | 场外基金组合回测框架 |
 | 📉 `barra/` | ✅ **可用** | Barra 多因子风险模型（协方差估计、归因连接） |
 | 🔗 `integrations/` | ✅ **可用** | 外部系统集成（DolphinDB 5分钟K线加速层） |
 | 🔍 `providers/` | 🔶 部分可用 | 数据访问接口，基础功能可用 |
@@ -32,84 +30,6 @@ AlphaHome 是一个完整的量化投研平台，提供从数据到策略的全�
 
 ---
 
-## 📈 **fund_analysis - 基金绩效分析（新增）**
-
-独立的基金绩效分析模块，可用于分析单只基金或回测结果。
-
-### **核心功能**
-- ✅ 累计/年化收益、波动率、夏普/索提诺/卡玛比率
-- ✅ 最大回撤、水下曲线、Top-N 回撤周期
-- ✅ 月/季/年度收益、滚动收益/波动率/夏普
-- ✅ VaR/CVaR、Beta、跟踪误差、信息比率
-- ✅ 贡献分析、Brinson 归因
-- ✅ 净值曲线、回撤图、月度热力图
-
-### **快速开始**
-
-```python
-from alphahome.fund_analysis import PerformanceAnalyzer
-
-analyzer = PerformanceAnalyzer()
-
-# 计算绩效指标
-metrics = analyzer.calculate_metrics(returns, nav_series, benchmark=benchmark_nav)
-print(f"年化收益: {metrics['annualized_return']:.2%}")
-print(f"最大回撤: {metrics['max_drawdown']:.2%}")
-print(f"夏普比率: {metrics['sharpe_ratio']:.2f}")
-
-# 回撤分析
-drawdowns = analyzer.analyze_drawdowns(nav_series)
-
-# 生成报告
-report = analyzer.to_dict(nav_series)  # JSON 可序列化
-```
-
----
-
-## 🔄 **fund_backtest - 基金组合回测（新增）**
-
-专为场外基金组合设计的回测框架。
-
-### **核心功能**
-- ✅ 按调仓记录生成组合净值
-- ✅ 支持 T+N 申购/赎回确认
-- ✅ 可配置申购费、赎回费、管理费
-- ✅ 支持复权净值（分红再投资）
-- ✅ 多组合并行回测
-- ✅ 自动集成 fund_analysis 生成绩效指标
-
-### **快速开始**
-
-```python
-from alphahome.fund_backtest import BacktestEngine, MemoryDataProvider, PortfolioConfig
-from alphahome.fund_analysis import PerformanceAnalyzer
-
-# 创建数据提供者
-provider = MemoryDataProvider(nav_panel=nav_df)
-provider.set_rebalance_records('portfolio_1', rebalance_df)
-
-# 配置组合
-config = PortfolioConfig(
-    portfolio_id='portfolio_1',
-    portfolio_name='测试组合',
-    initial_cash=1000000.0,
-    setup_date='2024-01-01',
-    rebalance_delay=2,        # T+2 申购确认
-    purchase_fee_rate=0.0015, # 0.15% 申购费
-    management_fee=0.005,     # 0.5% 年化管理费
-)
-
-# 运行回测
-engine = BacktestEngine(provider)
-engine.add_portfolio(config)
-results = engine.run('2024-01-01', '2024-12-31')
-
-# 结果已包含绩效指标
-result = results['portfolio_1']
-print(f"累计收益: {result.metrics['cumulative_return']:.2%}")
-```
-
----
 
 ## 📊 **fetchers - 数据获取模块**
 
@@ -263,11 +183,6 @@ alphahome/
 │   ├── sources/      #    数据源实现（Tushare、AkShare、PyTDX）
 │   ├── tasks/        #    数据任务定义
 │   └── tools/        #    辅助工具（交易日历等）
-├── fund_analysis/    # ✅ 基金绩效分析模块
-│   └── analyzers/    #    各类分析器（绩效/风险/归因）
-├── fund_backtest/    # ✅ 场外基金组合回测
-│   ├── engine/       #    回测引擎
-│   └── examples/     #    示例策略
 ├── barra/            # ✅ Barra 多因子风险模型
 ├── integrations/     # ✅ 外部系统集成（DolphinDB）
 ├── processors/       # 🚧 数据处理模块（开发中）

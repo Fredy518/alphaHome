@@ -9,8 +9,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from alphahome.fund_analysis import PerformanceAnalyzer
-from alphahome.fund_analysis._schema import METRICS_SCHEMA_KEYS
+from fund_analysis import PerformanceAnalyzer
+from fund_analysis._schema import METRICS_SCHEMA_KEYS
 
 
 class TestPerformanceAnalyzer:

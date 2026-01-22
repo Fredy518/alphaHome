@@ -112,6 +112,10 @@ class AkShareFundCfEmTask(AkShareTask):
 
         fund_cf_em 接口一次性返回所有历史数据。
         """
+        update_type = kwargs.get("update_type", UpdateTypes.SMART)
+        if await self._should_skip_by_recent_update_time(update_type, max_age_days=30):
+            return []
+
         self.logger.info(f"任务 {self.name}: 生成单批次参数（一次性获取所有历史数据）")
         return [{}]  # 返回空参数字典
 

@@ -7,6 +7,9 @@ from .tushare_index_swmember import TushareIndexSwmemberTask
 from .tushare_index_weight import TushareIndexWeightTask
 from .tushare_index_dailybasic import TushareIndexDailyBasicTask
 from .tushare_index_global import TushareIndexGlobalTask
+from .akshare_index_csindex_all import AkShareIndexCsindexAllTask
+from .akshare_index_stock_cons_csindex import AkShareIndexStockConsCsindexTask
+from .akshare_index_stock_cons_weight_csindex import AkShareIndexStockConsWeightCsindexTask
 
 __all__ = [
     "TushareIndexBasicTask",
@@ -18,4 +21,7 @@ __all__ = [
     "TushareIndexFactorProTask",
     "TushareIndexDailyBasicTask",
     "TushareIndexGlobalTask",
+    # "AkShareIndexCsindexAllTask",
+    # "AkShareIndexStockConsCsindexTask",
+    # "AkShareIndexStockConsWeightCsindexTask",
 ]

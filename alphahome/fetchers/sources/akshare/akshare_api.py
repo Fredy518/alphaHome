@@ -25,6 +25,7 @@ except ImportError:
     ak = None  # akshare not installed; will be checked on use
 
 from .stock_limitup_reason_ext import stock_limitup_reason
+from .index_cons_csindex_ext import index_stock_cons_csindex
 
 class AkShareAPIError(Exception):
     """AkShare API 调用错误"""
@@ -68,6 +69,8 @@ class AkShareAPI:
     # extra akshare-like functions in this project
     EXTRA_FUNCS: Dict[str, Callable[..., Any]] = {
         "stock_limitup_reason": stock_limitup_reason,
+        # Override buggy akshare impl for .xls reading
+        "index_stock_cons_csindex": index_stock_cons_csindex,
     }
     def __init__(
         self,

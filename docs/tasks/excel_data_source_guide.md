@@ -282,13 +282,13 @@ primary_keys = ["ts_code", "trade_date"]
 primary_keys = ["ts_code", "end_date", "report_type"]
 ```
 
-## 示例：基金分析展望数据
+## 示例：基金相关数据
 
 完整的实现示例请参考：
-`alphahome/fetchers/tasks/fund/excel_fund_analysis_outlook.py`
+`alphahome/fetchers/tasks/fund/` 目录下的相关任务
 
-该任务展示了：
-- 如何处理大文本字段（~23万行）
+这些任务展示了：
+- 如何处理大文本字段
 - 如何清洗文本数据
 - 如何处理特殊值（如将 "0" 转为 NULL）
 - 如何定义复合主键

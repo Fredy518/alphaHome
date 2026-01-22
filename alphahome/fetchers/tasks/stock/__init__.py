@@ -36,6 +36,7 @@ from .tushare_stock_topinst import TushareStockTopInstTask
 from .tushare_stock_blocktrade import TushareStockBlockTradeTask
 
 from .akshare_stock_limitup_reason import AkShareStockLimitupReasonTask
+from .akshare_stock_analyst_rank_em import AkShareStockAnalystRankEmTask
 
 __all__ = [
     "TushareStockBasicTask",
@@ -74,4 +75,5 @@ __all__ = [
     "TushareStockTopInstTask",
     "TushareStockBlockTradeTask",
     "AkShareStockLimitupReasonTask",
+    "AkShareStockAnalystRankEmTask",
 ]

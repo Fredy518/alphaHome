@@ -668,6 +668,14 @@ class BaseTask(ABC):
 
             self.logger.info(f"表 '{self.table_name}' 在 schema '{self.data_source or 'public'}' 中不存在，正在创建...")
             await self._create_table(stop_event=stop_event)
+        else:
+            if hasattr(self, "schema_def") and getattr(self, "schema_def", None):
+                try:
+                    await self.db.ensure_table_schema_compatible(self)
+                except Exception as e:
+                    self.logger.warning(
+                        f"表结构兼容检查失败（不影响建表流程，可能影响后续写入）: {e}"
+                    )
 
         # 表创建完成后，自动创建 rawdata 视图（如果表是新创建的，或者已存在）
         # 注意：第一次调用时表刚创建，后续调用时表已存在都会尝试创建视图

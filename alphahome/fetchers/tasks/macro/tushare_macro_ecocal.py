@@ -76,7 +76,7 @@ class TushareMacroEcocalTask(TushareTask):
     ]
 
     # 7. 智能增量模式回看天数
-    smart_lookback_days = 7
+    smart_lookback_days = 2
 
     async def get_batch_list(self, **kwargs: Any) -> List[Dict]:
         """

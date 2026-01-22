@@ -30,11 +30,11 @@
 
 ## 阶段二：归因引擎与组合管理 (Month 3-4)
 **职业目标**：发挥 FOF 背景优势，构建核心竞争力——**组合归因与风控**。这是你区别于普通研究员的"杀手锏"。
-**战略重心**：**将 `fund_analysis` 升维为通用的 `portfolio_analysis`。**
+**战略重心**：**构建通用的 `portfolio_analysis` 引擎。**
 
 ### AlphaHome 开发任务
 1.  **升级归因模块 (`alphahome/portfolio/attribution.py`)**
-    *   [ ] 从 `fund_analysis` 剥离通用逻辑，支持**基于持仓 (Holdings-based)** 的输入。
+    *   [ ] 实现通用组合分析逻辑，支持**基于持仓 (Holdings-based)** 的输入。
     *   [ ] 实现 **Brinson 归因**：将超额收益分解为"行业配置收益"与"个股选择收益"。
     *   [ ] 实现 **Barra 风格归因 (青春版)**：计算组合在 Value, Growth, Size 等因子上的暴露度 (Exposure)。
         *   *输出话术："本组合跑赢基准 5%，其中 3% 来自对低估值风格的超配。"*

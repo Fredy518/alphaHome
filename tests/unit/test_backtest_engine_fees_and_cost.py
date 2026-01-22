@@ -1,8 +1,8 @@
 import pandas as pd
 from decimal import Decimal
 
-from alphahome.fund_backtest import BacktestEngine, MemoryDataProvider, PortfolioConfig
-from alphahome.fund_backtest.core.portfolio import Portfolio
+from fund_backtest import BacktestEngine, MemoryDataProvider, PortfolioConfig
+from fund_backtest.core.portfolio import Portfolio
 
 
 def test_portfolio_redeem_keeps_average_cost_unchanged():
