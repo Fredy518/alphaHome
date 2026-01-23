@@ -300,7 +300,13 @@ async def get_trade_cal(
         )
         # 如果在赋值前发生错误，final_df 已经是一个空的 DataFrame 或将被设置
 
-    _TRADE_CAL_CACHE[cache_key] = final_df.copy()
+    # 注意：不要缓存空结果。
+    # 场景：先跑依赖交易日历的任务（导致空结果被缓存），随后跑日历更新任务写入数据库。
+    # 若缓存空结果，会导致同一进程内再次读取仍为空，从而错误地生成 0 个交易日批次。
+    if final_df is not None and not final_df.empty:
+        _TRADE_CAL_CACHE[cache_key] = final_df.copy()
+    else:
+        _TRADE_CAL_CACHE.pop(cache_key, None)
     return final_df.copy()
 
 

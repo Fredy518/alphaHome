@@ -6,16 +6,15 @@ Tushare 香港交易所交易日历任务 (tushare_others_hktradecal)
 获取港股 (HKEX) 的交易日历数据，包含日期分块逻辑。
 """
 
-import calendar as std_calendar  # Python 标准库 calendar
 import datetime
-from datetime import timedelta
+from datetime import date, timedelta
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
 from ...sources.tushare.tushare_task import TushareTask
 from alphahome.common.task_system.task_decorator import task_register
-from ...sources.tushare.batch_utils import generate_natural_day_batches
+from ....common.constants import UpdateTypes
 
 # logger 实例将由 TushareTask 基类提供 (self.logger)
 
@@ -82,14 +81,33 @@ class TushareOthersHktradecalTask(TushareTask):
     async def get_batch_list(
         self, start_date: str, end_date: str, **kwargs: Any
     ) -> List[Dict]:
-        """使用自然日分块生成批次，每批2000天。"""
-        batches = await generate_natural_day_batches(
-            start_date, end_date, batch_size=2000, logger=self.logger
-        )
+        """
+        生成批处理参数列表（HKEX 不分批）。
+
+        说明：
+        - hk_tradecal 数据量不大（~1-2万行），由 TushareAPI 内部分页自动处理 offset/limit，
+          不需要按日期拆分批次。
+        - SMART/INCREMENTAL 模式下仅传 start_date，不传 end_date，让 Tushare 返回后续全部可得日历。
+        """
+        update_type = kwargs.get("update_type", UpdateTypes.SMART)
+
+        # SMART：取当前年份的首日，确保能及时发现临时调整的交易日
+        # 例如今天是2026/1/23，start_date=20260101
+        # 这样可以发现疫情等突发事件导致的交易日临时调整
+        if update_type == UpdateTypes.SMART:
+            current_year = datetime.datetime.now().year
+            effective_start = f"{current_year}0101"
+        # FULL：从默认起始日全量拉取（仅传 start_date）
+        elif update_type == UpdateTypes.FULL:
+            effective_start = self.default_start_date or "19900101"
+        # MANUAL：使用外部传入的 start_date（仅传 start_date）
+        else:
+            effective_start = start_date or (self.default_start_date or "19900101")
+
         self.logger.info(
-            f"任务 {self.name}: 生成 {len(batches)} 个自然日批次 (每批2000天)。全局日期范围: {start_date} - {end_date}"
+            f"任务 {self.name}: HKEX 不分批，参数: exchange=HKEX, start_date={effective_start} (end_date 不传)"
         )
-        return batches
+        return [{"exchange": "HKEX", "start_date": effective_start}]
 
     def process_data(self, df: pd.DataFrame, **kwargs: Any) -> pd.DataFrame:
         """处理从API获取的原始数据框（重写基类扩展点）"""

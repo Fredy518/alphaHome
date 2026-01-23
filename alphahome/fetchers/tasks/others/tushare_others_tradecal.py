@@ -7,13 +7,14 @@ Tushare 中国大陆交易所交易日历任务 (tushare_others_tradecal)
 """
 
 import datetime  # 用于类型提示，实际日期操作主要在基类或 pd 中完成
-from datetime import timedelta  # 可能在特定日期计算中使用，但当前版本直接获取
+from datetime import date, timedelta  # 可能在特定日期计算中使用，但当前版本直接获取
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
 from ...sources.tushare.tushare_task import TushareTask
 from ....common.task_system.task_decorator import task_register
+from ....common.constants import UpdateTypes
 
 # logger 实例将由 TushareTask 基类提供 (self.logger)
 
@@ -81,23 +82,50 @@ class TushareOthersTradecalTask(TushareTask):
     async def get_batch_list(
         self, start_date: str, end_date: str, **kwargs: Any
     ) -> List[Dict]:
-        """使用 BatchPlanner 为每个中国大陆交易所生成批处理参数。"""
-        from alphahome.common.planning.batch_planner import BatchPlanner, Source, Partition, Map
+        """
+        生成批处理参数列表（按交易所分批）。
+
+        规则：
+        - 每个交易所 1 个批次（exchange 分批）
+        - SMART 模式下：只传 start_date（不传 end_date），并且 start_date 取该交易所
+          在表里的 MAX(cal_date) + 1 天；若无数据则用 default_start_date。
+        - FULL 模式下：只传 start_date=default_start_date（不传 end_date）。
+        - 由 TushareAPI 内部分页自动处理 offset/limit，不需要再按日期拆分。
+        """
+        update_type = kwargs.get("update_type", UpdateTypes.SMART)
+
+        batches: List[Dict[str, Any]] = []
+        for exch in self._EXCHANGES_TO_FETCH:
+            if update_type == UpdateTypes.SMART:
+                # SMART模式：取当前年份的首日，确保能及时发现临时调整的交易日
+                # 例如今天是2026/1/23，start_date=20260101
+                # 这样可以发现疫情等突发事件导致的交易日临时调整
+                current_year = datetime.datetime.now().year
+                effective_start = f"{current_year}0101"
+            elif update_type == UpdateTypes.FULL:
+                effective_start = self.default_start_date or "19900101"
+            else:
+                effective_start = start_date or (self.default_start_date or "19900101")
+
+            batches.append({"exchange": exch, "start_date": effective_start})
 
         self.logger.info(
-            f"任务 {self.name}: 使用 BatchPlanner 生成交易所批次。全局日期范围: {start_date} - {end_date}"
+            f"任务 {self.name}: 生成 {len(batches)} 个交易所批次（仅传 start_date，不传 end_date）。"
         )
-
-        # 创建 BatchPlanner
-        planner = BatchPlanner(
-            source=Source.from_list(self._EXCHANGES_TO_FETCH),
-            partition_strategy=Partition.by_size(1),  # 每个交易所一个批次
-            map_strategy=Map.to_dict("exchange")  # 映射为{"exchange": "SSE"}
-        )
-
-        batches = await planner.generate()
-        self.logger.info(f"任务 {self.name}: 成功生成 {len(batches)} 个批次。")
         return batches
+
+    async def get_latest_date_for_task(self) -> Optional[date]:
+        """
+        SMART 模式下的日期范围判定不使用“全表 MAX(cal_date)”。
+
+        说明：
+        - `others_calendar` 是共享表，按全表 MAX(cal_date) 会被某个交易所的未来日期误导，
+          导致任务被基类判定为 up-to-date 而跳过。
+        - 本任务在 get_batch_list 内部按 exchange 维度自算 start_date，所以这里返回 None，
+          让基类不要提前跳过。
+        """
+        return None
+
 
     def process_data(self, df: pd.DataFrame, **kwargs: Any) -> pd.DataFrame:
         """处理从API获取的原始数据框（重写基类扩展点）"""
