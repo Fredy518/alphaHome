@@ -114,6 +114,20 @@ class TushareOthersTradecalTask(TushareTask):
         )
         return batches
 
+    async def _determine_date_range(self) -> Optional[Dict[str, str]]:
+        """
+        覆盖基类的日期范围判定逻辑。
+
+        对于交易日历任务，我们不使用传统的 MAX(date) + 1 逻辑，
+        而是在 get_batch_list 中按交易所分别计算起始日期。
+        """
+        if self.update_type == UpdateTypes.SMART:
+            # 返回一个不会被跳过的日期范围，确保能进入 get_batch_list
+            return {"start_date": "19900101", "end_date": "20991231"}
+        else:
+            # 对于其他模式，使用基类逻辑
+            return await super()._determine_date_range()
+
     async def get_latest_date_for_task(self) -> Optional[date]:
         """
         SMART 模式下的日期范围判定不使用“全表 MAX(cal_date)”。
