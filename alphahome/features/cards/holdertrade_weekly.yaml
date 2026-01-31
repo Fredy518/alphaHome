@@ -1,0 +1,20 @@
+# 入库卡片：股东增减持（周频）
+
+name: holdertrade_weekly
+version: "1.0"
+status: pending  # pending / approved / deployed
+
+sources:
+  - table: tushare.stock_holdertrade
+    usage: "股东/高管/个人增减持明细（周频聚合）"
+
+migration:
+  original_fetchers: []
+  replacement: features.mv_holdertrade_weekly
+
+meta:
+  frequency: weekly
+  grain: week_end
+  refresh: weekly
+  created_at: 2026-01-30
+  created_by: AI Assistant

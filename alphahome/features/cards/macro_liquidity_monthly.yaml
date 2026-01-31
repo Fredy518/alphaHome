@@ -1,0 +1,22 @@
+# 入库卡片：宏观流动性指标
+
+name: macro_liquidity_monthly
+version: "1.0"
+status: pending
+
+sources:
+  - table: rawdata.macro_sf_month
+    usage: "社会融资规模（月度新增/存量）"
+  - table: rawdata.macro_cn_m
+    usage: "货币供应量（M0/M1/M2 及同比）"
+
+migration:
+  original_fetchers: []
+  replacement: features.mv_macro_liquidity_monthly
+
+meta:
+  frequency: monthly
+  grain: month_end_date
+  refresh: M+1
+  created_at: 2026-01-30
+  created_by: AI Assistant

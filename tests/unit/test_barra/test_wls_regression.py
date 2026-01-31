@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 
 # Import the task class to test static methods
-from alphahome.processors.tasks.barra.barra_factor_returns_daily import BarraFactorReturnsDailyTask
+from alphahome.barra.tasks import BarraFactorReturnsDailyTask
 
 
 class TestWinsorize:

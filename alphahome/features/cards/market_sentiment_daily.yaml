@@ -1,0 +1,84 @@
+# 入库卡片：市场情绪综合特征（日频）
+# 合并原 market_breadth_daily + limit_updown_daily
+
+name: market_sentiment_daily
+version: "1.0"
+status: pending  # pending / approved / deployed
+
+# 数据源
+sources:
+  - table: tushare.stock_factor_pro
+    columns: [trade_date, close_hfq, ma_hfq_60, ma_hfq_90, pct_chg]
+    usage: "MA 占比、涨跌家数"
+  - table: tushare.stock_limitlist
+    columns: [trade_date, ts_code, limit, amount, open_times, limit_times, first_time]
+    usage: "涨跌停明细"
+  - table: tushare.stock_st
+    columns: [ts_code, trade_date]
+    usage: "ST 状态（精确识别）"
+
+# 输出字段
+outputs:
+  market_breadth:
+    - total_stock_count: "总股票数"
+    - above_ma60_count: "站上 MA60 家数"
+    - above_ma90_count: "站上 MA90 家数"
+    - above_ma60_ratio: "站上 MA60 比例"
+    - above_ma90_ratio: "站上 MA90 比例"
+    - up_count: "上涨家数"
+    - down_count: "下跌家数"
+    - up_down_ratio: "涨跌比"
+    - up_down_ratio_smooth: "涨跌比（平滑，分母+1）"
+  new_high_low:
+    - new_high_count: "52周新高家数（全市场）"
+    - new_low_count: "52周新低家数（全市场）"
+    - new_high_low_ratio: "新高/新低比值"
+    - new_high_low_ratio_smooth: "新高/新低比值（平滑，分母+1）"
+  limit_updown:
+    - limit_up_count: "涨停家数"
+    - limit_down_count: "跌停家数"
+    - limit_up_non_st: "非 ST 涨停家数"
+    - limit_down_non_st: "非 ST 跌停家数"
+    - limit_up_20cm: "20cm 板涨停家数"
+    - limit_up_bse: "北交所涨停家数（30cm）"
+    - limit_up_down_ratio: "涨停/跌停比值（严格）"
+    - limit_up_down_ratio_smooth: "涨停/跌停比值（平滑，分母+1）"
+    - limit_up_down_ratio_non_st: "非 ST 涨停/跌停比值（严格）"
+    - limit_up_down_ratio_non_st_smooth: "非 ST 涨停/跌停比值（平滑，分母+1）"
+    - limit_up_amount: "涨停成交额（亿元）"
+    - broken_limit_count: "炸板家数"
+    - broken_limit_ratio: "炸板率（严格，炸板/涨停）"
+    - broken_limit_count_non_st: "非 ST 炸板家数"
+    - broken_limit_ratio_non_st: "非 ST 炸板率（严格）"
+    - avg_open_times: "平均开板次数（全部涨停）"
+    - avg_open_times_non_st: "平均开板次数（非 ST 涨停）"
+  consec_limit:
+    - consec_2_count: "2 连板及以上家数"
+    - consec_3_count: "3 连板及以上家数"
+    - consec_5_count: "5 连板及以上家数"
+    - max_consec: "最高连板数"
+    - early_limit_count: "早盘封板家数（10:00 前，全部）"
+    - early_limit_count_non_st: "早盘封板家数（10:00 前，非 ST）"
+    - early_limit_ratio: "早盘封板率（严格，早盘涨停/涨停）"
+    - early_limit_ratio_non_st: "早盘封板率（严格，非 ST）"
+
+# 原 data_infra Fetcher 映射
+migration:
+  original_fetchers:
+    - data_infra.fetchers.breadth.MarketBreadthFetcher
+    - data_infra.fetchers.breadth.NewHighLowFetcher
+    - data_infra.fetchers.limit_features.LimitUpDownFeaturesFetcher
+  replacement: features.mv_market_sentiment_daily
+
+# 部署建议（可选）
+deployment:
+  post_create_sqls:
+    - "CREATE INDEX IF NOT EXISTS idx_mv_market_sentiment_daily_trade_date ON features.mv_market_sentiment_daily (trade_date)"
+
+# 元信息
+meta:
+  frequency: daily
+  grain: date (全市场聚合)
+  refresh: T+1
+  created_at: 2025-01-15
+  created_by: AI Assistant

@@ -1,0 +1,73 @@
+# 入库卡片：宏观利率特征（日频）
+
+name: macro_rate_daily
+version: "1.0"
+status: pending  # pending / approved / deployed
+
+# 数据源
+sources:
+  - table: akshare.macro_bond_rate
+    columns: [date, country, term, yield]
+    usage: "中美国债收益率原始数据"
+
+# 输出字段
+outputs:
+  raw_yields:
+    - cn_2y: "中国 2 年期国债收益率（%）"
+    - cn_5y: "中国 5 年期国债收益率（%）"
+    - cn_10y: "中国 10 年期国债收益率（%）"
+    - cn_30y: "中国 30 年期国债收益率（%）"
+    - us_2y: "美国 2 年期国债收益率（%）"
+    - us_5y: "美国 5 年期国债收益率（%）"
+    - us_10y: "美国 10 年期国债收益率（%）"
+    - us_30y: "美国 30 年期国债收益率（%）"
+  term_spreads:
+    - cn_term_spread_10y2y: "中国期限利差 10y-2y"
+    - cn_term_spread_30y10y: "中国期限利差 30y-10y"
+    - us_term_spread_10y2y: "美国期限利差 10y-2y"
+    - us_term_spread_30y10y: "美国期限利差 30y-10y"
+  cnus_spreads:
+    - cnus_spread_2y: "中美利差 2y"
+    - cnus_spread_5y: "中美利差 5y"
+    - cnus_spread_10y: "中美利差 10y"
+    - cnus_spread_30y: "中美利差 30y"
+  changes:
+    - cn_10y_chg_1d: "中国 10y 日变化（bp）"
+    - cn_10y_chg_5d: "中国 10y 周变化（bp）"
+    - cn_10y_chg_20d: "中国 10y 月变化（bp）"
+    - us_10y_chg_1d: "美国 10y 日变化（bp）"
+    - us_10y_chg_5d: "美国 10y 周变化（bp）"
+    - us_10y_chg_20d: "美国 10y 月变化（bp）"
+    - cnus_spread_10y_chg_5d: "中美利差 10y 周变化（bp）"
+    - cnus_spread_10y_chg_20d: "中美利差 10y 月变化（bp）"
+    - cn_term_spread_10y2y_chg_20d: "中国期限利差月变化（bp）"
+    - us_term_spread_10y2y_chg_20d: "美国期限利差月变化（bp）"
+  percentiles:
+    - cn_10y_pctl_1y: "中国 10y 1 年分位数"
+    - cn_10y_pctl_3y: "中国 10y 3 年分位数"
+    - cn_10y_pctl_5y: "中国 10y 5 年分位数"
+    - us_10y_pctl_1y: "美国 10y 1 年分位数"
+    - us_10y_pctl_3y: "美国 10y 3 年分位数"
+    - us_10y_pctl_5y: "美国 10y 5 年分位数"
+    - cnus_spread_10y_pctl_1y: "中美利差 10y 1 年分位数"
+    - cnus_spread_10y_pctl_3y: "中美利差 10y 3 年分位数"
+
+# 部署建议（可选）
+deployment:
+  post_create_sqls:
+    - "CREATE INDEX IF NOT EXISTS idx_mv_macro_rate_daily_trade_date ON features.mv_macro_rate_daily (trade_date)"
+
+# 原 data_infra Fetcher 映射
+migration:
+  original_fetchers:
+    - data_infra.fetchers.macro_rate.MacroBondRateFetcher
+    - data_infra.fetchers.macro_rate.MacroRatePercentileFetcher
+  replacement: features.mv_macro_rate_daily
+
+# 元信息
+meta:
+  frequency: daily
+  grain: date (全球宏观)
+  refresh: T+1
+  created_at: 2026-01-30
+  created_by: AI Assistant

@@ -1,6 +1,10 @@
 # Tick Lists for Hikyuu -> DolphinDB
 
-这些清单文件用于 `alphahome-ddb import-hikyuu-5min` 的 `--codes-file` 参数。
+这些清单文件用于 Hikyuu -> DolphinDB 导入流程的 `--codes-file` 参数。
+
+当前推荐入口：
+- PowerShell 一键脚本：`./scripts/import_all_hikyuu_to_ddb.ps1`
+- 或直接运行模块：`python -m alphahome.integrations.dolphindb.cli import-hikyuu-5min --codes-file <PATH>`
 
 ## 文件命名（脚本默认只用 *_all）
 

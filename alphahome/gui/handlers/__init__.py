@@ -8,7 +8,7 @@ GUI业务逻辑处理器模块
 主要处理器：
 - task_execution_handler: 任务执行逻辑
 - data_collection_handler: 数据采集处理
-- data_processing_handler: 数据处理逻辑
+- feature_update_handler: 特征更新逻辑
 - storage_settings_handler: 存储设置管理
 - task_log_handler: 任务日志处理
 """
@@ -24,14 +24,6 @@ from .data_collection_handler import (
     handle_select_all_collection,
     update_collection_task_list_ui,
 )
-from .data_processing_handler import (
-    handle_deselect_all_processing,
-    handle_processing_refresh_complete,
-    handle_processing_task_tree_click,
-    handle_refresh_processing_tasks,
-    handle_select_all_processing,
-    update_processing_task_list_ui,
-)
 from .storage_settings_handler import (
     get_settings_from_ui,
     handle_test_db_connection,
@@ -45,6 +37,18 @@ from .task_execution_handler import (
     update_task_run_status,
 )
 from .task_log_handler import handle_clear_log, update_task_log
+from .feature_update_handler import (
+    handle_category_filter_change,
+    handle_create_missing_features,
+    handle_deselect_all_features,
+    handle_feature_operation_complete,
+    handle_feature_refresh_complete,
+    handle_feature_tree_click,
+    handle_refresh_features,
+    handle_refresh_selected_features,
+    handle_select_all_features,
+    update_feature_list_ui,
+)
 
 __all__ = [
     # data_collection_handler
@@ -55,13 +59,6 @@ __all__ = [
     "handle_collection_task_tree_click",
     "handle_collection_type_filter_change",
     "handle_collection_sort_column",
-    # data_processing_handler
-    "update_processing_task_list_ui",
-    "handle_processing_refresh_complete",
-    "handle_refresh_processing_tasks",
-    "handle_select_all_processing",
-    "handle_deselect_all_processing",
-    "handle_processing_task_tree_click",
     # storage_settings_handler
     "update_storage_settings_display",
     "get_settings_from_ui",
@@ -75,7 +72,15 @@ __all__ = [
     # task_log_handler
     "update_task_log",
     "handle_clear_log",
+    # feature_update_handler
+    "update_feature_list_ui",
+    "handle_feature_refresh_complete",
+    "handle_refresh_features",
+    "handle_select_all_features",
+    "handle_deselect_all_features",
+    "handle_feature_tree_click",
+    "handle_category_filter_change",
+    "handle_refresh_selected_features",
+    "handle_create_missing_features",
+    "handle_feature_operation_complete",
 ]
-
-# 为了保持向后兼容，这里可以添加重要处理器的导入
-# 但在重构完成前，我们先保持空的状态

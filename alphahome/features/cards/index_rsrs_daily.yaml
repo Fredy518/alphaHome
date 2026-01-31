@@ -1,0 +1,65 @@
+name: index_rsrs_daily
+description: "RSRS 择时指标组件：β斜率、R²、标准化值、右偏修正（日频）"
+recipe_class: IndexRSRSDailyMV
+output_table: features.mv_index_rsrs_daily
+
+source_tables:
+  - tushare.index_daily
+
+columns:
+  - name: trade_date
+    type: DATE
+    description: 交易日期
+  - name: ts_code
+    type: VARCHAR
+    description: 指数代码
+  - name: alias
+    type: VARCHAR
+    description: 指数别名（HS300/ZZ500/ZZ1000 等）
+  - name: close
+    type: FLOAT
+    description: 指数收盘价
+  - name: rsrs_beta
+    type: FLOAT
+    description: RSRS β 斜率（18 日 High~Low 回归系数）
+  - name: rsrs_r2
+    type: FLOAT
+    description: 回归 R²（拟合优度）
+  - name: rsrs_beta_mean
+    type: FLOAT
+    description: β 的 600 日滚动均值
+  - name: rsrs_beta_std
+    type: FLOAT
+    description: β 的 600 日滚动标准差
+  - name: rsrs_zscore
+    type: FLOAT
+    description: 标准化 β（Z-score）
+  - name: rsrs_zscore_adj
+    type: FLOAT
+    description: R² 修正后的标准化 β（= zscore × R²）
+  - name: rsrs_zscore_rightskew
+    type: FLOAT
+    description: 右偏修正值（= zscore × R² × β）
+
+refresh_strategy: full
+frequency: daily
+
+tags:
+  - market
+  - index
+  - rsrs
+  - technical
+  - timing
+
+notes: |
+  RSRS（阻力支撑相对强度）是光大证券提出的择时指标。
+  本 MV 只保存组件特征，不保存最终择时信号。
+  
+  参数设置：
+  - 回归窗口 N = 18 日
+  - 标准化窗口 M = 600 日
+  
+  使用建议：
+  - rsrs_zscore_adj > 0.7 可视为牛市信号
+  - rsrs_zscore_adj < -0.7 可视为熊市信号
+  - 具体阈值需根据回测调整

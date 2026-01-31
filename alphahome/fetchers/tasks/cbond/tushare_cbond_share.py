@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 """
-可转债转股结果 (cb_share) 全量更新任务
+可转债转股结果 (cb_share) 任务
 获取所有可转债的转股结果信息并替换数据库中的旧数据。
 继承自 TushareTask。
 
@@ -10,10 +10,7 @@
 权限要求: 用户需要至少2000积分才可以调取，但有流量控制，5000积分以上频次相对较高
 限量: 单次最大2000，总量不限制
 
-!!! 重要提示：接口 Bug !!!
-该任务使用的 cb_share 接口存在 bug，暂时无法使用 ann_date、start_date、end_date 等日期参数。
-因此增量更新功能实际无法使用，使用增量更新模式将获取空数据框。
-目前只能使用全量更新模式（update_type="full"），通过 ts_code 参数获取所有数据。
+说明：cb_share 接口已支持日期参数，可使用 start_date/end_date 进行增量更新。
 """
 
 import logging
@@ -31,7 +28,7 @@ from ....common.task_system.task_decorator import task_register
 
 @task_register()
 class TushareCBondShareTask(TushareTask):
-    """获取可转债转股结果 (全量更新)"""
+    """获取可转债转股结果"""
 
     # 1. 核心属性
     domain = "cbond"  # 业务域标识
@@ -120,10 +117,7 @@ class TushareCBondShareTask(TushareTask):
         """
         生成批处理参数列表。
         从 tushare.cbond_basic 表获取所有可转债代码，每20个 ts_code 组成一个多值字符串分批获取。
-        
-        注意：由于 cb_share 接口存在 bug，无法使用 ann_date、start_date、end_date 等日期参数，
-        因此增量更新功能实际无法使用，使用增量更新模式将获取空数据框。
-        目前只能使用全量更新模式（update_type="full"）。
+        支持全量与增量（start_date/end_date）两种模式。
         """
         update_type = kwargs.get("update_type", "full")
         
@@ -145,13 +139,6 @@ class TushareCBondShareTask(TushareTask):
         
         if update_type != "full":
             # 增量更新模式：使用 start_date 和 end_date 参数
-            # !!! 警告：接口 Bug !!!
-            # cb_share 接口存在 bug，无法使用 ann_date、start_date、end_date 等日期参数
-            # 使用增量更新模式将获取空数据框，请使用全量更新模式
-            self.logger.warning(
-                f"任务 {self.name}: 警告！cb_share 接口存在 bug，无法使用日期参数。"
-                f"增量更新模式将获取空数据框，建议使用全量更新模式（update_type='full'）。"
-            )
             start_date = kwargs.get("start_date")
             end_date = kwargs.get("end_date")
             
@@ -237,20 +224,17 @@ class TushareCBondShareTask(TushareTask):
 """
 使用方法:
 1. 全量更新：设置 update_type="full" 或通过GUI选择"全量更新"
-   - 会清空现有数据，重新获取所有可转债转股结果信息
-   - 从 tushare.cbond_basic 表获取所有转债代码，每20个 ts_code 组成一个多值字符串分批获取
-   - 这是目前唯一可用的更新模式
+    - 会清空现有数据，重新获取所有可转债转股结果信息
+    - 从 tushare.cbond_basic 表获取所有转债代码，每20个 ts_code 组成一个多值字符串分批获取
 2. 增量更新：设置 update_type="smart" 或 "incremental"
-   - !!! 警告：由于接口 Bug，增量更新功能暂时无法使用 !!!
-   - cb_share 接口存在 bug，无法使用 ann_date、start_date、end_date 等日期参数
-   - 使用增量更新模式将获取空数据框，请使用全量更新模式
+    - 支持 start_date/end_date 日期参数
+    - smart 模式默认从数据库最新 end_date 回看 smart_lookback_days 天
 3. 权限要求：用户需要至少2000积分才可以调取，但有流量控制，5000积分以上频次相对较高
 4. 单次限量：2000条，总量不限制
 
 注意事项:
 - 只处理可转债转股结果信息，不包含其他数据
 - 全量更新会清空现有数据并重新获取
-- !!! 重要：由于接口 Bug，增量更新功能暂时无法使用，只能使用全量更新模式 !!!
 - 主键为 (ts_code, end_date)，同一个转债可能有多次转股结果记录
 - 数据包含本次转股金额、转股数量、转股比例，以及累计转股金额、转股数量、转股比例等信息
 - 每批处理20个转债代码，避免单次请求数据量过大

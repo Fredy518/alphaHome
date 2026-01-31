@@ -4,7 +4,7 @@
 负责处理MainWindow的所有UI事件绑定逻辑，包括：
 - 存储设置按钮事件
 - 数据采集相关事件
-- 数据处理相关事件
+- 特征更新相关事件
 - 任务执行相关事件
 - 窗口管理事件
 """
@@ -13,7 +13,7 @@ from async_tkinter_loop import async_handler
 from .. import controller
 from ..handlers import (
     data_collection_handler,
-    data_processing_handler,
+    feature_update_handler,
     storage_settings_handler,
     task_execution_handler,
 )
@@ -89,25 +89,41 @@ class WindowEventsMixin:
                 ),
             )
 
-        # Data Processing Binds
-        self.ui_elements["processing_refresh_button"].config(
-            command=lambda: data_processing_handler.handle_refresh_processing_tasks(
+        # Feature Update Binds
+        self.ui_elements["feature_refresh_button"].config(
+            command=lambda: feature_update_handler.handle_refresh_features(
                 self.ui_elements
             )
         )
-        self.ui_elements["processing_select_all_button"].config(
-            command=lambda: data_processing_handler.handle_select_all_processing(
+        self.ui_elements["feature_select_all_button"].config(
+            command=lambda: feature_update_handler.handle_select_all_features(
                 self.ui_elements
             )
         )
-        self.ui_elements["processing_deselect_all_button"].config(
-            command=lambda: data_processing_handler.handle_deselect_all_processing(
+        self.ui_elements["feature_deselect_all_button"].config(
+            command=lambda: feature_update_handler.handle_deselect_all_features(
                 self.ui_elements
             )
         )
-        self.ui_elements["processing_task_tree"].bind(
+        self.ui_elements["feature_refresh_selected_button"].config(
+            command=lambda: feature_update_handler.handle_refresh_selected_features(
+                self.ui_elements
+            )
+        )
+        self.ui_elements["feature_create_missing_button"].config(
+            command=lambda: feature_update_handler.handle_create_missing_features(
+                self.ui_elements
+            )
+        )
+        self.ui_elements["feature_category_combobox"].bind(
+            "<<ComboboxSelected>>",
+            lambda e: feature_update_handler.handle_category_filter_change(
+                self.ui_elements
+            ),
+        )
+        self.ui_elements["feature_tree"].bind(
             "<ButtonRelease-1>",
-            lambda event: data_processing_handler.handle_processing_task_tree_click(
+            lambda event: feature_update_handler.handle_feature_tree_click(
                 event, self.ui_elements
             ),
         )

@@ -1,0 +1,20 @@
+# 入库卡片：大小盘分化（日频）
+
+name: market_size_daily
+version: "1.0"
+status: pending  # pending / approved / deployed
+
+sources:
+  - table: tushare.stock_factor_pro
+    usage: "个股市值/收益/成交额（日频截面，用于 decile 分组）"
+
+migration:
+  original_fetchers: []
+  replacement: features.mv_market_size_daily
+
+meta:
+  frequency: daily
+  grain: date
+  refresh: T+1
+  created_at: 2026-01-30
+  created_by: AI Assistant

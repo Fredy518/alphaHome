@@ -1,0 +1,26 @@
+# 入库卡片：风险偏好代理（日频）
+
+name: risk_appetite_daily
+version: "1.0"
+status: pending  # pending / approved / deployed
+
+sources:
+  - table: tushare.stock_factor_pro
+    usage: "全市场收益/成交等基础输入"
+  - table: tushare.stock_st
+    usage: "动态 ST 列表（避免幸存者偏差）"
+  - table: tushare.stock_basic
+    usage: "北交所筛选/股票基础信息"
+  - table: tushare.cbond_daily
+    usage: "可转债日行情（情绪代理）"
+
+migration:
+  original_fetchers: []
+  replacement: features.mv_risk_appetite_daily
+
+meta:
+  frequency: daily
+  grain: date
+  refresh: T+1
+  created_at: 2026-01-30
+  created_by: AI Assistant

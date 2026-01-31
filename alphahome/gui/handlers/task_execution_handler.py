@@ -54,7 +54,7 @@ from ..utils.common import validate_date_string
 from ...common.logging_utils import get_logger
 from .. import controller
 # 添加导入以获取选中的任务
-from . import data_collection_handler as data_collection, data_processing_handler as data_processing
+from . import data_collection_handler as data_collection
 
 logger = get_logger(__name__)
 
@@ -261,11 +261,8 @@ def get_execution_params(widgets: Dict[str, tk.Widget]) -> Optional[Dict[str, An
     # 1. 收集选中的数据采集任务
     selected_collection_tasks = data_collection.get_selected_collection_tasks()
     
-    # 2. 收集选中的数据处理任务  
-    selected_processing_tasks = data_processing.get_selected_processing_tasks()
-    
-    # 3. 合并所有选中的任务
-    all_selected_tasks = selected_collection_tasks + selected_processing_tasks
+    # 2. 合并所有选中的任务
+    all_selected_tasks = selected_collection_tasks
     
     # 获取执行模式和参数
     exec_mode = widgets["exec_mode"].get()

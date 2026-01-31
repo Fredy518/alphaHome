@@ -1,0 +1,20 @@
+# 入库卡片：公募基金重仓股
+
+name: fund_holdings_quarterly
+version: "1.0"
+status: pending
+
+sources:
+  - table: rawdata.fund_portfolio
+    usage: "公募基金持仓明细（季报披露）"
+
+migration:
+  original_fetchers: []
+  replacement: features.mv_fund_holdings_quarterly
+
+meta:
+  frequency: quarterly
+  grain: ts_code × end_date (PIT window)
+  refresh: T+1
+  created_at: 2026-01-30
+  created_by: AI Assistant

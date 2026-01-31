@@ -1,0 +1,49 @@
+# 说明：此卡片已迁移到 backlog（当前缺少对应 recipe）。
+
+# 入库卡片：市场融资余额特征（月频）
+
+name: market_margin_monthly
+version: "1.0"
+status: pending  # pending / approved / deployed
+
+# 数据源
+sources:
+  - table: tushare.stock_margin
+    columns: [trade_date, ts_code, rzye, rzmre, rzche]
+    usage: "融资余额明细"
+  - table: tushare.stock_dailybasic
+    columns: [trade_date, circ_mv, total_mv]
+    usage: "流通市值"
+
+# 输出字段
+outputs:
+  balance:
+    - total_margin_balance: "融资余额总额（元）"
+    - total_margin_buy: "融资买入额（元）"
+    - total_margin_repay: "融资偿还额（元）"
+  market_cap:
+    - total_circ_mv: "全市场流通市值（万元）"
+    - total_market_mv: "全市场总市值（万元）"
+  ratio:
+    - margin_circ_ratio: "融资余额占流通市值比"
+    - margin_total_ratio: "融资余额占总市值比"
+
+# 原 data_infra Fetcher 映射
+migration:
+  original_fetchers:
+    - data_infra.fetchers.stock_margin.StockMarginSummaryFetcher
+  replacement: features.mv_market_margin_monthly
+
+# 部署建议（可选）
+deployment:
+  post_create_sqls:
+    - "CREATE INDEX IF NOT EXISTS idx_mv_market_margin_monthly_month_end ON features.mv_market_margin_monthly (month_end)"
+
+# 元信息
+meta:
+  frequency: monthly
+  grain: month_end (全市场聚合)
+  snapshot: "取每月最后一个交易日"
+  refresh: M+1
+  created_at: 2025-01-15
+  created_by: AI Assistant

@@ -1,125 +1,100 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-初始化物化视图系统
+初始化 features 物化视图系统（兼容旧脚本名）
 
-创建 materialized_views schema、物化视图、索引和元数据表。
+历史上本仓库使用 scripts/initialize_materialized_views.py 初始化物化视图子系统。
+features 重构后，推荐使用新入口：
+    python scripts/features_init.py --create-views
 
-使用方法：
-    python scripts/initialize_materialized_views.py
-
-或在 Python 代码中：
-    from scripts.initialize_materialized_views import initialize_materialized_views
-    initialize_materialized_views()
+本脚本保留旧文件名以兼容既有文档/习惯用法，但实际初始化目标已切换为：
+- schema: features
+- 元数据表: features.mv_metadata / features.mv_refresh_log
+- 视图定义: alphahome.features.recipes.mv 下的 BaseFeatureView 子类
 """
 
-import sys
-import os
+from __future__ import annotations
+
+import asyncio
 import logging
-from typing import Optional
+import os
+import sys
+from pathlib import Path
 
-# 添加项目路径
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# 添加项目根目录到 sys.path
+project_root = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(project_root))
 
+from alphahome.common.config_manager import get_database_url
 from alphahome.common.db_manager import DBManager
-from alphahome.common.config_manager import ConfigManager
-from alphahome.processors.materialized_views.database_init import MaterializedViewDatabaseInit
+from alphahome.features import FeatureRegistry
+from alphahome.features.storage.database_init import FeaturesDatabaseInit
 
 
-def setup_logging():
-    """设置日志"""
+def setup_logging() -> None:
     logging.basicConfig(
         level=logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
 
 
-def get_db_connection_string() -> str:
-    """Get database connection string from config or environment."""
-    db_url = os.environ.get("DATABASE_URL")
-    if db_url:
-        return db_url
-
-    try:
-        config_manager = ConfigManager()
-        db_url = config_manager.get_database_url()
-        if db_url:
-            return db_url
-    except Exception:
-        pass
-
-    raise RuntimeError(
-        "No database URL configured. Set DATABASE_URL or configure ~/.alphahome/config.json (database.url)."
-    )
-
-
-def initialize_materialized_views(db_manager: Optional[DBManager] = None) -> bool:
-    """
-    初始化物化视图系统
-    
-    Args:
-        db_manager: 数据库管理器（可选，如果为 None 则创建新实例）
-    
-    Returns:
-        bool: 初始化是否成功
-    """
+async def initialize_features_views(create_views: bool = True) -> bool:
     logger = logging.getLogger(__name__)
-    
+
+    db_url = os.environ.get("DATABASE_URL") or get_database_url()
+    db_manager = DBManager(db_url)
+
     try:
-        # 创建数据库管理器
-        if db_manager is None:
-            logger.info("创建数据库管理器...")
-            db_url = get_db_connection_string()
-            db_manager = DBManager(db_url, mode="sync")
-        
-        # 获取所有初始化 SQL
-        init_sqls = MaterializedViewDatabaseInit.get_all_init_sqls()
-        
-        logger.info(f"开始初始化物化视图系统，共 {len(init_sqls)} 个 SQL 语句")
-        
-        # 执行每个 SQL 语句
-        for i, sql in enumerate(init_sqls, 1):
-            if not sql.strip():
-                continue
-            
-            logger.info(f"执行 SQL {i}/{len(init_sqls)}...")
-            logger.debug(f"SQL: {sql[:100]}...")
-            
+        await db_manager.connect()
+        logger.info("数据库连接成功")
+
+        initializer = FeaturesDatabaseInit(db_manager=db_manager, schema="features")
+        await initializer.ensure_initialized()
+        logger.info("features schema 与元数据表就绪")
+
+        if not create_views:
+            return True
+
+        view_classes = FeatureRegistry.discover()
+        results: dict[str, list] = {"success": [], "failed": []}
+
+        for view_cls in view_classes:
             try:
-                db_manager.execute_sync(sql)
-                logger.info(f"SQL {i} 执行成功")
+                view = view_cls(db_manager=db_manager, schema="features")
+                logger.info(f"创建物化视图: {view.full_name}")
+                await view.create(if_not_exists=True)
+                results["success"].append(view.name)
             except Exception as e:
-                logger.error(f"SQL {i} 执行失败: {e}")
-                # 继续执行其他 SQL，不中断
-                continue
-        
-        logger.info("物化视图系统初始化完成")
-        return True
-        
-    except Exception as e:
-        logger.error(f"初始化物化视图系统失败: {e}", exc_info=True)
-        return False
+                results["failed"].append({"name": view_cls.name, "error": str(e)})
+                logger.error(f"{view_cls.name} 创建失败: {e}")
+
+        logger.info(
+            f"物化视图创建完成：成功 {len(results['success'])} 个，失败 {len(results['failed'])} 个"
+        )
+        return len(results["failed"]) == 0
+
+    finally:
+        await db_manager.close()
+        logger.info("数据库连接已关闭")
 
 
-def main():
-    """主函数"""
+def main() -> int:
     setup_logging()
     logger = logging.getLogger(__name__)
-    
+
     logger.info("=" * 60)
-    logger.info("物化视图系统初始化")
+    logger.info("features 物化视图系统初始化（兼容旧脚本名）")
+    logger.info("推荐新入口：python scripts/features_init.py --create-views")
     logger.info("=" * 60)
-    
-    success = initialize_materialized_views()
-    
-    if success:
-        logger.info("✅ 初始化成功")
-        return 0
-    else:
-        logger.error("❌ 初始化失败")
+
+    try:
+        ok = asyncio.run(initialize_features_views(create_views=True))
+        return 0 if ok else 1
+    except Exception as e:
+        logger.error(f"初始化失败: {e}", exc_info=True)
         return 1
 
 
 if __name__ == "__main__":
-    exit_code = main()
-    sys.exit(exit_code)
+    raise SystemExit(main())
+

@@ -1,7 +1,9 @@
 # AlphaHome 统一 CLI 建设 - Phase 3 验收报告
 
 **报告日期**：2025-12-19
-**报告状态**：✅ **Phase 3 已完全实施并验证**
+**报告状态**：⚠️ **历史报告（后续版本已下线统一 CLI）**
+
+> 说明：该报告描述的是当时“统一 CLI + 兼容旧入口”的阶段性状态。当前代码库已下线统一 CLI 入口点，并移除旧的 processors 模块。
 
 ---
 
@@ -54,10 +56,9 @@ usage: refresh-materialized-view [options] {refresh,refresh-all,...}
 # pyproject.toml 中的入口点配置
 [project.scripts]
 alphahome = "alphahome.gui.main_window:run_gui"
-refresh-materialized-view = "alphahome.processors.materialized_views.cli:main_sync"
-alphahome-ddb = "alphahome.integrations.dolphindb.cli:main_sync"
-ah = "alphahome.cli.main:main_sync"
-alphahome-cli = "alphahome.cli.main:main_sync"
+alphahome-ddb = "alphahome.integrations.dolphindb.cli:main_sync"  # 后续已移除 console script
+ah = "alphahome.cli.main:main_sync"  # 后续已移除 console script
+alphahome-cli = "alphahome.cli.main:main_sync"  # 后续已移除 console script
 ```
 
 **验证结果**：所有入口点都指向正确的函数且能正常调用。

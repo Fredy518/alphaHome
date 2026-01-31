@@ -1,0 +1,70 @@
+# 入库卡片：指数综合特征（日频）
+# 合并原 index_valuation_daily + index_volatility_daily
+
+name: index_features_daily
+version: "1.0"
+status: pending  # pending / approved / deployed
+
+# 数据源
+sources:
+  - table: tushare.index_dailybasic
+    columns: [trade_date, ts_code, pe_ttm, pb]
+    usage: "指数估值"
+  - table: tushare.index_factor_pro
+    columns: [trade_date, ts_code, close]
+    usage: "收盘价（用于计算波动率）"
+  - table: akshare.macro_bond_rate
+    columns: [date, yield]
+    usage: "10 年国债收益率（用于 ERP）"
+
+# 核心指数
+core_indexes:
+  - ts_code: "000300.SH"
+    alias: HS300
+  - ts_code: "000905.SH"
+    alias: ZZ500
+  - ts_code: "000852.SH"
+    alias: ZZ1000
+  - ts_code: "000016.SH"
+    alias: SZ50
+  - ts_code: "399006.SZ"
+    alias: CYB
+  - ts_code: "000001.SH"
+    alias: SZZZ
+
+# 输出字段
+outputs:
+  valuation:
+    - pe_ttm: "市盈率（TTM）"
+    - pb: "市净率"
+    - pe_pctl_10y: "PE 十年分位数"
+    - pe_pctl_1y: "PE 一年分位数"
+    - pb_pctl_10y: "PB 十年分位数"
+    - pb_pctl_1y: "PB 一年分位数"
+    - cn_10y_yield: "10 年国债收益率"
+    - erp: "股权风险溢价 (1/PE - 国债)"
+  volatility:
+    - rv_20d: "20 日实现波动率（年化）"
+    - rv_60d: "60 日实现波动率（年化）"
+    - rv_252d: "252 日实现波动率（年化）"
+    - rv_ratio_20_60: "短期/中期波动率比值"
+
+# 原 data_infra Fetcher 映射
+migration:
+  original_fetchers:
+    - data_infra.fetchers.stock_index.StockIndexValuationFetcher
+    - data_infra.fetchers.stock_index.StockIndexVolatilityFetcher
+  replacement: features.mv_index_features_daily
+
+# 部署建议（可选）
+deployment:
+  post_create_sqls:
+    - "CREATE INDEX IF NOT EXISTS idx_mv_index_features_daily_trade_date_ts_code ON features.mv_index_features_daily (trade_date, ts_code)"
+
+# 元信息
+meta:
+  frequency: daily
+  grain: index × date
+  refresh: T+1
+  created_at: 2025-01-15
+  created_by: AI Assistant

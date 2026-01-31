@@ -158,7 +158,7 @@ HikyuuH5Exporter --> DBManager : "间接使用"
 ## 详细组件分析
 
 ### CLI 参考：refresh-materialized-view
-- 入口点：console_scripts 中的 refresh-materialized-view 指向 alphahome.processors.materialized_views.cli:main_sync
+- 入口点（历史）：console_scripts 曾包含 refresh-materialized-view → processors.materialized_views.cli:main_sync（已删除）
 - 支持命令：
   - refresh：刷新单个物化视图
   - refresh-all：刷新全部物化视图

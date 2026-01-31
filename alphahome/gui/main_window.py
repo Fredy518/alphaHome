@@ -63,14 +63,14 @@ from ..common.task_system import UnifiedTaskFactory
 from . import controller
 from .handlers import (
     data_collection_handler,
-    data_processing_handler,
+    feature_update_handler,
     storage_settings_handler,
     task_execution_handler,
     task_log_handler,
 )
 from .ui import (
     data_collection_tab,
-    data_processing_tab,
+    feature_update_tab,
     storage_settings_tab,
     task_execution_tab,
     task_log_tab,
@@ -207,7 +207,7 @@ class MainWindow(WindowEventsMixin, WindowDpiMixin, WindowLayoutMixin, tk.Tk):
         ## 在事件循环启动后执行的异步初始化流程：
         1. 初始化后端控制器
         2. 加载数据采集任务列表
-        3. 加载数据处理任务列表  
+        3. 加载特征列表
         4. 加载存储设置
         """
         # 首先初始化控制器
@@ -215,7 +215,7 @@ class MainWindow(WindowEventsMixin, WindowDpiMixin, WindowLayoutMixin, tk.Tk):
         
         # 然后加载初始数据
         await controller.handle_request("GET_COLLECTION_TASKS")
-        await controller.handle_request("GET_PROCESSING_TASKS")
+        await controller.handle_request("GET_FEATURES")
         await controller.handle_request("GET_STORAGE_SETTINGS")
 
     def handle_controller_response(self, command: str, data: Any):
@@ -244,16 +244,8 @@ class MainWindow(WindowEventsMixin, WindowDpiMixin, WindowLayoutMixin, tk.Tk):
                 data_collection_handler.update_collection_task_list_ui,
                 [self.ui_elements, data],
             ),
-            "PROCESSING_TASK_LIST_UPDATE": (
-                data_processing_handler.update_processing_task_list_ui,
-                [self, self.ui_elements, data],
-            ),
             "STORAGE_SETTINGS_UPDATE": (
                 storage_settings_handler.update_storage_settings_display,
-                [self.ui_elements, data],
-            ),
-            "PROCESSING_REFRESH_COMPLETE": (
-                data_processing_handler.handle_processing_refresh_complete,
                 [self.ui_elements, data],
             ),
             "STATUS": (
@@ -263,6 +255,19 @@ class MainWindow(WindowEventsMixin, WindowDpiMixin, WindowLayoutMixin, tk.Tk):
             "COLLECTION_REFRESH_COMPLETE": (
                 self._handle_collection_refresh_complete,
                 [self.ui_elements],
+            ),
+            # Feature Update Responses
+            "FEATURE_LIST_UPDATE": (
+                feature_update_handler.update_feature_list_ui,
+                [self, self.ui_elements, data],
+            ),
+            "FEATURE_REFRESH_COMPLETE": (
+                feature_update_handler.handle_feature_refresh_complete,
+                [self.ui_elements, data],
+            ),
+            "FEATURE_OPERATION_COMPLETE": (
+                feature_update_handler.handle_feature_operation_complete,
+                [self.ui_elements, data],
             ),
         }
 

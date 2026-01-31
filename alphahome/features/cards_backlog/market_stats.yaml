@@ -1,0 +1,69 @@
+# 说明：此卡片已迁移到 backlog（当前 recipes 使用 market_stats_daily）。
+
+# 入库卡片：市场横截面统计（日频）
+
+name: market_stats
+version: "1.0"
+status: pending  # pending / approved / deployed
+
+# 数据源
+sources:
+  - table: rawdata.stock_dailybasic
+    columns:
+      - trade_date
+      - pe_ttm
+      - pb
+      - ps_ttm
+      - dv_ttm
+      - turnover_rate
+      - total_mv
+      - circ_mv
+    usage: "全市场日频截面（估值/换手/市值）"
+
+# 输出字段（按模块分组）
+outputs:
+  core:
+    - trade_date: "交易日"
+    - stock_count: "当日参与统计股票数"
+  pe:
+    - pe_ttm_median: "PE 中位数"
+    - pe_ttm_q25: "PE 25%分位"
+    - pe_ttm_q75: "PE 75%分位"
+    - pe_ttm_mean: "PE 均值"
+  pb:
+    - pb_median: "PB 中位数"
+    - pb_q25: "PB 25%分位"
+    - pb_q75: "PB 75%分位"
+    - pb_mean: "PB 均值"
+  ps_dv_turnover:
+    - ps_ttm_median: "PS 中位数（过滤异常/NULL）"
+    - ps_ttm_mean: "PS 均值（过滤异常/NULL）"
+    - dv_ttm_median: "股息率中位数（过滤异常/NULL）"
+    - dv_ttm_mean: "股息率均值（过滤异常/NULL）"
+    - turnover_rate_median: "换手率中位数（过滤异常/NULL）"
+    - turnover_rate_q25: "换手率 25%分位（过滤异常/NULL）"
+    - turnover_rate_q75: "换手率 75%分位（过滤异常/NULL）"
+    - turnover_rate_mean: "换手率均值（过滤异常/NULL）"
+  market_cap:
+    - total_mv_sum: "总市值合计"
+    - circ_mv_sum: "流通市值合计"
+    - total_mv_median: "总市值中位数（过滤NULL）"
+    - total_mv_mean: "总市值均值（过滤NULL）"
+
+# 部署建议（可选）
+deployment:
+  post_create_sqls:
+    - "CREATE INDEX IF NOT EXISTS idx_mv_market_stats_trade_date ON features.mv_market_stats (trade_date)"
+
+# 迁移说明（历史）
+migration:
+  original_fetchers: []
+  replacement: features.mv_market_stats
+
+# 元信息
+meta:
+  frequency: daily
+  grain: date (全市场聚合)
+  refresh: T+1
+  created_at: 2026-01-30
+  created_by: AI Assistant

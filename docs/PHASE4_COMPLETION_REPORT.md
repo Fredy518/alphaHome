@@ -105,7 +105,6 @@ $ python -m compileall alphahome -q
 # 测试关键模块导入
 import alphahome.cli.main          # ✅
 import alphahome.integrations.dolphindb.cli   # ✅
-import alphahome.processors.materialized_views.cli  # ✅
 ```
 
 #### 代码覆盖率

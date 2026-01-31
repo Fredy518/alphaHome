@@ -107,7 +107,7 @@ class TushareOthersHktradecalTask(TushareTask):
         self.logger.info(
             f"任务 {self.name}: HKEX 不分批，参数: exchange=HKEX, start_date={effective_start} (end_date 不传)"
         )
-        return [{"exchange": "HKEX", "start_date": effective_start}]
+        return [{"start_date": effective_start}] # hk_tradecal不需要传入exchange参数
 
     async def _determine_date_range(self) -> Optional[Dict[str, str]]:
         """

@@ -1,0 +1,22 @@
+# 入库卡片：两融成交占比（日频）
+
+name: margin_turnover_daily
+version: "1.0"
+status: pending  # pending / approved / deployed
+
+sources:
+  - table: tushare.stock_margin
+    usage: "两融余额与交易（日频）"
+  - table: tushare.stock_daily
+    usage: "个股成交额（日频，用于占比）"
+
+migration:
+  original_fetchers: []
+  replacement: features.mv_margin_turnover_daily
+
+meta:
+  frequency: daily
+  grain: date
+  refresh: T+1
+  created_at: 2026-01-30
+  created_by: AI Assistant

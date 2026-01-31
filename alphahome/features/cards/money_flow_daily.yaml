@@ -1,0 +1,20 @@
+# 入库卡片：市场资金流向（日频）
+
+name: money_flow_daily
+version: "1.0"
+status: pending  # pending / approved / deployed
+
+sources:
+  - table: tushare.stock_moneyflow
+    usage: "个股资金流向（小单/中单/大单/特大单）聚合到市场层"
+
+migration:
+  original_fetchers: []
+  replacement: features.mv_money_flow_daily
+
+meta:
+  frequency: daily
+  grain: date (全市场聚合)
+  refresh: T+1
+  created_at: 2026-01-30
+  created_by: AI Assistant

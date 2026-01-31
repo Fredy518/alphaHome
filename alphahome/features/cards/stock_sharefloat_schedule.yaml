@@ -1,0 +1,22 @@
+# 入库卡片：限售股解禁日程
+
+name: stock_sharefloat_schedule
+version: "1.0"
+status: pending
+
+sources:
+  - table: rawdata.stock_sharefloat
+    usage: "限售股解禁明细（日期/股数/股东）"
+  - table: rawdata.stock_dailybasic
+    usage: "流通市值（用于计算解禁占比）"
+
+migration:
+  original_fetchers: []
+  replacement: features.mv_stock_sharefloat_schedule
+
+meta:
+  frequency: snapshot (未来解禁日程)
+  grain: ts_code
+  refresh: daily
+  created_at: 2026-01-30
+  created_by: AI Assistant

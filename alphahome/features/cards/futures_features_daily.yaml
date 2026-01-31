@@ -1,0 +1,24 @@
+# 入库卡片：股指期货特征（日频）
+
+name: futures_features_daily
+version: "1.0"
+status: pending  # pending / approved / deployed
+
+sources:
+  - table: tushare.future_daily
+    usage: "期货日行情（加权基差/贴水）"
+  - table: tushare.future_holding
+    usage: "会员持仓（净多空/多空比/变化）"
+  - table: tushare.index_daily
+    usage: "现货指数收盘价（基差计算）"
+
+migration:
+  original_fetchers: []
+  replacement: features.mv_futures_features_daily
+
+meta:
+  frequency: daily
+  grain: date
+  refresh: T+1
+  created_at: 2026-01-30
+  created_by: AI Assistant

@@ -1,0 +1,20 @@
+# 入库卡片：股东户数与筹码集中度
+
+name: stock_shareholder_concentration
+version: "1.0"
+status: pending
+
+sources:
+  - table: rawdata.stock_holdernumber
+    usage: "股东户数变化，筹码集中度核心输入"
+
+migration:
+  original_fetchers: []
+  replacement: features.mv_stock_shareholder_concentration
+
+meta:
+  frequency: quarterly
+  grain: ts_code × end_date
+  refresh: T+1
+  created_at: 2026-01-30
+  created_by: AI Assistant

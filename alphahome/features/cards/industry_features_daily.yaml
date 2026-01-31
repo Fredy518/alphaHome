@@ -1,0 +1,56 @@
+# 入库卡片：行业特征（日频）
+
+name: industry_features_daily
+version: "1.0"
+status: pending  # pending / approved / deployed
+
+# 数据源
+sources:
+  - table: tushare.index_swdaily
+    columns: [trade_date, ts_code, close]
+    usage: "申万行业指数日线"
+  - table: tushare.index_swmember
+    columns: [l1_code]
+    usage: "识别申万一级行业代码"
+
+# 输出字段
+outputs:
+  counts:
+    - industry_count: "参与统计的行业数量"
+    - industry_up_count: "上涨行业数量"
+    - industry_strong_count: "强势行业数量（涨幅 > 1%）"
+    - industry_weak_count: "弱势行业数量（跌幅 > 1%）"
+  ratios:
+    - industry_up_ratio: "上涨行业占比"
+    - industry_strong_ratio: "强势行业占比"
+    - industry_weak_ratio: "弱势行业占比"
+  return_stats:
+    - industry_return_mean: "行业收益均值"
+    - industry_return_std: "行业收益标准差（分散度）"
+    - industry_return_max: "最强行业收益"
+    - industry_return_min: "最弱行业收益"
+    - industry_return_range: "行业收益极差"
+  rolling:
+    - industry_up_ratio_5d: "5 日滚动上涨行业占比"
+    - industry_return_std_5d: "5 日滚动行业分散度"
+    - industry_up_ratio_20d: "20 日滚动上涨行业占比"
+
+# 部署建议（可选）
+deployment:
+  post_create_sqls:
+    - "CREATE INDEX IF NOT EXISTS idx_mv_industry_features_daily_trade_date ON features.mv_industry_features_daily (trade_date)"
+
+# 原 data_infra Fetcher 映射
+migration:
+  original_fetchers:
+    - data_infra.fetchers.industry.IndustryReturnFetcher
+    - data_infra.fetchers.industry.IndustryBreadthFetcher
+  replacement: features.mv_industry_features_daily
+
+# 元信息
+meta:
+  frequency: daily
+  grain: date (申万一级行业聚合)
+  refresh: T+1
+  created_at: 2026-01-30
+  created_by: AI Assistant

@@ -1,0 +1,22 @@
+# 入库卡片：行业分类（月度快照，SW+CI）
+
+name: stock_industry_monthly_snapshot
+version: "1.0"
+status: pending  # pending / approved / deployed
+
+sources:
+  - table: rawdata.index_swmember
+    usage: "申万行业成分（用于 L1/L2/L3 映射）"
+  - table: rawdata.index_cimember
+    usage: "中信行业成分（用于 CI 行业映射）"
+
+migration:
+  original_fetchers: []
+  replacement: features.mv_stock_industry_monthly_snapshot
+
+meta:
+  frequency: monthly
+  grain: ts_code × obs_date
+  refresh: monthly
+  created_at: 2026-01-30
+  created_by: AI Assistant

@@ -72,7 +72,7 @@ I["run.py<br/>本地开发入口(非打包安装)"] --> B
   - 启动流程：run_gui() 调用 main()，初始化日志、DPI感知、异步事件循环，最终启动 MainWindow 并进入事件循环。
 - refresh-materialized-view（物化视图CLI）
   - 作用：提供物化视图的刷新、状态查询、历史查询能力，支持全量刷新与并发刷新策略。
-  - 入口映射：在 pyproject.toml 的 [project.scripts] 中定义为 refresh-materialized-view = "alphahome.processors.materialized_views.cli:main_sync"。
+  - 入口映射（历史）：曾在 pyproject.toml 的 [project.scripts] 中定义为 refresh-materialized-view = "processors.materialized_views.cli:main_sync"（已删除）。
   - 子命令：
     - refresh <view_name> [--strategy full|concurrent] [--format text|json]
     - refresh-all [--strategy full|concurrent] [--format text|json]
@@ -96,7 +96,7 @@ sequenceDiagram
 participant U as "用户"
 participant P as "pyproject.toml入口"
 participant G as "GUI入口 : alphahome.gui.main_window"
-participant R as "CLI入口 : alphahome.processors.materialized_views.cli"
+participant R as "CLI入口 : processors.materialized_views.cli（已删除）"
 U->>P : 执行 alphahome
 P-->>G : 调用 run_gui()
 G->>G : main() 初始化日志/DPI/异步事件循环

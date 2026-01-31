@@ -22,8 +22,7 @@ from alphahome.common.config_manager import get_database_url
 from alphahome.common.db_manager import create_async_manager
 
 # Import tasks so decorators register (optional)
-from alphahome.processors.tasks.barra.barra_exposures_daily import BarraExposuresDailyTask
-from alphahome.processors.tasks.barra.barra_factor_returns_daily import BarraFactorReturnsDailyTask
+from alphahome.barra.tasks import BarraExposuresDailyTask, BarraFactorReturnsDailyTask
 
 
 async def main(trade_date: str) -> None:

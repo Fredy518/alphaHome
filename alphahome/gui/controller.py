@@ -67,6 +67,7 @@ from .services import (
     task_registry_service,
     configuration_service,
     task_execution_service,
+    feature_service,
 )
 
 logger = get_logger(__name__)
@@ -99,6 +100,7 @@ async def initialize_controller(response_callback):
     task_registry_service.initialize_task_registry(response_callback)
     configuration_service.initialize_storage_settings(response_callback)
     task_execution_service.set_response_callback(response_callback)
+    feature_service.initialize_feature_service(response_callback)
     
     # 初始化任务执行会话
     task_execution_service.initialize_session()
@@ -190,13 +192,33 @@ async def handle_get_collection_tasks():
     await task_registry_service.handle_get_collection_tasks()
 
 
-async def handle_get_processing_tasks():
+async def handle_get_features():
     """
-    处理获取数据处理任务列表的请求
+    处理获取特征列表的请求
     
-    委托给任务注册服务处理，获取所有可用的数据处理任务。
+    委托给特征服务处理，获取所有已注册的特征配方。
     """
-    await task_registry_service.handle_get_processing_tasks()
+    await feature_service.handle_get_features()
+
+
+async def handle_refresh_features(feature_names: List[str]):
+    """
+    处理刷新指定特征视图的请求
+    
+    Args:
+        feature_names: 要刷新的特征名称列表
+    """
+    await feature_service.handle_refresh_features(feature_names)
+
+
+async def handle_create_features(feature_names: List[str]):
+    """
+    处理创建指定特征视图的请求
+    
+    Args:
+        feature_names: 要创建的特征名称列表
+    """
+    await feature_service.handle_create_features(feature_names)
 
 
 async def handle_request(command: str, data: Optional[Dict[str, Any]] = None):
@@ -243,18 +265,10 @@ async def handle_request(command: str, data: Optional[Dict[str, Any]] = None):
         elif command == "GET_COLLECTION_TASKS":
             await handle_get_collection_tasks()
 
-        elif command == "GET_PROCESSING_TASKS":
-            await handle_get_processing_tasks()
-
         elif command == "TOGGLE_COLLECTION_SELECT":
             row_index = data.get("row_index", -1)
             if row_index >= 0:
                 task_registry_service.toggle_collection_select(row_index)
-
-        elif command == "TOGGLE_PROCESSING_SELECT":
-            row_index = data.get("row_index", -1)
-            if row_index >= 0:
-                task_registry_service.toggle_processing_select(row_index)
 
         elif command == "GET_STORAGE_SETTINGS":
             await configuration_service.handle_get_storage_settings()
@@ -265,7 +279,6 @@ async def handle_request(command: str, data: Optional[Dict[str, Any]] = None):
             
             # After reloading, we need to refresh the UI task list
             await handle_get_collection_tasks()
-            await handle_get_processing_tasks()
 
         elif command == "TEST_DB_CONNECTION":
             db_url = data.get("db_url")
@@ -273,6 +286,20 @@ async def handle_request(command: str, data: Optional[Dict[str, Any]] = None):
                 await configuration_service.test_database_connection(db_url)
             else:
                 logger.warning("Test DB connection request received with no URL.")
+        
+        # --- 特征更新相关命令 ---
+        elif command == "GET_FEATURES":
+            await handle_get_features()
+        
+        elif command == "REFRESH_FEATURES":
+            feature_names = data.get("feature_names", [])
+            if feature_names:
+                await handle_refresh_features(feature_names)
+        
+        elif command == "CREATE_FEATURES":
+            feature_names = data.get("feature_names", [])
+            if feature_names:
+                await handle_create_features(feature_names)
             
         else:
             logger.warning(f"Unknown command: {command}")
@@ -295,14 +322,6 @@ def request_collection_tasks():
     """
     asyncio.create_task(handle_request("GET_COLLECTION_TASKS"))
 
-def request_processing_tasks():
-    """
-    请求获取数据处理任务列表
-    
-    创建异步任务来获取数据处理任务，避免阻塞当前线程。
-    """
-    asyncio.create_task(handle_request("GET_PROCESSING_TASKS"))
-
 def request_all_task_status():
     """
     请求获取所有任务状态
@@ -311,13 +330,31 @@ def request_all_task_status():
     """
     asyncio.create_task(handle_request("GET_ALL_TASK_STATUS"))
 
-def toggle_processing_task_selection(task_name: str):
+
+def request_feature_list():
     """
-    切换数据处理任务的选择状态（已废弃）
+    请求获取特征列表
     
-    注意：此函数已废弃，请使用TOGGLE_PROCESSING_SELECT命令。
+    创建异步任务来获取特征配方列表，避免阻塞当前线程。
+    """
+    asyncio.create_task(handle_request("GET_FEATURES"))
+
+
+def request_refresh_features(feature_names: List[str]):
+    """
+    请求刷新指定特征视图
     
     Args:
-        task_name (str): 任务名称（已不使用）
+        feature_names: 要刷新的特征名称列表
     """
-    logger.warning("toggle_processing_task_selection 已废弃，请使用TOGGLE_PROCESSING_SELECT命令")
+    asyncio.create_task(handle_request("REFRESH_FEATURES", {"feature_names": feature_names}))
+
+
+def request_create_features(feature_names: List[str]):
+    """
+    请求创建指定特征视图
+    
+    Args:
+        feature_names: 要创建的特征名称列表
+    """
+    asyncio.create_task(handle_request("CREATE_FEATURES", {"feature_names": feature_names}))

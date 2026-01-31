@@ -1,0 +1,22 @@
+# 入库卡片：个股日行情增强（日频）
+
+name: stock_daily_enriched
+version: "1.0"
+status: pending  # pending / approved / deployed
+
+sources:
+  - table: rawdata.stock_daily
+    usage: "个股日行情 OHLCV"
+  - table: rawdata.stock_dailybasic
+    usage: "个股日频估值/换手/市值等补充"
+
+migration:
+  original_fetchers: []
+  replacement: features.mv_stock_daily_enriched
+
+meta:
+  frequency: daily
+  grain: ts_code × date
+  refresh: T+1
+  created_at: 2026-01-30
+  created_by: AI Assistant

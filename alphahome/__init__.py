@@ -5,4 +5,4 @@ alphahome 包初始化
 子模块请按需显式导入，例如：`import alphahome.gui` 或 `from alphahome import gui`。
 """
 
-__all__ = ["gui", "fetchers", "processors", "factors"]
+__all__ = ["gui", "fetchers", "factors"]

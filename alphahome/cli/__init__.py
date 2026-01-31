@@ -1,19 +1,14 @@
 """
-AlphaHome 统一命令行界面（CLI）
+AlphaHome CLI 模块（已下线）
 
-本模块提供统一的命令行入口点，整合所有生产能力、工具和工具集。
+CLI 入口点已在 features 模块重构期间下线。
+稳定后按需恢复。
 
-核心设计：
-- 顶层命令：`ah`，支持多个子命令组
-- 统一的参数契约：--log-level, --format, --config
-- 统一的退出码和异常处理
-- 向后兼容：保留旧入口点不变
-
-子命令组：
-- ddb：DolphinDB 数据库工具
-- mv：物化视图管理
-- prod：生产脚本和任务
-- gui：GUI 应用（可选）
+历史入口：
+- ah / alphahome-cli: 统一 CLI
+- refresh-materialized-view: MV 刷新
+- alphahome-ddb: DolphinDB CLI
 """
 
 __version__ = "1.0"
+# CLI 功能已下线，见 docs/architecture/features_module_design.md

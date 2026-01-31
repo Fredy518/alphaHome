@@ -1,0 +1,20 @@
+# 入库卡片：股票回购（周频）
+
+name: repurchase_weekly
+version: "1.0"
+status: pending  # pending / approved / deployed
+
+sources:
+  - table: tushare.stock_repurchase
+    usage: "回购公告明细（周频聚合：数量/金额/进度分布）"
+
+migration:
+  original_fetchers: []
+  replacement: features.mv_repurchase_weekly
+
+meta:
+  frequency: weekly
+  grain: week_end
+  refresh: weekly
+  created_at: 2026-01-30
+  created_by: AI Assistant

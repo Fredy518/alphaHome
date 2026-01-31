@@ -1,0 +1,20 @@
+# 入库卡片：AH 溢价特征
+
+name: ah_premium_daily
+version: "1.0"
+status: pending
+
+sources:
+  - table: rawdata.stock_ahcomparison
+    usage: "AH 股比价/溢价明细"
+
+migration:
+  original_fetchers: []
+  replacement: features.mv_ah_premium_daily
+
+meta:
+  frequency: daily
+  grain: ts_code × trade_date
+  refresh: T+1
+  created_at: 2026-01-30
+  created_by: AI Assistant
