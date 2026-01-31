@@ -27,7 +27,7 @@ class FuturesFeaturesDailyMV(BaseFeatureView):
     source_tables = [
         "tushare.future_daily",
         "tushare.future_holding",
-        "tushare.index_daily",
+        "rawdata.index_factor_pro",
     ]
     refresh_strategy = "full"
 
@@ -72,7 +72,7 @@ class FuturesFeaturesDailyMV(BaseFeatureView):
                 trade_date,
                 ts_code AS idx_code,
                 close
-            FROM tushare.index_daily
+            FROM rawdata.index_factor_pro
             WHERE ts_code IN ('000300.SH', '000905.SH', '000852.SH', '000016.SH')
               AND close IS NOT NULL
         ),
@@ -186,7 +186,7 @@ class FuturesFeaturesDailyMV(BaseFeatureView):
             MAX(CASE WHEN t.fut_prefix = 'IH' THEN t.net_chg END) AS IH_Top20_Net_Chg,
 
             -- 血缘
-            'tushare.future_daily,tushare.future_holding,tushare.index_daily' AS _source_table,
+            'tushare.future_daily,tushare.future_holding,rawdata.index_factor_pro' AS _source_table,
             NOW() AS _processed_at,
             CURRENT_DATE AS _data_version
         FROM basis b

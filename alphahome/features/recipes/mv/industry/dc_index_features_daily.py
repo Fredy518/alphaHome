@@ -25,7 +25,7 @@ class DCIndexFeaturesDailyMV(BaseFeatureView):
                 trade_date,
                 ts_code,
                 name,
-                leading,        -- 领涨股代码
+                "leading" AS leading_name,  -- 领涨股名称
                 leading_code,
                 pct_change,     -- 指数涨跌幅
                 leading_pct,    -- 领涨股涨幅

@@ -51,8 +51,8 @@ class MarginTurnoverDailyMV(BaseFeatureView):
                 trade_date,
                 -- stock_daily.amount 单位：千元，转换为元
                 SUM(amount) FILTER (WHERE amount IS NOT NULL AND amount > 0) * 1000 AS market_amount_yuan,
-                -- stock_daily.vol：成交量（用于融券卖出量占比的分母）
-                SUM(vol) FILTER (WHERE vol IS NOT NULL AND vol > 0) AS market_vol
+                -- stock_daily.volume：成交量（用于融券卖出量占比的分母）
+                SUM(volume) FILTER (WHERE volume IS NOT NULL AND volume > 0) AS market_vol
             FROM tushare.stock_daily
             WHERE trade_date IS NOT NULL
             GROUP BY trade_date

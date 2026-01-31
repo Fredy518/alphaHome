@@ -114,7 +114,7 @@ class StockDailyEnrichedMV(BaseFeatureView):
             AND d.trade_date IS NOT NULL
             AND d.close IS NOT NULL
             AND d.close > 0
-        ORDER BY d.ts_code, d.trade_date DESC;
+        WITH NO DATA;
         """
         return sql.strip()
 

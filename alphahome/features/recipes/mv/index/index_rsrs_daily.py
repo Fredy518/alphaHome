@@ -46,7 +46,7 @@ class IndexRSRSDailyMV(BaseFeatureView):
     name = "index_rsrs_daily"
     description = "RSRS 择时指标组件：β斜率、R²、标准化值、右偏修正（日频）"
     source_tables = [
-        "tushare.index_daily",
+        "rawdata.index_factor_pro",
     ]
     refresh_strategy = "full"
 
@@ -78,7 +78,7 @@ class IndexRSRSDailyMV(BaseFeatureView):
                 d.high,
                 d.low,
                 d.close
-            FROM tushare.index_daily d
+            FROM rawdata.index_factor_pro d
             JOIN core_indexes c ON d.ts_code = c.ts_code
             WHERE d.high IS NOT NULL AND d.low IS NOT NULL
               AND d.high > 0 AND d.low > 0
@@ -195,7 +195,7 @@ class IndexRSRSDailyMV(BaseFeatureView):
             ROUND(rsrs_zscore_adj::NUMERIC, 4) AS rsrs_zscore_adj,
             ROUND(rsrs_zscore_rightskew::NUMERIC, 4) AS rsrs_zscore_rightskew,
             -- 血缘
-            'tushare.index_daily' AS _source_table,
+            'rawdata.index_factor_pro' AS _source_table,
             NOW() AS _processed_at,
             CURRENT_DATE AS _data_version
         FROM rsrs_final

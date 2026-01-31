@@ -30,7 +30,7 @@ class StockCashflowQuarterlyMV(BaseFeatureView):
                 c_fr_sale_sg,           -- 销售商品收到的现金
                 n_cashflow_act,         -- 经营活动现金流量净额
                 -- 投资活动现金流
-                c_pay_acq_const_fiam,   -- 购建固定资产支付的现金
+                c_pay_acq_const_fiolta, -- 购建固定资产支付的现金
                 c_paid_invest,          -- 投资支付的现金
                 n_cashflow_inv_act,     -- 投资活动现金流量净额
                 -- 筹资活动现金流
@@ -64,7 +64,7 @@ class StockCashflowQuarterlyMV(BaseFeatureView):
             net_profit,
             c_fr_sale_sg,
             n_cashflow_act,
-            c_pay_acq_const_fiam,
+            c_pay_acq_const_fiolta,
             c_paid_invest,
             n_cashflow_inv_act,
             c_fr_borr,

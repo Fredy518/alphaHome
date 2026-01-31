@@ -14,7 +14,7 @@ class ConceptFeaturesDailyMV(BaseFeatureView):
 
     name = "concept_features_daily"
     description = "概念板块涨停数量、上涨数量、板块强度与轮动信号"
-    source_tables = ["rawdata.stock_kplconcept", "rawdata.stock_kplmember"]
+    source_tables = ["rawdata.stock_kplconcept"]
     refresh_strategy = "full"
 
     create_sql = """
@@ -30,25 +30,30 @@ class ConceptFeaturesDailyMV(BaseFeatureView):
             FROM rawdata.stock_kplconcept
             WHERE trade_date IS NOT NULL
         ),
+        -- 先计算每日的 90% 分位数阈值
+        daily_threshold AS (
+            SELECT
+                trade_date,
+                PERCENTILE_CONT(0.9) WITHIN GROUP (ORDER BY limit_up_count) AS p90_threshold
+            FROM concept_stats
+            GROUP BY trade_date
+        ),
         market_agg AS (
             -- 市场层面聚合
             SELECT
-                trade_date,
-                COUNT(DISTINCT concept_code) AS total_concepts,
-                SUM(limit_up_count) AS market_concept_limit_up,
-                AVG(limit_up_count) AS avg_concept_limit_up,
-                MAX(limit_up_count) AS max_concept_limit_up,
+                c.trade_date,
+                COUNT(DISTINCT c.concept_code) AS total_concepts,
+                SUM(c.limit_up_count) AS market_concept_limit_up,
+                AVG(c.limit_up_count) AS avg_concept_limit_up,
+                MAX(c.limit_up_count) AS max_concept_limit_up,
                 -- 强势概念数（涨停数 >= 3）
-                COUNT(*) FILTER (WHERE limit_up_count >= 3) AS strong_concept_count,
-                -- Top 5 概念涨停占比
-                SUM(limit_up_count) FILTER (
-                    WHERE limit_up_count >= (
-                        SELECT PERCENTILE_CONT(0.9) WITHIN GROUP (ORDER BY limit_up_count)
-                        FROM concept_stats cs2 WHERE cs2.trade_date = concept_stats.trade_date
-                    )
-                ) * 100.0 / NULLIF(SUM(limit_up_count), 0) AS top_concept_concentration
-            FROM concept_stats
-            GROUP BY trade_date
+                COUNT(*) FILTER (WHERE c.limit_up_count >= 3) AS strong_concept_count,
+                -- Top 概念涨停占比（使用预计算的阈值）
+                SUM(c.limit_up_count) FILTER (WHERE c.limit_up_count >= t.p90_threshold) * 100.0 
+                    / NULLIF(SUM(c.limit_up_count), 0) AS top_concept_concentration
+            FROM concept_stats c
+            LEFT JOIN daily_threshold t ON c.trade_date = t.trade_date
+            GROUP BY c.trade_date
         ),
         with_rolling AS (
             SELECT
@@ -78,7 +83,7 @@ class ConceptFeaturesDailyMV(BaseFeatureView):
                 ELSE 0
             END AS concept_activity_signal,
             -- 血缘字段
-            'rawdata.stock_kplconcept,rawdata.stock_kplmember' AS _source_table,
+            'rawdata.stock_kplconcept' AS _source_table,
             NOW() AS _processed_at,
             CURRENT_DATE AS _data_version
         FROM with_rolling
