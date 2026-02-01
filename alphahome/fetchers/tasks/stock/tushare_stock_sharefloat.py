@@ -13,13 +13,12 @@ Tushare 限售股解禁数据任务
 权限要求: 需要至少120积分，超过5000积分频次相对较高
 """
 
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional
 
 import asyncio
 
 from ...sources.tushare.tushare_task import TushareTask
-from ...sources.tushare.batch_utils import generate_month_range_batches
 from ....common.task_system.task_decorator import task_register
 
 
@@ -28,8 +27,9 @@ class TushareStockShareFloatTask(TushareTask):
     """获取限售股解禁数据 (share_float)
 
     实现要求:
-    - 全量更新: 按月份范围分批获取全部历史数据（数据量大，季度分批会超出offset限制）
-    - 增量模式: 根据时间跨度智能选择批处理策略
+    - 本任务以 ann_date（公告日期）作为增量更新基准（date_column=ann_date）。
+    - share_float 接口的 start_date/end_date 参数含义为“解禁日期区间 (float_date)”，不适合作为公告口径的增量。
+    - 因此批处理采用 ann_date（自然日）逐日分批拉取，避免漏掉“公告在今天、解禁在未来”的记录。
     """
 
     # 1. 核心属性
@@ -104,17 +104,16 @@ class TushareStockShareFloatTask(TushareTask):
         end_date = kwargs.get("end_date")
 
         current_date = datetime.now().strftime("%Y%m%d")
-        is_full_mode = start_date == self.default_start_date and end_date == current_date
 
         self.logger.info(
-            f"任务 {self.name}: 生成批处理列表 - is_full_mode: {is_full_mode}, "
+            f"任务 {self.name}: 生成批处理列表 (按公告日期 ann_date 分批) - "
             f"start_date: {start_date}, end_date: {end_date}"
         )
 
         try:
             # 确定起止日期
             if not start_date:
-                latest_db_date = await self.get_latest_date()
+                latest_db_date = await self.get_latest_date_for_task()
                 if latest_db_date:
                     start_date = (latest_db_date + timedelta(days=1)).strftime("%Y%m%d")
                 else:
@@ -127,25 +126,22 @@ class TushareStockShareFloatTask(TushareTask):
                 self.logger.info(f"起始日期 ({start_date}) 晚于结束日期 ({end_date})，跳过执行")
                 return []
 
-            days_span = (datetime.strptime(str(end_date), "%Y%m%d") - 
-                        datetime.strptime(str(start_date), "%Y%m%d")).days
+            start_dt = datetime.strptime(str(start_date), "%Y%m%d").date()
+            end_dt = datetime.strptime(str(end_date), "%Y%m%d").date()
 
-            if days_span < 30:
-                self.logger.info(f"时间跨度 {days_span} 天，使用单批次获取")
-                return [{
-                    "start_date": start_date,
-                    "end_date": end_date,
-                    "fields": ",".join(self.fields or [])
-                }]
-            else:
-                # 数据量大，使用按月分批避免 offset 限制
-                self.logger.info(f"按月份范围分批获取限售股解禁数据: {start_date} ~ {end_date}")
-                return await generate_month_range_batches(
-                    start_date=start_date,
-                    end_date=end_date,
-                    logger=self.logger,
-                    additional_params={"fields": ",".join(self.fields or [])}
-                )
+            days_span = (end_dt - start_dt).days
+
+            # share_float 接口的 start_date/end_date 参数含义为“解禁日期区间 (float_date)”，
+            # 与本任务的 date_column=ann_date 不一致；因此按 ann_date（自然日）逐日分批拉取。
+            # 这样能正确获取“公告日发生在今天，但解禁日发生在未来”的记录。
+            self.logger.info(f"时间跨度 {days_span} 天，按 ann_date 逐日分批获取")
+
+            batches: List[Dict[str, str]] = []
+            cur: date = start_dt
+            while cur <= end_dt:
+                batches.append({"ann_date": cur.strftime("%Y%m%d")})
+                cur += timedelta(days=1)
+            return batches
 
         except Exception as e:
             self.logger.error(f"任务 {self.name}: 生成批次时出错: {e}", exc_info=True)
