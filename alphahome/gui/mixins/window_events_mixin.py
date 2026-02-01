@@ -110,6 +110,11 @@ class WindowEventsMixin:
                 self.ui_elements
             )
         )
+        self.ui_elements["feature_full_refresh_button"].config(
+            command=lambda: feature_update_handler.handle_full_refresh_selected_features(
+                self.ui_elements
+            )
+        )
         self.ui_elements["feature_create_missing_button"].config(
             command=lambda: feature_update_handler.handle_create_missing_features(
                 self.ui_elements
@@ -121,12 +126,29 @@ class WindowEventsMixin:
                 self.ui_elements
             ),
         )
+        self.ui_elements["feature_storage_type_combobox"].bind(
+            "<<ComboboxSelected>>",
+            lambda e: feature_update_handler.handle_storage_type_filter_change(
+                self.ui_elements
+            ),
+        )
         self.ui_elements["feature_tree"].bind(
             "<ButtonRelease-1>",
             lambda event: feature_update_handler.handle_feature_tree_click(
                 event, self.ui_elements
             ),
         )
+        
+        # 绑定特征表格列头排序
+        feature_tree = self.ui_elements["feature_tree"]
+        for col in ("name", "description", "category", "storage_type", "status", "row_count", "last_refresh"):
+            feature_tree.heading(
+                col,
+                text=feature_tree.heading(col)["text"],
+                command=lambda c=col: feature_update_handler.handle_column_sort(
+                    c, self.ui_elements
+                ),
+            )
 
         # Task Execution Binds
         self.ui_elements["run_tasks_button"].config(

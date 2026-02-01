@@ -10,6 +10,7 @@
 """
 import asyncio
 from datetime import datetime
+import re
 from typing import Any, Callable, Dict, List, Optional
 
 from ...common.logging_utils import get_logger
@@ -60,10 +61,14 @@ async def handle_get_features():
                 # 推断分类（从模块路径或 source_tables）
                 category = _infer_category(recipe_cls)
                 
+                # 推断存储类型（物化视图或数据表）
+                storage_type = _infer_storage_type(recipe_cls)
+                
                 feature_info = {
                     "name": name,
                     "description": description,
                     "category": category,
+                    "storage_type": storage_type,
                     "source_tables": source_tables,
                     "refresh_strategy": refresh_strategy,
                     "status": "未知",  # 稍后更新
@@ -101,12 +106,13 @@ async def handle_get_features():
             _send_response_callback("FEATURE_REFRESH_COMPLETE", {"success": success})
 
 
-async def handle_refresh_features(feature_names: List[str]):
+async def handle_refresh_features(feature_names: List[str], strategy: str = "default"):
     """
     处理刷新指定特征视图的请求。
     
     Args:
         feature_names: 要刷新的特征名称列表
+        strategy: 刷新策略 ("default", "full", "incremental")
     """
     success_count = 0
     fail_count = 0
@@ -128,19 +134,24 @@ async def handle_refresh_features(feature_names: List[str]):
                 continue
             
             recipe_cls = feature["recipe_class"]
+            actual_strategy = (
+                getattr(recipe_cls, "refresh_strategy", "full")
+                if strategy == "default"
+                else strategy
+            )
             
             # 创建实例并刷新
             instance = recipe_cls(db_manager=db_manager)
-            logger.info(f"正在刷新物化视图: {instance.full_name}")
+            logger.info(f"正在刷新物化视图: {instance.full_name} (策略: {actual_strategy})")
             
-            result = await instance.refresh()
+            result = await instance.refresh(strategy=actual_strategy)
             
-            if result.get("success"):
+            if result.get("status") == "success":
                 success_count += 1
                 logger.info(f"物化视图 {name} 刷新成功")
             else:
                 fail_count += 1
-                logger.error(f"物化视图 {name} 刷新失败: {result.get('error')}")
+                logger.error(f"物化视图 {name} 刷新失败: {result.get('error_message')}")
                 
         except Exception as e:
             fail_count += 1
@@ -209,6 +220,10 @@ async def handle_create_features(feature_names: List[str]):
 
 def _infer_category(recipe_cls) -> str:
     """从配方类推断分类。"""
+    # 优先使用类属性中的 category
+    if hasattr(recipe_cls, 'category') and recipe_cls.category:
+        return recipe_cls.category
+    
     module = recipe_cls.__module__
     
     # 从模块路径推断: alphahome.features.recipes.mv.market.xxx -> market
@@ -218,9 +233,36 @@ def _infer_category(recipe_cls) -> str:
         if len(parts) > idx + 2:
             # recipes.mv.market -> market
             category = parts[idx + 2]
+            # 对于 Python 特征（recipes.python.xxx），尝试从 name 推断
+            if category == "python" and hasattr(recipe_cls, 'name'):
+                name = recipe_cls.name
+                # 从 name 的前缀推断（如 stock_xxx -> stock）
+                if '_' in name:
+                    prefix = name.split('_')[0]
+                    return prefix
             return category
     
     return "other"
+
+
+def _infer_storage_type(recipe_cls) -> str:
+    """从配方类推断存储类型。"""
+    # 优先使用显式声明（更类型安全、可维护）
+    explicit = getattr(recipe_cls, "storage_type", None)
+    if isinstance(explicit, str) and explicit:
+        return explicit
+
+    # 检查是否为 Python 特征（数据表）
+    if hasattr(recipe_cls, 'is_python_feature') and recipe_cls.is_python_feature:
+        return "数据表"
+    
+    # 检查基类是否为 IncrementalTableView（数据表）
+    from alphahome.features.storage.incremental_view import IncrementalTableView
+    if any(base.__name__ == 'IncrementalTableView' for base in recipe_cls.__mro__):
+        return "数据表"
+    
+    # 默认为物化视图
+    return "物化视图"
 
 
 async def _update_features_with_db_status(feature_cache: List[Dict[str, Any]]):
@@ -246,16 +288,29 @@ async def _update_features_with_db_status(feature_cache: List[Dict[str, Any]]):
             instance = recipe_cls(db_manager=db_manager)
             view_name = instance.view_name
             schema = instance.schema
+
+            # Guardrail: schema/view_name 会拼接进 SQL 标识符，必须严格校验
+            # (值来自代码配方类，理论可控，但这里仍做硬化以避免意外/注入风险)
+            identifier_re = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+            if not identifier_re.fullmatch(schema or ""):
+                raise ValueError(f"Invalid schema identifier: {schema!r}")
+            if not identifier_re.fullmatch(view_name or ""):
+                raise ValueError(f"Invalid view_name identifier: {view_name!r}")
             
-            # 检查物化视图是否存在
-            sql = f"""
+            # 检查物化视图或普通表是否存在
+            exists_sql = """
             SELECT EXISTS (
                 SELECT 1 FROM pg_matviews
-                WHERE schemaname = '{schema}'
-                  AND matviewname = '{view_name}'
+                WHERE schemaname = $1
+                  AND matviewname = $2
+                UNION ALL
+                SELECT 1 FROM information_schema.tables
+                WHERE table_schema = $1
+                  AND table_name = $2
+                  AND table_type = 'BASE TABLE'
             ) AS exists;
-            """
-            result = await db_manager.fetch(sql)
+            """.strip()
+            result = await db_manager.fetch(exists_sql, schema, view_name)
             exists = result and result[0]["exists"]
             
             if exists:
@@ -271,23 +326,28 @@ async def _update_features_with_db_status(feature_cache: List[Dict[str, Any]]):
                 
                 # 尝试从刷新日志获取最后刷新时间
                 try:
-                    # 使用字符串格式化而不是参数化查询，因为某些 db_manager 实现可能不支持 $1 语法
-                    refresh_log_sql = f"""
-                    SELECT finished_at FROM features.mv_refresh_log
-                    WHERE view_name = '{view_name}' AND success = TRUE
+                    refresh_log_sql = """
+                    SELECT finished_at AT TIME ZONE 'Asia/Shanghai' AS finished_at
+                    FROM features.mv_refresh_log
+                    WHERE schema_name = $1 AND view_name = $2 AND success = TRUE
                     ORDER BY finished_at DESC
                     LIMIT 1;
-                    """
-                    logger.debug(f"查询刷新日志 for {view_name}: {refresh_log_sql}")
-                    log_result = await db_manager.fetch(refresh_log_sql)
-                    logger.debug(f"查询结果: {log_result}")
+                    """.strip()
+                    log_result = await db_manager.fetch(refresh_log_sql, schema, view_name)
                     
-                    if log_result and len(log_result) > 0 and log_result[0].get("finished_at"):
-                        last_refresh = log_result[0]["finished_at"]
+                    last_refresh = None
+                    if log_result and len(log_result) > 0:
+                        try:
+                            last_refresh = log_result[0]["finished_at"]
+                        except Exception:
+                            last_refresh = None
+
+                    if last_refresh:
                         if isinstance(last_refresh, datetime):
-                            feature["last_refresh"] = last_refresh.strftime("%Y-%m-%d %H:%M")
+                            # 使用北京时间24小时格式
+                            feature["last_refresh"] = last_refresh.strftime("%Y-%m-%d %H:%M:%S")
                         else:
-                            feature["last_refresh"] = str(last_refresh)[:16]
+                            feature["last_refresh"] = str(last_refresh)[:19]
                     else:
                         feature["last_refresh"] = "N/A"
                 except Exception as e:

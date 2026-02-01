@@ -20,6 +20,11 @@ _full_feature_list: List[Dict[str, Any]] = []
 _filtered_feature_list: List[Dict[str, Any]] = []
 # 当前选择的分类
 _current_category: str = "全部"
+# 当前选择的存储类型
+_current_storage_type: str = "全部"
+# 当前排序状态
+_sort_column: str = ""
+_sort_reverse: bool = False
 
 
 def update_feature_list_ui(
@@ -31,7 +36,7 @@ def update_feature_list_ui(
     global _full_feature_list
     _full_feature_list = feature_list
     logger.info(f"UI更新回调：接收到 {len(feature_list)} 个特征配方。")
-    _apply_category_filter(ui_elements)
+    _apply_filters(ui_elements)
     _update_stats_label(ui_elements)
 
 
@@ -73,7 +78,7 @@ def handle_select_all_features(widgets: Dict[str, tk.Widget]):
     global _full_feature_list
     for feature in _full_feature_list:
         feature["selected"] = True
-    _apply_category_filter(widgets)
+    _apply_filters(widgets)
 
 
 def handle_deselect_all_features(widgets: Dict[str, tk.Widget]):
@@ -82,7 +87,7 @@ def handle_deselect_all_features(widgets: Dict[str, tk.Widget]):
     global _full_feature_list
     for feature in _full_feature_list:
         feature["selected"] = False
-    _apply_category_filter(widgets)
+    _apply_filters(widgets)
 
 
 def handle_feature_tree_click(event: tk.Event, widgets: Dict[str, tk.Widget]):
@@ -118,23 +123,58 @@ def handle_category_filter_change(widgets: Dict[str, tk.Widget]):
     if category_var:
         _current_category = category_var.get()
         logger.debug(f"分类筛选变更为: {_current_category}")
-        _apply_category_filter(widgets)
+        _apply_filters(widgets)
+
+
+def handle_storage_type_filter_change(widgets: Dict[str, tk.Widget]):
+    """处理存储类型筛选下拉框变化"""
+    global _current_storage_type
+    storage_type_var = widgets.get("feature_storage_type_var")
+    if storage_type_var:
+        _current_storage_type = storage_type_var.get()
+        logger.debug(f"存储类型筛选变更为: {_current_storage_type}")
+        _apply_filters(widgets)
 
 
 def handle_refresh_selected_features(widgets: Dict[str, tk.Widget]):
-    """处理刷新选中视图按钮点击"""
+    """处理增量刷新选中视图按钮点击"""
     selected = get_selected_features()
     if not selected:
         messagebox.showwarning("提示", "请先选择要刷新的特征视图。")
         return
     
-    logger.info(f"Requesting refresh of {len(selected)} selected features...")
+    logger.info(f"Requesting incremental refresh of {len(selected)} selected features...")
     
     status_label = widgets.get("feature_status_label")
     if status_label:
-        status_label.config(text=f"正在刷新 {len(selected)} 个特征视图...")
+        status_label.config(text=f"正在增量刷新 {len(selected)} 个特征视图...")
     
     controller.request_refresh_features(selected)
+
+
+def handle_full_refresh_selected_features(widgets: Dict[str, tk.Widget]):
+    """处理全量刷新选中视图按钮点击"""
+    selected = get_selected_features()
+    if not selected:
+        messagebox.showwarning("提示", "请先选择要刷新的特征视图。")
+        return
+    
+    # 确认操作（全量刷新可能耗时较长）
+    result = messagebox.askyesno(
+        "确认全量刷新", 
+        f"将对 {len(selected)} 个特征视图执行全量刷新，可能需要较长时间。\n\n是否继续？"
+    )
+    if not result:
+        return
+    
+    logger.info(f"Requesting full refresh of {len(selected)} selected features...")
+    
+    status_label = widgets.get("feature_status_label")
+    if status_label:
+        status_label.config(text=f"正在全量刷新 {len(selected)} 个特征视图...")
+    
+    # 使用 strategy="full" 参数
+    controller.request_refresh_features(selected, strategy="full")
 
 
 def handle_create_missing_features(widgets: Dict[str, tk.Widget]):
@@ -188,21 +228,105 @@ def _toggle_feature_selection(feature_name: str, widgets: Dict[str, tk.Widget]):
             feature["selected"] = not feature.get("selected", False)
             logger.debug(f"Toggled selection for feature: {feature_name} -> {feature['selected']}")
             break
-    _apply_category_filter(widgets)
+    _apply_filters(widgets)
 
 
-def _apply_category_filter(ui_elements: Dict[str, tk.Widget]):
-    """应用分类过滤并更新显示"""
-    global _filtered_feature_list, _current_category
+def _apply_filters(ui_elements: Dict[str, tk.Widget]):
+    """应用所有筛选条件并更新显示"""
+    global _filtered_feature_list, _current_category, _current_storage_type
     
+    # 应用分类筛选
     if _current_category == "全部":
-        _filtered_feature_list = _full_feature_list
+        _filtered_feature_list = list(_full_feature_list)
     else:
         _filtered_feature_list = [
             f for f in _full_feature_list 
             if f.get("category", "").lower() == _current_category.lower()
         ]
     
+    # 应用存储类型筛选
+    if _current_storage_type != "全部":
+        _filtered_feature_list = [
+            f for f in _filtered_feature_list
+            if f.get("storage_type", "") == _current_storage_type
+        ]
+    
+    # 应用排序
+    _apply_sort()
+    _update_feature_display(ui_elements)
+
+
+def _apply_sort():
+    """对已过滤的列表应用排序"""
+    global _filtered_feature_list, _sort_column, _sort_reverse
+    
+    if not _sort_column:
+        return
+    
+    # 列名到数据字段的映射
+    column_map = {
+        "name": "name",
+        "description": "description",
+        "category": "category",
+        "storage_type": "storage_type",
+        "status": "status",
+        "row_count": "row_count",
+        "last_refresh": "last_refresh",
+    }
+    
+    field = column_map.get(_sort_column)
+    if not field:
+        return
+    
+    def sort_key(item):
+        val = item.get(field, "")
+        # 特殊处理行数（数字排序）
+        if field == "row_count":
+            try:
+                return int(val) if val not in ("N/A", "") else -1
+            except (ValueError, TypeError):
+                return -1
+        # 字符串排序
+        return str(val).lower() if val else ""
+    
+    _filtered_feature_list.sort(key=sort_key, reverse=_sort_reverse)
+
+
+def handle_column_sort(column: str, ui_elements: Dict[str, tk.Widget]):
+    """处理列头点击排序"""
+    global _sort_column, _sort_reverse
+    
+    if _sort_column == column:
+        # 同一列，切换排序方向
+        _sort_reverse = not _sort_reverse
+    else:
+        # 新列，默认升序
+        _sort_column = column
+        _sort_reverse = False
+    
+    logger.debug(f"排序列: {_sort_column}, 降序: {_sort_reverse}")
+    
+    # 更新列头显示排序箭头
+    tree = ui_elements.get("feature_tree")
+    if tree and isinstance(tree, ttk.Treeview):
+        # 重置所有列头
+        column_texts = {
+            "selected": "选择",
+            "name": "特征名称",
+            "description": "描述",
+            "category": "分类",
+            "status": "状态",
+            "row_count": "行数",
+            "last_refresh": "最后刷新",
+        }
+        for col, text in column_texts.items():
+            if col == _sort_column:
+                arrow = " ↓" if _sort_reverse else " ↑"
+                tree.heading(col, text=text + arrow)
+            else:
+                tree.heading(col, text=text)
+    
+    _apply_sort()
     _update_feature_display(ui_elements)
 
 
@@ -236,6 +360,7 @@ def _update_feature_display(ui_elements: Dict[str, tk.Widget]):
                 feature.get("name", "N/A"),
                 feature.get("description", "N/A"),
                 feature.get("category", "N/A"),
+                feature.get("storage_type", "N/A"),
                 status,
                 feature.get("row_count", "N/A"),
                 feature.get("last_refresh", "N/A"),

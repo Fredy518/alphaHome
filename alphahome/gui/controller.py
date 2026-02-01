@@ -201,14 +201,15 @@ async def handle_get_features():
     await feature_service.handle_get_features()
 
 
-async def handle_refresh_features(feature_names: List[str]):
+async def handle_refresh_features(feature_names: List[str], strategy: str = "default"):
     """
     处理刷新指定特征视图的请求
     
     Args:
         feature_names: 要刷新的特征名称列表
+        strategy: 刷新策略 ("default", "full", "incremental")
     """
-    await feature_service.handle_refresh_features(feature_names)
+    await feature_service.handle_refresh_features(feature_names, strategy=strategy)
 
 
 async def handle_create_features(feature_names: List[str]):
@@ -293,8 +294,9 @@ async def handle_request(command: str, data: Optional[Dict[str, Any]] = None):
         
         elif command == "REFRESH_FEATURES":
             feature_names = data.get("feature_names", [])
+            strategy = data.get("strategy", "default")
             if feature_names:
-                await handle_refresh_features(feature_names)
+                await handle_refresh_features(feature_names, strategy=strategy)
         
         elif command == "CREATE_FEATURES":
             feature_names = data.get("feature_names", [])
@@ -340,14 +342,18 @@ def request_feature_list():
     asyncio.create_task(handle_request("GET_FEATURES"))
 
 
-def request_refresh_features(feature_names: List[str]):
+def request_refresh_features(feature_names: List[str], strategy: str = "default"):
     """
     请求刷新指定特征视图
     
     Args:
         feature_names: 要刷新的特征名称列表
+        strategy: 刷新策略 ("default", "full", "incremental")
     """
-    asyncio.create_task(handle_request("REFRESH_FEATURES", {"feature_names": feature_names}))
+    asyncio.create_task(handle_request("REFRESH_FEATURES", {
+        "feature_names": feature_names,
+        "strategy": strategy
+    }))
 
 
 def request_create_features(feature_names: List[str]):

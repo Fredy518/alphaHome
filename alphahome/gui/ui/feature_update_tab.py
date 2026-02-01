@@ -46,10 +46,18 @@ def create_feature_update_tab(parent: ttk.Frame) -> Dict[str, tk.Widget]:
     # --- 刷新操作按钮 ---
     refresh_selected_button = ui_factory.create_button(
         top_frame,
-        text="刷新选中视图",
+        text="增量刷新选中",
     )
     refresh_selected_button.pack(side=tk.LEFT, padx=(20, 5))
     widgets["feature_refresh_selected_button"] = refresh_selected_button
+
+    # 添加全量刷新按钮
+    full_refresh_button = ui_factory.create_button(
+        top_frame,
+        text="全量刷新选中",
+    )
+    full_refresh_button.pack(side=tk.LEFT, padx=(0, 5))
+    widgets["feature_full_refresh_button"] = full_refresh_button
 
     create_missing_button = ui_factory.create_button(
         top_frame,
@@ -74,12 +82,28 @@ def create_feature_update_tab(parent: ttk.Frame) -> Dict[str, tk.Widget]:
     widgets["feature_category_var"] = category_var
     widgets["feature_category_combobox"] = category_combobox
 
+    # --- 存储类型筛选下拉框 ---
+    storage_type_label = ui_factory.create_label(top_frame, text="存储类型:")
+    storage_type_label.pack(side=tk.LEFT, padx=(10, 5))
+
+    storage_type_var = tk.StringVar(value="全部")
+    storage_type_combobox = ttk.Combobox(
+        top_frame,
+        textvariable=storage_type_var,
+        values=["全部", "物化视图", "数据表"],
+        state="readonly",
+        width=10
+    )
+    storage_type_combobox.pack(side=tk.LEFT, padx=(0, 5))
+    widgets["feature_storage_type_var"] = storage_type_var
+    widgets["feature_storage_type_combobox"] = storage_type_combobox
+
     # --- Treeview (表格) 框架 ---
     tree_frame = ui_factory.create_frame(parent)
     tree_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
 
     # 使用DPI感知的Treeview，确保表头样式与其他页面一致
-    columns = ("selected", "name", "description", "category", "status", "row_count", "last_refresh")
+    columns = ("selected", "name", "description", "category", "storage_type", "status", "row_count", "last_refresh")
     tree = ui_factory.create_treeview(
         tree_frame, columns=columns, show="headings"
     )
@@ -88,18 +112,26 @@ def create_feature_update_tab(parent: ttk.Frame) -> Dict[str, tk.Widget]:
     tree.heading("name", text="特征名称")
     tree.heading("description", text="描述")
     tree.heading("category", text="分类")
+    tree.heading("storage_type", text="存储类型")
     tree.heading("status", text="状态")
     tree.heading("row_count", text="行数")
     tree.heading("last_refresh", text="最后刷新")
 
-    # 设置列宽
-    tree.column("selected", width=60, anchor=tk.CENTER, stretch=False)
-    tree.column("name", width=200, stretch=False)
-    tree.column("description", width=300, stretch=True)
-    tree.column("category", width=100, anchor=tk.CENTER, stretch=False)
-    tree.column("status", width=80, anchor=tk.CENTER, stretch=False)
-    tree.column("row_count", width=80, anchor=tk.E, stretch=False)
-    tree.column("last_refresh", width=150, anchor=tk.CENTER, stretch=False)
+    # 设置列宽 - minwidth 用于限制最小宽度，stretch 控制自动拉伸
+    # 经验法则：
+    # - 短字段（分类/状态/行数/时间）固定宽度，避免占用过多空间
+    # - 描述列可伸缩，填充剩余空间，提升可读性
+    tree.column("selected", width=56, minwidth=44, anchor=tk.CENTER, stretch=False)
+    tree.column("name", width=240, minwidth=160, stretch=False)
+    # 描述列作为弹性列：其他列扩宽后，描述会自动收缩以避免必须手动拖拽腾空间
+    tree.column("description", width=520, minwidth=200, stretch=True)
+    # 用户反馈：分类/存储类型/状态/行数需要更宽（约 *1.5）
+    tree.column("category", width=135, minwidth=100, anchor=tk.CENTER, stretch=False)
+    tree.column("storage_type", width=135, minwidth=100, anchor=tk.CENTER, stretch=False)
+    tree.column("status", width=120, minwidth=90, anchor=tk.CENTER, stretch=False)
+    tree.column("row_count", width=135, minwidth=100, anchor=tk.E, stretch=False)
+    # 用户反馈：最后刷新需要更宽（约 *2）
+    tree.column("last_refresh", width=340, minwidth=280, anchor=tk.CENTER, stretch=False)
 
     vsb = ttk.Scrollbar(tree_frame, orient="vertical", command=tree.yview)
     hsb = ttk.Scrollbar(tree_frame, orient="horizontal", command=tree.xview)
