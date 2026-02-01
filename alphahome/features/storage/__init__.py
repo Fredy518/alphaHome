@@ -9,6 +9,8 @@ from .refresh import MaterializedViewRefresh
 from .validator import MaterializedViewValidator
 from .database_init import FeaturesDatabaseInit
 from .base_view import BaseFeatureView
+from .python_feature import PythonFeatureTable
+from .incremental_view import IncrementalFeatureView, IncrementalTableView
 
 __all__ = [
     "MaterializedViewSQL",
@@ -16,4 +18,7 @@ __all__ = [
     "MaterializedViewValidator",
     "FeaturesDatabaseInit",
     "BaseFeatureView",
+    "PythonFeatureTable",
+    "IncrementalFeatureView",
+    "IncrementalTableView",
 ]

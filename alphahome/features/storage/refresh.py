@@ -18,6 +18,8 @@ from datetime import datetime
 import logging
 import re
 
+from .refresh_log import log_mv_refresh
+
 logger = logging.getLogger(__name__)
 
 
@@ -272,45 +274,23 @@ class MaterializedViewRefresh:
         triggered_by: str,
         refresh_strategy: str,
     ) -> None:
-        """
-        将刷新结果写入 features.mv_refresh_log
-        """
+        """将刷新结果写入 features.mv_refresh_log。"""
         if not self._db_manager:
             return
 
-        # 与 features.storage.database_init 中 CREATE_MV_REFRESH_LOG_TABLE_SQL 保持一致
-        sql = """
-        INSERT INTO features.mv_refresh_log (
-            view_name,
-            schema_name,
-            refresh_strategy,
-            started_at,
-            finished_at,
-            duration_seconds,
-            success,
-            error_message,
-            row_count
-        ) VALUES (
-            $1, $2, $3, $4, $5, $6, $7, $8, $9
-        );
-        """.strip()
-
-        try:
-            await self._execute(
-                sql,
-                view_name,
-                schema,
-                refresh_strategy,
-                started_at,
-                completed_at,
-                duration_seconds,
-                success,
-                error_message,
-                row_count,
-            )
-        except Exception as e:
-            # 日志写入失败不应阻断主流程
-            self.logger.warning(f"Failed to log refresh to features.mv_refresh_log: {e}")
+        # log_mv_refresh 内部保证日志失败不阻断主流程
+        await log_mv_refresh(
+            self._db_manager,
+            view_name=view_name,
+            schema_name=schema,
+            refresh_strategy=refresh_strategy,
+            started_at=started_at,
+            finished_at=completed_at,
+            success=success,
+            duration_seconds=duration_seconds,
+            row_count=row_count,
+            error_message=error_message,
+        )
 
     async def _check_matview_exists(
         self,
@@ -318,15 +298,15 @@ class MaterializedViewRefresh:
         schema: str
     ) -> bool:
         """
-        检查物化视图是否存在
+        检查物化视图或表是否存在（兼容IncrementalTableView）
         """
         try:
+            # 同时检查物化视图和普通表
             query = """
             SELECT EXISTS (
-                SELECT 1
-                FROM pg_matviews
-                WHERE schemaname = $1
-                  AND matviewname = $2
+                SELECT 1 FROM pg_matviews WHERE schemaname = $1 AND matviewname = $2
+                UNION
+                SELECT 1 FROM information_schema.tables WHERE table_schema = $1 AND table_name = $2
             );
             """
             val = await self._fetch_val(query, schema, view_name)
@@ -334,9 +314,27 @@ class MaterializedViewRefresh:
 
         except Exception as e:
             self.logger.warning(
-                f"Failed to check if view {schema}.{view_name} exists: {e}"
+                f"Failed to check if view/table {schema}.{view_name} exists: {e}"
             )
             return False
+
+    async def _is_materialized_view(self, view_name: str, schema: str) -> bool:
+        """
+        判断指定对象是否为物化视图（pg_matviews）。
+
+        注意：
+        - 对于 IncrementalTableView（CREATE TABLE），应返回 False。
+        - 该方法用于决定走 REFRESH MATERIALIZED VIEW 还是拒绝（表刷新应由 recipe.refresh 处理）。
+        """
+        query = """
+        SELECT EXISTS (
+            SELECT 1
+            FROM pg_matviews
+            WHERE schemaname = $1 AND matviewname = $2
+        ) AS is_matview;
+        """
+        val = await self._fetch_val(query, schema, view_name)
+        return bool(val)
     
     async def _execute_refresh(
         self,
@@ -345,32 +343,45 @@ class MaterializedViewRefresh:
         strategy: str
     ) -> None:
         """
-        执行 REFRESH MATERIALIZED VIEW 命令
+        执行刷新命令（根据表类型选择REFRESH MATERIALIZED VIEW或全量重建）
         """
         full_name = f"{schema}.{view_name}"
         
-        if strategy == 'concurrent':
-            # CONCURRENT 刷新不阻塞查询
-            query = f"REFRESH MATERIALIZED VIEW CONCURRENTLY {full_name}"
-        else:
-            # FULL 刷新会阻塞查询
-            query = f"REFRESH MATERIALIZED VIEW {full_name}"
+        # 检查是否为物化视图
+        is_matview = await self._is_materialized_view(view_name, schema)
         
-        self.logger.debug(f"Executing: {query}")
-
-        try:
-            await self._execute(query)
-        except Exception as e:
-            # 如果 CONCURRENT 刷新失败（例如没有唯一索引），回退到 FULL 刷新
+        if is_matview:
+            # 物化视图：使用REFRESH MATERIALIZED VIEW
             if strategy == 'concurrent':
-                self.logger.warning(
-                    f"CONCURRENT refresh failed for {full_name}, "
-                    f"falling back to FULL refresh: {e}"
-                )
-                query = f"REFRESH MATERIALIZED VIEW {full_name}"
-                await self._execute(query)
+                # CONCURRENT 刷新不阻塞查询
+                query = f"REFRESH MATERIALIZED VIEW CONCURRENTLY {full_name}"
             else:
-                raise
+                # FULL 刷新会阻塞查询
+                query = f"REFRESH MATERIALIZED VIEW {full_name}"
+            
+            self.logger.debug(f"Executing: {query}")
+
+            try:
+                await self._execute(query)
+            except Exception as e:
+                # 如果 CONCURRENT 刷新失败（例如没有唯一索引），回退到 FULL 刷新
+                if strategy == 'concurrent':
+                    self.logger.warning(
+                        f"CONCURRENT refresh failed for {full_name}, "
+                        f"falling back to FULL refresh: {e}"
+                    )
+                    query = f"REFRESH MATERIALIZED VIEW {full_name}"
+                    await self._execute(query)
+                else:
+                    raise
+        else:
+            # 普通表（IncrementalTableView）：不能使用REFRESH命令
+            # 这里应该由recipe的refresh方法处理，不应该走到这个路径
+            # 如果走到这里，说明调用方式有问题
+            raise NotImplementedError(
+                f"{full_name} is a regular table, not a materialized view. "
+                f"Please use the recipe class's refresh() method instead of MaterializedViewRefresh.refresh()"
+            )
     
     async def _get_row_count(
         self,

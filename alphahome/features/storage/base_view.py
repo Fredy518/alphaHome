@@ -33,6 +33,7 @@ class BaseFeatureView(ABC):
     # 物化视图实际表名默认使用 mv_{name}（见 docs/architecture/features_module_design.md 3.2.1）。
     name: str = ""
     description: str = ""  # 视图描述
+    storage_type: str = "物化视图"  # 显式存储类型（GUI 直接使用）
     # 可选：显式覆盖物化视图实际名称（不含 schema）。默认使用 mv_{name}
     materialized_view_name: str = ""
     refresh_strategy: str = "full"  # 刷新策略: full / concurrent
@@ -244,6 +245,10 @@ class BaseFeatureView(ABC):
         """
         if self._db_manager is None:
             raise RuntimeError("db_manager 未设置")
+
+        # GUI 层使用 "default" 表示“使用配方默认策略”
+        if strategy == "default":
+            strategy = None
 
         actual_strategy = strategy or self.refresh_strategy
         refresher = self._ensure_refresher()
