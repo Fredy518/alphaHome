@@ -34,8 +34,7 @@ class StockCashflowQuarterlyMV(BaseFeatureView):
                 c_paid_invest,          -- 投资支付的现金
                 n_cashflow_inv_act,     -- 投资活动现金流量净额
                 -- 筹资活动现金流
-                c_fr_borr,              -- 取得借款收到的现金
-                c_recp_borrow,          -- 收到其他筹资活动相关的现金
+                c_recp_borrow,          -- 取得借款收到的现金
                 n_cash_flows_fnc_act,   -- 筹资活动现金流量净额
                 -- 现金净增加额
                 n_incr_cash_cash_equ,   -- 现金及现金等价物净增加额
@@ -67,7 +66,6 @@ class StockCashflowQuarterlyMV(BaseFeatureView):
             c_pay_acq_const_fiolta,
             c_paid_invest,
             n_cashflow_inv_act,
-            c_fr_borr,
             c_recp_borrow,
             n_cash_flows_fnc_act,
             n_incr_cash_cash_equ,
