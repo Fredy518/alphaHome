@@ -349,6 +349,23 @@ class TestSourceTablePatterns:
         assert "total_margin_balance_billion" in sql_lower
         assert "total_short_balance_billion" in sql_lower
 
+    def test_market_sentiment_incremental_sql_matches_schema(self):
+        """market_sentiment_daily: 增量 SQL 必须包含与表一致的字段（避免 INSERT 列错位）。"""
+        from alphahome.features.recipes.mv import MarketSentimentDailyMV
+
+        mv = MarketSentimentDailyMV(schema="features")
+        inc_sql = mv.get_incremental_sql("20260101", "20260131").lower()
+
+        assert "limit_up_down_ratio_non_st" in inc_sql
+        assert "limit_up_down_ratio_non_st_smooth" in inc_sql
+
+        # 关键顺序：broken_limit_ratio 应在 broken_limit_count_non_st 之前
+        ratio_pat = "l.broken_limit_count::float / nullif(l.limit_up_count, 0) as broken_limit_ratio"
+        cnt_pat = "coalesce(l.broken_limit_count_non_st, 0) as broken_limit_count_non_st"
+        assert ratio_pat in inc_sql
+        assert cnt_pat in inc_sql
+        assert inc_sql.index(ratio_pat) < inc_sql.index(cnt_pat)
+
     def test_limit_industry_daily_avoids_month_end_snapshot_leakage(self):
         """limit_industry_daily: 行业映射应使用 index_swmember in_date/out_date as-of，而非当月月末快照。"""
         from alphahome.features.recipes.mv import LimitIndustryDailyMV

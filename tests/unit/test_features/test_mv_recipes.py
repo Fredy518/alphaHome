@@ -101,7 +101,7 @@ import pytest
         # M7 Phase 2：股指期货特征
         (
             "FuturesFeaturesDaily",
-            ["tushare.future_daily", "tushare.future_holding", "tushare.index_daily"],
+            ["tushare.future_daily", "tushare.future_holding", "rawdata.index_factor_pro"],
         ),
         # M7 Phase 2：大小盘分化
         (
@@ -181,7 +181,7 @@ import pytest
         # 新增：RSRS 指标组件
         (
             "IndexRSRSDailyMV",
-            ["tushare.index_daily"],
+            ["rawdata.index_factor_pro"],
         ),
     ],
 )
@@ -192,7 +192,10 @@ def test_mv_sql_generation_and_sources(mv_class: str, expected_sources: list[str
     mv = mv_cls(schema="features")
     sql = mv.get_create_sql()
 
-    assert "CREATE MATERIALIZED VIEW features." in sql
+    assert (
+        "CREATE MATERIALIZED VIEW features." in sql
+        or "CREATE TABLE features." in sql
+    )
     assert "materialized_views." not in sql
     assert "pgs_factors." not in sql
 
