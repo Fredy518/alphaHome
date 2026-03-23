@@ -275,95 +275,117 @@ async def _update_features_with_db_status(feature_cache: List[Dict[str, Any]]):
         return
 
     logger.info(f"开始更新 {len(feature_cache)} 个特征的数据库状态...")
+    # 性能优化：将“逐个特征、多次SQL往返”的模式改为“批量查询”
+    # 主要收益：
+    # - 避免对每个特征执行 COUNT(*)（大表会非常慢）
+    # - 将 37×(exists + count + refresh_log) 次往返压缩为 2 次查询
+    try:
+        identifier_re = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
-    async def update_single_feature(feature: Dict[str, Any]):
-        """更新单个特征的状态"""
-        try:
+        # 1) 收集 schema / view_name（仍通过实例化保证与命名逻辑一致）
+        feature_key_to_item: Dict[str, Dict[str, Any]] = {}
+        view_names: List[str] = []
+        schema = "features"  # Phase1 强约束：当前系统仅允许 features
+
+        for feature in feature_cache:
             recipe_cls = feature.get("recipe_class")
             if not recipe_cls:
                 feature["status"] = "错误"
-                return
-            
-            # 创建临时实例获取视图名
+                feature["row_count"] = "N/A"
+                feature["last_refresh"] = "N/A"
+                continue
+
             instance = recipe_cls(db_manager=db_manager)
             view_name = instance.view_name
-            schema = instance.schema
+            schema = instance.schema or schema
 
-            # Guardrail: schema/view_name 会拼接进 SQL 标识符，必须严格校验
-            # (值来自代码配方类，理论可控，但这里仍做硬化以避免意外/注入风险)
-            identifier_re = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
             if not identifier_re.fullmatch(schema or ""):
                 raise ValueError(f"Invalid schema identifier: {schema!r}")
             if not identifier_re.fullmatch(view_name or ""):
                 raise ValueError(f"Invalid view_name identifier: {view_name!r}")
-            
-            # 检查物化视图或普通表是否存在
-            exists_sql = """
-            SELECT EXISTS (
-                SELECT 1 FROM pg_matviews
-                WHERE schemaname = $1
-                  AND matviewname = $2
-                UNION ALL
-                SELECT 1 FROM information_schema.tables
-                WHERE table_schema = $1
-                  AND table_name = $2
-                  AND table_type = 'BASE TABLE'
-            ) AS exists;
-            """.strip()
-            result = await db_manager.fetch(exists_sql, schema, view_name)
-            exists = result and result[0]["exists"]
-            
-            if exists:
-                feature["status"] = "已创建"
-                
-                # 获取行数
-                try:
-                    count_sql = f"SELECT COUNT(*) AS cnt FROM {schema}.{view_name};"
-                    count_result = await db_manager.fetch(count_sql)
-                    feature["row_count"] = count_result[0]["cnt"] if count_result else 0
-                except Exception:
-                    feature["row_count"] = "N/A"
-                
-                # 尝试从刷新日志获取最后刷新时间
-                try:
-                    refresh_log_sql = """
-                    SELECT finished_at AT TIME ZONE 'Asia/Shanghai' AS finished_at
-                    FROM features.mv_refresh_log
-                    WHERE schema_name = $1 AND view_name = $2 AND success = TRUE
-                    ORDER BY finished_at DESC
-                    LIMIT 1;
-                    """.strip()
-                    log_result = await db_manager.fetch(refresh_log_sql, schema, view_name)
-                    
-                    last_refresh = None
-                    if log_result and len(log_result) > 0:
-                        try:
-                            last_refresh = log_result[0]["finished_at"]
-                        except Exception:
-                            last_refresh = None
 
-                    if last_refresh:
-                        if isinstance(last_refresh, datetime):
-                            # 使用北京时间24小时格式
-                            feature["last_refresh"] = last_refresh.strftime("%Y-%m-%d %H:%M:%S")
-                        else:
-                            feature["last_refresh"] = str(last_refresh)[:19]
-                    else:
-                        feature["last_refresh"] = "N/A"
-                except Exception as e:
-                    logger.error(f"查询刷新日志失败 for {view_name}: {e}")
-                    feature["last_refresh"] = "N/A"
-            else:
+            view_names.append(view_name)
+            feature_key_to_item[view_name] = feature
+
+        if not view_names:
+            logger.info("特征缓存为空，跳过数据库状态更新。")
+            return
+
+        # 2) 批量检查对象是否存在（物化视图 或 普通表）
+        # 注意：这里不拼接标识符到 SQL，而是通过 join 系统表来判断是否存在
+        exists_sql = """
+        WITH names AS (
+            SELECT unnest($1::text[]) AS obj_name
+        )
+        SELECT
+            n.obj_name AS view_name,
+            (m.matviewname IS NOT NULL OR t.table_name IS NOT NULL) AS exists
+        FROM names n
+        LEFT JOIN pg_matviews m
+            ON m.schemaname = $2 AND m.matviewname = n.obj_name
+        LEFT JOIN information_schema.tables t
+            ON t.table_schema = $2
+           AND t.table_name = n.obj_name
+           AND t.table_type = 'BASE TABLE';
+        """.strip()
+        exists_rows = await db_manager.fetch(exists_sql, view_names, schema, timeout=10)
+        exists_map = {r["view_name"]: bool(r["exists"]) for r in (exists_rows or [])}
+
+        # 3) 批量获取最后一次成功刷新记录（包含 row_count）
+        refresh_log_sql = """
+        SELECT DISTINCT ON (view_name)
+            view_name,
+            finished_at AT TIME ZONE 'Asia/Shanghai' AS finished_at,
+            row_count
+        FROM features.mv_refresh_log
+        WHERE schema_name = $1
+          AND view_name = ANY($2::text[])
+          AND success = TRUE
+        ORDER BY view_name, finished_at DESC;
+        """.strip()
+        log_rows = await db_manager.fetch(refresh_log_sql, schema, view_names, timeout=10)
+        log_map = {r["view_name"]: r for r in (log_rows or [])}
+
+        # 4) 回填到缓存
+        for view_name in view_names:
+            feature = feature_key_to_item.get(view_name)
+            if not feature:
+                continue
+
+            exists = exists_map.get(view_name, False)
+            if not exists:
                 feature["status"] = "未创建"
                 feature["row_count"] = 0
                 feature["last_refresh"] = "N/A"
-                
-        except Exception as e:
-            logger.error(f"更新特征 '{feature.get('name')}' 状态时发生错误: {e}")
-            feature["status"] = "错误"
+                continue
 
-    # 并发更新所有特征状态
-    tasks = [update_single_feature(feature) for feature in feature_cache]
-    await asyncio.gather(*tasks)
+            feature["status"] = "已创建"
+
+            log_row = log_map.get(view_name)
+            if log_row:
+                # row_count 来自刷新日志（避免 COUNT(*) 的高开销）
+                try:
+                    feature["row_count"] = int(log_row.get("row_count") or 0)
+                except Exception:
+                    feature["row_count"] = "N/A"
+
+                last_refresh = log_row.get("finished_at")
+                if isinstance(last_refresh, datetime):
+                    feature["last_refresh"] = last_refresh.strftime("%Y-%m-%d %H:%M:%S")
+                elif last_refresh:
+                    feature["last_refresh"] = str(last_refresh)[:19]
+                else:
+                    feature["last_refresh"] = "N/A"
+            else:
+                feature["row_count"] = "N/A"
+                feature["last_refresh"] = "N/A"
+
+    except Exception as e:
+        logger.error(f"批量更新特征状态失败: {e}", exc_info=True)
+        for feature in feature_cache:
+            if feature.get("status") in ("未知", None):
+                feature["status"] = "错误"
+            feature.setdefault("row_count", "N/A")
+            feature.setdefault("last_refresh", "N/A")
 
     logger.info("特征状态更新完成。")

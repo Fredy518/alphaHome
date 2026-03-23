@@ -1,0 +1,155 @@
+================================================================================
+T2: FUND PURCHASE LIMIT SNAPSHOT SCHEMA DESIGN
+Date: 2026-03-23
+Task: Design snapshot schema and key/index strategy for historical daily snapshots
+================================================================================
+
+## 1. TABLE DEFINITION
+
+Table Name: fund_purchase_limit
+Purpose: Store daily snapshots of fund purchase limits and status
+Update Pattern: Idempotent daily snapshots (same-day reruns replace via upsert)
+
+================================================================================
+
+## 2. SCHEMA DEFINITION
+
+schema_def = {
+    "fund_code": {
+        "type": "VARCHAR(20)",
+        "constraints": "NOT NULL",
+        "description": "Fund code from data source (基金代码)"
+    },
+    "ts_code": {
+        "type": "VARCHAR(15)",
+        "constraints": "",
+        "description": "Tushare fund code (ts_code), mapped from fund_code if available"
+    },
+    "fund_name": {
+        "type": "VARCHAR(100)",
+        "constraints": "",
+        "description": "Fund name (基金简称)"
+    },
+    "purchase_status": {
+        "type": "VARCHAR(50)",
+        "constraints": "",
+        "description": "Purchase status (申购状态) - e.g., '开放申购', '暂停申购', '不开放申购'"
+    },
+    "daily_limit_amount": {
+        "type": "NUMERIC(18,2)",
+        "constraints": "",
+        "description": "Daily cumulative limit amount in CNY (日累计限定金额). NULL means unlimited."
+    },
+    "snapshot_date": {
+        "type": "DATE",
+        "constraints": "NOT NULL",
+        "description": "The date of this snapshot"
+    },
+    # update_time is auto-managed by AkShareTask base class
+}
+
+================================================================================
+
+## 3. PRIMARY KEYS STRATEGY
+
+primary_keys = ["fund_code", "snapshot_date"]
+
+Rationale:
+- Ensures one record per fund per day
+- Enables idempotent same-day reruns via upsert (delete & insert, or ON CONFLICT)
+- Supports historical trend analysis by fund over time
+- Matches pattern from akshare_fund_cf_em (fund_code + date-based composite key)
+
+Behavior on same-day rerun:
+- Old record with (fund_code, snapshot_date) is deleted first
+- New data for that (fund_code, snapshot_date) is inserted
+- No duplicates created; exactly one record per fund per day
+
+================================================================================
+
+## 4. INDEX STRATEGY
+
+indexes = [
+    {"name": "idx_fund_purchase_limit_fund_code", "columns": "fund_code"},
+    {"name": "idx_fund_purchase_limit_snapshot_date", "columns": "snapshot_date"},
+    {"name": "idx_fund_purchase_limit_update_time", "columns": "update_time"},
+]
+
+Index Usage:
+
+1. idx_fund_purchase_limit_fund_code
+   - Supports: Query history by fund code
+   - Query pattern: "SELECT * FROM fund_purchase_limit WHERE fund_code = '...' ORDER BY snapshot_date"
+   - Use case: Retrieve purchase status evolution for a single fund
+
+2. idx_fund_purchase_limit_snapshot_date
+   - Supports: Query snapshot by date
+   - Query pattern: "SELECT * FROM fund_purchase_limit WHERE snapshot_date = '2026-03-23'"
+   - Use case: Retrieve all funds' status on a specific date
+
+3. idx_fund_purchase_limit_update_time
+   - Supports: Incremental sync and deletion tracking
+   - Query pattern: "SELECT * FROM fund_purchase_limit WHERE update_time > '2026-03-22 12:00:00'"
+   - Use case: Incremental update for downstream systems (CDC, cache refresh)
+
+Composite Index (Not created initially, but recommended for future):
+- (fund_code, snapshot_date) - implicit from primary key
+- (snapshot_date, fund_code) - if range queries on date then filter by fund
+
+================================================================================
+
+## 5. SAME-DAY RERUN BEHAVIOR (IDEMPOTENT)
+
+Scenario: Task runs at 10:00 AM and populates fund_purchase_limit for snapshot_date='2026-03-23'
+          At 2:00 PM, task reruns for the same date.
+
+Implementation (via BaseTask upsert):
+1. Before insert: DELETE FROM fund_purchase_limit WHERE snapshot_date = '2026-03-23'
+2. Insert new data with snapshot_date='2026-03-23'
+3. Result: Exactly one snapshot per fund per date, no duplicates
+
+Alternative (using ON CONFLICT):
+   INSERT INTO fund_purchase_limit (...) VALUES (...)
+   ON CONFLICT (fund_code, snapshot_date) DO UPDATE SET
+       fund_name = EXCLUDED.fund_name,
+       purchase_status = EXCLUDED.purchase_status,
+       daily_limit_amount = EXCLUDED.daily_limit_amount,
+       update_time = EXCLUDED.update_time
+
+Both approaches are valid; task framework will use delete+insert by default.
+
+================================================================================
+
+## 6. DATA TYPE JUSTIFICATION
+
+- fund_code (VARCHAR(20)): Accommodates various fund code formats (12-15 chars typical)
+- ts_code (VARCHAR(15)): Standard Tushare code format (e.g., '110022.OF')
+- fund_name (VARCHAR(100)): Sufficient for Chinese fund names (up to 50 characters typical)
+- purchase_status (VARCHAR(50)): Enum-like field for status strings
+- daily_limit_amount (NUMERIC(18,2)): Financial amount with 2 decimal places, handles up to 999,999,999,999.99 CNY
+- snapshot_date (DATE): Date-only, no time component (daily snapshot)
+- update_time (TIMESTAMP): Auto-managed, tracks record modification time
+
+================================================================================
+
+## 7. DESIGN CONSTRAINTS ENFORCED
+
+✓ NOT a current-state-only table (snapshot_date enables historical tracking)
+✓ NO foreign keys (self-contained snapshot data)
+✓ NO derived columns (only raw source fields + snapshot_date)
+✓ NO analytics-oriented extensions (pure data capture)
+✓ Matches akshare_fund_cf_em pattern: composite primary key with date
+✓ Matches akshare_stock_limitup_reason pattern: date + code keys, index on date/code/update_time
+
+================================================================================
+
+## 8. MIGRATION/IMPLEMENTATION NOTES
+
+1. Create table with primary key (fund_code, snapshot_date)
+2. Create 3 indexes as specified
+3. Update_time column added automatically by BaseTask
+4. Set table schema = 'akshare' (data source)
+5. Task should implement daily run via scheduler or manual trigger
+6. Reconciliation: Query by snapshot_date to verify all funds captured on a given day
+
+================================================================================

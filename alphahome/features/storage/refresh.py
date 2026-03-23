@@ -41,13 +41,28 @@ class MaterializedViewRefresh:
     # Phase1 强制迁移：仅允许 features schema
     DEFAULT_SCHEMA = "features"
 
-    def __init__(self, db_manager=None, schema: str = "features", logger=None):
+    # REFRESH MATERIALIZED VIEW 往往是长耗时操作（大表/复杂查询）。
+    # 连接池默认 command_timeout=180s（见 db_manager_core.py），这里需要单独放宽以避免误杀。
+    DEFAULT_MV_REFRESH_TIMEOUT_SECONDS = 7200  # 2 小时
+    # COUNT(*) 仅用于日志；避免在超大 MV 上阻塞过久
+    DEFAULT_MV_ROWCOUNT_TIMEOUT_SECONDS = 60  # 1 分钟
+
+    def __init__(
+        self,
+        db_manager=None,
+        schema: str = "features",
+        logger=None,
+        refresh_timeout_seconds: Optional[float] = None,
+        row_count_timeout_seconds: Optional[float] = None,
+    ):
         """初始化刷新执行器。
 
         Args:
             db_manager: DBManager 异步实例（需支持 execute/fetch）
             schema: 物化视图所在 schema（Phase1 强制为 features）
             logger: 日志记录器
+            refresh_timeout_seconds: REFRESH MATERIALIZED VIEW 的超时（秒）。None 表示使用配置或默认值。
+            row_count_timeout_seconds: 获取行数 COUNT(*) 的超时（秒）。None 表示使用配置或默认值。
         """
         if schema != self.DEFAULT_SCHEMA:
             raise ValueError(
@@ -59,8 +74,49 @@ class MaterializedViewRefresh:
         self.logger = logger or logging.getLogger(__name__)
         self._refresh_status: Dict[str, Any] = {}
 
+        # 从配置加载超时（允许调用方显式覆盖）
+        cfg_refresh_timeout, cfg_rowcount_timeout = self._load_timeout_config()
+        self._refresh_timeout_seconds: Optional[float] = (
+            float(refresh_timeout_seconds)
+            if refresh_timeout_seconds is not None
+            else cfg_refresh_timeout
+        )
+        self._row_count_timeout_seconds: Optional[float] = (
+            float(row_count_timeout_seconds)
+            if row_count_timeout_seconds is not None
+            else cfg_rowcount_timeout
+        )
+
     def set_db_manager(self, db_manager) -> None:
         self._db_manager = db_manager
+
+    @classmethod
+    def _load_timeout_config(cls) -> tuple[Optional[float], Optional[float]]:
+        """
+        从用户配置读取 MV 刷新相关超时。
+
+        约定（config.json）：
+        - database.mv_refresh_timeout_seconds: REFRESH MATERIALIZED VIEW 的超时（秒）
+        - database.mv_row_count_timeout_seconds: COUNT(*) 的超时（秒）
+        """
+        try:
+            # 避免模块级导入导致潜在循环依赖；且 load_config 失败时直接回退默认值
+            from ...common.config_manager import load_config
+
+            cfg = load_config() or {}
+            db_cfg = cfg.get("database", {}) or {}
+            refresh_timeout = db_cfg.get(
+                "mv_refresh_timeout_seconds", cls.DEFAULT_MV_REFRESH_TIMEOUT_SECONDS
+            )
+            rowcount_timeout = db_cfg.get(
+                "mv_row_count_timeout_seconds",
+                cls.DEFAULT_MV_ROWCOUNT_TIMEOUT_SECONDS,
+            )
+            return float(refresh_timeout), float(rowcount_timeout)
+        except Exception:
+            return float(cls.DEFAULT_MV_REFRESH_TIMEOUT_SECONDS), float(
+                cls.DEFAULT_MV_ROWCOUNT_TIMEOUT_SECONDS
+            )
 
     @staticmethod
     def _validate_identifier(identifier: str, kind: str) -> None:
@@ -362,7 +418,7 @@ class MaterializedViewRefresh:
             self.logger.debug(f"Executing: {query}")
 
             try:
-                await self._execute(query)
+                await self._execute(query, timeout=self._refresh_timeout_seconds)
             except Exception as e:
                 # 如果 CONCURRENT 刷新失败（例如没有唯一索引），回退到 FULL 刷新
                 if strategy == 'concurrent':
@@ -371,7 +427,7 @@ class MaterializedViewRefresh:
                         f"falling back to FULL refresh: {e}"
                     )
                     query = f"REFRESH MATERIALIZED VIEW {full_name}"
-                    await self._execute(query)
+                    await self._execute(query, timeout=self._refresh_timeout_seconds)
                 else:
                     raise
         else:
@@ -394,7 +450,7 @@ class MaterializedViewRefresh:
         try:
             full_name = f"{schema}.{view_name}"
             query = f"SELECT COUNT(*) FROM {full_name}"
-            val = await self._fetch_val(query)
+            val = await self._fetch_val(query, timeout=self._row_count_timeout_seconds)
             return int(val or 0)
 
         except Exception as e:
@@ -403,26 +459,26 @@ class MaterializedViewRefresh:
             )
             return 0
 
-    async def _execute(self, query: str, *args) -> Any:
+    async def _execute(self, query: str, *args, **kwargs) -> Any:
         if not self._db_manager:
             raise RuntimeError("db_manager 未设置")
 
         try:
             if hasattr(self._db_manager, "execute"):
-                return await self._db_manager.execute(query, *args)
+                return await self._db_manager.execute(query, *args, **kwargs)
             raise RuntimeError("db_manager does not support async execute()")
         except Exception:
             self.logger.error(f"SQL execution failed: {query}", exc_info=True)
             raise
 
-    async def _fetch_val(self, query: str, *args) -> Any:
+    async def _fetch_val(self, query: str, *args, **kwargs) -> Any:
         if not self._db_manager:
             raise RuntimeError("db_manager 未设置")
 
         try:
             # DBManager v2: fetch 返回 list[dict]
             if hasattr(self._db_manager, "fetch"):
-                rows = await self._db_manager.fetch(query, *args)
+                rows = await self._db_manager.fetch(query, *args, **kwargs)
                 if not rows:
                     return None
                 row0 = rows[0]

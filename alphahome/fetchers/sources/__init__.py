@@ -9,6 +9,13 @@ from .akshare import (
     AkShareSingleBatchTask,
     AkShareDataTransformer,
 )
+from .tinysoft import (
+    TinySoftAPI,
+    TinySoftAPIError,
+    TinySoftAuthError,
+    TinySoftDependencyError,
+    TinySoftTask,
+)
 
 __all__ = [
     # AkShare
@@ -18,4 +25,10 @@ __all__ = [
     "AkShareTask",
     "AkShareSingleBatchTask",
     "AkShareDataTransformer",
+    # Tinysoft
+    "TinySoftAPI",
+    "TinySoftAPIError",
+    "TinySoftAuthError",
+    "TinySoftDependencyError",
+    "TinySoftTask",
 ]

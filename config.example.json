@@ -2,6 +2,8 @@
     "_comment": "请将本文件复制到你的用户配置目录（如 C:/Users/<你的用户名>/AppData/Local/YourAppNameOrAuthor/alphaHomeApp/config.json），并根据实际情况填写数据库和API信息。",
     "database": {
         "url": "postgresql://username:password@localhost:5432/alphadb",
+    "mv_refresh_timeout_seconds": 7200,
+    "mv_row_count_timeout_seconds": 60,
         "pool_config": {
             "_comment": "数据库连接池配置 - 用于优化批量数据操作性能",
             "min_size": 5,
@@ -24,6 +26,17 @@
         "ifind": {
             "base_url": "https://quantapi.51ifind.com/api/v1/",
             "refresh_token": "your_ifind_refresh_token_here"
+        },
+        "tinysoft": {
+            "_comment": "Tinysoft(pyTSL) 连接配置。可二选一：1) 填 user/password/host/port；2) 仅填 ini_path",
+            "user": "your_tinysoft_user",
+            "password": "your_tinysoft_password",
+            "host": "tsl.tinysoft.com.cn",
+            "port": 443,
+            "service": "",
+            "timeout_ms": 45000,
+            "request_interval": 0.2,
+            "ini_path": ""
         }
     },
     "dolphindb": {
@@ -55,6 +68,16 @@
         },
         "tushare_stock_basic": {
             "update_frequency": "daily"
+        },
+        "tinysoft_stock_minute": {
+            "cycle": "1分钟线",
+            "batch_days": 1,
+            "max_symbols": 1,
+            "ts_codes": [
+                "000001.SZ"
+            ],
+            "concurrent_limit": 2,
+            "query_timeout_ms": 45000
         }
     },
     "backtesting": {

@@ -10,7 +10,9 @@ from .tushare_fund_portfolio import TushareFundPortfolioTask
 from .tushare_fund_share import TushareFundShareTask
 from .tushare_fund_dividend import TushareFundDividendTask
 from .akshare_fund_cf_em import AkShareFundCfEmTask
+from .akshare_fund_purchase_em import AkShareFundPurchaseEmTask
 from .excel_fund_analysis_outlook import ExcelFundAnalysisOutlookTask
+from .tinysoft_fund_minute import TinySoftFundMinuteTask
 
 __all__ = [
     "TushareFundBasicTask",
@@ -25,5 +27,7 @@ __all__ = [
     "TushareFundManagerTask",
     "TushareFundDividendTask",
     "AkShareFundCfEmTask",
+    "AkShareFundPurchaseEmTask",
     "ExcelFundAnalysisOutlookTask",
+    "TinySoftFundMinuteTask",
 ]

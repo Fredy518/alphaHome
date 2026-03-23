@@ -2,7 +2,13 @@ import inspect
 import logging
 from typing import Any, Dict, List, Optional, Type
 
-from ..config_manager import get_database_url, get_task_config, get_tushare_token, reload_config as _reload_config
+from ..config_manager import (
+    get_database_url,
+    get_task_config,
+    get_tinysoft_config,
+    get_tushare_token,
+    reload_config as _reload_config,
+)
 from ..db_manager import DBManager
 from .base_task import BaseTask
 
@@ -254,6 +260,8 @@ class UnifiedTaskFactory:
         init_params = inspect.signature(task_class.__init__).parameters
         if "api_token" in init_params:
             constructor_kwargs["api_token"] = get_tushare_token()
+        if "tinysoft_config" in init_params and "tinysoft_config" not in constructor_kwargs:
+            constructor_kwargs["tinysoft_config"] = get_tinysoft_config()
 
         # 注入任务特定配置
         task_config = get_task_config(task_name)
@@ -295,6 +303,8 @@ class UnifiedTaskFactory:
             if "api_token" in init_params:
                 # 如果接受api_token，则传递它
                 constructor_kwargs["api_token"] = get_tushare_token()
+            if "tinysoft_config" in init_params:
+                constructor_kwargs["tinysoft_config"] = get_tinysoft_config()
             
             task_instance = task_class(cls._db_manager, **constructor_kwargs)
 

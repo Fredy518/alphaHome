@@ -128,6 +128,9 @@ class FetcherTask(BaseTask, ABC):
             
         elif self.update_type == UpdateTypes.SMART:
             latest_date_in_db = await self.get_latest_date_for_task()
+            # 兼容 TIMESTAMP 类型日期列：统一转换为 date，避免 datetime/date 比较报错
+            if isinstance(latest_date_in_db, datetime):
+                latest_date_in_db = latest_date_in_db.date()
             
             if latest_date_in_db:
                 start_dt = latest_date_in_db + timedelta(days=1) - timedelta(days=self.smart_lookback_days)

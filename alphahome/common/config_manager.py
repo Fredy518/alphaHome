@@ -190,6 +190,69 @@ class ConfigManager:
         """获取Tushare API Token"""
         return self.load_config()["api"]["tushare_token"]
 
+    def get_tinysoft_config(self) -> Dict[str, Any]:
+        """
+        获取 Tinysoft(pyTSL) 连接配置。
+
+        配置优先级：
+        1. config.json 的 api.tinysoft
+        2. 环境变量回退
+        """
+        config = self.load_config()
+        api_cfg = config.get("api", {})
+        tiny_cfg = api_cfg.get("tinysoft", {}) if isinstance(api_cfg, dict) else {}
+        if not isinstance(tiny_cfg, dict):
+            tiny_cfg = {}
+
+        result = tiny_cfg.copy()
+
+        # 基础字段
+        if not result.get("user"):
+            result["user"] = os.environ.get("TINYSOFT_USER", "")
+        if not result.get("password"):
+            result["password"] = os.environ.get("TINYSOFT_PASSWORD", "")
+        if not result.get("host"):
+            result["host"] = os.environ.get("TINYSOFT_HOST", "tsl.tinysoft.com.cn")
+
+        # 端口
+        port_val = result.get("port")
+        if port_val in (None, ""):
+            port_val = os.environ.get("TINYSOFT_PORT", 443)
+        try:
+            result["port"] = int(port_val)
+        except (TypeError, ValueError):
+            result["port"] = 443
+
+        # 可选 ini 文件
+        if not result.get("ini_path"):
+            ini_path = os.environ.get("TINYSOFT_INI")
+            if ini_path:
+                result["ini_path"] = ini_path
+
+        # 服务节点
+        if not result.get("service"):
+            result["service"] = os.environ.get("TINYSOFT_SERVICE", "")
+
+        # 超时（毫秒）
+        timeout_val = result.get("timeout_ms")
+        if timeout_val in (None, ""):
+            timeout_val = os.environ.get("TINYSOFT_TIMEOUT_MS", 30000)
+        try:
+            result["timeout_ms"] = int(timeout_val)
+        except (TypeError, ValueError):
+            result["timeout_ms"] = 30000
+
+        # 请求间隔（秒）
+        interval_val = result.get("request_interval")
+        if interval_val in (None, ""):
+            interval_val = os.environ.get("TINYSOFT_REQUEST_INTERVAL", 0.2)
+        try:
+            result["request_interval"] = float(interval_val)
+        except (TypeError, ValueError):
+            result["request_interval"] = 0.2
+
+        return result
+
     def get_task_config(
         self, task_name: str, key: Optional[str] = None, default: Any = None
     ) -> Any:
@@ -262,6 +325,11 @@ def get_database_url() -> Optional[str]:
 def get_tushare_token() -> str:
     """获取Tushare API Token"""
     return _config_manager.get_tushare_token()
+
+
+def get_tinysoft_config() -> Dict[str, Any]:
+    """获取 Tinysoft(pyTSL) 连接配置"""
+    return _config_manager.get_tinysoft_config()
 
 
 def get_task_config(
