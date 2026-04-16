@@ -59,11 +59,6 @@ class _BaseMarginTask(AkShareNoDateSingleBatchTask):
         "margin_balance": {"type": "NUMERIC(20,2)"},
     }
 
-    indexes = [
-        {"name": "idx_margin_date", "columns": "date"},
-        {"name": "idx_margin_update_time", "columns": "update_time"},
-    ]
-
     validations = [
         (lambda df: df["date"].notna(), "date 不能为空"),
     ]
@@ -83,6 +78,10 @@ class AkShareMacroChinaMarketMarginSZTask(_BaseMarginTask):
     description = "深圳融资融券余额（AkShare/Jin10）"
     table_name = "macro_china_market_margin_sz"
     api_name = "macro_china_market_margin_sz"
+    indexes = [
+        {"name": "idx_margin_sz_date", "columns": "date"},
+        {"name": "idx_margin_sz_update_time", "columns": "update_time"},
+    ]
 
 
 @task_register()
@@ -91,3 +90,7 @@ class AkShareMacroChinaMarketMarginSHTask(_BaseMarginTask):
     description = "上海融资融券余额（AkShare/Jin10）"
     table_name = "macro_china_market_margin_sh"
     api_name = "macro_china_market_margin_sh"
+    indexes = [
+        {"name": "idx_margin_sh_date", "columns": "date"},
+        {"name": "idx_margin_sh_update_time", "columns": "update_time"},
+    ]

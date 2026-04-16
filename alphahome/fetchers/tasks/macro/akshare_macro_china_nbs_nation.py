@@ -52,6 +52,15 @@ def _parse_period_end(label: Any) -> Optional[date]:
         y, mo = int(m.group(1)), int(m.group(2))
         return (pd.Timestamp(year=y, month=mo, day=1) + pd.offsets.MonthEnd(0)).date()
 
+    # 累计月度：2024年1-2月 / 2024年1-2月份
+    m = re.match(r"^(\d{4})年(\d{1,2})\s*[-~～至到]\s*(\d{1,2})月(?:份)?$", text)
+    if m:
+        y = int(m.group(1))
+        end_month = int(m.group(3))
+        if 1 <= end_month <= 12:
+            return (pd.Timestamp(year=y, month=end_month, day=1) + pd.offsets.MonthEnd(0)).date()
+        return None
+
     # 季度：2023年第2季度 / 2023年第二季度
     m = re.match(r"^(\d{4})年(?:第)?([0-4一二三四])季度$", text)
     if m:

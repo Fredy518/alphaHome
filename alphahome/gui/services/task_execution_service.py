@@ -200,7 +200,14 @@ async def run_tasks(
             # 检查任务是否支持选择的执行模式
             # Excel 任务在智能增量模式下直接跳过，其他任务自动切换到全量更新
             actual_exec_mode = exec_mode
-            if exec_mode == "智能增量" and not task_instance.supports_incremental_update():
+            supports_incremental = True
+            supports_incremental_method = getattr(task_instance, "supports_incremental_update", None)
+            if callable(supports_incremental_method):
+                supports_incremental = bool(supports_incremental_method())
+            elif supports_incremental_method is not None:
+                supports_incremental = bool(supports_incremental_method)
+
+            if exec_mode == "智能增量" and not supports_incremental:
                 # Excel 任务专门处理：直接跳过
                 if hasattr(task_instance, 'data_source') and task_instance.data_source == "excel":
                     skip_reason = "该任务不支持智能增量更新，已跳过"
@@ -241,6 +248,7 @@ async def run_tasks(
 
                     # 更新任务初始化参数为全量更新模式
                     task_init_params['update_type'] = UpdateTypes.FULL
+                    setattr(task_instance, "update_type", UpdateTypes.FULL)
 
             if not task_instance:
                 log_msg = f"任务 {task_name} 创建失败，跳过。"

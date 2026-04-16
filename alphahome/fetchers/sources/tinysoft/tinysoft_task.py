@@ -12,6 +12,7 @@
 
 import abc
 import asyncio
+from datetime import date
 from typing import Any, Dict, Iterable, List, Optional
 
 import pandas as pd
@@ -87,6 +88,46 @@ class TinySoftTask(FetcherTask, abc.ABC):
             return float(value)
         except (TypeError, ValueError):
             return float(default)
+
+    @staticmethod
+    def _parse_bool(value: Any, default: bool = False) -> bool:
+        if isinstance(value, bool):
+            return value
+        if value is None:
+            return default
+        if isinstance(value, (int, float)):
+            return bool(value)
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {"1", "true", "yes", "y", "on"}:
+                return True
+            if normalized in {"0", "false", "no", "n", "off", ""}:
+                return False
+        return default
+
+    @staticmethod
+    def _parse_positive_int(value: Any, default: int, *, min_value: int = 1) -> int:
+        try:
+            parsed = int(value)
+            return max(min_value, parsed)
+        except (TypeError, ValueError):
+            return max(min_value, int(default))
+
+    @staticmethod
+    def _parse_float(value: Any, default: float) -> float:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return float(default)
+
+    @staticmethod
+    def _parse_date(value: Any) -> Optional[date]:
+        if value is None or (isinstance(value, float) and pd.isna(value)):
+            return None
+        ts = pd.to_datetime(value, errors="coerce")
+        if pd.isna(ts):
+            return None
+        return pd.Timestamp(ts).date()
 
     def _apply_config(self, task_config: Dict):
         super()._apply_config(task_config)
