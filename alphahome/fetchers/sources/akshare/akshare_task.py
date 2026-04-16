@@ -326,3 +326,25 @@ class AkShareSingleBatchTask(AkShareTask):
         """
         return True
 
+
+class AkShareNoDateSingleBatchTask(AkShareTask):
+    """单批次任务：不传 start_date/end_date。
+
+    很多 AkShare 宏观接口一次返回全历史且不接受 start/end 参数。
+    使用该基类可以避免 FetcherTask 自动透传 start/end 导致 TypeError。
+    """
+
+    async def get_batch_list(self, **kwargs) -> List[Dict]:
+        update_type = kwargs.get("update_type", UpdateTypes.SMART)
+
+        # 对于无法增量、且每次会全量回溯的接口：SMART 模式下做一次“近期更新跳过”保护
+        if await self._should_skip_by_recent_update_time(update_type, max_age_days=1):
+            return []
+
+        batch_params: Dict[str, Any] = {}
+        if self.api_params:
+            batch_params.update(self.api_params)
+
+        self.logger.info(f"任务 {self.name}: 生成无日期单批次参数: {batch_params}")
+        return [batch_params]
+

@@ -50,6 +50,9 @@ alphahome = "alphahome.gui.main_window:run_gui" # 当用户安装后，可以运
 # refresh-materialized-view, alphahome-ddb, ah, alphahome-cli
 
 [project.optional-dependencies]
+akshare = [
+    "akshare>=1.15.0",
+]
 research = [
     "jupyterlab>=4.0.0",
     "papermill>=2.4.0",

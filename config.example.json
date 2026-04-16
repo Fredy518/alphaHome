@@ -56,6 +56,24 @@
     },
     "tasks": {
         "_comment": "在此处为特定任务覆盖默认设置",
+        "akshare_macro_china_nbs_nation": {
+            "_comment": "国家统计局 NBS 通用全国宏观：配置 series 列表，每个 series 对应 kind/path/period。kind/path 需与 stats.gov.cn 页面层级匹配（建议手动维护）。",
+            "concurrent_limit": 1,
+            "series": [
+                {
+                    "id": "gdp_annual",
+                    "kind": "年度数据",
+                    "path": "<例如：国民经济核算 > 国内生产总值>",
+                    "period": "LAST10"
+                },
+                {
+                    "id": "cpi_monthly",
+                    "kind": "月度数据",
+                    "path": "<例如：价格指数 > 居民消费价格指数(CPI)>",
+                    "period": "LAST120"
+                }
+            ]
+        },
         "tushare_stock_daily": {
             "save_batch_size": 5000,
             "concurrent_limit": 10,
@@ -70,11 +88,106 @@
             "update_frequency": "daily"
         },
         "tinysoft_stock_minute": {
+            "_comment": "默认全市场分钟线；symbol_batch_size 控制每个批次内的股票组大小；normalize_units=true 时将 TinySoft 原始单位股/元归一化为手/千元；如需仅抓部分股票，设置 use_config_symbols=true 并填写 ts_codes（可配 max_symbols）",
             "cycle": "1分钟线",
             "batch_days": 1,
-            "max_symbols": 1,
-            "ts_codes": [
-                "000001.SZ"
+            "symbol_batch_size": 50,
+            "use_config_symbols": false,
+            "skip_failed_symbols": true,
+            "normalize_units": true,
+            "volume_scale": 0.01,
+            "amount_scale": 0.001,
+            "enable_quality_checks": true,
+            "quality_check_days": 20,
+            "quality_check_coverage_warn_threshold": 0.95,
+            "quality_check_reconcile_days": 5,
+            "enforce_coverage_threshold": true,
+            "coverage_fail_on_breach": false,
+            "persist_quality_checks": true,
+            "quality_checks_table": "tinysoft.stock_minute_quality_checks",
+            "concurrent_limit": 2,
+            "query_timeout_ms": 45000
+        },
+        "tinysoft_index_minute": {
+            "_comment": "默认抓取可映射到 TinySoft 原码的国内指数分钟线；支持传 ts_codes=000001.SH/000300.CSI 或 TinySoft 原码 SH000001/CSI000300",
+            "cycle": "1分钟线",
+            "batch_days": 1,
+            "symbol_batch_size": 50,
+            "use_config_symbols": false,
+            "skip_failed_symbols": true,
+            "normalize_units": true,
+            "volume_scale": 0.01,
+            "amount_scale": 0.001,
+            "concurrent_limit": 2,
+            "query_timeout_ms": 45000
+        },
+        "tinysoft_fund_minute": {
+            "_comment": "默认抓取场内基金（ETF/LOF 等）分钟线；从 fund_basic/fund_etf_basic 读取 SH/SZ 场内代码",
+            "cycle": "1分钟线",
+            "batch_days": 1,
+            "symbol_batch_size": 50,
+            "use_config_symbols": false,
+            "skip_failed_symbols": true,
+            "normalize_units": true,
+            "volume_scale": 0.01,
+            "amount_scale": 0.001,
+            "concurrent_limit": 2,
+            "query_timeout_ms": 45000
+        },
+        "tinysoft_stock_suspend": {
+            "_comment": "停牌事件（表127 InfoArray）；默认全市场，按停牌开始日过滤并入库",
+            "symbol_batch_size": 50,
+            "use_config_symbols": false,
+            "skip_failed_symbols": true,
+            "infoarray_table_id": 127,
+            "include_empty_events": false,
+            "concurrent_limit": 2,
+            "query_timeout_ms": 45000
+        },
+        "tinysoft_stock_industry_versioned": {
+            "_comment": "行业版本化（表139 InfoArray）；默认全行业源，可用 source_codes 过滤（如 SWHY/CSRCHY）",
+            "symbol_batch_size": 50,
+            "use_config_symbols": false,
+            "skip_failed_symbols": true,
+            "include_empty_records": false,
+            "infoarray_table_id": 139,
+            "source_codes": [],
+            "concurrent_limit": 2,
+            "query_timeout_ms": 45000
+        },
+        "tinysoft_stock_fina_pit_ext": {
+            "_comment": "财务 PIT 扩展（默认表42）；按公布日/截止日展开并保留字段ID与report表达式",
+            "symbol_batch_size": 30,
+            "use_config_symbols": false,
+            "skip_failed_symbols": true,
+            "include_empty_metrics": false,
+            "metric_profiles": [
+                {
+                    "finance_source": "report_42_main",
+                    "table_id": 42,
+                    "metric_defs": [
+                        {
+                            "metric_name": "eps_diluted",
+                            "field_id": 42002,
+                            "field_name": "每股收益(摊薄)"
+                        },
+                        {
+                            "metric_name": "bps",
+                            "field_id": 42006,
+                            "field_name": "每股净资产"
+                        },
+                        {
+                            "metric_name": "roe_diluted",
+                            "field_id": 42012,
+                            "field_name": "净资产收益率(摊薄)(%)"
+                        },
+                        {
+                            "metric_name": "netprofit_excl_nr",
+                            "field_id": 42017,
+                            "field_name": "扣除非经常性损益后的净利润"
+                        }
+                    ]
+                }
             ],
             "concurrent_limit": 2,
             "query_timeout_ms": 45000
