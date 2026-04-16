@@ -332,12 +332,16 @@ class AkShareNoDateSingleBatchTask(AkShareTask):
 
     很多 AkShare 宏观接口一次返回全历史且不接受 start/end 参数。
     使用该基类可以避免 FetcherTask 自动透传 start/end 导致 TypeError。
+
+    同时，为了支持 GUI 的“智能增量/手动增量”，本基类会在 process_data 阶段
+    按 FetcherTask 计算出的生效日期窗口（_effective_start_date/_effective_end_date）
+    对结果进行过滤，从而实现“只回写所需时间窗”的增量效果。
     """
 
     async def get_batch_list(self, **kwargs) -> List[Dict]:
         update_type = kwargs.get("update_type", UpdateTypes.SMART)
 
-        # 对于无法增量、且每次会全量回溯的接口：SMART 模式下做一次“近期更新跳过”保护
+        # SMART 模式下做一次“近期更新跳过”保护，避免短时间重复全量回溯
         if await self._should_skip_by_recent_update_time(update_type, max_age_days=1):
             return []
 
@@ -347,4 +351,37 @@ class AkShareNoDateSingleBatchTask(AkShareTask):
 
         self.logger.info(f"任务 {self.name}: 生成无日期单批次参数: {batch_params}")
         return [batch_params]
+
+    def process_data(self, data: pd.DataFrame, **kwargs) -> pd.DataFrame:
+        data = super().process_data(data, **kwargs)
+        if data is None or data.empty:
+            return data
+
+        if self.update_type not in (UpdateTypes.SMART, UpdateTypes.MANUAL):
+            return data
+
+        date_col = getattr(self, "date_column", None)
+        if not date_col or date_col not in data.columns:
+            return data
+
+        start = getattr(self, "_effective_start_date", None) or getattr(self, "start_date", None)
+        end = getattr(self, "_effective_end_date", None) or getattr(self, "end_date", None)
+        if not start or not end:
+            return data
+
+        start_dt = pd.to_datetime(start, errors="coerce")
+        end_dt = pd.to_datetime(end, errors="coerce")
+        if pd.isna(start_dt) or pd.isna(end_dt):
+            return data
+
+        # 统一到 date，避免 datetime/date 混用
+        start_d = pd.Timestamp(start_dt).date()
+        end_d = pd.Timestamp(end_dt).date()
+
+        # 尽量把日期列转换为 date 再过滤
+        col_series = pd.to_datetime(data[date_col], errors="coerce")
+        data = data.assign(**{date_col: col_series.dt.date})
+        data = data.dropna(subset=[date_col])
+
+        return data[(data[date_col] >= start_d) & (data[date_col] <= end_d)].copy()
 

@@ -244,6 +244,10 @@ class FetcherTask(BaseTask, ABC):
                 self.logger.error(f"未知的更新类型: {self.update_type}")
                 return None
 
+            # 记录本次执行实际生效的日期范围（供子类在 process_data 中做窗口过滤/增强模式使用）
+            self._effective_start_date = start_date
+            self._effective_end_date = end_date
+
             # 确保日期范围有效
             if not start_date or not end_date:
                 self.logger.info(f"'{self.name}' - No date range determined. Task finished.")

@@ -45,6 +45,8 @@ def _month_end(value: Any) -> Optional[pd.Timestamp]:
 
 @task_register()
 class AkShareMacroThsRmbLoanTask(AkShareNoDateSingleBatchTask):
+    # 月度数据：智能增量默认回写近 15 个月，避免 10 天窗口导致“增量过滤为空”
+    smart_lookback_days = 450
     domain = "macro"
     name = "akshare_macro_ths_rmb_loan"
     description = "新增人民币贷款（AkShare/同花顺）"
@@ -93,6 +95,17 @@ class AkShareMacroThsRmbLoanTask(AkShareNoDateSingleBatchTask):
         data["month_end_date"] = data["month"].apply(_month_end)
         data = data.dropna(subset=["month_end_date"]).copy()
         data["month_end_date"] = pd.to_datetime(data["month_end_date"]).dt.date
+
+        # 智能/手动增量：按生效日期窗口回写（该列为派生列，需要在此处过滤）
+        if self.update_type in ("smart", "manual"):
+            start = getattr(self, "_effective_start_date", None) or self.start_date
+            end = getattr(self, "_effective_end_date", None) or self.end_date
+            s = pd.to_datetime(start, errors="coerce") if start else pd.NaT
+            e = pd.to_datetime(end, errors="coerce") if end else pd.NaT
+            if not pd.isna(s) and not pd.isna(e):
+                sd = pd.Timestamp(s).date()
+                ed = pd.Timestamp(e).date()
+                data = data[(data["month_end_date"] >= sd) & (data["month_end_date"] <= ed)].copy()
 
         for col in ["new_loan_total", "new_loan_yoy", "new_loan_mom", "loan_total", "loan_yoy"]:
             if col in data.columns:

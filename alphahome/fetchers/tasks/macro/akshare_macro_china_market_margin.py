@@ -21,6 +21,7 @@ from ....common.task_system.task_decorator import task_register
 
 
 class _BaseMarginTask(AkShareNoDateSingleBatchTask):
+    smart_lookback_days = 60
     domain = "macro"
 
     primary_keys = ["date"]

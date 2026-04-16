@@ -27,6 +27,7 @@ from ....common.task_system.task_decorator import task_register
 
 @task_register()
 class AkShareMacroChinaRmbFixingTask(AkShareNoDateSingleBatchTask):
+    smart_lookback_days = 60
     domain = "macro"
     name = "akshare_macro_china_rmb_fixing"
     description = "人民币汇率中间价（AkShare/Jin10）"

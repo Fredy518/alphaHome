@@ -182,5 +182,14 @@ class AkShareMacroChinaNBSNationTask(AkShareTask):
         melted = melted.dropna(subset=["period_end_date"]).copy()
         melted["period_end_date"] = pd.to_datetime(melted["period_end_date"]).dt.date
 
+        # 手动增量：按用户选择的日期范围回写（增强/补洞）
+        if self.update_type == UpdateTypes.MANUAL and self.start_date and self.end_date:
+            s = pd.to_datetime(self.start_date, errors="coerce")
+            e = pd.to_datetime(self.end_date, errors="coerce")
+            if not pd.isna(s) and not pd.isna(e):
+                sd = pd.Timestamp(s).date()
+                ed = pd.Timestamp(e).date()
+                melted = melted[(melted["period_end_date"] >= sd) & (melted["period_end_date"] <= ed)].copy()
+
         melted = melted.drop_duplicates(subset=["series_id", "indicator", "period_end_date"], keep="last")
         return melted
