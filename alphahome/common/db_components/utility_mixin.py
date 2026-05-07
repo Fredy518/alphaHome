@@ -61,7 +61,7 @@ class UtilityMixin:
             date_column (str): 日期列名
 
         Returns:
-            Optional[datetime]: 最新日期的datetime对象，如果表为空则返回None
+            Optional[datetime]: 最新日期的datetime对象，如果表不存在或为空则返回None
         """
         import time
         start_time = time.time()
@@ -75,6 +75,13 @@ class UtilityMixin:
         '''
 
         try:
+            table_exists = await self.table_exists(target)  # type: ignore
+            if not table_exists:
+                self.logger.info(  # type: ignore
+                    f"表 {resolved_table_name} 不存在，无法获取最新日期，按无历史数据处理。"
+                )
+                return None
+
             result = await self.fetch_val(query)  # type: ignore
 
             query_duration = time.time() - start_time
@@ -84,6 +91,11 @@ class UtilityMixin:
                 )
 
             return result if result is not None else None
+        except asyncpg.exceptions.UndefinedTableError:
+            self.logger.info(  # type: ignore
+                f"表 {resolved_table_name} 在查询最新日期时不存在，按无历史数据处理。"
+            )
+            return None
         except Exception as e:
             query_duration = time.time() - start_time
             self.logger.error(  # type: ignore

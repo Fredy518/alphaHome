@@ -18,7 +18,6 @@ from .akshare_macro_china_market_margin import (
 )
 from .akshare_macro_ths_rmb_loan import AkShareMacroThsRmbLoanTask
 from .akshare_macro_ths_rmb_deposit import AkShareMacroThsRmbDepositTask
-from .akshare_macro_china_nbs_nation import AkShareMacroChinaNBSNationTask
 
 __all__ = [
     # Tushare 宏观任务
@@ -39,5 +38,4 @@ __all__ = [
     "AkShareMacroChinaMarketMarginSZTask",
     "AkShareMacroThsRmbLoanTask",
     "AkShareMacroThsRmbDepositTask",
-    "AkShareMacroChinaNBSNationTask",
 ]

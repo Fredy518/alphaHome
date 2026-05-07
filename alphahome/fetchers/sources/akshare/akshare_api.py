@@ -157,12 +157,12 @@ class AkShareAPI:
         else:
             self._check_akshare_available()
 
-            # ��ȡ akshare ����
+            # 获取 akshare 函数
             func = getattr(ak, func_name, None)
             if func is None:
-                raise AkShareAPIError(f"akshare �в����ں���: {func_name}")
+                raise AkShareAPIError(f"akshare 中不存在函数: {func_name}")
 
-        self.logger.info(f"���� akshare.{func_name}������: {kwargs}")
+        self.logger.info(f"调用 akshare.{func_name}，参数: {kwargs}")
 
         last_error = None
         for attempt in range(1, self.max_retries + 1):

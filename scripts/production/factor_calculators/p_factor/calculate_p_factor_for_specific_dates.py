@@ -13,29 +13,31 @@ import os
 import argparse
 import time
 import logging
+import importlib.util
 from datetime import datetime
 from typing import List
 from pathlib import Path
 
 # 添加项目根目录到路径
-project_root = Path(__file__).parent.parent.parent.parent.parent
+project_root = Path(__file__).resolve().parents[4]
 sys.path.insert(0, str(project_root))
 
-# 添加research路径
-research_path = project_root / "research"
-sys.path.insert(0, str(research_path))
+# 动态导入生产P因子计算器，避免误用 research 目录中的旧实现
+spec = importlib.util.spec_from_file_location(
+    "production_p_factor_calculator",
+    Path(__file__).resolve().parent / "production_p_factor_calculator.py"
+)
+calc_module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(calc_module)
+ProductionPFactorCalculator = calc_module.ProductionPFactorCalculator
 
-# 导入p因子计算器和上下文
-from pgs_factor.processors.production_p_factor_calculator import ProductionPFactorCalculator
-from research.tools.context import ResearchContext
 
 
 class SpecificDatePFactorCalculator:
     """指定日期P因子计算器"""
 
     def __init__(self):
-        self.context = ResearchContext()
-        self.calculator = ProductionPFactorCalculator(self.context)
+        self.calculator = ProductionPFactorCalculator()
         self.logger = self._setup_logger()
 
     def _setup_logger(self):

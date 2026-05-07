@@ -17,6 +17,7 @@ Test coverage includes:
 import pandas as pd
 import pytest
 
+from alphahome.common.constants import UpdateTypes
 from alphahome.fetchers.tasks.fund.akshare_fund_purchase_em import AkShareFundPurchaseEmTask
 from tests.unit.test_akshare_fund_purchase_em_fixtures import (
     fixture_normal_limits,
@@ -33,6 +34,15 @@ class _MockDB:
 
     async def fetch(self, query, *args, **kwargs):
         return []
+
+    async def get_latest_date(self, target, date_column):
+        return None
+
+    async def table_exists(self, target):
+        return False
+
+    async def get_latest_update_time(self, target):
+        return None
 
 
 @pytest.fixture
@@ -100,6 +110,7 @@ class TestColumnMapping:
             "日累计限定金额",
             "赎回状态",
             "最新净值",
+            "最新净值/万份收益",
         }
         actual_keys = set(AkShareFundPurchaseEmTask.column_mapping.keys())
         assert actual_keys == expected_keys
@@ -118,10 +129,14 @@ class TestColumnMapping:
         assert actual_values == expected_values
 
     def test_column_mapping_is_bijective(self):
-        """Verify each Chinese column maps to exactly one English column"""
+        """Verify duplicate targets only exist for backward-compatible aliases"""
         mapping = AkShareFundPurchaseEmTask.column_mapping
-        values = list(mapping.values())
-        assert len(values) == len(set(values)), "Duplicate target columns in mapping"
+        duplicate_targets = {
+            value
+            for value in mapping.values()
+            if list(mapping.values()).count(value) > 1
+        }
+        assert duplicate_targets == {"latest_nav"}
 
 
 class TestNormalizationNormalLimits:
@@ -236,6 +251,43 @@ class TestSnapshotDate:
             assert isinstance(date_val, str)
             assert len(date_val) == 10
             assert date_val.count('-') == 2
+
+
+class TestSmartUpdateCompatibility:
+    """Test snapshot task works with SMART date window calculation"""
+
+    @pytest.mark.asyncio
+    async def test_smart_update_can_determine_date_range(self):
+        task = AkShareFundPurchaseEmTask(db_connection=_MockDB(), update_type=UpdateTypes.SMART)
+
+        date_range = await task._determine_date_range()
+
+        assert date_range["start_date"]
+        assert date_range["end_date"]
+        assert len(date_range["start_date"]) == 8
+        assert len(date_range["end_date"]) == 8
+
+
+class TestCurrentAkshareColumns:
+    """Test compatibility with current AkShare response columns"""
+
+    def test_latest_nav_maps_from_current_column_name(self, task):
+        raw_data = pd.DataFrame(
+            {
+                "基金代码": ["000001"],
+                "基金简称": ["华夏成长混合"],
+                "申购状态": ["开放申购"],
+                "日累计限定金额": [1e11],
+                "赎回状态": ["开放赎回"],
+                "最新净值/万份收益": [1.139],
+            }
+        )
+
+        processed = task.process_data(task.data_transformer.process_data(raw_data))
+
+        assert "latest_nav" in processed.columns
+        assert processed["latest_nav"].iloc[0] == 1.139
+        assert pd.isna(processed["daily_limit_amount"].iloc[0])
 
 
 class TestPurchaseStatus:

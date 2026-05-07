@@ -517,7 +517,17 @@ class ProductionPFactorCalculator:
                     pit.operate_profit_yoy_growth,
                     pit.data_quality,
                     pit.calculation_status,
-                    ROW_NUMBER() OVER (PARTITION BY pit.ts_code ORDER BY pit.ann_date DESC, pit.end_date DESC) as rn
+                    ROW_NUMBER() OVER (
+                        PARTITION BY pit.ts_code
+                        ORDER BY pit.ann_date DESC,
+                                 pit.end_date DESC,
+                                 CASE pit.data_source
+                                     WHEN 'report' THEN 1
+                                     WHEN 'express' THEN 2
+                                     WHEN 'forecast' THEN 3
+                                     ELSE 9
+                                 END
+                    ) as rn
                 FROM pgs_factors.pit_financial_indicators pit
                 INNER JOIN tushare.stock_basic sb ON pit.ts_code = sb.ts_code
                 WHERE pit.ann_date <= %s  -- PIT原则: 只看已公告的数据

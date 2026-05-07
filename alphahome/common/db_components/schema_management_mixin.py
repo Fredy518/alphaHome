@@ -173,6 +173,28 @@ class SchemaManagementMixin:
     def _quote_ident(self, name: str) -> str:
         return '"' + str(name).replace('"', '""') + '"'
 
+    def _normalize_index_columns(self, index_columns: Any) -> Optional[List[str]]:
+        """规范化索引列定义，兼容单列、列表和逗号分隔字符串。"""
+        raw_columns: List[str]
+        if isinstance(index_columns, str):
+            raw_columns = [col.strip() for col in index_columns.split(",")]
+        elif isinstance(index_columns, list):
+            raw_columns = []
+            for col in index_columns:
+                if not isinstance(col, str):
+                    return None
+                raw_columns.append(col.strip())
+        else:
+            return None
+
+        normalized_columns: List[str] = []
+        for col in raw_columns:
+            cleaned_col = col.strip().strip('"')
+            if cleaned_col:
+                normalized_columns.append(cleaned_col)
+
+        return normalized_columns or None
+
     def _parse_varchar_length(self, type_str: str) -> Optional[int]:
         match = self._VARCHAR_LEN_RE.match(type_str or "")
         if not match:
@@ -553,43 +575,38 @@ class SchemaManagementMixin:
                             unique = False
 
                             if isinstance(index_def, dict):  # 索引定义是字典
-                                index_columns_list = index_def.get("columns")
+                                index_columns_raw = index_def.get("columns")
+                                index_columns_list = self._normalize_index_columns(
+                                    index_columns_raw
+                                )
                                 if not index_columns_list:
                                     self.logger.warning( # type: ignore
                                         f"跳过无效的索引定义 (缺少 columns): {index_def}"
                                     )
                                     continue
-                                # 将列名或列名列表转换为SQL字符串
-                                if isinstance(index_columns_list, str):
-                                    index_columns_str = f'"{index_columns_list}"'
-                                elif isinstance(index_columns_list, list):
-                                    index_columns_str = ", ".join(
-                                        [f'"{col}"' for col in index_columns_list]
-                                    )
-                                else:
-                                    self.logger.warning( # type: ignore 
-                                        f"索引定义中的 'columns' 类型无效: {index_columns_list}"
-                                    )
-                                    continue
+                                index_columns_str = ", ".join(
+                                    [f'"{col}"' for col in index_columns_list]
+                                )
 
                                 # 规范化索引名称中列名的部分，移除特殊字符
-                                safe_cols_for_name = (
-                                    str(index_columns_list)
-                                    .replace(" ", "")
-                                    .replace('"', "")
-                                    .replace("[", "")
-                                    .replace("]", "")
-                                    .replace("'", "")
-                                    .replace(",", "_")
-                                )
+                                safe_cols_for_name = "_".join(index_columns_list)
                                 index_name = index_def.get(
                                     "name", f"idx_{simple_name}_{safe_cols_for_name}"
                                 )
                                 unique = index_def.get("unique", False)
 
                             elif isinstance(index_def, str):  # 索引定义是单个列名字符串
-                                index_columns_str = f'"{index_def}"'
-                                index_name = f"idx_{simple_name}_{index_def}"
+                                index_columns_list = self._normalize_index_columns(index_def)
+                                if not index_columns_list:
+                                    self.logger.warning( # type: ignore
+                                        f"跳过无效的索引定义字符串: {index_def}"
+                                    )
+                                    continue
+                                index_columns_str = ", ".join(
+                                    [f'"{col}"' for col in index_columns_list]
+                                )
+                                safe_cols_for_name = "_".join(index_columns_list)
+                                index_name = f"idx_{simple_name}_{safe_cols_for_name}"
                             else:  # 未知格式
                                 self.logger.warning( # type: ignore
                                     f"跳过未知格式的索引定义: {index_def}"

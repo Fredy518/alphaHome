@@ -11,10 +11,6 @@ from alphahome.fetchers.tasks.macro.akshare_macro_china_market_margin import (
     AkShareMacroChinaMarketMarginSHTask,
     AkShareMacroChinaMarketMarginSZTask,
 )
-from alphahome.fetchers.tasks.macro.akshare_macro_china_nbs_nation import (
-    AkShareMacroChinaNBSNationTask,
-    _parse_period_end,
-)
 from alphahome.fetchers.tasks.macro.akshare_macro_china_rmb_fixing import (
     AkShareMacroChinaRmbFixingTask,
 )
@@ -213,62 +209,3 @@ def test_rmb_fixing_process_data_melts_and_filters_unknown_metrics():
         date(2024, 4, 1),
         date(2024, 4, 2),
     ]
-
-
-def test_nbs_parse_period_end_handles_cumulative_month_ranges():
-    assert _parse_period_end("2024年1-2月") == date(2024, 2, 29)
-    assert _parse_period_end("2024年1-2月份") == date(2024, 2, 29)
-    assert _parse_period_end("2024年03月") == date(2024, 3, 31)
-
-
-class _StubNBSAPI:
-    async def call(self, func_name, kind, path, period, stop_event=None):
-        assert func_name == "macro_china_nbs_nation"
-        assert kind == "月度数据"
-        assert path == "工业>增加值"
-        assert period == "LAST10"
-        return pd.DataFrame(
-            {
-                "2024年1-2月份": [5.2],
-                "2024年03月": [5.8],
-            },
-            index=pd.Index(["工业增加值同比"], name=None),
-        )
-
-
-@pytest.mark.asyncio
-async def test_nbs_fetch_batch_melts_data_and_filters_manual_window():
-    task = AkShareMacroChinaNBSNationTask(
-        db_connection=_MockDB(),
-        api=_StubNBSAPI(),
-        update_type=UpdateTypes.MANUAL,
-        start_date="2024-02-01",
-        end_date="2024-02-29",
-        task_config={
-            "series": [
-                {
-                    "id": "industry_growth",
-                    "kind": "月度数据",
-                    "path": "工业>增加值",
-                    "period": "LAST10",
-                }
-            ]
-        },
-    )
-
-    processed = await task.fetch_batch(
-        {
-            "series_id": "industry_growth",
-            "kind": "月度数据",
-            "path": "工业>增加值",
-            "period": "LAST10",
-        }
-    )
-
-    assert len(processed) == 1
-    row = processed.iloc[0]
-    assert row["series_id"] == "industry_growth"
-    assert row["indicator"] == "工业增加值同比"
-    assert row["period_label"] == "2024年1-2月份"
-    assert row["period_end_date"] == date(2024, 2, 29)
-    assert row["value"] == 5.2

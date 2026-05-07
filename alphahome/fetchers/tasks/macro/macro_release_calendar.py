@@ -1043,7 +1043,7 @@ class MacroReleaseCalendarTask(FetcherTask):
     }
 
     indexes = [
-        {"name": "idx_macro_release_calendar_period", "columns": "indicator_code, period_end_date"},
+        {"name": "idx_macro_release_calendar_period", "columns": ["indicator_code", "period_end_date"]},
         {"name": "idx_macro_release_calendar_release_date", "columns": "release_date"},
         {"name": "idx_macro_release_calendar_update_time", "columns": "update_time"},
     ]

@@ -17,7 +17,7 @@
 |------|----------|
 | **processors 过重** | processors 模块设计了完整的引擎层/任务层/操作层/Clean层/物化视图子系统，但对于个人量化平台而言过于复杂，实际投入生产使用的部分很少 |
 | **特征模块空置** | `alphahome/factors/` 为空壳目录，未被实际使用 |
-| **特征能力分散** | PIT 数据在 `research/pit_data/`、物化视图在 `processors/materialized_views/`、Barra 因子在 `alphahome/barra/`，缺乏统一的特征工程入口 |
+| **特征能力分散** | PIT 数据在 `research/pit_data/`、物化视图在 `processors/materialized_views/`，缺乏统一的特征工程入口 |
 | **data_infra 定位模糊** | 外部 QuantLab 项目的 data_infra 模块有 35+ Fetcher，但其语义是"从 alphadb 读取"而非"写入 alphadb"，与 alphahome 的生产者定位不符 |
 
 ### 1.2 目标
@@ -30,7 +30,7 @@
 ### 1.3 非目标
 
 - ❌ 不保留运维/生产 CLI（`refresh-materialized-view`、`ah`/`alphahome-cli`、`alphahome-ddb` 全部下线；必要时以脚本或 Python API 替代，等 features 稳定后再考虑恢复）
-- ❌ Barra 因子不纳入 features 模块（保持独立的 `alphahome/barra/`）
+- ❌ 不做独立风险模型或组合归因模块（如需此类能力，应拆分到独立项目）
 - ❌ 不做在线特征服务层
 
 ### 1.4 CLI 边界说明
@@ -63,24 +63,18 @@
 | 脚本路径 | 依赖符号 | 处置方式 |
 |----------|----------|----------|
 | `scripts/initialize_materialized_views.py` | `MaterializedViewDatabaseInit` | 迁移到 features 或改为独立脚本 |
-| `scripts/run_barra_batch.py` | `BarraExposuresDailyTask`, `BarraExposuresFullTask`, `BarraFactorReturnsDailyTask` | 改为直接调用 `alphahome/barra/`（或在 scripts 内自包含计算入口） |
-| `scripts/debug_run_barra_day.py` | `BarraExposuresDailyTask`, `BarraFactorReturnsDailyTask` | 同上 |
 
 #### 2.1.3 tests 依赖
 
-| 测试路径 | 依赖符号 | 处置方式 |
-|----------|----------|----------|
-| `tests/unit/test_barra/test_wls_regression.py` | `BarraFactorReturnsDailyTask`（原来自旧 `processors.tasks.barra.*`） | ✅ 已改为从 `alphahome.barra.tasks` 导入 |
-| `tests/unit/test_barra/test_factor_calculators.py` | - | ✅ 已核对：无 processors 依赖 |
+当前无额外测试依赖需要迁移。
 
 ### 2.2 processors 内部模块分类
 
 | 分类 | 模块路径 | 处置决策 |
 |------|----------|----------|
 | **需迁移** | `processors/materialized_views/` | 迁移核心能力到 `features/storage/` |
-| **需解耦** | `processors/tasks/barra/` | Barra 脚本改为直接调用 `barra/` 模块（该工作与 features 无关，但对“删除 processors”是硬前置） |
 | **可废弃** | `processors/engine/` | 过重的调度引擎，废弃 |
-| **可废弃** | `processors/tasks/` (非 barra) | 未投入生产，废弃 |
+| **可废弃** | `processors/tasks/` | 未投入生产，废弃 |
 | **可废弃** | `processors/clean/` | Clean Layer 概念过重，废弃 |
 | **可废弃** | `processors/operations/` | 几乎无外部引用，废弃（如需保留可迁至 common） |
 | **可废弃** | `processors/domain/` | 废弃 |
@@ -130,8 +124,6 @@ alphahome/
 │   ├── pit/                   # PIT 时序特征
 │   ├── recipes/               # 特征计算配方
 │   └── registry.py            # 特征注册表
-├── barra/                     # Barra 风险模型（保持独立）
-│   └── ...
 ├── integrations/              # 外部集成（保持不变）
 └── [processors/]              # 【废弃删除】
 ```
@@ -385,14 +377,7 @@ B. 动态扫描（**默认采用**）
                               │
                               ▼
 ┌────────────────────────────────────────────────────────────────┐
-│  Phase 2: Barra 解耦（与 Phase 1 可并行）                       │
-│  ──────────────────────────────────────                        │
-│  B1-B5 → scripts/tests 无 processors.tasks.barra 依赖          │
-└────────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌────────────────────────────────────────────────────────────────┐
-│  Phase 3: CLI 下线 + processors 清零                           │
+│  Phase 2: CLI 下线 + processors 清零                           │
 │  ──────────────────────────────────────                        │
 │  C1-C4 → 运维 CLI 入口全部移除                                  │
 │  D1    → grep 确认 0 引用                                       │
@@ -401,7 +386,7 @@ B. 动态扫描（**默认采用**）
                               │
                               ▼
 ┌────────────────────────────────────────────────────────────────┐
-│  Phase 4: 首批特征入库                                          │
+│  Phase 3: 首批特征入库                                          │
 │  ──────────────────────────────────────                        │
 │  基于甄别清单，逐批落库 valuation/breadth 等特征               │
 └────────────────────────────────────────────────────────────────┘
@@ -409,8 +394,7 @@ B. 动态扫描（**默认采用**）
 
 **关键检查点**：
 - Phase 1 完成后：`scripts/features_init.py` 可执行，至少 1 个 MV 可刷新
-- Phase 2 完成后：`scripts/run_barra_batch.py` 可执行，无 processors import
-- Phase 3 完成后：仓库内无旧 processors 残留引用（建议用 PowerShell：`Select-String -Path alphahome/**,scripts/**,tests/** -Pattern "processors." -SimpleMatch`；如安装了 ripgrep/grep 也可用：`rg "processors\." alphahome scripts tests`）
+- Phase 2 完成后：仓库内无旧 processors 残留引用（建议用 PowerShell：`Select-String -Path alphahome/**,scripts/**,tests/** -Pattern "processors." -SimpleMatch`；如安装了 ripgrep/grep 也可用：`rg "processors\." alphahome scripts tests`）
 
 ### 4.1 Line A: 物化视图 → features/storage
 
@@ -436,21 +420,7 @@ B. 动态扫描（**默认采用**）
 4. 路径迁移不应改变 `recipe.name`：
     - `recipe.name` 是下游契约（卡片、输出表名、refresh/validate 指令入参的基础），迁移目录结构时必须保持不变。
 
-### 4.2 Line B: Barra 脚本解耦
-
-**目标**: 把 Barra 相关脚本从 `processors/tasks/barra/` 解耦，改为直接调用 `alphahome/barra/`。
-
-说明：这条线不属于 features 建设内容，但它是删除 processors 的硬前置。
-
-| 阶段 | 任务 | 产出 | 验收标准 |
-|------|------|------|----------|
-| B1 | 分析 `processors/tasks/barra/` 与 `alphahome/barra/` 的差异 | 差异清单 | 文档化 |
-| B2 | 补全 `alphahome/barra/` 缺失的入口函数 | 可独立调用 | 无 processors 依赖 |
-| B3 | 更新 `scripts/run_barra_batch.py` | 改为 import barra | 脚本可执行 |
-| B4 | 更新 `scripts/debug_run_barra_day.py` | 同上 | 脚本可执行 |
-| B5 | 更新 `tests/unit/test_barra/test_wls_regression.py`（并核对 Barra 单测不依赖 processors） | 改为 import barra | pytest 通过 |
-
-### 4.3 去 CLI
+### 4.2 去 CLI
 
 **目标**: 移除所有 CLI 入口（运维/生产命令行），等 features 稳定后再考虑恢复。
 
@@ -464,7 +434,7 @@ B. 动态扫描（**默认采用**）
 替代方式：
 - 运维与生产动作以 `scripts/*.py` 或 Python API 方式执行（例如初始化 features schema、刷新指定 MV）。
 
-### 4.4 删除 processors
+### 4.3 删除 processors
 
 **目标**: 确认无外部依赖后，删除整个 processors 目录。
 
@@ -770,7 +740,6 @@ approval:
 | 风险 | 影响 | 缓解措施 |
 |------|------|----------|
 | 迁移过程中引入 bug | 物化视图刷新失败 | 迁移后对比原有产出 |
-| Barra 脚本解耦不完整 | 生产 Barra 因子中断 | 分阶段验证，保留回滚能力 |
 | CLI 移除后操作不便 | 日常运维需写脚本 | 提供最小化的 Python 脚本入口 |
 | 特征甄别遗漏 | 重要特征未入库 | 保持甄别清单可扩展 |
 
@@ -782,7 +751,6 @@ approval:
 | **依赖验收** | 全项目无旧 processors import | PowerShell `Select-String -Path alphahome/**,scripts/**,tests/** -Pattern "processors." -SimpleMatch` 返回空（或 `rg "processors\."` 返回空） |
 | **可运维性** | 初始化/刷新/校验均有脚本入口且可重复执行 | 连续运行 2 次无副作用 |
 | **甄别完整性** | 首批特征全部有入库卡片 | `alphahome/features/cards/*.yaml` 与清单一一对应 |
-| **回归测试** | Barra 因子计算结果与迁移前一致 | 因子值差异 < 1e-6 |
 
 ### 7.3 回滚策略
 
@@ -790,7 +758,6 @@ approval:
 |------|--------------|----------|
 | A（features 骨架） | 目录结构或接口设计严重缺陷 | 删除 `alphahome/features/`，重新设计 |
 | B（物化视图迁移） | MV 刷新逻辑迁移后频繁失败 | 回退到迁移前实现（恢复 `processors/materialized_views/` 的使用路径），保留 features 但不启用 |
-| C（Barra 解耦） | Barra 因子计算异常 | scripts 恢复旧 import 路径 |
 | D（CLI 下线） | 运维痛点超出预期 | 恢复 `cli/commands/mv.py`（从 Git 历史恢复） |
 | E（processors 删除） | 发现遗漏依赖 | 从 Git 历史恢复整个目录 |
 
@@ -806,11 +773,10 @@ approval:
 |--------|----------|----------|------|
 | M1: features 骨架 | A1 | `alphahome/features/` 可 import | ✅ 已完成 |
 | M2: 物化视图迁移完成 | A2-A6 | features/storage 可独立运行 | ✅ 已完成 |
-| M3: Barra 解耦完成 | B1-B5 | scripts/tests 无 processors.tasks.barra 依赖 | ✅ 已完成 |
-| M4: CLI 下线 | C1-C4 | 无 CLI 入口，cli/ 最小化 | ✅ 已完成 |
-| M5: processors 删除 | D1-D4 | 目录已删除 | ✅ 已完成 |
-| M6: PIT 替代完成（MV PIT 化） | D0-D3 | income/balance/industry/fina_indicator 等可 PIT 消费的 MV 达到 D-1/D-2/D-3 验收 | ✅ 已完成 |
-| M7: 首批特征入库 | 基于甄别清单 | valuation/breadth/margin/volatility/limit 等 MV 可用 | 🔄 进行中 |
+| M3: CLI 下线 | C1-C4 | 无 CLI 入口，cli/ 最小化 | ✅ 已完成 |
+| M4: processors 删除 | D1-D4 | 目录已删除 | ✅ 已完成 |
+| M5: PIT 替代完成（MV PIT 化） | D0-D3 | income/balance/industry/fina_indicator 等可 PIT 消费的 MV 达到 D-1/D-2/D-3 验收 | ✅ 已完成 |
+| M6: 首批特征入库 | 基于甄别清单 | valuation/breadth/margin/volatility/limit 等 MV 可用 | 🔄 进行中 |
 
 ---
 
@@ -842,7 +808,6 @@ approval:
 | 2026-01-29 | v0.4 | 补充 features 命名与目录规范（对齐 fetchers 的可读性原则）；明确 recipes 分域目录与输出对象命名；细化 A6 的落地约束与兼容策略 |
 | 2026-01-29 | v0.5 | **代码落地**：1) 实现 @feature_register 装饰器 + FeatureRegistry.discover() 动态扫描；2) 重组 recipes/mv/ 为 {domain}/ 分组结构；3) 迁移 4 个 MV 到分域目录并添加装饰器；4) 保留兼容导出；5) 验证通过 |
 | 2026-01-29 | v0.6 | 文档全面对齐现状：更新 MV 清单与目录规范（移除 mv/pit wrapper 描述）、修正数据流向（区分 research/pit_data 现状与 features/pit 规划）、同步 BaseFeatureView/FeatureRegistry 的已落地契约与里程碑状态 |
-| 2026-01-29 | v0.7 | **Barra 解耦完成**：新增 `alphahome/barra/tasks/`（3 个任务 + 独立序列化），更新 scripts/tests import 路径，`tests/unit/test_barra` 全量通过 |
 | 2026-01-29 | v0.8 | **Phase 3 进展**：完成 C1-C4 CLI 入口下线（pyproject.toml 移除 4 个入口点，cli/ 目录最小化）；完成 D1 验收（scripts/tests 无 processors 引用），待执行 D2-D4 删除 processors |
 | 2026-01-29 | v0.9 | **Phase 3 完成**：执行 D2-D4，删除 `alphahome/processors/` 目录、移除顶层导出、同步 README/docs/repowiki 去除 processors/CLI 引用；全仓 grep 清零验收、pytest 104 passed |
 | 2026-01-29 | v0.10 | **M6 策略调整**：6.2 改为"MV PIT 化替代（方案 D）"，新增 income/balance 两张派生 MV 的下一步计划，并引入更严格验收 D-1/D-2/D-3 |

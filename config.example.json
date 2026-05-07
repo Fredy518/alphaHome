@@ -56,24 +56,6 @@
     },
     "tasks": {
         "_comment": "在此处为特定任务覆盖默认设置",
-        "akshare_macro_china_nbs_nation": {
-            "_comment": "国家统计局 NBS 通用全国宏观：配置 series 列表，每个 series 对应 kind/path/period。kind/path 需与 stats.gov.cn 页面层级匹配（建议手动维护）。",
-            "concurrent_limit": 1,
-            "series": [
-                {
-                    "id": "gdp_annual",
-                    "kind": "年度数据",
-                    "path": "<例如：国民经济核算 > 国内生产总值>",
-                    "period": "LAST10"
-                },
-                {
-                    "id": "cpi_monthly",
-                    "kind": "月度数据",
-                    "path": "<例如：价格指数 > 居民消费价格指数(CPI)>",
-                    "period": "LAST120"
-                }
-            ]
-        },
         "tushare_stock_daily": {
             "save_batch_size": 5000,
             "concurrent_limit": 10,

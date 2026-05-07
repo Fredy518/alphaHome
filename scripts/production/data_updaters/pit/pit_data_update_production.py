@@ -179,6 +179,15 @@ class PITDataUpdateCoordinator:
         """运行指定的更新任务"""
         logger.info(f"开始执行PIT数据更新，目标: {targets}, 模式: {mode}, 并行: {parallel}")
 
+        # financial_indicators 依赖 income/balance 的最新 PIT 数据。
+        # 当同一轮任务包含依赖方和被依赖方时，不能并行，否则会读到旧数据或半更新数据。
+        dependency_targets = {'balance', 'income'}
+        if parallel and 'financial_indicators' in targets and dependency_targets.intersection(targets):
+            logger.warning(
+                "检测到 financial_indicators 与其依赖任务同批执行，已禁用并行以保证 PIT 依赖顺序"
+            )
+            parallel = False
+
         update_tasks = []
         for target in targets:
             if target == 'balance':

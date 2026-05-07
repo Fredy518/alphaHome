@@ -31,8 +31,44 @@ CREATE TABLE IF NOT EXISTS pgs_factors.pit_financial_indicators (
     data_completeness VARCHAR(20) DEFAULT 'income_only', -- 新增：数据完整性
     balance_sheet_lag INTEGER,                         -- 新增：资产负债表数据延迟（天）
 
-    PRIMARY KEY (ts_code, end_date, ann_date)
+    PRIMARY KEY (ts_code, ann_date, end_date, data_source)
 );
+
+-- 兼容已存在的旧表：旧主键缺少 data_source，会导致计算器的
+-- ON CONFLICT (ts_code, ann_date, end_date, data_source) 无法匹配唯一约束。
+DO $$
+DECLARE
+    pk_name TEXT;
+    pk_cols TEXT[];
+BEGIN
+    SELECT c.conname,
+           ARRAY_AGG(a.attname ORDER BY u.ord)
+      INTO pk_name, pk_cols
+      FROM pg_constraint c
+      JOIN pg_class t ON c.conrelid = t.oid
+      JOIN pg_namespace n ON n.oid = t.relnamespace
+      JOIN UNNEST(c.conkey) WITH ORDINALITY AS u(attnum, ord) ON TRUE
+      JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = u.attnum
+     WHERE n.nspname = 'pgs_factors'
+       AND t.relname = 'pit_financial_indicators'
+       AND c.contype = 'p'
+     GROUP BY c.conname;
+
+    IF pk_name IS NULL THEN
+        ALTER TABLE pgs_factors.pit_financial_indicators
+        ADD CONSTRAINT pit_financial_indicators_pkey
+        PRIMARY KEY (ts_code, ann_date, end_date, data_source);
+    ELSIF NOT (pk_cols @> ARRAY['ts_code','ann_date','end_date','data_source']
+               AND ARRAY['ts_code','ann_date','end_date','data_source'] @> pk_cols) THEN
+        EXECUTE FORMAT(
+            'ALTER TABLE pgs_factors.pit_financial_indicators DROP CONSTRAINT %I',
+            pk_name
+        );
+        ALTER TABLE pgs_factors.pit_financial_indicators
+        ADD CONSTRAINT pit_financial_indicators_pkey
+        PRIMARY KEY (ts_code, ann_date, end_date, data_source);
+    END IF;
+END $$;
 
 CREATE INDEX IF NOT EXISTS idx_pit_financial_indicators_ts_ann
 ON pgs_factors.pit_financial_indicators (ts_code, ann_date);
@@ -66,4 +102,3 @@ BEGIN
         ADD CONSTRAINT chk_calc_status CHECK (calculation_status IN ('success', 'failed', 'partial'));
     END IF;
 END $$;
-

@@ -10,7 +10,7 @@
 ### AlphaHome 开发任务
 1.  **构建因子库框架 (`alphahome/factors`)**
     *   [ ] 设计统一的因子计算接口 (FactorCalculator)。
-    *   [ ] 实现 Barra CNE6 风格的基础因子：
+    *   [ ] 实现多因子风险模型风格的基础因子：
         *   **Size (规模)**: 总市值、流通市值 (对数处理)。
         *   **Value (估值)**: EP, BP, SP, 现金流市值比。
         *   **Momentum (动量)**: RPS (欧奈尔强度), 1个月/3个月/6个月动量, 均线乖离率。
@@ -36,7 +36,7 @@
 1.  **升级归因模块 (`alphahome/portfolio/attribution.py`)**
     *   [ ] 实现通用组合分析逻辑，支持**基于持仓 (Holdings-based)** 的输入。
     *   [ ] 实现 **Brinson 归因**：将超额收益分解为"行业配置收益"与"个股选择收益"。
-    *   [ ] 实现 **Barra 风格归因 (青春版)**：计算组合在 Value, Growth, Size 等因子上的暴露度 (Exposure)。
+    *   [ ] 实现 **多因子归因 (青春版)**：计算组合在 Value, Growth, Size 等因子上的暴露度 (Exposure)。
         *   *输出话术："本组合跑赢基准 5%，其中 3% 来自对低估值风格的超配。"*
 
 2.  **开发组合风控面板 (`alphahome/portfolio/risk.py`)**

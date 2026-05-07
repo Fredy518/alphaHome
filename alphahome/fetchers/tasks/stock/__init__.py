@@ -34,6 +34,9 @@ from .tushare_stock_holdertrade import TushareStockHolderTradeTask
 from .tushare_stock_toplist import TushareStockTopListTask
 from .tushare_stock_topinst import TushareStockTopInstTask
 from .tushare_stock_blocktrade import TushareStockBlockTradeTask
+from .tushare_stock_moneyflow_hsgt import TushareStockMoneyflowHsgtTask
+from .tushare_stock_hsgt_top10 import TushareStockHsgtTop10Task
+from .tushare_stock_hk_hold import TushareStockHkHoldTask
 
 from .akshare_stock_limitup_reason import AkShareStockLimitupReasonTask
 from .akshare_stock_analyst_rank_em import AkShareStockAnalystRankEmTask
@@ -75,6 +78,9 @@ __all__ = [
     "TushareStockTopListTask",
     "TushareStockTopInstTask",
     "TushareStockBlockTradeTask",
+    "TushareStockMoneyflowHsgtTask",
+    "TushareStockHsgtTop10Task",
+    "TushareStockHkHoldTask",
     "AkShareStockLimitupReasonTask",
     "AkShareStockAnalystRankEmTask",
     "TinySoftStockMinuteTask",

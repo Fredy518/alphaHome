@@ -13,21 +13,29 @@ import os
 import argparse
 import time
 import logging
+import importlib.util
 import pandas as pd
 from datetime import datetime, timedelta
 from typing import List, Dict, Any
 from pathlib import Path
 
 # 添加项目根目录到路径
-project_root = Path(__file__).parent.parent.parent.parent.parent
+project_root = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(project_root))
 
 # 添加research路径
 research_path = project_root / "research"
 sys.path.insert(0, str(research_path))
 
-# 导入计算器
-from pgs_factor.processors.production_p_factor_calculator import ProductionPFactorCalculator
+# 动态导入生产P因子计算器，避免误用 research 目录中的旧实现
+spec = importlib.util.spec_from_file_location(
+    "production_p_factor_calculator",
+    Path(__file__).resolve().parent / "p_factor" / "production_p_factor_calculator.py"
+)
+calc_module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(calc_module)
+ProductionPFactorCalculator = calc_module.ProductionPFactorCalculator
+
 from pgs_factor.processors.production_g_factor_calculator import ProductionGFactorCalculator
 
 
@@ -37,7 +45,7 @@ class BatchMissingFactorCalculator:
     def __init__(self):
         from research.tools.context import ResearchContext
         self.context = ResearchContext()
-        self.p_calculator = ProductionPFactorCalculator(self.context)
+        self.p_calculator = ProductionPFactorCalculator()
         self.g_calculator = ProductionGFactorCalculator(self.context)
         self.logger = self._setup_logger()
 
