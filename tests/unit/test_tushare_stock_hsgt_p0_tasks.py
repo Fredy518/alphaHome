@@ -109,22 +109,22 @@ async def test_p0_tasks_support_gui_smart_mode(task_cls):
 
 
 @pytest.mark.asyncio
-async def test_moneyflow_hsgt_generates_trade_date_batches(monkeypatch):
+async def test_moneyflow_hsgt_generates_date_range_batches(monkeypatch):
     from alphahome.fetchers.tasks.stock import tushare_stock_moneyflow_hsgt as module
 
     captured = {}
 
-    async def fake_generate_single_date_batches(**kwargs):
+    async def fake_generate_trade_day_batches(**kwargs):
         captured.update(kwargs)
-        return [{"trade_date": kwargs["start_date"]}]
+        return [{"start_date": kwargs["start_date"], "end_date": kwargs["end_date"]}]
 
-    monkeypatch.setattr(module, "generate_single_date_batches", fake_generate_single_date_batches)
+    monkeypatch.setattr(module, "generate_trade_day_batches", fake_generate_trade_day_batches)
     task = _make_task(TushareStockMoneyflowHsgtTask)
 
     batches = await task.get_batch_list(start_date="20240506", end_date="20240506")
 
-    assert batches == [{"trade_date": "20240506"}]
-    assert captured["date_field"] == "trade_date"
+    assert batches == [{"start_date": "20240506", "end_date": "20240506"}]
+    assert captured["batch_size"] == task.batch_trade_days
     assert captured["start_date"] == "20240506"
     assert captured["end_date"] == "20240506"
 
@@ -135,11 +135,17 @@ async def test_hsgt_top10_preserves_optional_api_filters(monkeypatch):
 
     captured = {}
 
-    async def fake_generate_single_date_batches(**kwargs):
+    async def fake_generate_trade_day_batches(**kwargs):
         captured.update(kwargs)
-        return [{"trade_date": kwargs["start_date"], **kwargs["additional_params"]}]
+        return [
+            {
+                "start_date": kwargs["start_date"],
+                "end_date": kwargs["end_date"],
+                **kwargs["additional_params"],
+            }
+        ]
 
-    monkeypatch.setattr(module, "generate_single_date_batches", fake_generate_single_date_batches)
+    monkeypatch.setattr(module, "generate_trade_day_batches", fake_generate_trade_day_batches)
     task = _make_task(TushareStockHsgtTop10Task)
 
     batches = await task.get_batch_list(
@@ -149,8 +155,15 @@ async def test_hsgt_top10_preserves_optional_api_filters(monkeypatch):
         ts_code="600519.SH",
     )
 
-    assert batches == [{"trade_date": "20240506", "market_type": "1", "ts_code": "600519.SH"}]
-    assert captured["date_field"] == "trade_date"
+    assert batches == [
+        {
+            "start_date": "20240506",
+            "end_date": "20240506",
+            "market_type": "1",
+            "ts_code": "600519.SH",
+        }
+    ]
+    assert captured["batch_size"] == task.batch_trade_days
     assert captured["additional_params"] == {"market_type": "1", "ts_code": "600519.SH"}
 
 

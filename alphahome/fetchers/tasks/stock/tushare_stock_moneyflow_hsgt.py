@@ -14,7 +14,7 @@ from datetime import datetime
 from typing import Dict, List
 
 from ....common.task_system.task_decorator import task_register
-from ...sources.tushare.batch_utils import generate_single_date_batches
+from ...sources.tushare.batch_utils import generate_trade_day_batches
 from ...sources.tushare.tushare_task import TushareTask
 
 
@@ -34,6 +34,7 @@ class TushareStockMoneyflowHsgtTask(TushareTask):
 
     default_concurrent_limit = 1
     default_page_size = 300
+    batch_trade_days = 120
 
     api_name = "moneyflow_hsgt"
     fields = [
@@ -79,7 +80,7 @@ class TushareStockMoneyflowHsgtTask(TushareTask):
     validation_mode = "report"
 
     async def get_batch_list(self, **kwargs) -> List[Dict]:
-        """按交易日生成批次，覆盖 GUI 全量、手动增量、智能增量三种模式。"""
+        """按交易日范围生成批次，覆盖 GUI 全量、手动增量、智能增量三种模式。"""
         start_date = kwargs.get("start_date") or self.default_start_date
         end_date = kwargs.get("end_date") or datetime.now().strftime("%Y%m%d")
 
@@ -87,11 +88,14 @@ class TushareStockMoneyflowHsgtTask(TushareTask):
             self.logger.info(f"起始日期 ({start_date}) 晚于结束日期 ({end_date})，跳过执行")
             return []
 
-        self.logger.info(f"按交易日分批获取沪深港通资金流: {start_date} ~ {end_date}")
-        return await generate_single_date_batches(
+        self.logger.info(
+            f"按交易日范围分批获取沪深港通资金流: {start_date} ~ {end_date}, "
+            f"每批 {self.batch_trade_days} 个交易日"
+        )
+        return await generate_trade_day_batches(
             start_date=start_date,
             end_date=end_date,
-            date_field="trade_date",
+            batch_size=self.batch_trade_days,
             logger=self.logger,
             exchange=kwargs.get("exchange", "SSE"),
         )
