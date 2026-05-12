@@ -338,7 +338,7 @@ class TushareAPI:
                             self.logger.error(
                                 f"Tushare API 返回错误 ({api_name}): Code: {result.get('code')}, Msg: {error_msg}, Payload: {payload}"
                             )
-                            if result.get("code") == 50101:
+                            if result.get("code") == 50101 and self._is_offset_limit_50101(error_msg, params):
                                 self.logger.warning(
                                     f"Tushare API 返回offset限制错误 ({api_name}): {error_msg}。将启动智能时间拆分处理。"
                                 )
@@ -537,7 +537,7 @@ class TushareAPI:
                                             raise asyncio.CancelledError
                                         await asyncio.sleep(1)
                                     continue  # 继续外层循环以重试
-                                elif result.get("code") == 50101:
+                                elif result.get("code") == 50101 and self._is_offset_limit_50101(error_msg, params):
                                     self.logger.warning(
                                         f"Tushare API 返回offset限制错误 ({api_name}): {error_msg}。"
                                         f"将启动智能时间拆分处理。"
@@ -637,6 +637,23 @@ class TushareAPI:
             f"API {api_name} (参数: {params}) 通过分页共获取 {len(combined_data)} 条记录。"
         )
         return combined_data
+
+    def _is_offset_limit_50101(self, error_msg: str, params: Dict[str, Any]) -> bool:
+        """判断 50101 是否确实适合按时间范围拆分处理。"""
+        if "start_date" not in params or "end_date" not in params:
+            return False
+
+        normalized_msg = str(error_msg or "").lower()
+        offset_markers = (
+            "offset",
+            "100000",
+            "limit",
+            "分页",
+            "超过",
+            "上限",
+            "限制",
+        )
+        return any(marker in normalized_msg for marker in offset_markers)
 
     async def _handle_offset_limit_error(
         self,
@@ -742,10 +759,11 @@ class TushareAPI:
 
             except Exception as e:
                 self.logger.error(
-                    f"子批次 {i+1} 处理失败: {e}，将跳过此批次"
+                    f"子批次 {i+1} 处理失败: {e}，中止智能时间拆分以避免返回部分数据。"
                 )
-                # 继续处理下一个子批次，不中断整个流程
-                continue
+                raise RuntimeError(
+                    f"智能时间拆分子批次 {i+1}/{len(sub_ranges)} 失败: {e}"
+                ) from e
 
         # 5. 合并结果
         if all_results:

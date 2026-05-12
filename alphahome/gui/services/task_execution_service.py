@@ -193,6 +193,11 @@ async def run_tasks(
                     task_name, **task_init_params
                 )
             except Exception as factory_e:
+                log_msg = f"任务 {task_name} 创建失败: {factory_e}"
+                logger.error(log_msg, exc_info=True)
+                if _send_response_callback:
+                    _send_response_callback("LOG", {"level": "error", "message": log_msg})
+                await _record_task_status(db_manager, task_name, "error", f"任务实例创建失败: {factory_e}")
                 await get_all_task_status(db_manager)
                 continue
             # --- 重构结束 ---

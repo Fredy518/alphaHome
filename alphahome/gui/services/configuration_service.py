@@ -66,11 +66,44 @@ def get_current_settings() -> Dict:
         return {}
 
 
+def _deep_merge_settings(base: Dict[str, Any], updates: Dict[str, Any]) -> Dict[str, Any]:
+    """递归合并配置，避免 GUI 保存少量字段时覆盖整棵配置树。"""
+    merged = base.copy()
+    for key, value in updates.items():
+        if (
+            key in merged
+            and isinstance(merged[key], dict)
+            and isinstance(value, dict)
+        ):
+            merged[key] = _deep_merge_settings(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
+
+
+def _normalize_settings_update(settings_from_gui: Dict[str, Any]) -> Dict[str, Any]:
+    """清理 GUI 更新载荷，避免空输入覆盖已有关键配置。"""
+    normalized = {
+        key: value.copy() if isinstance(value, dict) else value
+        for key, value in (settings_from_gui or {}).items()
+    }
+    database_settings = normalized.get("database")
+    if isinstance(database_settings, dict) and not database_settings.get("url"):
+        database_settings.pop("url", None)
+        if not database_settings:
+            normalized.pop("database", None)
+    return normalized
+
+
 async def handle_save_settings(settings_from_gui: Dict):
     """处理保存设置的逻辑，并触发配置重载。"""
     try:
+        current_settings = get_current_settings()
+        normalized_update = _normalize_settings_update(settings_from_gui)
+        merged_settings = _deep_merge_settings(current_settings, normalized_update)
+
         with open(CONFIG_FILE_PATH, "w", encoding="utf-8") as f:
-            json.dump(settings_from_gui, f, indent=4, ensure_ascii=False)
+            json.dump(merged_settings, f, indent=4, ensure_ascii=False)
         logger.info(f"设置已成功保存到 {CONFIG_FILE_PATH}")
         if _send_response_callback:
             _send_response_callback("LOG_ENTRY", "设置已成功保存。")

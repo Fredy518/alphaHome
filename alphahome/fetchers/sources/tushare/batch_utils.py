@@ -70,6 +70,7 @@ async def generate_trade_day_batches(
     ts_code: Optional[str] = None,
     exchange: str = "SSE",
     additional_params: Optional[Dict[str, Any]] = None,
+    db_manager: Optional[Any] = None,
     logger: Optional[logging.Logger] = None,
 ) -> List[Dict[str, Any]]:
     """
@@ -95,7 +96,12 @@ async def generate_trade_day_batches(
     try:
         # 1. 定义数据源：获取交易日列表
         async def get_trade_days():
-            return await get_trade_days_between(start_date, end_date, exchange=exchange)
+            return await get_trade_days_between(
+                start_date,
+                end_date,
+                exchange=exchange,
+                db_manager=db_manager,
+            )
         
         trade_days_source = Source.from_callable(get_trade_days)
 

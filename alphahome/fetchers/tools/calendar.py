@@ -1,4 +1,5 @@
 import calendar as std_calendar
+import contextvars
 import datetime
 import inspect
 import json
@@ -13,8 +14,22 @@ import pandas as pd
 logger = logging.getLogger(__name__)
 
 # 全局交易日历数据缓存
-_TRADE_CAL_CACHE: Dict[Tuple[str, str, str], pd.DataFrame] = {}
+_TRADE_CAL_CACHE: Dict[Tuple[str, str, str, str], pd.DataFrame] = {}
 _DB_POOL: Optional[asyncpg.Pool] = None
+_CALENDAR_DB_MANAGER: contextvars.ContextVar[Optional[Any]] = contextvars.ContextVar(
+    "alphahome_calendar_db_manager",
+    default=None,
+)
+
+
+def set_calendar_db_manager(db_manager: Any) -> contextvars.Token:
+    """为当前异步上下文设置交易日历使用的数据库管理器。"""
+    return _CALENDAR_DB_MANAGER.set(db_manager)
+
+
+def reset_calendar_db_manager(token: contextvars.Token) -> None:
+    """恢复交易日历数据库管理器上下文。"""
+    _CALENDAR_DB_MANAGER.reset(token)
 
 
 def _normalize_date_to_yyyymmdd(
@@ -182,7 +197,10 @@ async def _get_db_pool() -> Optional[asyncpg.Pool]:
 
 
 async def get_trade_cal(
-    start_date: str = None, end_date: str = None, exchange: str = "SSE"
+    start_date: str = None,
+    end_date: str = None,
+    exchange: str = "SSE",
+    db_manager: Optional[Any] = None,
 ) -> pd.DataFrame:
     """获取交易日历数据 (从数据库)
 
@@ -221,17 +239,16 @@ async def get_trade_cal(
         f"_get_trade_cal: Calculated exchange codes: input_exchange='{exchange}', upper_exchange='{upper_exchange}', db_exchange_code='{db_exchange_code}'"
     )
 
-    cache_key = (start_date, end_date, upper_exchange)
+    active_db_manager = (
+        db_manager if db_manager is not None else _CALENDAR_DB_MANAGER.get()
+    )
+    cache_db_key = f"db:{id(active_db_manager)}" if active_db_manager is not None else "legacy"
+    cache_key = (start_date, end_date, upper_exchange, cache_db_key)
     if cache_key in _TRADE_CAL_CACHE:
         logger.debug(f"交易日历缓存命中: {cache_key}")
         return _TRADE_CAL_CACHE[cache_key].copy()
 
     logger.debug(f"交易日历缓存未命中，尝试从数据库获取: {cache_key}")
-
-    pool = await _get_db_pool()
-    if not pool:
-        logger.error("数据库连接池不可用，无法获取交易日历。")
-        return pd.DataFrame()
 
     sql_query = '''
     SELECT exchange, cal_date, is_open, pretrade_date
@@ -245,10 +262,19 @@ async def get_trade_cal(
     final_df = pd.DataFrame()
 
     try:
-        async with pool.acquire() as conn:
-            records = await conn.fetch(
+        if active_db_manager is not None:
+            records = await active_db_manager.fetch(
                 sql_query, db_exchange_code, start_date, end_date
             )
+        else:
+            pool = await _get_db_pool()
+            if not pool:
+                logger.error("数据库连接池不可用，无法获取交易日历。")
+                return pd.DataFrame()
+            async with pool.acquire() as conn:
+                records = await conn.fetch(
+                    sql_query, db_exchange_code, start_date, end_date
+                )
 
         logger.debug(
             f"_get_trade_cal: Database raw records count for {db_exchange_code} ({start_date}-{end_date}): {len(records) if records else 'None'}"
@@ -311,7 +337,9 @@ async def get_trade_cal(
 
 
 async def is_trade_day(
-    date: Union[str, datetime.datetime, datetime.date], exchange: str = "SSE"
+    date: Union[str, datetime.datetime, datetime.date],
+    exchange: str = "SSE",
+    db_manager: Optional[Any] = None,
 ) -> bool:
     """检查指定日期是否为交易日。
 
@@ -329,7 +357,12 @@ async def is_trade_day(
 
     # 优化：直接使用 get_trade_cal 并检查结果
     # 这样可以利用缓存，并且只查询一次数据库
-    df = await get_trade_cal(start_date=date_str, end_date=date_str, exchange=exchange)
+    df = await get_trade_cal(
+        start_date=date_str,
+        end_date=date_str,
+        exchange=exchange,
+        db_manager=db_manager,
+    )
 
     if not df.empty:
         # 确保查询结果包含当天
@@ -345,6 +378,7 @@ async def get_last_trade_day(
     date: Union[str, datetime.datetime, datetime.date] = None,
     n: int = 1,
     exchange: str = "SSE",
+    db_manager: Optional[Any] = None,
 ) -> Optional[str]:
     """获取指定日期（或当前日期）之前的第 n 个交易日。
 
@@ -374,7 +408,10 @@ async def get_last_trade_day(
     start_date_str_query = start_date_dt.strftime("%Y%m%d")
 
     df = await get_trade_cal(
-        start_date=start_date_str_query, end_date=base_date_str, exchange=exchange
+        start_date=start_date_str_query,
+        end_date=base_date_str,
+        exchange=exchange,
+        db_manager=db_manager,
     )
 
     if df.empty:
@@ -401,6 +438,7 @@ async def get_next_trade_day(
     date: Union[str, datetime.datetime, datetime.date] = None,
     n: int = 1,
     exchange: str = "SSE",
+    db_manager: Optional[Any] = None,
 ) -> Optional[str]:
     """获取指定日期（或当前日期）之后的第 n 个交易日。
 
@@ -429,7 +467,10 @@ async def get_next_trade_day(
     end_date_str_query = end_date_dt.strftime("%Y%m%d")
 
     df = await get_trade_cal(
-        start_date=base_date_str, end_date=end_date_str_query, exchange=exchange
+        start_date=base_date_str,
+        end_date=end_date_str_query,
+        exchange=exchange,
+        db_manager=db_manager,
     )
 
     if df.empty:
@@ -456,6 +497,7 @@ async def get_trade_days_between(
     start_date: Union[str, datetime.datetime, datetime.date],
     end_date: Union[str, datetime.datetime, datetime.date],
     exchange: str = "SSE",
+    db_manager: Optional[Any] = None,
 ) -> List[str]:
     """获取两个日期之间的所有交易日列表。
 
@@ -477,7 +519,10 @@ async def get_trade_days_between(
         return []
 
     df = await get_trade_cal(
-        start_date=start_date_str, end_date=end_date_str, exchange=exchange
+        start_date=start_date_str,
+        end_date=end_date_str,
+        exchange=exchange,
+        db_manager=db_manager,
     )
     if not df.empty and "is_open" in df.columns:
         # 筛选出 is_open 为 1 的交易日

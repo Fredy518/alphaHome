@@ -98,3 +98,34 @@ async def test_run_tasks_switches_unsupported_smart_task_to_full(monkeypatch):
 
     assert task.executed is True
     assert task.update_type == UpdateTypes.FULL
+
+
+@pytest.mark.asyncio
+async def test_run_tasks_records_error_when_task_factory_fails(monkeypatch):
+    db_manager = object()
+    create_task_instance = AsyncMock(side_effect=RuntimeError("factory boom"))
+    record_task_status = AsyncMock()
+
+    monkeypatch.setattr(task_execution_service, "_ensure_task_status_table_exists", AsyncMock())
+    monkeypatch.setattr(task_execution_service, "_record_task_status", record_task_status)
+    monkeypatch.setattr(task_execution_service, "get_all_task_status", AsyncMock())
+    monkeypatch.setattr(
+        task_execution_service.UnifiedTaskFactory,
+        "create_task_instance",
+        create_task_instance,
+    )
+
+    await task_execution_service.run_tasks(
+        db_manager=db_manager,
+        tasks_to_run=[{"task_name": "broken_task"}],
+        start_date=None,
+        end_date=None,
+        exec_mode="智能增量",
+    )
+
+    record_task_status.assert_any_await(
+        db_manager,
+        "broken_task",
+        "error",
+        "任务实例创建失败: factory boom",
+    )

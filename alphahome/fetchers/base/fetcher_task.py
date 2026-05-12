@@ -163,8 +163,10 @@ class FetcherTask(BaseTask, ABC):
             
         semaphore = asyncio.Semaphore(self.concurrent_limit)
         progress_bar = tqdm(total=len(batches), desc=f"Executing {self.name}", unit="batch")
+        failed_batches: List[Dict[str, Any]] = []
         
         async def process_batch_with_retry(batch):
+            last_error = None
             for attempt in range(self.max_retries):
                 if stop_event and stop_event.is_set():
                     progress_bar.close()
@@ -172,18 +174,31 @@ class FetcherTask(BaseTask, ABC):
                 try:
                     async with semaphore:
                         params = await self.prepare_params(batch)
-                        return await self.fetch_batch(params, stop_event=stop_event)
+                        return {
+                            "success": True,
+                            "batch": batch,
+                            "data": await self.fetch_batch(params, stop_event=stop_event),
+                        }
                 except asyncio.CancelledError:
                     raise  # Propagate cancellation
                 except Exception as e:
+                    last_error = e
                     self.logger.warning(
                         f"'{self.name}' - Batch {batch} failed on attempt {attempt + 1}/{self.max_retries}. Error: {e}"
                     )
                     if attempt + 1 == self.max_retries:
                         self.logger.error(f"'{self.name}' - Batch {batch} failed after all retries.")
-                        return None
+                        return {
+                            "success": False,
+                            "batch": batch,
+                            "error": str(last_error),
+                        }
                     await asyncio.sleep(self.retry_delay * (attempt + 1))
-            return None
+            return {
+                "success": False,
+                "batch": batch,
+                "error": str(last_error) if last_error else "unknown batch failure",
+            }
 
         tasks = []
         for batch in batches:
@@ -195,7 +210,13 @@ class FetcherTask(BaseTask, ABC):
         results = []
         for future in asyncio.as_completed(tasks):
             try:
-                result = await future
+                batch_result = await future
+                if not batch_result:
+                    continue
+                if not batch_result.get("success"):
+                    failed_batches.append(batch_result)
+                    continue
+                result = batch_result.get("data")
                 if result is not None:
                     results.append(result)
             except asyncio.CancelledError:
@@ -209,6 +230,17 @@ class FetcherTask(BaseTask, ABC):
                 progress_bar.update(1)
 
         progress_bar.close()
+
+        if failed_batches:
+            sample_errors = "; ".join(
+                f"batch={item.get('batch')}, error={item.get('error')}"
+                for item in failed_batches[:3]
+            )
+            raise RuntimeError(
+                f"'{self.name}' - {len(failed_batches)}/{len(batches)} batches failed; "
+                f"aborting save to avoid partial data. Sample errors: {sample_errors}"
+            )
+
         return results
 
     async def _fetch_data(self, stop_event: Optional[asyncio.Event] = None, **kwargs) -> Optional[pd.DataFrame]:
@@ -264,7 +296,13 @@ class FetcherTask(BaseTask, ABC):
 
             # 将计算出的日期范围和 kwargs 合并，传递给 get_batch_list
             batch_gen_params = {**kwargs, **{"start_date": start_date, "end_date": end_date}}
-            batches = await self.get_batch_list(**batch_gen_params)
+            from ..tools.calendar import reset_calendar_db_manager, set_calendar_db_manager
+
+            calendar_token = set_calendar_db_manager(self.db)
+            try:
+                batches = await self.get_batch_list(**batch_gen_params)
+            finally:
+                reset_calendar_db_manager(calendar_token)
             
             if not batches:
                 self.logger.info(f"'{self.name}' - No batches to process. Task finished.")

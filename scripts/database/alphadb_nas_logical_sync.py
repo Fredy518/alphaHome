@@ -584,7 +584,7 @@ def ensure_logical_slot(local_conn, slot_name: str, local_dbname: str, *, dry_ru
     )
 
 
-def schema_signature(conn) -> list[str]:
+def schema_signature(conn) -> dict[tuple[str, str], list[str]]:
     rows = fetchall(
         conn,
         """
@@ -605,41 +605,61 @@ def schema_signature(conn) -> list[str]:
         ORDER BY c.table_schema, c.table_name, c.ordinal_position
         """,
     )
-    return [
-        "|".join(
-            [
-                row["table_schema"],
-                row["table_name"],
-                row["column_name"],
-                row["data_type"],
-                row["udt_name"],
-                str(row["char_len"]),
-                row["is_nullable"],
-            ]
+    signatures: dict[tuple[str, str], list[str]] = {}
+    for row in rows:
+        table_key = (row["table_schema"], row["table_name"])
+        signatures.setdefault(table_key, []).append(
+            "|".join(
+                [
+                    row["table_schema"],
+                    row["table_name"],
+                    row["column_name"],
+                    row["data_type"],
+                    row["udt_name"],
+                    str(row["char_len"]),
+                    row["is_nullable"],
+                ]
+            )
         )
-        for row in rows
-    ]
+    return signatures
 
 
 def ensure_schema_compatible(local_conn, nas_conn) -> None:
     local_sig = schema_signature(local_conn)
     nas_sig = schema_signature(nas_conn)
-    if local_sig == nas_sig:
+    missing_tables = sorted(set(local_sig) - set(nas_sig))
+    differing_tables = sorted(
+        table_key
+        for table_key in set(local_sig) & set(nas_sig)
+        if local_sig[table_key] != nas_sig[table_key]
+    )
+
+    if not missing_tables and not differing_tables:
+        extra_tables = sorted(set(nas_sig) - set(local_sig))
+        if extra_tables:
+            LOGGER.info("NAS 上存在 %s 张本机没有的额外表，已忽略。", len(extra_tables))
         return
 
-    diff = list(
-        difflib.unified_diff(
-            local_sig,
-            nas_sig,
-            fromfile="local",
-            tofile="nas",
-            lineterm="",
-            n=2,
+    diff: list[str] = []
+    if missing_tables:
+        diff.append("NAS 缺少以下本机表:")
+        diff.extend(f"  {schema_name}.{table_name}" for schema_name, table_name in missing_tables)
+
+    for schema_name, table_name in differing_tables:
+        diff.extend(
+            difflib.unified_diff(
+                local_sig[(schema_name, table_name)],
+                nas_sig[(schema_name, table_name)],
+                fromfile=f"local:{schema_name}.{table_name}",
+                tofile=f"nas:{schema_name}.{table_name}",
+                lineterm="",
+                n=2,
+            )
         )
-    )
+
     preview = "\n".join(diff[:SCHEMA_DIFF_PREVIEW_LINES])
     raise RuntimeError(
-        "本机与 NAS 的表结构签名不一致。逻辑复制不会自动同步 DDL，请先让 NAS schema 对齐。\n"
+        "本机发布表与 NAS 表结构不兼容。逻辑复制不会自动同步 DDL，请先让 NAS schema 对齐。\n"
         f"{preview}"
     )
 

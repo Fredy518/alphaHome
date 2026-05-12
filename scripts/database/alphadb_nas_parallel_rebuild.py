@@ -399,6 +399,20 @@ def recreate_nas_database(nas_admin_url: str, dbname: str, *, psql_bin: str) -> 
     raise RuntimeError(f"创建 NAS 数据库失败: {dbname}")
 
 
+def terminate_nas_database_connections(nas_db_url: str) -> None:
+    with connection_scope(nas_db_url) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT pg_terminate_backend(pid)
+                FROM pg_stat_activity
+                WHERE datname = current_database()
+                  AND pid <> pg_backend_pid()
+                """
+            )
+    LOGGER.info("已终止 NAS 目标库上的其他连接")
+
+
 def restore_dump(
     *,
     pg_restore_bin: str,
@@ -483,6 +497,11 @@ def main() -> int:
         help="在最终 sync-now 后刷新 NAS 全部 materialized view",
     )
     parser.add_argument("--cleanup-dump", action="store_true", help="成功后删除 dump 目录")
+    parser.add_argument(
+        "--preserve-nas-extra-objects",
+        action="store_true",
+        help="不删除 NAS 数据库，仅 clean/restore dump 中对象，以保留 NAS-only schema/table",
+    )
     parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args()
 
@@ -525,7 +544,12 @@ def main() -> int:
             meta["snapshot_name"],
         )
 
-    recreate_nas_database(nas_admin_url, dbname, psql_bin=psql_bin)
+    if args.preserve_nas_extra_objects:
+        terminate_nas_database_connections(nas_url)
+        LOGGER.info("保留 NAS 数据库及 dump 外对象，仅覆盖本机 dump 中的对象")
+    else:
+        recreate_nas_database(nas_admin_url, dbname, psql_bin=psql_bin)
+
     restore_dump(
         pg_restore_bin=pg_restore_bin,
         dump_dir=dump_dir,
