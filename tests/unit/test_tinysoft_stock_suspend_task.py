@@ -21,8 +21,12 @@ class _FakeDB:
 
 
 class _MultiSymbolApi:
+    def __init__(self):
+        self.last_where_clause = "NOT_CALLED"
+
     async def call_dataframe(self, func, table_id, **kwargs):
         stock = kwargs.get("stock")
+        self.last_where_clause = kwargs.get("where_clause")
         assert func == "infoarray"
         assert table_id == 127
         return pd.DataFrame(
@@ -114,6 +118,17 @@ async def test_get_batch_list_uses_infoarray_table_id():
 
 
 @pytest.mark.asyncio
+async def test_get_batch_list_defaults_start_date_when_missing():
+    task = _make_task(
+        db=_FakeDB(rows=[{"ts_code": "000001.SZ"}]),
+        task_config={"symbol_batch_size": 1},
+    )
+    batches = await task.get_batch_list()
+    assert len(batches) == 1
+    assert batches[0]["start_date"] == task.default_start_date
+
+
+@pytest.mark.asyncio
 async def test_fetch_batch_supports_symbol_pairs():
     task = _make_task(
         db=_FakeDB(),
@@ -134,3 +149,72 @@ async def test_fetch_batch_supports_symbol_pairs():
     assert df is not None
     assert len(df) == 2
     assert set(df["StockID"]) == {"SZ000001", "SH600000"}
+
+
+# ---------- WHERE clause tests ----------
+
+
+def test_build_where_clause_with_valid_date():
+    clause = TinySoftStockSuspendTask._build_where_clause("20260301")
+    assert clause == '["停牌开始日"]>=20260301'
+
+
+def test_build_where_clause_with_none():
+    assert TinySoftStockSuspendTask._build_where_clause(None) is None
+
+
+def test_build_where_clause_with_empty_string():
+    assert TinySoftStockSuspendTask._build_where_clause("") is None
+
+
+@pytest.mark.asyncio
+async def test_fetch_batch_passes_where_clause_when_start_date_present():
+    """SMART/MANUAL: start_date -> WHERE 条件应传到 call_dataframe。"""
+    api = _MultiSymbolApi()
+    task = _make_task(db=_FakeDB(), api=api, task_config={"skip_failed_symbols": False})
+    await task.fetch_batch(
+        {
+            "symbol_pairs": [{"ts_code": "000001.SZ", "stock": "SZ000001"}],
+            "infoarray_table_id": 127,
+            "start_date": "20260301",
+            "service": "",
+            "timeout_ms": 45000,
+        }
+    )
+    assert api.last_where_clause == '["停牌开始日"]>=20260301'
+
+
+@pytest.mark.asyncio
+async def test_fetch_batch_no_where_clause_when_no_start_date():
+    """低层 fetch_batch 未给 start_date 时不传 where_clause。"""
+    api = _MultiSymbolApi()
+    task = _make_task(db=_FakeDB(), api=api, task_config={"skip_failed_symbols": False})
+    await task.fetch_batch(
+        {
+            "symbol_pairs": [{"ts_code": "000001.SZ", "stock": "SZ000001"}],
+            "infoarray_table_id": 127,
+            "service": "",
+            "timeout_ms": 45000,
+        }
+    )
+    assert api.last_where_clause is None
+
+
+def test_process_data_uses_effective_window_when_kwargs_missing():
+    task = _make_task()
+    task._effective_start_date = "20260301"
+    task._effective_end_date = "20260331"
+    raw = pd.DataFrame(
+        {
+            "停牌开始日": [20260228, 20260302],
+            "停牌开始时间": ["09:30:00", "09:30:00"],
+            "停牌截止日": [20260228, 20260302],
+            "停牌截止时间": ["10:30:00", "10:30:00"],
+            "停牌期限": ["1小时", "1小时"],
+            "停牌原因": ["临时停牌", "临时停牌"],
+            "StockID": ["SZ000001", "SZ000001"],
+        }
+    )
+    processed = task.process_data(raw)
+    assert len(processed) == 1
+    assert str(processed.iloc[0]["trade_date"]) == "2026-03-02"

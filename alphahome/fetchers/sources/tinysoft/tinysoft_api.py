@@ -272,3 +272,140 @@ class TinySoftAPI:
             )
 
         raise TinySoftAPIError("Tinysoft query 未返回有效结果")
+
+    # ------------------------------------------------------------------
+    # exec / call / call_dataframe — 通用 TSL 接口
+    # ------------------------------------------------------------------
+
+    async def _parse_result(self, result, *, as_dataframe: bool = True):
+        """统一解析 pyTSL 调用结果。"""
+        if result is None:
+            return pd.DataFrame() if as_dataframe else None
+
+        try:
+            error_code = int(result.error())
+        except Exception:
+            error_code = -999
+        try:
+            message = str(result.message())
+        except Exception:
+            message = "unknown error"
+
+        if error_code != 0:
+            raise TinySoftAPIError(
+                f"Tinysoft 调用失败: code={error_code}, message={message}"
+            )
+
+        if as_dataframe:
+            try:
+                df = result.dataframe()
+                return df if isinstance(df, pd.DataFrame) else pd.DataFrame()
+            except Exception as e:
+                raise TinySoftAPIError(f"转换结果为 DataFrame 失败: {e}") from e
+        else:
+            try:
+                return result.value()
+            except Exception as e:
+                raise TinySoftAPIError(f"获取结果 value 失败: {e}") from e
+
+    async def exec(
+        self,
+        tsl_code: str,
+        *,
+        as_dataframe: bool = True,
+        stop_event: Optional[asyncio.Event] = None,
+    ):
+        """
+        执行任意 TSL 代码。
+
+        Args:
+            tsl_code: TSL 脚本字符串。
+            as_dataframe: True 返回 DataFrame，False 返回原始 value()。
+            stop_event: 取消事件。
+        """
+        if stop_event and stop_event.is_set():
+            raise asyncio.CancelledError("Tinysoft exec 被取消")
+
+        client = await self._get_client()
+        await self.login()
+        await self._wait_for_request_slot()
+
+        result = await asyncio.to_thread(client.exec, tsl_code)
+        return await self._parse_result(result, as_dataframe=as_dataframe)
+
+    async def call(
+        self,
+        func_name: str,
+        *args,
+        code: str = "",
+        as_dataframe: bool = True,
+        stop_event: Optional[asyncio.Event] = None,
+    ):
+        """
+        调用 TSL 自定义函数。
+
+        Args:
+            func_name: TSL 函数名。
+            *args: 传给函数的位置参数。
+            code: 包含函数定义的 TSL 代码。
+            as_dataframe: True 返回 DataFrame，False 返回原始 value()。
+            stop_event: 取消事件。
+        """
+        if stop_event and stop_event.is_set():
+            raise asyncio.CancelledError("Tinysoft call 被取消")
+
+        client = await self._get_client()
+        await self.login()
+        await self._wait_for_request_slot()
+
+        call_kwargs = {}
+        if code:
+            call_kwargs["code"] = code
+        result = await asyncio.to_thread(client.call, func_name, *args, **call_kwargs)
+        return await self._parse_result(result, as_dataframe=as_dataframe)
+
+    async def call_dataframe(
+        self,
+        func_name: str,
+        table_id: int,
+        *,
+        stock: str = "",
+        where_clause: Optional[str] = None,
+        service: Optional[str] = None,
+        timeout_ms: Optional[int] = None,
+        stop_event: Optional[asyncio.Event] = None,
+    ) -> pd.DataFrame:
+        """
+        通过 exec 拉取 InfoArray / InfoTable 数据并返回 DataFrame。
+
+        等价 TSL::
+
+            select * from infotable {table_id} of '{stock}' [where {where_clause}] end;
+
+        Args:
+            func_name: 逻辑上的数据函数名（如 ``"infoarray"``），仅用于日志；
+                       实际取数一律使用 ``infotable`` SQL 语法。
+            table_id: 天软表 ID（如 127 停牌、139 行业、42 财务）。
+            stock: 天软格式股票代码（如 ``"SZ000001"``）。
+            where_clause: 可选 TSL WHERE 条件（如 ``'["停牌开始日"]>=20260101'``）。
+                          为 None 时拉取全量记录。
+            service: 可选 service 参数（当前未使用，保留兼容）。
+            timeout_ms: 查询超时（当前未使用，保留兼容）。
+            stop_event: 取消事件。
+
+        Returns:
+            pd.DataFrame: 返回表格数据。
+        """
+        if stop_event and stop_event.is_set():
+            raise asyncio.CancelledError("Tinysoft call_dataframe 被取消")
+
+        where_part = f" where {where_clause}" if where_clause else ""
+        tsl_code = (
+            f"return select * from infotable {int(table_id)} of '{stock}'"
+            f"{where_part} end;"
+        )
+        self.logger.debug(
+            "call_dataframe: func=%s, table_id=%s, stock=%s, where=%s",
+            func_name, table_id, stock, where_clause or "(none)",
+        )
+        return await self.exec(tsl_code, as_dataframe=True, stop_event=stop_event)

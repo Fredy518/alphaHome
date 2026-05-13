@@ -67,7 +67,7 @@ async def run_migration_check(db_manager: DBManager, task_registry: List[Type[Ba
                 
                 migrated_count += 1
                 logger.info(
-                    f"✅ 成功将表 'public.{table_name}' "
+                    f"[OK] 成功将表 'public.{table_name}' "
                     f"迁移到 '{target_schema}.{table_name}'"
                 )
 

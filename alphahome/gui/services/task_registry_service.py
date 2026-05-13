@@ -9,6 +9,7 @@
 - 为GUI提供统一的任务信息接口
 """
 import asyncio
+import re
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional
 import inspect
@@ -18,6 +19,9 @@ from ...common.task_system import UnifiedTaskFactory, get_tasks_by_type
 from ...gui.utils.common import format_datetime_for_display
 
 logger = get_logger(__name__)
+
+# Tinysoft 分钟线采集任务：仍注册于工厂供 CLI/调度使用，但不列入 GUI「数据采集」列表。
+_GUI_EXCLUDE_TINYSOFT_MINUTE_FETCH = re.compile(r"^tinysoft_.*_minute$")
 
 # --- 缓存和回调 ---
 _collection_task_cache: List[Dict[str, Any]] = []
@@ -77,6 +81,8 @@ async def handle_get_collection_tasks():
         task_names = sorted(fetch_tasks.keys()) if isinstance(fetch_tasks, dict) else sorted(fetch_tasks)
 
         for name in task_names:
+            if _GUI_EXCLUDE_TINYSOFT_MINUTE_FETCH.match(name):
+                continue
             try:
                 task_instance = await UnifiedTaskFactory.get_task(name)
                 # 推断任务子类型

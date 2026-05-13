@@ -234,6 +234,17 @@ class TinySoftStockSuspendTask(TinySoftTask):
             return pd.to_datetime(text, format="%Y%m%d", errors="coerce")
         return pd.to_datetime(text, errors="coerce")
 
+    @staticmethod
+    def _build_where_clause(start_date: Any) -> Optional[str]:
+        """构造 infotable WHERE 子句，按停牌开始日做服务端过滤。"""
+        if not start_date:
+            return None
+        try:
+            dt = pd.to_datetime(str(start_date), errors="raise")
+            return f'["停牌开始日"]>={dt.strftime("%Y%m%d")}'
+        except Exception:
+            return None
+
     async def get_batch_list(self, **kwargs: Any) -> List[Dict]:
         start_date, end_date = normalize_date_range(
             start_date=kwargs.get("start_date"),
@@ -324,6 +335,8 @@ class TinySoftStockSuspendTask(TinySoftTask):
         )
         use_service = params.get("service", self.service)
 
+        where_clause = self._build_where_clause(params.get("start_date"))
+
         merged_frames: List[pd.DataFrame] = []
         for pair in symbol_pairs:
             if stop_event and stop_event.is_set():
@@ -341,6 +354,7 @@ class TinySoftStockSuspendTask(TinySoftTask):
                     "infoarray",
                     table_id,
                     stock=stock,
+                    where_clause=where_clause,
                     service=use_service,
                     timeout_ms=timeout_ms,
                     stop_event=stop_event,
@@ -432,8 +446,8 @@ class TinySoftStockSuspendTask(TinySoftTask):
         if df.empty:
             return pd.DataFrame()
 
-        start_date = kwargs.get("start_date")
-        end_date = kwargs.get("end_date")
+        start_date = getattr(self, "_effective_start_date", None) or kwargs.get("start_date")
+        end_date = getattr(self, "_effective_end_date", None) or kwargs.get("end_date")
         if start_date:
             start_dt = pd.to_datetime(str(start_date), errors="coerce")
             if not pd.isna(start_dt):

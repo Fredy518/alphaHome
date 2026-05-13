@@ -491,9 +491,14 @@ class BaseTask(ABC):
 
         # 输出验证结果摘要
         if validation_passed:
-            self.logger.info(f"✅ 任务 {self.name} 数据验证通过 (通过 {len(self.validations)} 个验证规则)") # type: ignore
+            # 避免 Windows 控制台 GBK 编码下输出 emoji 触发 UnicodeEncodeError
+            self.logger.info(
+                f"[OK] 任务 {self.name} 数据验证通过 (通过 {len(self.validations)} 个验证规则)"
+            )
         else:
-            self.logger.warning(f"⚠️ 任务 {self.name} 验证未完全通过，失败详情: {failed_validation_details}")
+            self.logger.warning(
+                f"[WARN] 任务 {self.name} 验证未完全通过，失败详情: {failed_validation_details}"
+            )
             if isinstance(data, pd.DataFrame):
                 nan_columns = data.columns[data.isna().any()].tolist()
                 if nan_columns:

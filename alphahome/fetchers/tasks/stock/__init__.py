@@ -41,6 +41,9 @@ from .tushare_stock_hk_hold import TushareStockHkHoldTask
 from .akshare_stock_limitup_reason import AkShareStockLimitupReasonTask
 from .akshare_stock_analyst_rank_em import AkShareStockAnalystRankEmTask
 from .tinysoft_stock_minute import TinySoftStockMinuteTask
+from .tinysoft_stock_suspend import TinySoftStockSuspendTask
+from .tinysoft_stock_industry_versioned import TinySoftStockIndustryVersionedTask
+from .tinysoft_stock_fina_pit_ext import TinySoftStockFinaPitExtTask
 
 __all__ = [
     "TushareStockBasicTask",
@@ -84,4 +87,7 @@ __all__ = [
     "AkShareStockLimitupReasonTask",
     "AkShareStockAnalystRankEmTask",
     "TinySoftStockMinuteTask",
+    "TinySoftStockSuspendTask",
+    "TinySoftStockIndustryVersionedTask",
+    "TinySoftStockFinaPitExtTask",
 ]

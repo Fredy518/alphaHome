@@ -23,8 +23,12 @@ class _FakeDB:
 
 
 class _MultiSymbolApi:
+    def __init__(self):
+        self.last_where_clause = "NOT_CALLED"
+
     async def call_dataframe(self, func, table_id, **kwargs):
         stock = kwargs.get("stock")
+        self.last_where_clause = kwargs.get("where_clause")
         assert func == "infoarray"
         assert table_id == 139
         return pd.DataFrame(
@@ -115,6 +119,17 @@ async def test_get_batch_list_with_table_id_and_source_codes():
 
 
 @pytest.mark.asyncio
+async def test_get_batch_list_defaults_start_date_when_missing():
+    task = _make_task(
+        db=_FakeDB(rows=[{"ts_code": "000001.SZ"}]),
+        task_config={"symbol_batch_size": 1},
+    )
+    batches = await task.get_batch_list()
+    assert len(batches) == 1
+    assert batches[0]["start_date"] == task.default_start_date
+
+
+@pytest.mark.asyncio
 async def test_fetch_batch_supports_symbol_pairs():
     task = _make_task(
         db=_FakeDB(),
@@ -135,3 +150,48 @@ async def test_fetch_batch_supports_symbol_pairs():
     assert df is not None
     assert len(df) == 6
     assert set(df["证券代码"]) == {"SZ000001", "SH600000"}
+
+
+# ---------- WHERE clause tests ----------
+
+
+@pytest.mark.asyncio
+async def test_fetch_batch_never_passes_where_clause():
+    """行业分类任务不做服务端过滤，where_clause 始终为 None。"""
+    api = _MultiSymbolApi()
+    task = _make_task(db=_FakeDB(), api=api, task_config={"skip_failed_symbols": False})
+    await task.fetch_batch(
+        {
+            "symbol_pairs": [{"ts_code": "000001.SZ", "stock": "SZ000001"}],
+            "infoarray_table_id": 139,
+            "start_date": "20260301",
+            "end_date": "20260302",
+            "service": "",
+            "timeout_ms": 45000,
+        }
+    )
+    assert api.last_where_clause is None, (
+        "行业分类任务不应传递 where_clause（需要完整上下文重建快照）"
+    )
+
+
+def test_process_data_uses_effective_window_when_kwargs_missing():
+    task = _make_task()
+    task._effective_start_date = "20260302"
+    task._effective_end_date = "20260302"
+    raw = pd.DataFrame(
+        {
+            "证券代码": ["SZ000001", "SZ000001", "SZ000001", "SZ000001", "SZ000001", "SZ000001"],
+            "属性代码": ["SWHY440000", "SWHY440100", "SWHY440101", "SWHY440000", "SWHY440100", "SWHY440101"],
+            "属性名称": ["申万金融服务", "申万银行", "申万股份制银行", "申万金融服务", "申万银行", "申万股份制银行"],
+            "级数": [1, 2, 3, 1, 2, 3],
+            "入选日期": [20260301, 20260301, 20260301, 20260302, 20260302, 20260302],
+            "剔除日期": [20260301, 20260301, 20260301, 0, 0, 0],
+            "最新标识": [1, 1, 1, 1, 1, 1],
+            "所属属性代码": ["SWHY", "SWHY", "SWHY", "SWHY", "SWHY", "SWHY"],
+            "所属属性名称": ["申万行业", "申万行业", "申万行业", "申万行业", "申万行业", "申万行业"],
+        }
+    )
+    processed = task.process_data(raw)
+    assert len(processed) == 1
+    assert str(processed.iloc[0]["trade_date"]) == "2026-03-02"

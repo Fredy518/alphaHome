@@ -573,12 +573,14 @@ class TinySoftStockIndustryVersionedTask(TinySoftTask):
 
         start_bound = None
         end_bound = None
-        if kwargs.get("start_date"):
-            dt = pd.to_datetime(str(kwargs.get("start_date")), errors="coerce")
+        start_date = getattr(self, "_effective_start_date", None) or kwargs.get("start_date")
+        end_date = getattr(self, "_effective_end_date", None) or kwargs.get("end_date")
+        if start_date:
+            dt = pd.to_datetime(str(start_date), errors="coerce")
             if not pd.isna(dt):
                 start_bound = dt.date()
-        if kwargs.get("end_date"):
-            dt = pd.to_datetime(str(kwargs.get("end_date")), errors="coerce")
+        if end_date:
+            dt = pd.to_datetime(str(end_date), errors="coerce")
             if not pd.isna(dt):
                 end_bound = dt.date()
 

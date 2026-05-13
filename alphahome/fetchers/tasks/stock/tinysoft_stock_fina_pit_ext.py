@@ -324,6 +324,18 @@ class TinySoftStockFinaPitExtTask(TinySoftTask):
         return pd.to_datetime(text, errors="coerce")
 
     @staticmethod
+    def _build_where_clause(start_date: Any) -> Optional[str]:
+        """构造 infotable WHERE 子句，按公布日或截止日做服务端过滤。"""
+        if not start_date:
+            return None
+        try:
+            dt = pd.to_datetime(str(start_date), errors="raise")
+            d = dt.strftime("%Y%m%d")
+            return f'["公布日"]>={d} or ["截止日"]>={d}'
+        except Exception:
+            return None
+
+    @staticmethod
     def _is_non_empty(value: Any) -> bool:
         if value is None:
             return False
@@ -441,6 +453,8 @@ class TinySoftStockFinaPitExtTask(TinySoftTask):
         )
         use_service = params.get("service", self.service)
 
+        where_clause = self._build_where_clause(params.get("start_date"))
+
         merged_frames: List[pd.DataFrame] = []
         for pair in symbol_pairs:
             if stop_event and stop_event.is_set():
@@ -458,6 +472,7 @@ class TinySoftStockFinaPitExtTask(TinySoftTask):
                     "infoarray",
                     table_id,
                     stock=stock,
+                    where_clause=where_clause,
                     service=use_service,
                     timeout_ms=timeout_ms,
                     stop_event=stop_event,
@@ -542,12 +557,14 @@ class TinySoftStockFinaPitExtTask(TinySoftTask):
 
         start_bound = None
         end_bound = None
-        if kwargs.get("start_date"):
-            dt = pd.to_datetime(str(kwargs.get("start_date")), errors="coerce")
+        start_date = getattr(self, "_effective_start_date", None) or kwargs.get("start_date")
+        end_date = getattr(self, "_effective_end_date", None) or kwargs.get("end_date")
+        if start_date:
+            dt = pd.to_datetime(str(start_date), errors="coerce")
             if not pd.isna(dt):
                 start_bound = dt.date()
-        if kwargs.get("end_date"):
-            dt = pd.to_datetime(str(kwargs.get("end_date")), errors="coerce")
+        if end_date:
+            dt = pd.to_datetime(str(end_date), errors="coerce")
             if not pd.isna(dt):
                 end_bound = dt.date()
         if start_bound:
