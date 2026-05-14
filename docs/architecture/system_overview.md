@@ -28,8 +28,7 @@ alphahome/
 │   ├── cards/                 # feature card YAML
 │   ├── recipes/               # MV/Python recipes
 │   └── storage/               # MV 初始化、刷新、校验
-├── integrations/
-│   └── dolphindb/             # Hikyuu 5min -> DolphinDB
+├── integrations/              # 外部系统集成预留
 ├── providers/                 # AlphaDataTool
 └── gui/                       # Tkinter GUI
 ```
@@ -45,7 +44,6 @@ flowchart LR
     PIT --> FactorPG[P/G factor scripts]
     AlphaDB --> Features[features MV recipes]
     AlphaDB --> Providers[AlphaDataTool / ResearchContext]
-    Hikyuu[Hikyuu HDF5 5min] --> DDB[DolphinDB kline_5min]
 ```
 
 ## 任务系统
@@ -77,7 +75,6 @@ BaseTask
 | `rawdata` | 由任务保存流程自动创建/更新的统一视图层，Tushare 同名表优先 |
 | `features` | 离线特征 MV 输出 schema |
 | `pgs_factors` | PIT 表和 P/G 因子结果 |
-| DolphinDB | 5 分钟 K 线高速查询层，当前表为 `kline_5min` |
 
 ## 生产脚本
 
@@ -93,6 +90,7 @@ BaseTask
 ## 已下线组件
 
 - `alphahome.processors` 已删除。
+- 旧外部分钟线加速集成已删除。
 - `ah` / `alphahome-cli` / `refresh-materialized-view` 不再安装。
 - `alphahome.cli` 仅保留兼容空壳，不作为当前入口。
 

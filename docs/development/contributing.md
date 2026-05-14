@@ -118,7 +118,7 @@ pytest tests -v -m requires_api
 ```bash
 git commit -m "feat(fetchers): add new data task"
 git commit -m "fix(pit): handle missing forecast values"
-git commit -m "docs(hikyuu): update import workflow"
+git commit -m "docs(setup): update import workflow"
 git commit -m "test(features): cover mv refresh edge case"
 ```
 

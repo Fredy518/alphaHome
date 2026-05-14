@@ -1,6 +1,6 @@
 # AlphaHome 文档中心
 
-本目录保存 AlphaHome 当前使用文档与历史设计记录。当前文档以代码现状为准；`archive/`、`PHASE*_COMPLETION_REPORT.md` 和 `docs/tasks/` 中的大量材料保留为历史记录，不再代表当前可执行入口。
+本目录保存 AlphaHome 当前使用文档与历史设计记录。当前文档以代码现状为准；`archive/` 和 `docs/tasks/` 中的大量材料保留为历史记录，不再代表当前可执行入口。
 
 ## 当前入口
 
@@ -9,7 +9,7 @@
 | [项目概览](../README.md) | 当前模块状态、常用入口和项目结构 |
 | [安装指南](setup/installation.md) | 本地开发环境、依赖安装和最小验证 |
 | [配置指南](setup/configuration.md) | `~/.alphahome/config.json`、环境变量、数据库/API 配置 |
-| [用户指南](user/user_guide.md) | GUI、生产脚本、PIT、Features、DolphinDB 的日常使用 |
+| [用户指南](user/user_guide.md) | GUI、生产脚本、PIT、Features 的日常使用 |
 | [FAQ](user/faq.md) | 常见安装、配置、数据更新和脚本问题 |
 | [CLI 下线说明](CLI_USAGE_GUIDE.md) | `ah` / `alphahome-cli` / `refresh-materialized-view` 的替代入口 |
 
@@ -32,15 +32,10 @@
 | [数据源说明](business/data_sources.md) | AlphaDB 主要数据表和数据来源说明 |
 | [数据质量](business/data_quality.md) | 数据验证机制和改进方案 |
 | [PIT 增量更新](pit_incremental_update_guide.md) | 当前 PIT 生产脚本与调度建议 |
-| [DolphinDB 集成](business/dolphindb_integration.md) | Hikyuu 5min 到 DolphinDB 的导入与查询 |
-| [Hikyuu 集成](hikyuu_integration_guide.md) | Hikyuu 数据源与导入流程 |
-| [Hikyuu FAQ](hikyuu_faq.md) | Hikyuu 常见问题 |
-| [Hikyuu 性能说明](hikyuu_performance_analysis.md) | 当前 Hikyuu 路径的性能边界与历史基准说明 |
 | [生产脚本说明](../scripts/production/README.md) | 日常数据更新、PIT、P/G 因子、数据库维护脚本 |
 
 ## 历史记录
 
-- `PHASE1_COMPLETION_REPORT.md` 到 `PHASE4_COMPLETION_REPORT.md` 是统一 CLI 建设阶段的验收材料。统一 CLI 后续已下线，这些文档仅用于追溯。
 - `docs/development/archive/` 保存已完成或废弃的设计草稿。
 - `docs/tasks/` 保存任务甄别、审查清单和一次性实施记录。
 - `archive/` 保存旧版文档和迁移前资料。

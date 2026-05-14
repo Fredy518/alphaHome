@@ -29,7 +29,6 @@ python -c "from alphahome.common.config_manager import ConfigManager; c=ConfigMa
 
 - `DATABASE_URL`
 - `TUSHARE_TOKEN`
-- `HIKYUU_DATA_DIR`
 - `TINYSOFT_USER`
 - `TINYSOFT_PASSWORD`
 - `TINYSOFT_HOST`
@@ -72,14 +71,6 @@ alphahome
 ### `ah`、`alphahome-cli`、`refresh-materialized-view` 为什么没有了？
 
 统一 CLI 已下线。现在使用 GUI、`scripts/` 脚本或 `python -m` 模块入口。详见 [CLI 下线说明](../CLI_USAGE_GUIDE.md)。
-
-### DolphinDB 怎么运行？
-
-```bash
-python -m alphahome.integrations.dolphindb.cli --help
-python -m alphahome.integrations.dolphindb.cli init-kline5m
-python -m alphahome.integrations.dolphindb.cli import-hikyuu-5min --codes-file scripts/tickers/all.txt --incremental
-```
 
 ## 数据采集
 

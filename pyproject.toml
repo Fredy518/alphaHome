@@ -21,8 +21,6 @@ classifiers = [
 dependencies = [
     "aiohttp>=3.12.13",
     "asyncpg>=0.30.0",
-    "dolphindb>=1.30.0",
-    "h5py>=3.10.0",
     "psycopg2-binary>=2.9.9",
     "matplotlib>=3.9.0",
     "numpy>=1.26.0",
@@ -47,7 +45,7 @@ include = ["alphahome", "alphahome.*"]
 [project.scripts]
 alphahome = "alphahome.gui.main_window:run_gui" # 当用户安装后，可以运行 alphahome 命令启动 GUI
 # CLI 入口已下线（features 重构完成后可恢复）：
-# refresh-materialized-view, alphahome-ddb, ah, alphahome-cli
+# refresh-materialized-view, ah, alphahome-cli
 
 [project.optional-dependencies]
 akshare = [

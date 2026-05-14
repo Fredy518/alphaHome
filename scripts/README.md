@@ -8,14 +8,11 @@
 scripts/
 ├── features_init.py
 ├── features_validate_pit.py
-├── generate_hikyuu_5min_tickers.py
-├── import_all_hikyuu_to_ddb.ps1
 ├── initialize_materialized_views.py
 ├── analysis/
 ├── database/
 ├── maintenance/
-├── production/
-└── tickers/
+└── production/
 ```
 
 ## 当前常用脚本
@@ -26,18 +23,6 @@ scripts/
 python scripts/initialize_materialized_views.py
 python scripts/features_init.py --help
 python scripts/features_validate_pit.py --help
-```
-
-### Hikyuu 5min / DolphinDB
-
-```bash
-# 生成导入清单
-python scripts/generate_hikyuu_5min_tickers.py --hikyuu-dir E:/stock --output-dir scripts/tickers
-
-# 一键导入
-.\scripts\import_all_hikyuu_to_ddb.ps1 -InitTable
-.\scripts\import_all_hikyuu_to_ddb.ps1 -Incremental
-.\scripts\import_all_hikyuu_to_ddb.ps1 -ResetDb -InitTable
 ```
 
 ### 生产数据更新
@@ -77,6 +62,5 @@ python scripts/maintenance/fix_g_factor_rankings_and_scores.py --help
 | `database/` | AlphaDB / NAS 同步、恢复、逻辑复制和数据库级维护 |
 | `maintenance/` | 一次性或低频数据修复 |
 | `production/` | 日常生产脚本，详见 [production README](production/README.md) |
-| `tickers/` | DolphinDB 导入用 ts_code 清单 |
 
 历史 `scripts/pit/` 入口已迁移到 `scripts/production/data_updaters/pit/`。

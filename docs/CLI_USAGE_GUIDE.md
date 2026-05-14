@@ -9,20 +9,7 @@
 
 - 仍可使用 `python run.py` 启动 GUI。
 
-### 2) DolphinDB / Hikyuu 5min 导入
-
-推荐使用脚本与模块入口（无需安装 console script）：
-
-- PowerShell 一键导入：`./scripts/import_all_hikyuu_to_ddb.ps1`
-- 或直接运行模块：
-
-```bash
-python -m alphahome.integrations.dolphindb.cli --help
-python -m alphahome.integrations.dolphindb.cli init-kline5m --help
-python -m alphahome.integrations.dolphindb.cli import-hikyuu-5min --help
-```
-
-### 3) 物化视图（MV）初始化
+### 2) 物化视图（MV）初始化
 
 使用脚本初始化（已替代旧的 `refresh-materialized-view` / `ah mv`）：
 
@@ -33,8 +20,4 @@ python scripts/initialize_materialized_views.py --help
 ## 旧命令映射（仅供参考）
 
 - `ah` / `alphahome-cli`：已下线（不再安装）
-- `alphahome-ddb`：已下线（不再安装），替代为 `python -m alphahome.integrations.dolphindb.cli ...`
 - `refresh-materialized-view`：已下线（不再安装），替代为脚本/Features 模块入口
-
-> 注意：`alphahome.integrations.dolphindb.cli` 的内部 `argparse` 名称仍保留历史字符串，不代表 `alphahome-ddb` console script 仍会被安装。
-

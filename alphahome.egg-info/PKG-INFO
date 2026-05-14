@@ -13,8 +13,6 @@ Description-Content-Type: text/markdown
 License-File: LICENSE
 Requires-Dist: aiohttp>=3.12.13
 Requires-Dist: asyncpg>=0.30.0
-Requires-Dist: dolphindb>=1.30.0
-Requires-Dist: h5py>=3.10.0
 Requires-Dist: psycopg2-binary>=2.9.9
 Requires-Dist: matplotlib>=3.9.0
 Requires-Dist: numpy>=1.26.0
@@ -27,164 +25,136 @@ Requires-Dist: zipline-reloaded>=3.0.0
 Requires-Dist: tushare>=1.4.0
 Requires-Dist: pytdx>=1.72
 Requires-Dist: python-dateutil>=2.8.0
+Provides-Extra: akshare
+Requires-Dist: akshare>=1.15.0; extra == "akshare"
 Provides-Extra: research
 Requires-Dist: jupyterlab>=4.0.0; extra == "research"
 Requires-Dist: papermill>=2.4.0; extra == "research"
 Requires-Dist: nbconvert>=7.16.0; extra == "research"
+Provides-Extra: test
+Requires-Dist: pytest>=7.0.0; extra == "test"
+Requires-Dist: pytest-asyncio>=0.21.0; extra == "test"
+Requires-Dist: hypothesis>=6.0.0; extra == "test"
 Dynamic: license-file
 
-# AlphaHome - 量化数据基础设施
+# AlphaHome
 
-**专注于金融数据获取、处理和管理的量化数据平台**
+AlphaHome 是一个面向个人和内部投研环境的量化数据与离线特征生产平台。当前重点是稳定地采集多源金融数据、写入 PostgreSQL/AlphaDB、生成离线特征和 PIT 数据，并通过生产脚本支持日常更新、修复和因子补算。
 
-> ⚠️ **当前状态**：项目处于活跃开发中，**目前仅 `fetchers` 模块完整可用**。其他模块（processors、factors、gui 等）仍在开发或重构中，暂不建议在生产环境使用。
-
-## 🎯 **项目定位**
-
-AlphaHome 定位为 **量化数据基础设施**，专注于：
-
-- **数据获取**：多源数据自动化抓取（Tushare、AkShare、同花顺等）
-- **数据处理**：清洗、转换、标准化
-- **数据存储**：PostgreSQL 数据库管理
-- **数据访问**：统一的数据查询接口
-
-**不在范围内**：回测引擎、策略开发、交易执行等功能。
-
-## 🏗️ **模块状态**
+## 当前能力
 
 | 模块 | 状态 | 说明 |
-|------|------|------|
-| 📊 `fetchers/` | ✅ **可用** | 数据获取，支持 Tushare、AkShare 等多数据源 |
-| ⚙️ `common/` | ✅ **可用** | 核心工具（数据库、配置、日志、任务系统） |
-| 🔍 `providers/` | 🔶 部分可用 | 数据访问接口，基础功能可用 |
-| 🔧 `processors/` | 🚧 开发中 | 数据处理引擎，数据分层架构已完成（见下方说明） |
-| 🧮 `factors/` | 🚧 开发中 | 因子计算库，功能开发中 |
-| 🖥️ `gui/` | 🚧 开发中 | 图形界面，基础功能可用但不稳定 |
+| --- | --- | --- |
+| `alphahome.fetchers` | 可用 | 统一任务框架，已覆盖 Tushare、AkShare、Tinysoft、Excel 等数据源任务 |
+| `alphahome.common` | 可用 | 配置、数据库、日志、任务生命周期、批处理规划等基础设施 |
+| `alphahome.features` | 可用 | 离线特征和物化视图，当前有 36 张 feature card、36 个 MV recipe、1 个 Python recipe |
+| `alphahome.providers` | 部分可用 | 面向研究脚本的简化数据访问工具 `AlphaDataTool` |
+| `alphahome.gui` | 可用但偏内部工具 | Tkinter GUI，用于查看配置、选择并运行数据采集任务 |
+| `alphahome.cli` | 已下线 | 仅保留空壳包兼容导入；不再安装 `ah` / `alphahome-cli` / `refresh-materialized-view` |
+| `alphahome.processors` | 已删除 | 历史 processors 能力已迁移到 `features`、`scripts` 或 research 侧 |
 
-### 🔧 **Processors 模块 - 数据分层架构**
-
-Processors 模块已完成数据分层架构设计和核心组件实现：
-
-**已完成**：
-- ✅ Clean Layer 组件（Validator, Aligner, Standardizer, LineageTracker）
-- ✅ Feature Layer 纯函数接口
-- ✅ Task Layer 增强（fetch → clean → feature → save 流程）
-- ✅ 18 个正确性属性的属性测试（255 个测试全部通过）
-- ✅ 任务分类表和特征入库白名单
-
-**待生产环境实现**：
-- ⚠️ `_save_to_clean()` 方法需覆盖以实现真正的数据库写入
-- 🔄 `_check_dependencies()` 依赖检查功能（扩展点）
-
-详细文档见：`.kiro/specs/processors-data-layering/`
-
-## 📊 **Fetchers - 数据获取模块（推荐使用）**
-
-### **支持的数据源**
-
-- **Tushare Pro**：A股行情、财务、指数等全面数据
-- **AkShare**：免费数据源，涨停原因、宏观数据等
-- **PyTDX**：通达信实时/历史行情
-
-### **核心特性**
-
-- ✅ 统一的任务框架，支持全量/增量/智能更新
-- ✅ 自动重试和错误处理
-- ✅ 交易日历感知，自动跳过非交易日
-- ✅ 并发控制和限流保护
-- ✅ 数据验证和质量检查
-
-### **快速开始**
+## 快速开始
 
 ```bash
-# 1. 安装依赖
+python -m venv .venv
+.venv\Scripts\activate
+python -m pip install --upgrade pip
 pip install -e .
 
-# 2. 配置数据库和API（复制并编辑配置文件）
-cp config.example.json ~/.alphahome/config.json
-
-# 3. 启动GUI运行数据任务
-python run.py
-
-# 或使用命令行
-alphahome task run tushare_stock_daily --update-type smart
+# 可选依赖
+pip install -e ".[akshare]"
+pip install -e ".[research]"
+pip install -e ".[test]"
 ```
 
-### **任务示例**
+复制配置模板到用户配置目录并编辑：
 
-```python
-# 命令行运行任务
-alphahome task run tushare_stock_daily --start-date 20240101 --end-date 20241231
-alphahome task run akshare_stock_limitup_reason --update-type smart
-
-# 查看可用任务
-alphahome task list
+```powershell
+New-Item -ItemType Directory -Force $HOME\.alphahome
+Copy-Item config.example.json $HOME\.alphahome\config.json
+notepad $HOME\.alphahome\config.json
 ```
 
-## ⚙️ **配置说明**
-
-配置文件路径：`~/.alphahome/config.json`
+至少需要配置：
 
 ```json
 {
   "database": {
-    "host": "localhost",
-    "port": 5432,
-    "database": "alphahome",
-    "user": "your_user",
-    "password": "your_password"
+    "url": "postgresql://username:password@localhost:5432/alphadb"
   },
-  "tushare": {
-    "token": "your_tushare_token"
+  "api": {
+    "tushare_token": "your_tushare_token_here"
   }
 }
 ```
 
-## DolphinDB（5分钟K线加速层）
+也可以用环境变量兜底：`DATABASE_URL`、`TUSHARE_TOKEN`、`TINYSOFT_*`。
 
-AlphaHome 支持将本地通达信(TDX) 5分钟K线（`vipdoc/*/minline/*.lc5`）导入到 DolphinDB，用于研究/筛选时的快速查询与计算。
-
-```bash
-# 初始化 DolphinDB 分区表（仅首次需要）
-alphahome-ddb init-kline5m --db-path dfs://kline_5min --table kline_5min
-
-# 从 Hikyuu 下载的 5分钟 HDF5 导入（默认读取 HIKYUU_DATA_DIR 或 backtesting.hikyuu_data_dir）
-alphahome-ddb import-hikyuu-5min --codes "000001.SZ,600000.SH" --init
-```
-
-## 🚀 **安装**
+## 常用入口
 
 ```bash
-# 克隆项目
-git clone https://github.com/your-repo/alphahome.git
-cd alphahome
+# GUI
+python run.py
+# 或安装后
+alphahome
 
-# 安装（开发模式）
-pip install -e .
+# 数据采集生产更新
+python scripts/production/data_updaters/tushare/data_collection_smart_update_production.py --workers 3
 
-# 运行测试（单元）
-pytest tests/unit/ -v -m "unit and not requires_db and not requires_api"
+# PIT 数据更新
+python scripts/production/data_updaters/pit/pit_data_update_production.py --target all --mode incremental
+
+# Features / MV 初始化
+python scripts/initialize_materialized_views.py
+python scripts/features_init.py --help
+python scripts/features_validate_pit.py --help
+
+# P/G 因子补算
+python scripts/production/factor_calculators/p_factor/calculate_p_factor_for_specific_dates.py --dates 2026-05-08
+python scripts/production/factor_calculators/g_factor/calculate_g_factor_for_specific_dates.py --dates 2026-05-08
 ```
 
-## 📁 **项目结构**
+## 项目结构
 
-```
+```text
 alphahome/
-├── common/           # 核心工具（数据库、配置、日志、任务系统）
-├── fetchers/         # ✅ 数据获取模块（推荐使用）
-│   ├── sources/      #    数据源实现（Tushare、AkShare、PyTDX）
-│   ├── tasks/        #    数据任务定义
-│   └── tools/        #    辅助工具（交易日历等）
-├── processors/       # 🚧 数据处理模块（开发中）
-├── factors/          # 🚧 因子计算模块（开发中）
-├── providers/        # 🔶 数据访问接口（部分可用）
-└── gui/              # 🚧 图形界面（开发中）
+├── common/          # 配置、数据库、日志、任务系统、批处理规划
+├── fetchers/        # 数据源基类与具体采集任务
+├── features/        # feature cards、MV recipes、存储/刷新/校验工具
+├── integrations/    # 外部系统集成预留
+├── providers/       # 研究侧简化数据访问
+└── gui/             # Tkinter GUI
+
+scripts/
+├── production/      # 生产数据更新、PIT、因子、数据库维护脚本
+├── database/        # 本地/NAS 同步与数据库维护脚本
+└── maintenance/     # 数据修复脚本
+
+research/
+├── pgs_factor/      # P/G 因子研究与历史生产实现
+├── pit_data/        # PIT 研究侧实现
+└── tools/           # ResearchContext / ResearchPipeline
 ```
 
-## 📄 **许可证**
+## 测试
 
-MIT License - 详见 [LICENSE](LICENSE) 文件
+```bash
+pytest tests/unit/ -v -m "not requires_db and not requires_api"
+```
 
----
+需要数据库或外部 API 的测试请显式启用对应 marker，并确认 `~/.alphahome/config.json` 已配置。
 
-**AlphaHome** - 量化数据，简单可靠 🚀
+## 文档
+
+- [文档中心](docs/README.md)
+- [安装指南](docs/setup/installation.md)
+- [配置指南](docs/setup/configuration.md)
+- [用户指南](docs/user/user_guide.md)
+- [任务开发指南](docs/new_task_development_guide.md)
+- [系统架构](docs/architecture/system_overview.md)
+- [PIT 增量更新](docs/pit_incremental_update_guide.md)
+- [CLI 下线说明](docs/CLI_USAGE_GUIDE.md)
+
+## 许可证
+
+MIT License，详见 [LICENSE](LICENSE)。

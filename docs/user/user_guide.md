@@ -88,15 +88,6 @@ python scripts/features_validate_pit.py --help
 
 当前 features 目录以 `features/cards/*.yaml` 和 `features/recipes/` 为准。
 
-### DolphinDB / Hikyuu 5min
-
-```bash
-python scripts/generate_hikyuu_5min_tickers.py --hikyuu-dir E:/stock --output-dir scripts/tickers
-python -m alphahome.integrations.dolphindb.cli init-kline5m
-python -m alphahome.integrations.dolphindb.cli import-hikyuu-5min --codes-file scripts/tickers/all.txt --incremental
-.\scripts\import_all_hikyuu_to_ddb.ps1 -Incremental
-```
-
 ## 任务系统
 
 采集任务统一走以下生命周期：

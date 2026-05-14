@@ -8,12 +8,10 @@
 | --- | --- | --- |
 | PostgreSQL URL | `database.url` | `DATABASE_URL` |
 | Tushare Token | `api.tushare_token` | `TUSHARE_TOKEN` |
-| Hikyuu 数据目录 | `backtesting.hikyuu_data_dir` | `HIKYUU_DATA_DIR` |
 | Tinysoft 用户 | `api.tinysoft.user` | `TINYSOFT_USER` |
 | Tinysoft 密码 | `api.tinysoft.password` | `TINYSOFT_PASSWORD` |
 | Tinysoft 主机 | `api.tinysoft.host` | `TINYSOFT_HOST` |
 | Tinysoft 端口 | `api.tinysoft.port` | `TINYSOFT_PORT` |
-| DolphinDB | `dolphindb.*` | 当前通过配置文件或命令行参数覆盖 |
 
 历史路径会被自动迁移到 `~/.alphahome/config.json`，但新安装请直接使用新路径。
 
@@ -53,12 +51,6 @@
       "ini_path": ""
     }
   },
-  "dolphindb": {
-    "host": "localhost",
-    "port": 8848,
-    "username": "admin",
-    "password": "123456"
-  },
   "tasks": {
     "tushare_stock_daily": {
       "save_batch_size": 5000,
@@ -67,9 +59,6 @@
       "retry_delay": 1,
       "smart_lookback_days": 10
     }
-  },
-  "backtesting": {
-    "hikyuu_data_dir": "E:/stock"
   }
 }
 ```

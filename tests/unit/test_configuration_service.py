@@ -21,7 +21,6 @@ async def test_handle_save_settings_deep_merges_existing_config(tmp_path, monkey
                     "tinysoft": {"host": "tsl.example.com"},
                 },
                 "tasks": {"tushare_stock_daily": {"concurrent_limit": 3}},
-                "dolphindb": {"host": "localhost"},
             }
         ),
         encoding="utf-8",
@@ -45,6 +44,4 @@ async def test_handle_save_settings_deep_merges_existing_config(tmp_path, monkey
     assert saved["api"]["tushare_token"] == "new-token"
     assert saved["api"]["tinysoft"] == {"host": "tsl.example.com"}
     assert saved["tasks"] == {"tushare_stock_daily": {"concurrent_limit": 3}}
-    assert saved["dolphindb"] == {"host": "localhost"}
     reload_config.assert_awaited_once()
-

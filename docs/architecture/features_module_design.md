@@ -31,7 +31,7 @@
 
 ### 1.3 非目标
 
-- ❌ 不保留运维/生产 CLI（`refresh-materialized-view`、`ah`/`alphahome-cli`、`alphahome-ddb` 全部下线；必要时以脚本或 Python API 替代，等 features 稳定后再考虑恢复）
+- ❌ 不保留运维/生产 CLI（`refresh-materialized-view`、`ah`/`alphahome-cli` 全部下线；必要时以脚本或 Python API 替代，等 features 稳定后再考虑恢复）
 - ❌ 不做独立风险模型或组合归因模块（如需此类能力，应拆分到独立项目）
 - ❌ 不做在线特征服务层
 
@@ -42,7 +42,6 @@
 | `alphahome` | GUI launcher | **保留** | 用于启动 GUI 应用，与运维 CLI 无关 |
 | `refresh-materialized-view` | 运维 CLI | 下线 | 迁移到 `scripts/` 脚本 |
 | `ah` / `alphahome-cli` | 统一 CLI | 下线 | 过重，features 稳定后按需恢复 |
-| `alphahome-ddb` | DolphinDB CLI | 下线 | 可选，按需恢复 |
 
 ---
 
@@ -56,7 +55,6 @@
 |----------|----------|----------|----------|
 | console_script | `pyproject.toml` → `refresh-materialized-view` | 旧 `processors.materialized_views.cli:main_sync`（已删除） | 移除入口 |
 | console_script | `pyproject.toml` → `ah` / `alphahome-cli` | `alphahome.cli.main:main_sync` | 下线统一 CLI（整套 cli/ 子包可移除） |
-| console_script | `pyproject.toml` → `alphahome-ddb` | `alphahome.integrations.dolphindb.cli:main_sync` | 是否一并下线（本方案默认下线） |
 | CLI 子命令 | `alphahome/cli/commands/mv.py` | 动态 import 旧 `processors.materialized_views.cli`（已删除） | 下线命令组（不再提供 mv 管理） |
 | CLI 注册 | `alphahome/cli/commands/registry.py` | `MVCommandGroup` 等 | 移除注册 / 移除整个 cli 子包 |
 
@@ -430,7 +428,6 @@ B. 动态扫描（**默认采用**）
 |------|------|------|----------|
 | C1 | 从 `pyproject.toml` 移除 `refresh-materialized-view` 入口点 | 无该入口 | `pip install -e .` 不报错 |
 | C2 | 从 `pyproject.toml` 移除 `ah`/`alphahome-cli` 入口点 | 无统一 CLI | `pip install -e .` 不报错 |
-| C3 | （可选）从 `pyproject.toml` 移除 `alphahome-ddb` 入口点 | 无 DDB CLI | `pip install -e .` 不报错 |
 | C4 | 移除 `alphahome/cli/` 子包（或最小化为空壳） | 无 cli 依赖 | import 不报错 |
 
 替代方式：

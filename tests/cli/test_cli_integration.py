@@ -38,14 +38,6 @@ class TestCLIParser:
         assert args.command == 'prod'
         assert args.prod_command == 'list'
     
-    def test_ddb_subcommand(self):
-        """测试 ddb 子命令解析"""
-        parser = build_parser()
-        args = parser.parse_args(['ddb', 'init-kline5m', '--db-path', 'test'])
-        assert args.command == 'ddb'
-        assert args.ddb_cmd == 'init-kline5m'
-        assert args.db_path == 'test'
-    
     def test_mv_subcommand(self):
         """测试 mv 子命令解析"""
         parser = build_parser()
@@ -120,16 +112,6 @@ class TestCLIIntegration:
         result = main(['mv', 'refresh', 'test_view', '--db-url', 'postgresql://invalid'])
         assert result != exitcodes.SUCCESS
     
-    @pytest.mark.requires_api
-    def test_ddb_init_fails_with_invalid_connection(self):
-        """测试 DDB 初始化在无连接时的行为"""
-        # 全局参数应该放在子命令之前
-        result = main(['ddb', 'init-kline5m', '--host', 'invalid', '--port', '9999'])
-        # 可能返回 FAILURE、INTERNAL_ERROR 或 INVALID_ARGS (参数错误)
-        # 这里主要测试命令能够被正确解析和执行
-        assert result in (exitcodes.FAILURE, exitcodes.INTERNAL_ERROR, exitcodes.INVALID_ARGS)
-
-
 class TestCLIHelp:
     """测试帮助文本"""
     
@@ -140,7 +122,7 @@ class TestCLIHelp:
         # 确保帮助文本包含预期的信息
         help_text = parser.format_help()
         assert 'prod' in help_text
-        assert 'ddb' in help_text
+        assert 'mv' in help_text
     
     def test_command_help_available(self):
         """测试各命令的帮助都可访问"""

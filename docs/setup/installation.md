@@ -5,8 +5,6 @@
 - Python >= 3.9，推荐 3.11 或 3.12。
 - PostgreSQL >= 12。
 - Windows PowerShell、macOS shell 或 Linux shell。
-- 可选：DolphinDB 单机服务，用于 5 分钟 K 线高速查询层。
-- 可选：Hikyuu HDF5 数据目录，用于 DolphinDB 导入。
 
 ## 安装
 

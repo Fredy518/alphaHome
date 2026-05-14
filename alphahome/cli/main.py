@@ -21,13 +21,6 @@ def build_parser() -> argparse.ArgumentParser:
     prod_subparsers = prod_parser.add_subparsers(dest="prod_command")
     prod_subparsers.add_parser("list", help="List production tasks")
 
-    ddb_parser = subparsers.add_parser("ddb", help="DolphinDB helpers")
-    ddb_subparsers = ddb_parser.add_subparsers(dest="ddb_cmd")
-    init_parser = ddb_subparsers.add_parser("init-kline5m", help="Initialize 5m kline db")
-    init_parser.add_argument("--db-path")
-    init_parser.add_argument("--host", default="localhost")
-    init_parser.add_argument("--port", default="8848")
-
     mv_parser = subparsers.add_parser("mv", help="Materialized view helpers")
     mv_subparsers = mv_parser.add_subparsers(dest="mv_command")
     mv_status = mv_subparsers.add_parser("status", help="Show materialized view status")
@@ -57,13 +50,6 @@ def main(argv: Optional[List[str]] = None) -> int:
         if args.prod_command == "list":
             return exitcodes.SUCCESS
         return exitcodes.INVALID_ARGS
-
-    if args.command == "ddb":
-        if args.ddb_cmd != "init-kline5m":
-            return exitcodes.INVALID_ARGS
-        if getattr(args, "host", "") == "invalid" or str(getattr(args, "port", "")) == "9999":
-            return exitcodes.FAILURE
-        return exitcodes.SUCCESS
 
     if args.command == "mv":
         if args.mv_command == "status":

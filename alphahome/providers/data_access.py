@@ -21,11 +21,6 @@ import pandas as pd
 import logging
 
 logger = logging.getLogger(__name__)
-try:
-    # 仅在导出器使用时导入，避免循环依赖
-    from ._helpers import map_ts_code_to_hikyuu
-except Exception:
-    map_ts_code_to_hikyuu = None  # type: ignore
 
 
 # ============================================================================
@@ -523,33 +518,6 @@ class AlphaDataTool:
         self._table_cache['stock_daily'] = default_table
         self.logger.warning(f"未找到股票表，使用默认: {default_table}")
         return default_table
-
-    # ========================================================================
-    # 导出辅助：按 Hikyuu 需要的列顺序/命名标准化 DataFrame
-    # ========================================================================
-
-    @staticmethod
-    def standardize_to_hikyuu_ohlcv(df: pd.DataFrame) -> pd.DataFrame:
-        """将 AlphaHome 行情数据标准化为 Hikyuu 期望的 OHLCV 列
-
-        期望列：['ts_code','trade_date','open','high','low','close','vol','amount']
-        - trade_date: pandas.Timestamp（或可格式化为 YYYY-MM-DD）
-        - 数值列：float/int
-        """
-        if df.empty:
-            return df
-        cols = ['ts_code','trade_date','open','high','low','close','vol','amount']
-        keep = [c for c in cols if c in df.columns]
-        sdf = df.loc[:, keep].copy()
-        # 确保 trade_date 为 datetime
-        if 'trade_date' in sdf.columns:
-            try:
-                sdf['trade_date'] = pd.to_datetime(sdf['trade_date'])
-            except Exception:
-                pass
-        # 保证顺序
-        sdf = sdf.reindex(columns=cols, fill_value=pd.NA)
-        return sdf
 
     def _get_index_table(self) -> str:
         """获取指数权重表名（智能检测）"""
