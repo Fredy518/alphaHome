@@ -36,3 +36,5 @@ python scripts/initialize_materialized_views.py --help
 - `alphahome-ddb`：已下线（不再安装），替代为 `python -m alphahome.integrations.dolphindb.cli ...`
 - `refresh-materialized-view`：已下线（不再安装），替代为脚本/Features 模块入口
 
+> 注意：`alphahome.integrations.dolphindb.cli` 的内部 `argparse` 名称仍保留历史字符串，不代表 `alphahome-ddb` console script 仍会被安装。
+

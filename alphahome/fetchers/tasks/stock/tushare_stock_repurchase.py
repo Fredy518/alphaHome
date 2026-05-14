@@ -97,7 +97,7 @@ class TushareStockRepurchaseTask(TushareTask):
     validations = [
         (lambda df: df["ts_code"].notna(), "股票代码不能为空"),
         (lambda df: df["ann_date"].notna(), "公告日期不能为空"),
-        (lambda df: (df["vol"] >= 0) | df["vol"].isna(), "回购数量必须非负"),
+        (lambda df: (df["volume"] >= 0) | df["volume"].isna(), "回购数量必须非负"),
         (lambda df: (df["amount"] >= 0) | df["amount"].isna(), "回购金额必须非负"),
         (lambda df: (df["low_limit"] <= df["high_limit"]) | df["low_limit"].isna() | df["high_limit"].isna(), 
          "回购最低价不能高于最高价"),

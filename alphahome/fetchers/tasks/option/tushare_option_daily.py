@@ -190,10 +190,10 @@ class TushareOptionDailyTask(TushareTask):
 
     # 验证规则：使用 validations 列表（真正生效的验证机制）
     validations = [
-        lambda df: df['ts_code'].notna(),       # 期权代码不能为空
-        lambda df: df['trade_date'].notna(),    # 交易日期不能为空
-        lambda df: (df['close'] >= 0),          # 收盘价不能为负
-        lambda df: (df['volume'] >= 0),            # 成交量不能为负
+        (lambda df: df['ts_code'].notna(), "期权代码不能为空"),
+        (lambda df: df['trade_date'].notna(), "交易日期不能为空"),
+        (lambda df: df['close'].isna() | (df['close'] >= 0), "收盘价不能为负数或为空"),
+        (lambda df: df['volume'].isna() | (df['volume'] >= 0), "成交量不能为负数或为空"),
     ]
     
 

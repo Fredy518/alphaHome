@@ -9,16 +9,53 @@ import numpy as np
 import pandas as pd
 from typing import Optional, List, Dict, Any, Union
 from datetime import datetime
+import importlib
+import importlib.util
 import logging
 
-try:
-    from hikyuu.interactive import *
-    HIKYUU_AVAILABLE = True
-except ImportError:
-    HIKYUU_AVAILABLE = False
-    print("Warning: Hikyuu not installed, adapter will work in mock mode")
+HIKYUU_AVAILABLE = importlib.util.find_spec("hikyuu") is not None
+_HIKYUU_IMPORTED = False
 
 logger = logging.getLogger(__name__)
+
+
+def _ensure_hikyuu_imported(adapter_logger: Optional[logging.Logger] = None) -> bool:
+    """Lazily import hikyuu only when native hikyuu objects are actually requested.
+
+    Importing ``hikyuu.interactive`` initializes hikyuu's global data driver and
+    opens Hikyuu HDF5/SQLite files under ``HIKYUU_DATA_DIR``. Keeping this lazy
+    prevents a long-running GUI process from locking those files just because the
+    adapter module was imported.
+    """
+    global HIKYUU_AVAILABLE, _HIKYUU_IMPORTED
+
+    if _HIKYUU_IMPORTED:
+        return True
+    if not HIKYUU_AVAILABLE:
+        return False
+
+    log = adapter_logger or logger
+    try:
+        interactive = importlib.import_module("hikyuu.interactive")
+        export_names = getattr(interactive, "__all__", None)
+        if export_names is None:
+            export_names = [
+                name for name in vars(interactive).keys()
+                if not name.startswith("_")
+            ]
+        globals().update(
+            {
+                name: getattr(interactive, name)
+                for name in export_names
+                if hasattr(interactive, name)
+            }
+        )
+        _HIKYUU_IMPORTED = True
+        return True
+    except ImportError:
+        HIKYUU_AVAILABLE = False
+        log.warning("Hikyuu 未安装，适配器将在模拟模式下工作")
+        return False
 
 
 class HikyuuDataAdapter:
@@ -47,7 +84,7 @@ class HikyuuDataAdapter:
         Returns:
             Hikyuu KData 对象或模拟对象
         """
-        if not HIKYUU_AVAILABLE:
+        if not _ensure_hikyuu_imported(self.logger):
             return self._create_mock_kdata(df, stock_code)
         
         try:
@@ -58,8 +95,6 @@ class HikyuuDataAdapter:
             
             # 创建 KData 对象 - 使用 Stock 和 Query
             # 先获取或创建一个 Stock 对象
-            from hikyuu import Stock, Query, KQuery
-            
             # 创建一个虚拟的 Stock 对象
             market = stock_code[:2].upper() if len(stock_code) > 2 else "SZ"
             code = stock_code[2:] if len(stock_code) > 2 else stock_code
@@ -120,7 +155,7 @@ class HikyuuDataAdapter:
         Returns:
             Hikyuu Stock 对象或模拟对象
         """
-        if not HIKYUU_AVAILABLE:
+        if not _ensure_hikyuu_imported(self.logger):
             return self._create_mock_stock(stock_info)
         
         try:
@@ -170,7 +205,7 @@ class HikyuuDataAdapter:
         if isinstance(kdata, pd.DataFrame):
             return self._calculate_indicator_from_df(kdata, indicator_name, params)
         
-        if not HIKYUU_AVAILABLE:
+        if not _ensure_hikyuu_imported(self.logger):
             return self._calculate_mock_indicator(kdata, indicator_name, params)
         
         try:
@@ -325,7 +360,7 @@ class HikyuuDataAdapter:
         if isinstance(kdata, pd.DataFrame):
             return self._generate_signals_from_df(kdata, signal_type, params)
         
-        if not HIKYUU_AVAILABLE:
+        if not _ensure_hikyuu_imported(self.logger):
             return self._generate_mock_signals(kdata, signal_type, params)
         
         try:

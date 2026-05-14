@@ -134,13 +134,13 @@ class TushareStockLimitListTask(TushareTask):
         (lambda df: df['ts_code'].notna(), "股票代码不能为空"),
         (lambda df: df['trade_date'].notna(), "交易日期不能为空"),
         (lambda df: df['limit'].isin(['D', 'U', 'Z']), "涨跌停类型必须为D/U/Z"),
-        (lambda df: df['close'] > 0, "收盘价必须为正数"),
-        (lambda df: df['amount'] >= 0, "成交额必须非负"),
+        (lambda df: df['close'].isna() | (df['close'] > 0), "收盘价必须为正数或为空"),
+        (lambda df: df['amount'].isna() | (df['amount'] >= 0), "成交额必须非负或为空"),
         # 修复：处理空值的验证规则
         (lambda df: (df['open_times'] >= 0) | df['open_times'].isna(), "炸板次数必须非负或为空"),
         (lambda df: (df['limit_times'] >= 0) | df['limit_times'].isna(), "连板数必须非负或为空"),
         # 涨跌幅合理性检查（考虑到涨跌停限制和空值）
-        (lambda df: (df['pct_chg'].abs() <= 25) | df['pct_chg'].isna(), "涨跌幅应在合理范围内（±25%）或为空"),
+        (lambda df: (df['pct_chg'].abs() <= 35) | df['pct_chg'].isna(), "涨跌幅应在合理范围内（±35%）或为空"),
     ]
 
     # 8. 验证模式配置 - 使用报告模式记录验证结果

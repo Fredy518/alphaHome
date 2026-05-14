@@ -1,5 +1,7 @@
 # AlphaDB 使用文档
 
+> 当前说明：本文保留 AlphaDB 主要表的人工整理说明。当前代码中的数据源和任务以 `alphahome/fetchers/tasks/`、`alphahome/features/cards/` 与生产脚本为准；新增表时应优先参考任务类的 `schema_def`、`primary_keys` 和 `date_column`。
+
 ## 引言
 
 `alphadb` 是 `alphahome` 项目用于存储从 [Tushare Pro API](https://tushare.pro/) 等多数据源获取的金融数据的 PostgreSQL 数据库。本文档旨在说明数据库的结构和内容。
@@ -8,9 +10,9 @@
 
 ## 数据库概览
 
-*   **数据来源:** Tushare Pro API
-*   **更新方式:** 主要通过 `alphahome/fetchers/tasks/` 下定义的 `TushareTask` 子类进行更新。根据任务配置，可以是增量更新（基于日期）或全量替换。
-*   **核心表:** 存储股票、基金、指数、财务等各类金融时间序列和基础信息数据。
+*   **数据来源:** Tushare、AkShare、Tinysoft、Excel 等。
+*   **更新方式:** 主要通过 `alphahome/fetchers/tasks/` 下定义的 `FetcherTask` 子类更新，日常生产入口是 `scripts/production/data_updaters/tushare/data_collection_smart_update_production.py`。
+*   **核心表:** 存储股票、基金、指数、财务、宏观、PIT、features 等各类数据。
 
 ## 表结构详情
 
@@ -475,4 +477,4 @@
 
 *   **交易日历:** (`trade_cal`)
 *   **分红送股:** (`dividend`)
-*   **其他 Tushare API:** (例如沪深股通、港股通、期权、期货等，需根据项目实际使用的 API 确定) 
+*   **其他 Tushare API:** (例如沪深股通、港股通、期权、期货等，需根据项目实际使用的 API 确定)

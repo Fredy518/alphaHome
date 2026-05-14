@@ -122,16 +122,16 @@ class TushareFundDividendTask(TushareTask):
 
     # 7. 数据验证规则
     validations = [
-        lambda df: df['ts_code'].notna(),
-        lambda df: df['ex_date'].notna(),
-        lambda df: df['div_cash'] >= 0,
-        lambda df: df['base_unit'] >= 0,
-        lambda df: df['ear_distr'] >= 0,
-        lambda df: df['ear_amount'] >= 0,
-        lambda df: df['div_proc'].isin(['预案', '股东大会通过', '实施']),
+        (lambda df: df['ts_code'].notna(), "基金代码不能为空"),
+        (lambda df: df['ex_date'].notna(), "除息日不能为空"),
+        (lambda df: df['div_cash'].isna() | (df['div_cash'] >= 0), "每股派息必须非负或为空"),
+        (lambda df: df['base_unit'].isna() | (df['base_unit'] >= 0), "基准基金份额必须非负或为空"),
+        (lambda df: df['ear_distr'].isna() | (df['ear_distr'] >= 0), "可分配收益必须非负或为空"),
+        (lambda df: df['ear_amount'].isna() | (df['ear_amount'] >= 0), "收益分配金额必须非负或为空"),
+        (lambda df: df['div_proc'].isna() | df['div_proc'].isin(['预案', '股东大会通过', '实施']), "方案进度必须有效或为空"),
         # 逻辑日期检查 (允许某些日期为空)
-        lambda df: (df['pay_date'] >= df['ex_date']) | df['pay_date'].isnull(), # 派息日不应早于除息日
-        lambda df: (df['ear_amount'] <= df['ear_distr']) | df['ear_distr'].isnull(), # 分配金额不应超过可分配收益
+        (lambda df: df['pay_date'].isna() | df['ex_date'].isna() | (df['pay_date'] >= df['ex_date']), "派息日不应早于除息日或为空"),
+        (lambda df: df['ear_amount'].isna() | df['ear_distr'].isna() | (df['ear_amount'] <= df['ear_distr']), "分配金额不应超过可分配收益或为空"),
     ]
 
     async def get_batch_list(self, **kwargs) -> List[Dict]:

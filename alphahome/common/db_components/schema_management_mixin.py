@@ -696,7 +696,7 @@ class SchemaManagementMixin:
             view_name: 视图名称（通常与源表同名）
             source_schema: 源表所在 schema（tushare/akshare/ifind等）
             source_table: 源表名称
-            replace: 是否使用 OR REPLACE（仅 tushare 数据源使用）
+            replace: 是否使用 OR REPLACE（非 tushare 源在源表增列后同步 rawdata 视图时也应为 True）
         """
         if self.pool is None: # type: ignore
             await self.connect() # type: ignore

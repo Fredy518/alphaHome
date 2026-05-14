@@ -1,270 +1,102 @@
-# AlphaHome 数据提供层 - 极简方案
+# AlphaHome Providers
 
-## 🎯 设计理念
+`alphahome.providers` 提供研究侧简化数据访问入口，核心类是 `AlphaDataTool`。
 
-基于**80/20原则**的极简数据提供层：
-- **80%的研究需求**通过5个核心方法满足
-- **20%的特殊需求**通过灵活接口处理
-- **单一入口 + 内部模块化**：对外暴露简洁API，内部采用模块化架构
-
-## 🚀 快速开始
-
-### 基础使用（80%需求）
+## 快速开始
 
 ```python
 from research.tools.context import ResearchContext
 
 with ResearchContext() as context:
     data_tool = context.data_tool
-    
-    # 1. 获取股票行情数据
-    stock_data = data_tool.get_stock_data(
-        symbols=['000001.SZ', '000002.SZ'], 
-        start_date='2024-01-01', 
-        end_date='2024-03-31'
-    )
-    
-    # 2. 获取指数权重数据
-    weights = data_tool.get_index_weights(
-        index_code='000300.SH',
-        start_date='2024-01-01',
-        end_date='2024-03-31',
-        monthly=True  # 只获取月末数据
-    )
-    
-    # 3. 获取股票基本信息
-    stock_info = data_tool.get_stock_info(
-        symbols=['000001.SZ', '000002.SZ'],
-        list_status='L'
-    )
-    
-    # 4. 获取交易日历
-    trade_dates = data_tool.get_trade_dates(
-        start_date='2024-01-01',
-        end_date='2024-03-31'
-    )
-    
-    # 5. 获取行业分类数据
-    industry_data = data_tool.get_industry_data(
-        symbols=['000001.SZ', '000002.SZ'],
-        level='sw_l1'
+    df = data_tool.get_stock_data(
+        ["000001.SZ", "600000.SH"],
+        "2024-01-01",
+        "2024-12-31",
     )
 ```
 
-### 高级使用（20%特殊需求）
+也可以直接传入数据库管理器：
 
 ```python
-# 自定义复杂查询
-complex_data = data_tool.custom_query('''
-    SELECT s.ts_code, s.close, w.weight, i.industry_name
-    FROM stock_daily s
-    JOIN index_weight w ON s.ts_code = w.con_code
-    JOIN stock_industry i ON s.ts_code = i.ts_code
-    WHERE w.index_code = %(index_code)s
-    AND s.trade_date = %(trade_date)s
-''', {
-    'index_code': '000300.SH',
-    'trade_date': '2024-01-31'
-})
+from alphahome.common.db_manager import create_sync_manager
+from alphahome.providers import AlphaDataTool
 
-# 获取原始数据库管理器进行底层操作
-db = data_tool.get_raw_db_manager()
-await db.copy_from_dataframe(custom_df, 'custom_table')
+db = create_sync_manager()
+data_tool = AlphaDataTool(db)
 ```
 
-## 📋 API 参考
+## API
 
-### 核心方法（5个）
-
-#### 1. get_stock_data()
-获取股票行情数据
+### `get_stock_data`
 
 ```python
-get_stock_data(
-    symbols: Union[str, List[str]],  # 股票代码
-    start_date: str,                 # 开始日期 'YYYY-MM-DD'
-    end_date: str,                   # 结束日期 'YYYY-MM-DD'
-    adjust: bool = True              # 是否使用复权价格
-) -> pd.DataFrame
+get_stock_data(symbols, start_date, end_date, fields=None, adjust=True)
 ```
 
-**返回字段**：
-- `ts_code`: 股票代码
-- `trade_date`: 交易日期
-- `open`, `high`, `low`, `close`: 开高低收价格
-- `vol`, `amount`: 成交量、成交额
-- `pct_chg`: 涨跌幅
+返回 `tushare.stock_daily` 中的行情数据，输出列包括：
 
-#### 2. get_index_weights()
-获取指数权重数据
+`ts_code`、`trade_date`、`open`、`high`、`low`、`close`、`pre_close`、`change`、`pct_chg`、`vol`、`amount`。
+
+### `get_adj_factor_data`
 
 ```python
-get_index_weights(
-    index_code: str,        # 指数代码，如 '000300.SH'
-    start_date: str,        # 开始日期
-    end_date: str,          # 结束日期
-    monthly: bool = False   # 是否只获取月末数据
-) -> pd.DataFrame
+get_adj_factor_data(symbols=None, start_date=None, end_date=None)
 ```
 
-**返回字段**：
-- `index_code`: 指数代码
-- `con_code`: 成分股代码
-- `trade_date`: 交易日期
-- `weight`: 权重
+返回 `tushare.stock_adjfactor` 的复权因子。
 
-#### 3. get_stock_info()
-获取股票基本信息
+### `get_index_weights`
 
 ```python
-get_stock_info(
-    symbols: Optional[Union[str, List[str]]] = None,  # 股票代码，None=所有
-    list_status: str = 'L'                            # 上市状态
-) -> pd.DataFrame
+get_index_weights(index_code, start_date, end_date, symbols=None, monthly=False)
 ```
 
-**返回字段**：
-- `ts_code`: 股票代码
-- `name`: 股票名称
-- `industry`: 所属行业
-- `area`: 地域
-- `list_date`: 上市日期
+返回指数成分权重。`monthly=True` 时只取月末附近记录。
 
-#### 4. get_trade_dates()
-获取交易日历
+### `get_stock_info`
 
 ```python
-get_trade_dates(
-    start_date: str,        # 开始日期
-    end_date: str,          # 结束日期
-    exchange: str = 'SSE'   # 交易所代码
-) -> pd.DataFrame
+get_stock_info(symbols=None, fields=None, active_only=False)
 ```
 
-**返回字段**：
-- `cal_date`: 日期
-- `is_open`: 是否开市（1=开市，0=休市）
+返回 `tushare.stock_basic` 的基础信息。`active_only=True` 时筛选 `list_status='L'`。
 
-#### 5. get_industry_data()
-获取行业分类数据
+### `get_trade_dates`
 
 ```python
-get_industry_data(
-    symbols: Optional[Union[str, List[str]]] = None,  # 股票代码
-    level: str = 'sw_l1'                              # 行业级别
-) -> pd.DataFrame
+get_trade_dates(start_date, end_date, market="SSE")
 ```
 
-**返回字段**：
-- `ts_code`: 股票代码
-- `industry_code`: 行业代码
-- `industry_name`: 行业名称
+返回交易日历。参数名是 `market`，不是 `exchange`。
 
-### 灵活接口（2个）
-
-#### custom_query()
-自定义SQL查询
+### `get_industry_data`
 
 ```python
-custom_query(
-    sql: str,                           # SQL查询语句
-    params: Optional[Dict[str, Any]] = None  # 查询参数
-) -> pd.DataFrame
+get_industry_data(symbols=None, industry_type="SW2021", active_only=False)
 ```
 
-#### get_raw_db_manager()
-获取原始数据库管理器
+当前实现基于 `tushare.stock_basic.industry` 返回简化行业字段。
+
+### `custom_query`
 
 ```python
-get_raw_db_manager() -> DBManager
+custom_query(query, params=None, as_dict=False)
 ```
 
-## 🏗️ 架构设计
+执行自定义 SQL。默认返回 `DataFrame`，`as_dict=True` 时返回字典列表。
 
-### 目录结构
-```
-alphahome/providers/
-├── __init__.py          # AlphaDataTool 主类
-├── _stock_queries.py    # 股票数据查询模块
-├── _index_queries.py    # 指数数据查询模块
-├── _helpers.py          # 辅助工具模块
-├── examples/            # 使用示例
-│   └── usage_example.py
-└── README.md           # 本文档
-```
-
-### 内部模块化
-
-- **StockQueries**: 专门处理股票相关查询
-- **IndexQueries**: 专门处理指数相关查询  
-- **DataHelpers**: 提供通用辅助功能
-
-### 智能特性
-
-1. **自动表名检测**：智能检测可用的数据表名
-2. **数据类型转换**：自动处理日期、数值类型转换
-3. **错误处理**：优雅处理数据缺失和查询异常
-4. **缓存机制**：缓存常用的静态数据
-5. **模式适配**：同时支持异步和同步数据库操作
-
-## 🔧 扩展策略
-
-### 扩展触发条件
-- 使用频率 ≥ 30%
-- 代码重复 ≥ 5次
-- 用户请求 ≥ 3个
-- 覆盖 ≥ 2个研究场景
-
-### 扩展边界控制
-- **核心方法**：最多5个（50%+使用率）
-- **扩展方法**：最多3个（30%+使用率）
-- **高级方法**：最多2个（10%+使用率）
-
-### 候选扩展功能
-1. `get_futures_data()` - 期货数据（使用率40%）
-2. `get_financial_data()` - 财务数据（使用率35%）
-3. `get_macro_data()` - 宏观数据（使用率25%）
-
-## 📊 使用示例
-
-完整的使用示例请参考：`examples/usage_example.py`
-
-运行示例：
-```bash
-cd alphahome/providers/examples
-python usage_example.py
-```
-
-## 🔗 集成说明
-
-### 与ResearchContext集成
-
-AlphaDataTool已经集成到ResearchContext中，通过`data_tool`属性访问：
+### `get_raw_db_manager`
 
 ```python
-from research.tools.context import ResearchContext
-
-with ResearchContext() as context:
-    # 直接使用数据访问工具
-    data_tool = context.data_tool
-    
-    # 原有功能仍然可用
-    db_manager = context.db_manager
-    planner = context.planner
+get_raw_db_manager()
 ```
 
-### 向后兼容
+返回底层 DBManager。
 
-- 保留对原始`db_manager`的完全访问权限
-- 现有的`query_dataframe`等方法继续可用
-- 不破坏任何现有代码
+## 注意事项
 
-## 🎯 预期效果
-
-- **学习成本**：几乎为零，5个方法即可上手
-- **覆盖率**：80%的研究场景通过标准方法满足
-- **灵活性**：20%的特殊需求通过灵活接口处理
-- **维护性**：内部模块化，代码清晰易维护
-- **扩展性**：有序扩展，不会失控
-
-这个方案完美平衡了简洁性、功能性和可维护性，是一个真正实用且优雅的解决方案。
+- `AlphaDataTool` 是轻量研究接口，不替代生产数据采集任务。
+- 当前方法直接查询数据库，要求对应表已经由 fetchers 或生产脚本写入。
+- 参数会被传入 `fetch_sync`，不要拼接用户输入到 SQL 字符串中。
+- 更复杂的因子、PIT 或跨表逻辑建议写成 research pipeline 或 features recipe。

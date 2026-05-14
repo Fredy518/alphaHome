@@ -13,6 +13,24 @@ from aiolimiter import AsyncLimiter
 from alphahome.fetchers.exceptions import TushareAuthError
 
 
+def _concat_dataframes(frames: List[pd.DataFrame]) -> pd.DataFrame:
+    nonempty_frames = [df for df in frames if df is not None and not df.empty]
+    if not nonempty_frames:
+        return pd.DataFrame()
+
+    columns = list(dict.fromkeys(col for df in nonempty_frames for col in df.columns))
+    cleaned_frames = []
+    for df in nonempty_frames:
+        usable_columns = [col for col in df.columns if not df[col].isna().all()]
+        if usable_columns:
+            cleaned_frames.append(df[usable_columns])
+
+    if not cleaned_frames:
+        return pd.DataFrame(columns=columns)
+
+    return pd.concat(cleaned_frames, ignore_index=True, sort=False).reindex(columns=columns)
+
+
 class TushareAPI:
     """Tushare API 客户端，负责处理与 Tushare 的 HTTP 通信"""
 
@@ -422,11 +440,9 @@ class TushareAPI:
         if not all_data:
             return pd.DataFrame()
 
-        all_data = [df for df in all_data if not df.empty]
-        if not all_data:
+        combined_data = _concat_dataframes(all_data)
+        if combined_data.empty:
             return pd.DataFrame()
-
-        combined_data = pd.concat(all_data, ignore_index=True)
         self.logger.debug(
             f"API {api_name} (参数: {params}) 通过分页共获取 {len(combined_data)} 条记录。"
         )
@@ -628,11 +644,9 @@ class TushareAPI:
 
         if not all_data:
             return pd.DataFrame()
-        # 过滤掉空的 DataFrame，避免 FutureWarning
-        all_data = [df for df in all_data if not df.empty]
-        if not all_data:
+        combined_data = _concat_dataframes(all_data)
+        if combined_data.empty:
             return pd.DataFrame()
-        combined_data = pd.concat(all_data, ignore_index=True)
         self.logger.debug(
             f"API {api_name} (参数: {params}) 通过分页共获取 {len(combined_data)} 条记录。"
         )
@@ -767,7 +781,7 @@ class TushareAPI:
 
         # 5. 合并结果
         if all_results:
-            combined_result = pd.concat(all_results, ignore_index=True)
+            combined_result = _concat_dataframes(all_results)
             self.logger.info(
                 f"智能时间拆分处理完成，共获取 {len(combined_result)} 条记录 "
                 f"(来自 {len(all_results)} 个有效子批次)"

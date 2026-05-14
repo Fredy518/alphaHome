@@ -1,375 +1,211 @@
-# 新任务开发指南 - 批处理最佳实践
+# 新任务开发指南
 
-## 概述
+本文档说明如何在当前任务系统中新增数据采集任务。
 
-本指南为新任务开发提供批处理功能的最佳实践，帮助开发者选择合适的批处理方案并正确实现。
+## 开发前确认
 
-## 🎯 批处理方案选择
+先回答四个问题：
 
-### 方案对比
+1. 数据源是什么：Tushare、AkShare、Tinysoft、Excel，还是其他？
+2. 目标 schema/table 是什么？
+3. 主键和日期列是什么？
+4. 批处理策略是什么：按交易日、自然日、代码、季度、单批次，还是多维组合？
 
-| 特性 | SmartBatchMixin | ExtendedBatchPlanner | 推荐场景 |
-|------|-----------------|---------------------|----------|
-| **适用场景** | 纯时间序列数据 | 复杂多维度分批 | - |
-| **实现复杂度** | 简单 | 中等 | 快速开发 vs 功能丰富 |
-| **功能丰富度** | 基础 | 丰富 | 基础需求 vs 复杂需求 |
-| **扩展性** | 有限 | 强 | 固定需求 vs 可能扩展 |
-| **性能监控** | 基础 | 详细 | 简单监控 vs 深度分析 |
+## 推荐继承关系
 
-### 选择决策树
+| 数据源 | 基类 |
+| --- | --- |
+| Tushare | `alphahome.fetchers.sources.tushare.tushare_task.TushareTask` |
+| AkShare | `alphahome.fetchers.sources.akshare.akshare_task.AkShareTask` |
+| Tinysoft | `alphahome.fetchers.sources.tinysoft.tinysoft_task.TinySoftTask` |
+| Excel | `alphahome.fetchers.sources.excel.excel_task.ExcelTask` |
 
-```
-新任务批处理需求
-├── 纯时间序列数据？
-│   ├── 是 → 需要复杂统计？
-│   │   ├── 否 → SmartBatchMixin ✅
-│   │   └── 是 → ExtendedBatchPlanner ✅
-│   └── 否 → 需要多维度分批？
-│       ├── 是 → ExtendedBatchPlanner ✅
-│       └── 否 → 原始 BatchPlanner
-```
+不要为普通采集任务直接继承 `BaseTask`。
 
-## 📋 实现模板
-
-### 模板1：时间序列任务 (推荐 ExtendedBatchPlanner)
+## 最小 Tushare 模板
 
 ```python
-from alphahome.common.planning import create_smart_time_planner
+from typing import Any, Dict, List
+
+from alphahome.common.task_system.task_decorator import task_register
+from alphahome.fetchers.sources.tushare.batch_utils import generate_trade_day_batches
 from alphahome.fetchers.sources.tushare.tushare_task import TushareTask
 
-class NewTimeSeriesTask(TushareTask):
-    """新时间序列数据任务 - 推荐实现"""
-    
-    # 核心属性
-    domain = "your_domain"
-    name = "new_time_series_task"
-    description = "新时间序列任务描述"
-    table_name = "your_table"
-    primary_keys = ["key1", "key2", "date"]
+
+@task_register()
+class TushareMyDailyTask(TushareTask):
+    name = "tushare_my_daily"
+    description = "示例日频任务"
+    task_type = "fetch"
+    domain = "stock"
+
+    data_source = "tushare"
+    table_name = "my_daily"
+    primary_keys = ["ts_code", "trade_date"]
     date_column = "trade_date"
     default_start_date = "20200101"
-    
-    # API配置
-    api_name = "your_api"
-    fields = ["field1", "field2", "trade_date"]
-    
-    async def get_batch_list(self, **kwargs):
-        """使用 ExtendedBatchPlanner 实现智能时间分批"""
-        start_date = kwargs.get("start_date", self.default_start_date)
-        end_date = kwargs.get("end_date", datetime.now().strftime("%Y%m%d"))
-        
-        # 创建智能时间批处理规划器
-        planner = create_smart_time_planner(
-            start_date=start_date,
-            end_date=end_date,
-            enable_stats=True
+
+    api_name = "daily"
+    fields = ["ts_code", "trade_date", "open", "high", "low", "close", "vol", "amount"]
+
+    schema_def = {
+        "ts_code": "VARCHAR(12) NOT NULL",
+        "trade_date": "DATE NOT NULL",
+        "open": "NUMERIC(18,4)",
+        "high": "NUMERIC(18,4)",
+        "low": "NUMERIC(18,4)",
+        "close": "NUMERIC(18,4)",
+        "vol": "NUMERIC(20,4)",
+        "amount": "NUMERIC(20,4)",
+        "update_time": "TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
+    }
+
+    validations = [
+        (lambda df: df["ts_code"].notna(), "ts_code 非空"),
+        (lambda df: df["trade_date"].notna(), "trade_date 非空"),
+        (lambda df: df["close"] > 0, "收盘价为正"),
+    ]
+
+    async def get_batch_list(self, **kwargs: Any) -> List[Dict[str, Any]]:
+        return await generate_trade_day_batches(
+            start_date=kwargs["start_date"],
+            end_date=kwargs["end_date"],
+            batch_size=1,
         )
-        
-        time_batches = await planner.generate()
-        
-        # 转换为任务特定格式
-        batches = []
-        for time_batch in time_batches:
-            batch = {
-                "start_date": time_batch["start_date"],
-                "end_date": time_batch["end_date"]
-            }
-            # 添加任务特有参数
-            if kwargs.get("ts_code"):
-                batch["ts_code"] = kwargs["ts_code"]
-            batches.append(batch)
-        
-        # 记录优化效果
-        stats = planner.get_stats()
-        if "smart_time_optimization" in stats:
-            opt = stats["smart_time_optimization"]
-            self.logger.info(f"智能批次优化：减少 {opt['reduction_rate']:.1f}% 批次数量")
-        
-        return batches
 ```
 
-### 模板2：多维度分批任务
+## 批处理模式
+
+### 按交易日
 
 ```python
-from alphahome.common.planning import (
-    ExtendedBatchPlanner, CompositePartition, 
-    StatusPartition, MarketPartition, ExtendedMap
-)
+from alphahome.fetchers.sources.tushare.batch_utils import generate_trade_day_batches
 
-class NewMultiDimensionTask(TushareTask):
-    """新多维度分批任务"""
-    
-    async def get_batch_list(self, **kwargs):
-        """多维度分批实现"""
-        # 获取股票列表
-        stocks = await self.get_stock_list()
-        
-        # 创建组合分区策略
-        composite_partition = CompositePartition.create([
-            MarketPartition.create("exchange"),  # 按交易所分区
-            StatusPartition.create("list_status")  # 按状态分区
-        ])
-        
-        planner = ExtendedBatchPlanner(
-            source=Source.from_list(stocks),
-            partition_strategy=composite_partition,
-            map_strategy=ExtendedMap.with_custom_func(
-                lambda batch: {
-                    "exchange": batch[0]["exchange"] if batch else None,
-                    "list_status": batch[0]["list_status"] if batch else None,
-                    "stocks": [stock["ts_code"] for stock in batch],
-                    "count": len(batch)
-                }
-            ),
-            enable_stats=True
-        )
-        
-        batches = await planner.generate()
-        stats = planner.get_stats()
-        
-        self.logger.info(f"多维度分批完成：生成 {len(batches)} 个批次")
-        self.logger.info(f"生成耗时：{stats.get('generation_time', 0):.3f}s")
-        
-        return batches
-```
-
-### 模板3：兼容现有任务 (SmartBatchMixin)
-
-```python
-from alphahome.fetchers.base.smart_batch_mixin import SmartBatchMixin
-
-class ExistingStyleTask(TushareTask, SmartBatchMixin):
-    """兼容现有任务风格的实现"""
-    
-    async def get_batch_list(self, **kwargs):
-        """使用 SmartBatchMixin 的传统方式"""
-        start_date = kwargs.get("start_date", self.default_start_date)
-        end_date = kwargs.get("end_date", datetime.now().strftime("%Y%m%d"))
-        
-        # 使用 SmartBatchMixin 的智能批次拆分
-        time_batches = self.generate_smart_time_batches(start_date, end_date)
-        
-        # 转换为任务特定格式
-        batches = []
-        for time_batch in time_batches:
-            batch = dict(time_batch)
-            # 添加任务特有参数
-            if kwargs.get("ts_code"):
-                batch["ts_code"] = kwargs["ts_code"]
-            batches.append(batch)
-        
-        # 记录优化效果
-        stats = self.get_batch_optimization_stats(start_date, end_date)
-        self.logger.info(
-            f"智能批次生成完成 - 采用{stats.get('strategy', '未知')}策略，"
-            f"生成 {len(batches)} 个批次，减少 {stats.get('reduction_rate', 0):.1f}% 批次数量"
-        )
-        
-        return batches
-```
-
-## 🚀 开发最佳实践
-
-### 1. 任务设计原则
-
-#### 时间序列任务
-- **优先使用 ExtendedBatchPlanner**: 获得更好的性能监控和扩展性
-- **合理设置默认起始日期**: 根据数据可用性设置 `default_start_date`
-- **支持增量更新**: 实现智能的增量更新逻辑
-- **添加性能统计**: 启用 `enable_stats=True` 监控优化效果
-
-#### 多维度分批任务
-- **明确分批维度**: 清楚定义需要按哪些维度分批
-- **选择合适的分区策略**: 使用预定义的分区策略或自定义
-- **优化批次大小**: 平衡API调用效率和系统资源消耗
-- **实现错误隔离**: 确保单个批次失败不影响其他批次
-
-### 2. 性能优化建议
-
-#### 批次数量优化
-```python
-# 好的做法：使用智能时间分区
-planner = create_smart_time_planner(
-    start_date="20200101",
-    end_date="20241231",
-    enable_stats=True
-)
-
-# 避免：固定大小分批
-# 这会产生过多的小批次
-batches = [{"start_date": date, "end_date": date} for date in date_list]
-```
-
-#### 内存使用优化
-```python
-# 好的做法：流式处理大数据集
-async def process_large_dataset(self):
-    async for batch in self.get_batch_iterator():
-        await self.process_batch(batch)
-
-# 避免：一次性加载所有数据
-# all_data = await self.load_all_data()  # 可能导致内存溢出
-```
-
-### 3. 错误处理模式
-
-#### 批次级错误处理
-```python
 async def get_batch_list(self, **kwargs):
-    try:
-        # 批次生成逻辑
-        planner = create_smart_time_planner(...)
-        return await planner.generate()
-    except Exception as e:
-        self.logger.error(f"批次生成失败: {e}")
-        # 回退到安全的单批次策略
-        return [{
-            "start_date": kwargs.get("start_date"),
-            "end_date": kwargs.get("end_date")
-        }]
-```
-
-#### 参数验证
-```python
-async def get_batch_list(self, **kwargs):
-    # 参数验证
-    start_date = kwargs.get("start_date")
-    end_date = kwargs.get("end_date")
-    
-    if not start_date or not end_date:
-        self.logger.error("缺少必要的日期参数")
-        return []
-    
-    # 日期格式验证
-    try:
-        datetime.strptime(start_date, "%Y%m%d")
-        datetime.strptime(end_date, "%Y%m%d")
-    except ValueError as e:
-        self.logger.error(f"日期格式错误: {e}")
-        return []
-```
-
-### 4. 测试建议
-
-#### 单元测试模板
-```python
-import pytest
-from your_task import YourTask
-
-class TestYourTask:
-    @pytest.fixture
-    def task(self):
-        return YourTask()
-    
-    @pytest.mark.asyncio
-    async def test_get_batch_list_basic(self, task):
-        """测试基础批次生成功能"""
-        batches = await task.get_batch_list(
-            start_date="20241201",
-            end_date="20241231"
-        )
-        
-        assert len(batches) > 0
-        assert all("start_date" in batch for batch in batches)
-        assert all("end_date" in batch for batch in batches)
-    
-    @pytest.mark.asyncio
-    async def test_get_batch_list_edge_cases(self, task):
-        """测试边界情况"""
-        # 单日数据
-        batches = await task.get_batch_list(
-            start_date="20241215",
-            end_date="20241215"
-        )
-        assert len(batches) == 1
-        
-        # 长期数据
-        batches = await task.get_batch_list(
-            start_date="20200101",
-            end_date="20241231"
-        )
-        assert len(batches) > 1
-```
-
-## 📊 性能监控
-
-### 监控指标
-- **批次数量**: 监控批次数量的合理性
-- **生成时间**: 批次生成的耗时
-- **优化效果**: 相比传统方案的改进程度
-- **错误率**: 批次生成的失败率
-
-### 监控实现
-```python
-async def get_batch_list(self, **kwargs):
-    import time
-    start_time = time.time()
-    
-    planner = create_smart_time_planner(
-        start_date=start_date,
-        end_date=end_date,
-        enable_stats=True
+    return await generate_trade_day_batches(
+        kwargs["start_date"],
+        kwargs["end_date"],
+        batch_size=1,
     )
-    
-    batches = await planner.generate()
-    generation_time = time.time() - start_time
-    
-    # 记录监控指标
-    stats = planner.get_stats()
-    self.logger.info(f"批次生成监控 - "
-                    f"数量: {len(batches)}, "
-                    f"耗时: {generation_time:.3f}s, "
-                    f"优化率: {stats.get('smart_time_optimization', {}).get('reduction_rate', 0):.1f}%")
-    
-    return batches
 ```
 
-## 🔧 故障排除
+适合日线行情、每日指标、涨跌停、资金流等接口。
 
-### 常见问题
+### 按自然日或月份
 
-1. **批次数量为0**
-   - 检查输入参数格式
-   - 验证日期范围有效性
-   - 查看错误日志
+使用 `alphahome.common.planning`：
 
-2. **性能问题**
-   - 检查批次大小是否合理
-   - 考虑使用更粗粒度的分批策略
-   - 监控内存使用情况
-
-3. **异步调用问题**
-   - 确保在异步上下文中调用
-   - 正确处理异步异常
-   - 避免阻塞事件循环
-
-### 调试技巧
 ```python
-# 启用详细日志
-import logging
-logging.basicConfig(level=logging.DEBUG)
+from alphahome.common.planning import BatchPlanner, Source, Partition, Map
 
-# 检查批次生成统计
-stats = planner.get_stats()
-print(f"批次生成统计: {stats}")
-
-# 验证分区结果
-partitions = partition_strategy(test_data)
-print(f"分区结果: {partitions}")
+async def get_batch_list(self, **kwargs):
+    planner = BatchPlanner(
+        source=Source.from_callable(lambda: self._build_dates(kwargs["start_date"], kwargs["end_date"])),
+        partition_strategy=Partition.by_month(),
+        map_strategy=Map.to_date_range("start_date", "end_date"),
+    )
+    return await planner.generate()
 ```
 
-## 📚 参考资源
+### 按代码
 
-- [ExtendedBatchPlanner 使用指南](extended_batch_planner_guide.md)
-- [BatchPlanner 迁移指南](batch_planner_migration_guide.md)
-- [SmartBatchMixin 迁移报告](smart_batch_mixin_migration_report.md)
+```python
+async def get_batch_list(self, **kwargs):
+    codes = await self.db.get_distinct_values("tushare.stock_basic", "ts_code")
+    return [{"ts_code": code} for code in codes]
+```
 
-## 🎯 总结
+如果还需要日期范围，把 `start_date` / `end_date` 合并进每个批次。
 
-选择合适的批处理方案对任务性能至关重要：
+### 多维分批
 
-- **新时间序列任务**: 推荐使用 ExtendedBatchPlanner
-- **多维度分批需求**: 必须使用 ExtendedBatchPlanner
-- **简单兼容需求**: 可以继续使用 SmartBatchMixin
+使用 `ExtendedBatchPlanner`，把资产集合先按市场、状态、行业等维度切分，再映射成 API 参数。适合接口限制复杂、单批请求上限不稳定的任务。
 
-遵循本指南的最佳实践，可以确保新任务具有良好的性能、可维护性和扩展性。
+## AkShare 任务要点
+
+AkShare 任务通常需要处理中文列名和宽表：
+
+```python
+@task_register()
+class AkShareMacroBondRateTask(AkShareNoDateSingleBatchTask):
+    name = "akshare_macro_bond_rate"
+    domain = "macro"
+    table_name = "macro_bond_rate"
+    api_name = "bond_zh_us_rate"
+    date_column = "trade_date"
+    primary_keys = ["trade_date"]
+    column_mapping = {"日期": "trade_date", "中国国债收益率10年": "cn_10y"}
+```
+
+若接口不接受日期参数，优先继承 `AkShareNoDateSingleBatchTask`，它会在 `process_data()` 阶段按有效日期窗口过滤。
+
+## Tinysoft 任务要点
+
+Tinysoft 批次必须提供：
+
+- `stock`
+- `begin_time`
+- `end_time`
+
+可选字段：
+
+- `cycle`
+- `fields`
+- `service`
+- `timeout_ms`
+
+配置项写入 `tasks.<task_name>`，例如 `symbol_batch_size`、`query_timeout_ms`、`request_interval`。
+
+## schema 与 rawdata 视图
+
+`BaseTask` 会根据 `data_source` 和 `table_name` 写入源 schema，并尝试创建 `rawdata.<table_name>` 视图。
+
+规则：
+
+- Tushare 表优先：`tushare.<table>` 会覆盖同名 rawdata 视图。
+- 非 Tushare 表只在没有 Tushare 同名表、且 rawdata 视图不存在时创建。
+
+因此新任务命名要避免和已有核心表无意义冲突。
+
+## 本地验证
+
+```python
+import asyncio
+import alphahome.fetchers  # 触发任务注册
+from alphahome.common.constants import UpdateTypes
+from alphahome.common.task_system import UnifiedTaskFactory
+
+async def main():
+    await UnifiedTaskFactory.initialize()
+    try:
+        task = await UnifiedTaskFactory.create_task_instance(
+            "tushare_my_daily",
+            update_type=UpdateTypes.MANUAL,
+            start_date="20260501",
+            end_date="20260508",
+        )
+        print(await task.execute())
+    finally:
+        await UnifiedTaskFactory.shutdown()
+
+asyncio.run(main())
+```
+
+检查点：
+
+- 任务能被注册。
+- MANUAL 短日期范围可执行。
+- 目标表自动创建，主键正确。
+- 重跑同一日期不会产生重复数据。
+- 日志中没有验证失败或批次失败。
+
+## 提交前清单
+
+- [ ] 任务类使用 `@task_register()`。
+- [ ] `name`、`domain`、`data_source`、`table_name` 明确。
+- [ ] `primary_keys` 覆盖唯一性。
+- [ ] `date_column` 支持 SMART 增量。
+- [ ] `schema_def` 与实际字段一致。
+- [ ] `get_batch_list()` 不执行 API 请求。
+- [ ] 至少有一个短日期范围验证记录。
+- [ ] 文档或任务说明同步更新。

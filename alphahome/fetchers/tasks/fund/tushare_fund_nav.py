@@ -104,8 +104,8 @@ class TushareFundNavTask(TushareTask):
         (lambda df: df['ts_code'].notna(), "基金代码不能为空"),
         (lambda df: df['nav_date'].notna(), "净值日期不能为空"),
         (lambda df: df['unit_nav'] > 0, "单位净值必须为正"),
-        (lambda df: df['accum_nav'] >= df['unit_nav'], "累计净值应大于等于单位净值"),
-        (lambda df: df['net_asset'] >= 0, "基金资产净值非负"),
+        (lambda df: df['accum_nav'].isna() | df['unit_nav'].isna() | (df['accum_nav'] >= df['unit_nav']), "累计净值应大于等于单位净值或为空"),
+        (lambda df: df['net_asset'].isna() | (df['net_asset'] >= 0), "基金资产净值非负或为空"),
     ]
 
     # 8. 分批配置

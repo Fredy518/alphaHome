@@ -1,229 +1,101 @@
 # AlphaHome 安装指南
 
-本文档将指导您完成 AlphaHome 智能量化投研系统的安装和初始配置。
+## 环境要求
 
-## 📋 **系统要求**
+- Python >= 3.9，推荐 3.11 或 3.12。
+- PostgreSQL >= 12。
+- Windows PowerShell、macOS shell 或 Linux shell。
+- 可选：DolphinDB 单机服务，用于 5 分钟 K 线高速查询层。
+- 可选：Hikyuu HDF5 数据目录，用于 DolphinDB 导入。
 
-### **硬件要求**
-- **CPU**: 4核心以上（推荐8核心）
-- **内存**: 8GB以上（推荐16GB）
-- **存储**: 50GB可用空间（推荐SSD）
-- **网络**: 稳定的互联网连接
-
-### **软件要求**
-- **操作系统**: Windows 10/11, macOS 10.15+, Ubuntu 18.04+
-- **Python**: 3.10 或更高版本
-- **PostgreSQL**: 12.0 或更高版本
-- **Git**: 用于代码管理
-
-## 🚀 **快速安装**
-
-### **步骤1: 安装Python环境**
-
-**Windows:**
-```bash
-# 下载并安装Python 3.10+
-# 从 https://python.org 下载官方安装包
-# 安装时勾选"Add Python to PATH"
-```
-
-**macOS:**
-```bash
-# 使用Homebrew安装
-brew install python@3.10
-```
-
-**Ubuntu:**
-```bash
-# 更新包列表
-sudo apt update
-
-# 安装Python 3.10
-sudo apt install python3.10 python3.10-pip python3.10-venv
-```
-
-### **步骤2: 安装PostgreSQL**
-
-**Windows:**
-```bash
-# 下载并安装PostgreSQL
-# 从 https://postgresql.org/download/windows/ 下载
-# 记住设置的密码，后续配置需要使用
-```
-
-**macOS:**
-```bash
-# 使用Homebrew安装
-brew install postgresql
-brew services start postgresql
-```
-
-**Ubuntu:**
-```bash
-# 安装PostgreSQL
-sudo apt install postgresql postgresql-contrib
-
-# 启动服务
-sudo systemctl start postgresql
-sudo systemctl enable postgresql
-```
-
-### **步骤3: 克隆项目**
+## 安装
 
 ```bash
-# 克隆项目到本地
 git clone https://github.com/your-repo/alphahome.git
 cd alphahome
-```
 
-### **步骤4: 创建虚拟环境**
-
-```bash
-# 创建虚拟环境
-python -m venv venv
-
-# 激活虚拟环境
-# Windows:
-venv\Scripts\activate
-# macOS/Linux:
-source venv/bin/activate
-```
-
-### **步骤5: 安装依赖**
-
-```bash
-# 升级pip
-pip install --upgrade pip
-
-# 安装项目依赖
-pip install -r requirements.txt
-
-# 开发模式安装（可选，用于本地调试）
+python -m venv .venv
+.venv\Scripts\activate
+python -m pip install --upgrade pip
 pip install -e .
 ```
 
-## 🔧 **详细配置**
+可选依赖：
 
-### **数据库配置**
+```bash
+pip install -e ".[akshare]"
+pip install -e ".[research]"
+pip install -e ".[test]"
+```
 
-1. **创建数据库**
+本仓库以 `pyproject.toml` 管理依赖，当前没有 `requirements.txt`。
+
+## 数据库
+
+创建 PostgreSQL 数据库：
+
 ```sql
--- 连接到PostgreSQL
-psql -U postgres
-
--- 创建数据库
-CREATE DATABASE alphadb;
-
--- 创建用户（可选）
 CREATE USER alphahome WITH PASSWORD 'your_password';
+CREATE DATABASE alphadb OWNER alphahome;
 GRANT ALL PRIVILEGES ON DATABASE alphadb TO alphahome;
 ```
 
-2. **配置连接**
-```bash
-# 复制配置模板
-cp config.example.json config.json
+如果你使用既有数据库，只需要确保配置中的 `database.url` 指向正确库。
 
-# 编辑配置文件
-# 修改数据库连接信息
+## 配置
+
+AlphaHome 默认读取：
+
+```text
+~/.alphahome/config.json
 ```
 
-### **API配置**
+Windows PowerShell：
 
-1. **获取Tushare Token**
-   - 访问 [Tushare官网](https://tushare.pro)
-   - 注册账号并获取API Token
-   - 将Token填入配置文件
+```powershell
+New-Item -ItemType Directory -Force $HOME\.alphahome
+Copy-Item config.example.json $HOME\.alphahome\config.json
+notepad $HOME\.alphahome\config.json
+```
 
-2. **配置示例**
+macOS/Linux：
+
+```bash
+mkdir -p ~/.alphahome
+cp config.example.json ~/.alphahome/config.json
+${EDITOR:-vi} ~/.alphahome/config.json
+```
+
+最小配置：
+
 ```json
 {
-    "database": {
-        "url": "postgresql://username:password@localhost:5432/alphadb"
-    },
-    "api": {
-        "tushare_token": "your_tushare_token_here"
-    }
+  "database": {
+    "url": "postgresql://alphahome:your_password@localhost:5432/alphadb"
+  },
+  "api": {
+    "tushare_token": "your_tushare_token_here"
+  }
 }
 ```
 
-## ✅ **验证安装**
+## 验证
 
-### **运行测试**
 ```bash
-# 运行单元测试
-pytest tests/unit/ -v -m "unit and not requires_db and not requires_api"
+python -c "from alphahome.common.config_manager import load_config; print(load_config()['database']['url'])"
+python -c "from alphahome.common.db_manager import create_sync_manager; db=create_sync_manager(); print(db.test_connection())"
+pytest tests/unit/ -v -m "not requires_db and not requires_api"
 ```
 
-### **启动GUI**
+启动 GUI：
+
 ```bash
-# 启动图形界面
 python run.py
-
-# 或使用模块方式
-python -m alphahome.gui.main_window
 ```
 
-### **测试数据库连接**
-```bash
-# 运行数据库连接测试
-python -c "
-from alphahome.common.db_manager import create_sync_manager
-db = create_sync_manager()
-print('数据库连接成功!' if db.test_connection() else '数据库连接失败!')
-"
-```
+## 常见问题
 
-## 🔍 **常见问题**
-
-### **Python版本问题**
-```bash
-# 检查Python版本
-python --version
-
-# 如果版本不对，使用特定版本
-python3.10 -m venv venv
-```
-
-### **依赖安装失败**
-```bash
-# 清理pip缓存
-pip cache purge
-
-# 使用国内镜像源
-pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple/
-```
-
-### **数据库连接失败**
-1. 检查PostgreSQL服务是否启动
-2. 验证用户名和密码
-3. 确认数据库名称正确
-4. 检查防火墙设置
-
-### **权限问题**
-```bash
-# Windows: 以管理员身份运行命令提示符
-# macOS/Linux: 使用sudo（谨慎使用）
-sudo pip install -r requirements.txt
-```
-
-## 🎯 **下一步**
-
-安装完成后，建议您：
-
-1. 阅读[配置指南](./configuration.md)进行详细配置
-2. 查看[用户指南](../user/user_guide.md)了解系统使用
-3. 运行第一个数据采集任务测试系统功能
-
-## 📞 **获取帮助**
-
-如果安装过程中遇到问题：
-
-1. 查看[常见问题](../user/faq.md)
-2. 检查系统日志文件
-3. 在GitHub上提交Issue
-4. 联系技术支持
-
----
-
-**恭喜！** 您已成功安装 AlphaHome 系统。现在可以开始您的量化投研之旅了！ 🚀
+- `ModuleNotFoundError`: 确认已在仓库根目录执行 `pip install -e .`。
+- 配置不生效：确认文件在 `~/.alphahome/config.json`，不是仓库根目录的 `config.json`。
+- Tushare 任务无法启动：确认 `api.tushare_token` 或环境变量 `TUSHARE_TOKEN` 已设置。
+- 数据库连接失败：先用 `psql` 验证连接串，再检查 PostgreSQL 服务和防火墙。

@@ -1,5 +1,7 @@
 # AlphaHome 统一 CLI 建设 - Phase 3 验收报告
 
+> 历史归档说明（2026-05-12）：本文记录统一 CLI 建设阶段的当时验收结果。当前统一 CLI 已下线，`ah`、`alphahome-cli`、`refresh-materialized-view` 不再作为可用入口。当前入口请见 [CLI 下线说明](CLI_USAGE_GUIDE.md)。
+
 **报告日期**：2025-12-19
 **报告状态**：⚠️ **历史报告（后续版本已下线统一 CLI）**
 

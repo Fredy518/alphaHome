@@ -127,22 +127,29 @@ class TushareDataTransformer:
 
         self.logger.debug(f"开始应用 {len(self.task.transformations)} 个转换规则")
 
+        column_mapping = getattr(self.task, "column_mapping", {}) or {}
+
         for column, transform_func in self.task.transformations.items():
-            if column in data.columns:
+            target_column = column
+            mapped_column = column_mapping.get(column)
+            if target_column not in data.columns and mapped_column in data.columns:
+                target_column = mapped_column
+
+            if target_column in data.columns:
                 try:
                     # 确保处理前列中没有Python原生的None，统一使用np.nan
-                    if data[column].dtype == "object":
+                    if data[target_column].dtype == "object":
                         # 修复 pandas FutureWarning：避免 fillna 的自动类型推断
                         # 先处理 None 值，然后安全地推断对象类型
-                        data[column] = data[column].where(data[column].notna(), np.nan).infer_objects(copy=False)
+                        data[target_column] = data[target_column].where(data[target_column].notna(), np.nan).infer_objects(copy=False)
 
                     # 定义一个安全的转换函数，处理np.nan值
                     def safe_transform(x):
                         if pd.isna(x):
                             # 对于文本字段，保持为None而不是np.nan，避免PostgreSQL类型错误
                             # 检查schema_def来确定是否为文本字段
-                            if hasattr(self.task, 'schema_def') and column in self.task.schema_def:
-                                col_def = self.task.schema_def[column]
+                            if hasattr(self.task, 'schema_def') and target_column in self.task.schema_def:
+                                col_def = self.task.schema_def[target_column]
                                 col_type = col_def.get('type', '').upper()
                                 if 'VARCHAR' in col_type or 'TEXT' in col_type:
                                     return None  # 文本字段使用None
@@ -150,47 +157,47 @@ class TushareDataTransformer:
                         try:
                             result = transform_func(x)  # 应用原始转换
                             # 如果转换结果是None，确保文本字段返回None而不是np.nan
-                            if result is None and hasattr(self.task, 'schema_def') and column in self.task.schema_def:
-                                col_def = self.task.schema_def[column]
+                            if result is None and hasattr(self.task, 'schema_def') and target_column in self.task.schema_def:
+                                col_def = self.task.schema_def[target_column]
                                 col_type = col_def.get('type', '').upper()
                                 if 'VARCHAR' in col_type or 'TEXT' in col_type:
                                     return None
                             return result
                         except Exception as e:
                             self.logger.warning(
-                                f"转换值 '{x}' (类型: {type(x)}) 到列 '{column}' 时失败: {str(e)}"
+                                f"转换值 '{x}' (类型: {type(x)}) 到列 '{target_column}' 时失败: {str(e)}"
                             )
                             return np.nan  # 转换失败时返回np.nan
 
                     # 应用安全转换
-                    original_dtype = data[column].dtype
-                    data[column] = data[column].apply(safe_transform)
+                    original_dtype = data[target_column].dtype
+                    data[target_column] = data[target_column].apply(safe_transform)
 
                     # 尝试恢复原始数据类型，但不恢复文本字段
                     try:
                         if (
-                            data[column].dtype == "object"
+                            data[target_column].dtype == "object"
                             and original_dtype != "object"
                         ):
                             # 检查是否为文本字段，如果是则不恢复类型
                             should_restore_type = True
-                            if hasattr(self.task, 'schema_def') and column in self.task.schema_def:
-                                col_def = self.task.schema_def[column]
+                            if hasattr(self.task, 'schema_def') and target_column in self.task.schema_def:
+                                col_def = self.task.schema_def[target_column]
                                 col_type = col_def.get('type', '').upper()
                                 if 'VARCHAR' in col_type or 'TEXT' in col_type:
                                     should_restore_type = False
-                                    self.logger.debug(f"列 '{column}' 是文本字段，跳过类型恢复")
+                                    self.logger.debug(f"列 '{target_column}' 是文本字段，跳过类型恢复")
 
                             if should_restore_type:
-                                data[column] = pd.to_numeric(data[column], errors="coerce")
+                                data[target_column] = pd.to_numeric(data[target_column], errors="coerce")
                     except Exception as type_e:
                         self.logger.debug(
-                            f"尝试恢复列 '{column}' 类型失败: {str(type_e)}"
+                            f"尝试恢复列 '{target_column}' 类型失败: {str(type_e)}"
                         )
 
                 except Exception as e:
                     self.logger.error(
-                        f"处理列 '{column}' 的转换时发生意外错误: {str(e)}",
+                        f"处理列 '{target_column}' 的转换时发生意外错误: {str(e)}",
                         exc_info=True,
                     )
 

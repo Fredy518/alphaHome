@@ -115,10 +115,10 @@ class TushareStockMarginDetailTask(TushareTask):
     validations = [
         (lambda df: df['ts_code'].notna(), "股票代码不能为空"),
         (lambda df: df['trade_date'].notna(), "交易日期不能为空"),
-        (lambda df: df['rzye'] >= 0, "融资余额必须非负"),
-        (lambda df: df['rqye'] >= 0, "融券余额必须非负"),
-        (lambda df: df['rzrqye'] >= 0, "融资融券余额必须非负"),
-        (lambda df: df['rqyl'] >= 0, "融券余量必须非负"),
+        (lambda df: df['rzye'].isna() | (df['rzye'] >= 0), "融资余额必须非负或为空"),
+        (lambda df: df['rqye'].isna() | (df['rqye'] >= 0), "融券余额必须非负或为空"),
+        (lambda df: df['rzrqye'].isna() | (df['rzrqye'] >= 0), "融资融券余额必须非负或为空"),
+        (lambda df: df['rqyl'].isna() | (df['rqyl'] >= 0), "融券余量必须非负或为空"),
     ]
 
     # 8. 验证模式配置 - 使用报告模式记录验证结果

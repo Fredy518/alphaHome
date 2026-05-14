@@ -1,9 +1,11 @@
 # 离线特征工程模块设计方案
 
-> **状态**: 设计中  
-> **创建日期**: 2026-01-27  
-> **最后更新**: 2026-01-29  
+> **状态**: 历史设计 + 当前 features 模块参考
+> **创建日期**: 2026-01-27
+> **最后更新**: 2026-05-12
 > **作者**: alphahome team
+
+> 当前说明：processors 删除、统一 CLI 下线、features/storage 与 recipes 迁移已完成。日常使用请优先看 [系统架构](system_overview.md)、[任务系统](task_system.md) 和根目录 README；本文保留为 features 迁移的设计与验收记录。
 
 ---
 

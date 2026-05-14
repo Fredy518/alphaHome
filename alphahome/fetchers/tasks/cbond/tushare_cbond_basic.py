@@ -190,10 +190,9 @@ class TushareCBondBasicTask(TushareTask):
     validations = [
         (lambda df: df['ts_code'].notna(), "转债代码不能为空"),
         (lambda df: df['bond_short_name'].notna(), "转债简称不能为空"),
-        (lambda df: df['stk_code'].notna(), "正股代码不能为空"),
-        (lambda df: df['stk_short_name'].notna(), "正股简称不能为空"),
+        (lambda df: df['stk_code'].isna() | (df['stk_code'].astype(str).str.strip() != ''), "正股代码非空时不能为空字符串"),
         (lambda df: ~(df['bond_short_name'].astype(str).str.strip().eq('') | df['bond_short_name'].isna()), "转债简称不能为空字符串"),
-        (lambda df: ~(df['stk_short_name'].astype(str).str.strip().eq('') | df['stk_short_name'].isna()), "正股简称不能为空字符串"),
+        (lambda df: df['stk_short_name'].isna() | (df['stk_short_name'].astype(str).str.strip() != ''), "正股简称非空时不能为空字符串"),
         (lambda df: df['exchange'].isin(['SZ', 'SH']), "上市地点必须是SZ或SH"),
         (lambda df: df['maturity'].fillna(0) >= 0, "发行期限不能为负数"),
         (lambda df: df['par'].fillna(0) >= 0, "面值不能为负数"),

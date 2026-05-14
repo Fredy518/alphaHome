@@ -1,263 +1,128 @@
-# PIT数据增量更新指南
+# PIT 数据增量更新指南
 
-## 📋 概述
+## 当前入口
 
-PIT数据增量更新系统提供了完整的增量更新解决方案，支持财务数据、财务指标和行业分类的自动化更新。
+PIT 生产脚本位于：
 
-## 🏗️ 系统架构
-
-```
-PIT增量更新系统
-├── 增量更新管理器 (incremental_update_manager.py)
-│   ├── 统一调度和协调
-│   └── 跨组件依赖管理
-├── 财务数据同步器 (pit_financial_data_syncer.py)
-│   ├── tushare数据增量同步
-│   └── PIT表数据更新
-├── 行业分类更新器 (pit_industry_updater.py)
-│   ├── 月度快照生成
-│   └── 行业变更检测
-└── 更新调度器 (incremental_update_scheduler.py)
-    ├── 日/周/月更新调度
-    └── 手动更新支持
+```text
+scripts/production/data_updaters/pit/
 ```
 
-## 🔄 更新策略
-
-### 1. 日更新 (Daily Update)
-**频率**: 每日执行  
-**内容**: 财务数据 + 财务指标  
-**适用**: 日常维护，保持数据最新
+统一入口：
 
 ```bash
-# 执行日更新
-python scripts/pit/incremental_update_scheduler.py --mode daily
-
-# 指定日期的日更新
-python scripts/pit/incremental_update_scheduler.py --mode daily --target-date 2025-08-11
+python scripts/production/data_updaters/pit/pit_data_update_production.py --target all --mode incremental
 ```
 
-### 2. 周更新 (Weekly Update)
-**频率**: 每周执行  
-**内容**: 全量检查 + 补充更新 + 数据验证  
-**适用**: 全面检查，补充遗漏数据
+历史文档中的 `scripts/pit/*` 路径已废弃。
+
+## 支持对象
+
+| target | 表 | 说明 |
+| --- | --- | --- |
+| `balance` | `pgs_factors.pit_balance_quarterly` | 资产负债表 PIT 数据 |
+| `income` | `pgs_factors.pit_income_quarterly` | 利润表 PIT 数据 |
+| `financial_indicators` | `pgs_factors.pit_financial_indicators` | 基于 income/balance 计算的 PIT 财务指标 |
+| `industry_classification` | `pgs_factors.pit_industry_classification` | 行业分类 PIT 快照 |
+| `all` | 全部 | 按依赖关系执行 |
+
+## 常用命令
 
 ```bash
-# 执行周更新
-python scripts/pit/incremental_update_scheduler.py --mode weekly
+# 日常增量
+python scripts/production/data_updaters/pit/pit_data_update_production.py --target all --mode incremental
+
+# 只更新依赖表
+python scripts/production/data_updaters/pit/pit_data_update_production.py --target balance income --mode incremental
+
+# 只重算财务指标
+python scripts/production/data_updaters/pit/pit_data_update_production.py --target financial_indicators --mode full
+
+# 并行执行无依赖冲突的任务
+python scripts/production/data_updaters/pit/pit_data_update_production.py --target balance income industry_classification --mode incremental --parallel --workers 3
+
+# 调试日志
+python scripts/production/data_updaters/pit/pit_data_update_production.py --target all --log-level DEBUG
 ```
 
-### 3. 月更新 (Monthly Update)
-**频率**: 每月执行  
-**内容**: 行业分类快照 + 全面验证 + 性能检查  
-**适用**: 行业快照生成，系统健康检查
+`financial_indicators` 依赖 `income` 和 `balance`。如果同批包含依赖任务，协调器会禁用并行以保证顺序。
+
+## 单表管理器
+
+必要时可直接运行单表管理器：
 
 ```bash
-# 执行月更新
-python scripts/pit/incremental_update_scheduler.py --mode monthly
+python scripts/production/data_updaters/pit/pit_income_quarterly_manager.py --mode incremental --days 30
+python scripts/production/data_updaters/pit/pit_balance_quarterly_manager.py --mode incremental --days 30
+python scripts/production/data_updaters/pit/pit_financial_indicators_manager.py --mode incremental --days 30
+python scripts/production/data_updaters/pit/pit_industry_classification_manager.py --mode incremental --months 3
 ```
 
-### 4. 手动更新 (Manual Update)
-**频率**: 按需执行  
-**内容**: 指定范围的强制更新  
-**适用**: 数据修复、历史回填、特殊需求
+常用参数：
+
+| 参数 | 说明 |
+| --- | --- |
+| `--mode incremental` | 增量更新 |
+| `--mode full-backfill` / `--mode full` | 历史回填或全量重算 |
+| `--mode single-backfill` | 单股回填，部分管理器支持 |
+| `--start-date` / `--end-date` | 指定公告日或观察日范围 |
+| `--days` / `--months` | 增量检查窗口 |
+| `--batch-size` | 分批大小 |
+| `--status` | 查看表状态 |
+| `--validate` | 执行数据校验 |
+| `--ts-code` | 单股回填代码 |
+
+## 调度建议
+
+### Windows 任务计划程序
+
+程序：
+
+```text
+python
+```
+
+参数：
+
+```text
+scripts/production/data_updaters/pit/pit_data_update_production.py --target all --mode incremental
+```
+
+起始位置：
+
+```text
+E:\CodePrograms\alphaHome
+```
+
+### Linux/macOS cron
 
 ```bash
-# 手动更新财务数据和指标
-python scripts/pit/incremental_update_scheduler.py --mode manual \
-    --start-date 2025-08-01 --end-date 2025-08-11 \
-    --financial-data --financial-indicators
-
-# 手动更新行业分类
-python scripts/pit/incremental_update_scheduler.py --mode manual \
-    --start-date 2025-08-01 --end-date 2025-08-11 \
-    --industry-classification
+0 2 * * * cd /path/to/alphaHome && python scripts/production/data_updaters/pit/pit_data_update_production.py --target all --mode incremental
 ```
 
-## 📊 组件详解
+## 验证
 
-### PIT财务数据同步器
-
-**功能**: 从tushare增量同步财务数据到PIT表
-
-**支持的表**:
-- `pit_income_quarterly` (利润表)
-- `pit_balance_quarterly` (资产负债表)  
-- `pit_cashflow_quarterly` (现金流量表)
-
-**使用示例**:
-```python
-from scripts.pit.pit_financial_data_syncer import PITFinancialDataSyncer
-
-with PITFinancialDataSyncer() as syncer:
-    # 增量同步单表
-    result = syncer.sync_incremental('pit_income_quarterly', '2025-08-01', '2025-08-11')
-    
-    # 增量同步所有表
-    result = syncer.sync_all_tables_incremental('2025-08-01', '2025-08-11')
-    
-    # 获取同步状态
-    status = syncer.get_sync_status()
+```sql
+SELECT 'income' AS table_name, MAX(ann_date) AS latest_date, COUNT(*) AS rows
+FROM pgs_factors.pit_income_quarterly
+UNION ALL
+SELECT 'balance', MAX(ann_date), COUNT(*)
+FROM pgs_factors.pit_balance_quarterly
+UNION ALL
+SELECT 'financial_indicators', MAX(ann_date), COUNT(*)
+FROM pgs_factors.pit_financial_indicators;
 ```
 
-### PIT行业分类更新器
+也可以用管理器：
 
-**功能**: 基于月度快照机制更新行业分类
-
-**特点**:
-- 月末快照生成
-- 申万和中信双重分类
-- 自动检测行业变更
-- 金融行业特殊处理
-
-**使用示例**:
-```python
-from scripts.pit.pit_industry_updater import PITIndustryUpdater
-
-with PITIndustryUpdater() as updater:
-    # 更新月度快照
-    result = updater.update_monthly_snapshots()
-    
-    # 基于行业变更更新
-    result = updater.update_industry_changes(since_date='2025-08-01')
-    
-    # 获取更新状态
-    status = updater.get_update_status()
-```
-
-### PIT财务指标计算器
-
-**功能**: 基于最新财务数据增量计算财务指标
-
-**特点**:
-- 使用MVP计算器高性能计算
-- 自动识别需要更新的股票
-- 支持批量计算和保存
-
-## 🛠️ 配置和部署
-
-### 1. 环境要求
-- Python 3.8+
-- PostgreSQL 12+
-- 足够的磁盘空间 (建议预留100GB+)
-
-### 2. 依赖安装
 ```bash
-pip install pandas psycopg2-binary python-dateutil
+python scripts/production/data_updaters/pit/pit_income_quarterly_manager.py --status
+python scripts/production/data_updaters/pit/pit_income_quarterly_manager.py --validate
 ```
 
-### 3. 数据库配置
-确保数据库连接配置正确，参考 `research/tools/context.py`
+## 注意事项
 
-### 4. 日志配置
-日志文件保存在 `logs/pit_incremental_update_YYYYMMDD.log`
-
-## 📅 定时任务设置
-
-### Linux/Mac (crontab)
-```bash
-# 每日凌晨2点执行日更新
-0 2 * * * cd /path/to/alphahome && python scripts/pit/incremental_update_scheduler.py --mode daily
-
-# 每周日凌晨3点执行周更新
-0 3 * * 0 cd /path/to/alphahome && python scripts/pit/incremental_update_scheduler.py --mode weekly
-
-# 每月1号凌晨4点执行月更新
-0 4 1 * * cd /path/to/alphahome && python scripts/pit/incremental_update_scheduler.py --mode monthly
-```
-
-### Windows (任务计划程序)
-1. 打开任务计划程序
-2. 创建基本任务
-3. 设置触发器 (每日/每周/每月)
-4. 设置操作: 启动程序
-   - 程序: `python`
-   - 参数: `scripts/pit/incremental_update_scheduler.py --mode daily`
-   - 起始位置: `C:\path\to\alphahome`
-
-## 🔍 监控和维护
-
-### 1. 日志监控
-```bash
-# 查看最新日志
-tail -f logs/pit_incremental_update_$(date +%Y%m%d).log
-
-# 搜索错误
-grep -i error logs/pit_incremental_update_*.log
-```
-
-### 2. 数据验证
-```python
-# 检查数据完整性
-from research.tools.context import ResearchContext
-
-with ResearchContext() as ctx:
-    # 检查最新数据日期
-    result = ctx.query_dataframe("""
-        SELECT 
-            'pit_income_quarterly' as table_name,
-            MAX(ann_date) as latest_date,
-            COUNT(*) as record_count
-        FROM pgs_factors.pit_income_quarterly
-        UNION ALL
-        SELECT 
-            'pit_financial_indicators_mvp' as table_name,
-            MAX(ann_date) as latest_date,
-            COUNT(*) as record_count
-        FROM pgs_factors.pit_financial_indicators_mvp
-    """)
-    print(result)
-```
-
-### 3. 性能监控
-- 监控更新耗时
-- 检查数据库连接数
-- 观察磁盘空间使用
-
-## ⚠️ 注意事项
-
-### 1. 数据一致性
-- 增量更新过程中避免并发修改
-- 定期进行全量数据验证
-- 保持tushare数据源的稳定性
-
-### 2. 错误处理
-- 网络异常时自动重试
-- 数据异常时记录日志但继续处理
-- 关键错误时发送告警通知
-
-### 3. 资源管理
-- 控制并发数量避免数据库压力过大
-- 合理设置批次大小
-- 定期清理过期日志文件
-
-## 🚀 最佳实践
-
-1. **渐进式部署**: 先在测试环境验证，再部署到生产环境
-2. **监控告警**: 设置关键指标的监控告警
-3. **备份策略**: 重要更新前进行数据备份
-4. **文档维护**: 及时更新配置和流程文档
-5. **定期检查**: 每月检查系统运行状态和数据质量
-
-## 📞 故障排除
-
-### 常见问题
-
-**Q: 更新失败，提示数据库连接错误**  
-A: 检查数据库连接配置，确认数据库服务正常运行
-
-**Q: 财务指标计算很慢**  
-A: 检查数据库索引，考虑调整批次大小
-
-**Q: 行业分类快照生成失败**  
-A: 检查tushare行业数据是否正常，验证日期范围设置
-
-**Q: 内存使用过高**  
-A: 减小批次大小，增加分批处理
-
-### 联系支持
-如遇到无法解决的问题，请提供:
-1. 错误日志
-2. 系统环境信息
-3. 数据库状态
-4. 复现步骤
+- PIT 表用于避免未来函数，更新逻辑必须以 `ann_date` / `obs_date` 为时点边界。
+- 全量回填前建议备份 `pgs_factors` 相关表。
+- 同时运行多个 PIT 脚本可能造成锁等待或重复写入，日常调度优先使用统一协调器。
+- 财务指标表依赖利润表和资产负债表，修复依赖表后需要重算指标。

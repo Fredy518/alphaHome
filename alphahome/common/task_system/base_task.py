@@ -569,7 +569,7 @@ class BaseTask(ABC):
             # 确保主键列存在
             valid_primary_keys = [pk for pk in self.primary_keys if pk in data.columns]
             if valid_primary_keys:
-                data.drop_duplicates(subset=valid_primary_keys, keep='last', inplace=True)
+                data = data.drop_duplicates(subset=valid_primary_keys, keep='last').copy()
                 dropped_rows = initial_rows - len(data)
                 if dropped_rows > 0:
                     self.logger.warning(f"数据中发现并移除了 {dropped_rows} 条基于主键 {valid_primary_keys} 的重复记录。")
@@ -615,7 +615,7 @@ class BaseTask(ABC):
         # 检查数据中的NaN值
         if isinstance(data, pd.DataFrame):
             # 将 'inf', '-inf' 替换为 NaN
-            data.replace([np.inf, -np.inf], np.nan, inplace=True)
+            data = data.replace([np.inf, -np.inf], np.nan)
             
             nan_count = data.isna().sum().sum()
             if nan_count > 0:
@@ -699,7 +699,8 @@ class BaseTask(ABC):
         
         策略（基于用户选择）：
         1. tushare: 总是创建 OR REPLACE VIEW（覆盖任何已存在的视图）
-        2. 其他源: 仅当 tushare 不存在 且 rawdata 视图不存在时才创建
+        2. 其他源: 当 tushare 无同名物理表时，对 rawdata 映射视图使用 OR REPLACE，
+           以便源表增列后视图仍为 `SELECT *`，避免长期停留在旧列清单上。
         
         为了确保系统稳定性，该方法的失败不会中断主数据采集流程。
         """
@@ -741,27 +742,15 @@ class BaseTask(ABC):
                 )
                 return
 
-            # 检查 rawdata 视图是否已存在
-            view_exists = await self.db.view_exists(table, 'rawdata')
-            self.logger.debug(f"检查 rawdata.{table} 视图存在性: {view_exists}")
-
-            if view_exists:
-                self.logger.debug(
-                    f"rawdata.{table} 视图已存在，跳过创建"
-                )
-                return
-
-            self.logger.debug(f"准备为 {schema}.{table} 创建 rawdata 视图")
-
-            # 创建视图
+            # 始终 OR REPLACE：源 schema 表结构演进后，rawdata 视图需同步列集合
             await self.db.create_rawdata_view(
                 view_name=table,
                 source_schema=schema,
                 source_table=table,
-                replace=False
+                replace=True,
             )
             self.logger.info(
-                f"已为 {schema}.{table} 创建 rawdata 视图"
+                f"已同步 rawdata.{table} 视图 -> {schema}.{table}（OR REPLACE）"
             )
         except Exception as e:
             self.logger.warning(

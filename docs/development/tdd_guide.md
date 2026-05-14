@@ -1,223 +1,149 @@
-# TDD实践指南 - 循序渐进的过渡方案
+# 测试与 TDD 指南
 
-## 🎯 **目标**
-从传统开发模式逐步过渡到测试驱动开发(TDD)，提升代码质量和项目稳定性。
+本文档说明当前仓库的测试入口和新增代码时的 TDD 实践方式。旧版“分阶段推进计划”已不再反映当前仓库状态；实际执行以 `pyproject.toml`、`tests/` 目录和本文命令为准。
 
-## 📈 **分阶段实施计划**
+## 测试环境
 
-### **阶段1: 测试基础设施建设 (当前阶段) ✅**
-**目标**: 建立完善的测试环境和CI/CD流水线
+安装测试依赖：
 
-**已完成**:
-- [x] pytest配置优化
-- [x] conftest.py共享配置
-- [x] GitHub Actions CI/CD
-- [x] 代码质量工具集成
-- [x] 数据库组件单元测试示例
-
-**关键指标**:
-- CI/CD流水线正常运行
-- 单元测试可以自动执行
-- 代码覆盖率可以统计
-
----
-
-### **阶段2: 现有代码测试补强 (下一阶段)**
-**目标**: 为现有核心模块补充测试，建立测试安全网
-
-**计划任务**:
-- [ ] 为`db_manager`新架构补充完整测试套件
-- [ ] 为`config_manager`添加单元测试
-- [ ] 为`bt_extensions`模块添加集成测试
-- [ ] 为核心工具类添加测试
-
-**实施策略**:
-```python
-# 示例：为现有功能补充测试
-def test_existing_config_manager():
-    """测试现有配置管理器功能"""
-    # 针对已有方法编写测试
-    pass
+```bash
+pip install -e ".[test]"
 ```
 
-**关键指标**:
-- 核心模块测试覆盖率 > 70%
-- 关键业务逻辑测试覆盖率 > 90%
-- 所有公共API都有基础测试
+当前测试配置在 `pyproject.toml`：
 
----
+- 测试目录：`tests`
+- 文件匹配：`test_*.py`
+- pytest 默认参数：`--strict-markers --tb=short -v`
+- marker：`unit`、`integration`、`e2e`、`slow`、`requires_db`、`requires_api`
 
-### **阶段3: 红-绿-重构小规模实践 (预计2-3周后)**
-**目标**: 在新功能开发中开始TDD实践
+注意：仓库里多数单元测试按目录归类，并未逐个标记 `unit`。日常运行应按目录选择，不要用 `-m "unit"` 作为唯一过滤条件。
 
-**适合TDD的场景**:
-1. **新的数据处理工具函数**
-2. **配置验证功能**
-3. **数据转换utilities**
-4. **简单的业务逻辑**
+## 常用命令
 
-**TDD实践流程**:
+本地快速回归：
+
+```bash
+pytest tests/unit -v -m "not requires_db and not requires_api"
+```
+
+运行全部不依赖外部服务的测试：
+
+```bash
+pytest tests -v -m "not requires_db and not requires_api"
+```
+
+运行指定模块：
+
+```bash
+pytest tests/unit/test_fetcher_task_failures.py -v
+pytest tests/unit/test_features/test_mv_recipes.py -v
+```
+
+需要数据库或外部 API 的测试必须显式确认环境后运行：
+
+```bash
+pytest tests -v -m requires_db
+pytest tests -v -m requires_api
+```
+
+## 目录约定
+
+| 目录 | 用途 |
+| --- | --- |
+| `tests/unit/` | 无真实外部服务依赖的单元测试和轻量组件测试 |
+| `tests/integration/` | PIT、数据库交互等集成测试 |
+| `tests/cli/` | 兼容性 CLI parser 测试；不代表 `ah` 等 console script 当前已安装 |
+| `tests/conftest.py` | 共享 fixture、mock 数据库、mock API 和测试配置 |
+
+## 新功能的 TDD 流程
+
+1. 先写一个失败测试，明确接口、输入、输出和边界条件。
+2. 写最小实现让测试通过。
+3. 在测试保护下整理命名、分支和错误处理。
+4. 对涉及数据库、API、文件系统的代码，用 fixture 或 mock 隔离外部依赖。
+5. 只有确实需要真实服务时才加 `requires_db` 或 `requires_api` marker。
+
+示例：
+
 ```python
-# 1. RED: 先写失败的测试
 def test_calculate_stock_return():
-    """测试股票收益率计算"""
-    # 这个函数还不存在，测试会失败
     result = calculate_stock_return([100, 110, 105])
-    assert result == [0.1, -0.045]  # 期望的结果
+    assert result == [0.1, -0.045454545454545456]
+```
 
-# 2. GREEN: 写最简单的实现让测试通过
-def calculate_stock_return(prices):
+实现：
+
+```python
+def calculate_stock_return(prices: list[float]) -> list[float]:
     if len(prices) < 2:
         return []
-    returns = []
-    for i in range(1, len(prices)):
-        ret = (prices[i] - prices[i-1]) / prices[i-1]
-        returns.append(round(ret, 3))
-    return returns
-
-# 3. REFACTOR: 重构改进代码
-def calculate_stock_return(prices: List[float]) -> List[float]:
-    """计算股票价格序列的收益率"""
-    if len(prices) < 2:
-        return []
-    
-    return [
-        round((curr - prev) / prev, 3)
-        for prev, curr in zip(prices[:-1], prices[1:])
-    ]
+    return [(curr - prev) / prev for prev, curr in zip(prices[:-1], prices[1:])]
 ```
 
-**关键指标**:
-- 新功能TDD覆盖率 = 100%
-- 每周至少完成1-2个TDD功能
-- 团队对TDD流程熟悉度提升
+## 测试数据和 Mock
 
----
+优先使用 `tests/conftest.py` 中已有 fixture：
 
-### **阶段4: 复杂模块TDD实践 (预计1-2个月后)**
-**目标**: 在更复杂的模块中应用TDD
+- `mock_db_manager`
+- `mock_tushare_api`
+- `sample_stock_data`
+- `sample_calendar_data`
+- `temp_data_dir`
 
-**适合场景**:
-1. **新的数据源fetcher**
-2. **因子计算模块**
-3. **回测策略组件**
-4. **API端点**
+新增 fixture 时保持小而明确，避免让一个 fixture 同时承担数据库、API 和业务语义。
 
-**实践方法**:
+## Marker 使用
+
+需要真实数据库：
+
 ```python
-# 示例：复杂业务逻辑的TDD
-class TestNewDataFetcher:
-    def test_fetch_single_stock_data(self):
-        """测试获取单只股票数据"""
-        # 先定义期望的接口和行为
-        pass
-    
-    def test_fetch_multiple_stocks_batch(self):
-        """测试批量获取多只股票数据"""
-        pass
-    
-    def test_handle_api_rate_limit(self):
-        """测试API限流处理"""
-        pass
-    
-    def test_data_validation_and_cleanup(self):
-        """测试数据验证和清理"""
-        pass
+import pytest
+
+
+@pytest.mark.requires_db
+def test_query_real_database():
+    ...
 ```
 
-**关键指标**:
-- 新模块TDD覆盖率 > 95%
-- 缺陷率显著降低
-- 开发速度保持稳定
+需要外部 API：
 
----
-
-### **阶段5: 全面TDD实践 (预计3-6个月后)**
-**目标**: TDD成为默认开发方式
-
-**实践内容**:
-- 所有新功能都采用TDD方式开发
-- 重构现有代码时补充TDD测试
-- 建立TDD最佳实践文档
-- 团队TDD技能成熟
-
-## 🛠️ **TDD工具和技巧**
-
-### **测试数据管理**
 ```python
-# 使用Factory Pattern创建测试数据
-class StockDataFactory:
-    @staticmethod
-    def create_daily_data(symbol="000001.SZ", days=5):
-        """创建测试用的日线数据"""
-        base_date = date(2023, 1, 1)
-        return pd.DataFrame({
-            'ts_code': [symbol] * days,
-            'trade_date': [base_date + timedelta(days=i) for i in range(days)],
-            'open': [10.0 + i * 0.1 for i in range(days)],
-            'close': [10.2 + i * 0.1 for i in range(days)],
-        })
+@pytest.mark.requires_api
+def test_fetch_real_api():
+    ...
 ```
 
-### **Mock策略**
+耗时较长：
+
 ```python
-# 对外部依赖进行Mock
-@pytest.fixture
-def mock_tushare_api():
-    with patch('tushare.pro_api') as mock_api:
-        mock_api.return_value.daily.return_value = StockDataFactory.create_daily_data()
-        yield mock_api
+@pytest.mark.slow
+def test_large_backfill_case():
+    ...
 ```
 
-### **测试分层策略**
-1. **单元测试**: 测试单个函数/方法
-2. **集成测试**: 测试模块间协作
-3. **端到端测试**: 测试完整业务流程
+## 代码质量检查
 
-## 📊 **进度跟踪**
+格式化和导入排序配置在 `pyproject.toml`：
 
-### **当前状态** (阶段1)
-- ✅ 测试基础设施
-- ✅ CI/CD流水线
-- ✅ 代码质量工具
-- 🔄 数据库组件测试
+```bash
+black alphahome tests
+isort alphahome tests
+```
 
-### **下一步行动**
-1. **本周**: 完善db_manager测试套件
-2. **下周**: 为config_manager添加测试
-3. **两周后**: 开始第一个TDD新功能实践
+如需只检查不改写：
 
-### **成功指标**
-- [ ] 所有CI检查通过率 > 95%
-- [ ] 代码覆盖率 > 80%
-- [ ] 新功能缺陷率 < 5%
-- [ ] TDD功能开发时间与传统方式持平
+```bash
+black --check alphahome tests
+isort --check-only alphahome tests
+```
 
-## 🎓 **TDD学习资源**
+`mypy` 配置已存在，但当前是渐进式引入，是否作为强制门禁由具体任务决定。
 
-### **推荐阅读**
-1. 《测试驱动开发》- Kent Beck
-2. 《重构：改善既有代码的设计》- Martin Fowler
-3. 《代码整洁之道》- Robert C. Martin
+## 新增测试的判断标准
 
-### **实践技巧**
-1. **从小功能开始**: 不要一开始就在复杂业务上实践TDD
-2. **快速反馈**: 测试运行时间要短，否则影响开发节奏
-3. **可读性优先**: 测试代码要像文档一样可读
-4. **先行思考**: 写测试时就是在设计API接口
-
-## 📝 **注意事项**
-
-### **常见陷阱**
-1. **过度测试**: 不是所有代码都需要测试
-2. **测试耦合**: 避免测试间相互依赖
-3. **完美主义**: 不要追求100%覆盖率而忽略代码质量
-
-### **渐进原则**
-1. **不要强求**: 如果某个功能不适合TDD，可以后补测试
-2. **团队节奏**: 根据团队接受程度调整推进速度
-3. **持续改进**: 定期回顾TDD实践，不断优化流程
-
----
-
-**记住**: TDD是一种开发方式的转变，需要时间和练习。循序渐进比一蹴而就更容易成功！ 🚀 
+- 修复 bug：必须先复现 bug，再验证修复。
+- 新增 fetcher/task：至少覆盖批次生成、参数传递、异常重试或保存路径之一。
+- 新增 PIT/Features 逻辑：覆盖时间窗口、去重、空值和边界日期。
+- 新增生产脚本：将核心逻辑放进可测试函数，CLI 解析只做薄封装。
+- 文档-only 变更：通常不需要跑 pytest，但应做链接和格式检查。

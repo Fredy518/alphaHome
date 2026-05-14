@@ -1,76 +1,53 @@
 # AlphaHome 文档中心
 
-欢迎来到 AlphaHome 量化投研一体化平台的文档中心！本目录包含了系统的完整文档，按功能模块分类组织。
+本目录保存 AlphaHome 当前使用文档与历史设计记录。当前文档以代码现状为准；`archive/`、`PHASE*_COMPLETION_REPORT.md` 和 `docs/tasks/` 中的大量材料保留为历史记录，不再代表当前可执行入口。
 
-## 📚 **文档导航**
+## 当前入口
 
-### **🚀 快速开始**
-- [项目概览](../README.md) - 系统架构、核心功能和完整使用指南
-- [快速安装](./setup/installation.md) - 环境配置和依赖安装
-- [配置指南](./setup/configuration.md) - 数据库连接和API配置
+| 文档 | 说明 |
+| --- | --- |
+| [项目概览](../README.md) | 当前模块状态、常用入口和项目结构 |
+| [安装指南](setup/installation.md) | 本地开发环境、依赖安装和最小验证 |
+| [配置指南](setup/configuration.md) | `~/.alphahome/config.json`、环境变量、数据库/API 配置 |
+| [用户指南](user/user_guide.md) | GUI、生产脚本、PIT、Features、DolphinDB 的日常使用 |
+| [FAQ](user/faq.md) | 常见安装、配置、数据更新和脚本问题 |
+| [CLI 下线说明](CLI_USAGE_GUIDE.md) | `ah` / `alphahome-cli` / `refresh-materialized-view` 的替代入口 |
 
-### **👥 用户文档**
-- [CLI 使用指南](./CLI_USAGE_GUIDE.md) - 统一命令行工具使用说明 🆕
-- [用户指南](./user/user_guide.md) - 完整的用户操作手册
-- [常见问题](./user/faq.md) - 常见问题解答
+## 架构与开发
 
-### **🔧 开发文档**
-- [新任务开发指南](./new_task_development_guide.md) - 如何开发新的数据任务
-- [TDD实践指南](./development/tdd_guide.md) - 测试驱动开发指南
-- [贡献指南](./development/contributing.md) - 如何参与项目开发
-- [财务数据处理技术指南](./development/financial_data_processing_guide.md) - 财务数据处理逻辑与边界情况
+| 文档 | 说明 |
+| --- | --- |
+| [系统架构](architecture/system_overview.md) | 当前模块边界和数据流 |
+| [任务系统](architecture/task_system.md) | `BaseTask -> FetcherTask -> 数据源 Task -> 具体任务` |
+| [Features 模块设计](architecture/features_module_design.md) | processors 下线和 features 迁移的设计/验收记录 |
+| [新任务开发指南](new_task_development_guide.md) | 新增 Tushare/AkShare/Tinysoft/Excel 采集任务 |
+| [TDD 指南](development/tdd_guide.md) | 测试驱动开发实践 |
+| [贡献指南](development/contributing.md) | 开发流程、测试和提交规范 |
+| [财务数据处理指南](development/financial_data_processing_guide.md) | 财务单位、TTM、PIT 相关处理约定 |
 
-### **🏗️ 架构文档**
-- [系统架构](./architecture/system_overview.md) - 整体架构设计
-- [任务系统设计](./architecture/task_system.md) - 四层任务架构详解
+## 数据与生产
 
-### **🔌 集成文档**
-- [Hikyuu 集成指南](./hikyuu_integration_guide.md) - Hikyuu 数据源集成
-- [DolphinDB 集成](./business/dolphindb_integration.md) - DolphinDB 高速查询层 🆕
+| 文档 | 说明 |
+| --- | --- |
+| [数据源说明](business/data_sources.md) | AlphaDB 主要数据表和数据来源说明 |
+| [数据质量](business/data_quality.md) | 数据验证机制和改进方案 |
+| [PIT 增量更新](pit_incremental_update_guide.md) | 当前 PIT 生产脚本与调度建议 |
+| [DolphinDB 集成](business/dolphindb_integration.md) | Hikyuu 5min 到 DolphinDB 的导入与查询 |
+| [Hikyuu 集成](hikyuu_integration_guide.md) | Hikyuu 数据源与导入流程 |
+| [Hikyuu FAQ](hikyuu_faq.md) | Hikyuu 常见问题 |
+| [Hikyuu 性能说明](hikyuu_performance_analysis.md) | 当前 Hikyuu 路径的性能边界与历史基准说明 |
+| [生产脚本说明](../scripts/production/README.md) | 日常数据更新、PIT、P/G 因子、数据库维护脚本 |
 
-### **📈 业务文档**
-- [数据源说明](./business/data_sources.md) - 支持的数据源详解
-- [数据质量](./business/data_quality.md) - 数据质量检查和验证
-- [Tushare智能错误处理机制](./business/tushare_smart_error_handling_summary.md) - 50101错误智能处理方案总结
+## 历史记录
 
-### **📋 开发阶段报告**
-- [Phase 1 完成报告](./PHASE1_COMPLETION_REPORT.md) - 数据获取模块
-- [Phase 2 完成报告](./PHASE2_COMPLETION_REPORT.md) - 数据处理模块
-- [Phase 3 完成报告](./PHASE3_COMPLETION_REPORT.md) - 因子计算模块
-- [Phase 4 完成报告](./PHASE4_COMPLETION_REPORT.md) - 生产化部署
+- `PHASE1_COMPLETION_REPORT.md` 到 `PHASE4_COMPLETION_REPORT.md` 是统一 CLI 建设阶段的验收材料。统一 CLI 后续已下线，这些文档仅用于追溯。
+- `docs/development/archive/` 保存已完成或废弃的设计草稿。
+- `docs/tasks/` 保存任务甄别、审查清单和一次性实施记录。
+- `archive/` 保存旧版文档和迁移前资料。
 
-## 📋 **文档更新记录**
+## 文档维护规则
 
-| 日期 | 版本 | 更新内容 | 作者 |
-|------|------|----------|------|
-| 2025-12-31 | 2.2 | 清理过时文档，移至 archive 目录 | System |
-| 2025-01-XX | 2.0 | 文档重新整理和归档 | System |
-| 2025-01-XX | 1.5 | 添加验证流程改进方案 | System |
-
-## 🤝 **文档贡献**
-
-我们欢迎您为文档做出贡献！请遵循以下原则：
-
-1. **准确性**: 确保文档内容与代码实现一致
-2. **清晰性**: 使用简洁明了的语言和结构
-3. **完整性**: 提供足够的示例和说明
-4. **时效性**: 及时更新过时的内容
-
-### **文档规范**
-- 使用Markdown格式
-- 遵循统一的文档结构
-- 包含适当的代码示例
-- 添加必要的图表和截图
-
-## 📞 **获取帮助**
-
-如果您在使用过程中遇到问题：
-
-1. 首先查看[常见问题](./user/faq.md)
-2. 搜索相关文档章节
-3. 查看项目的Issue列表
-4. 提交新的Issue或Pull Request
-
----
-
-**AlphaHome** - 让量化投研更简单、更专业、更可靠 🚀
+1. 当前入口文档只描述仍可运行的命令、路径和 API。
+2. 历史文档不做大幅重写；如与当前实现冲突，在开头添加归档说明。
+3. 新增脚本时同步更新对应目录 README。
+4. 链接必须指向仓库中真实存在的文件。

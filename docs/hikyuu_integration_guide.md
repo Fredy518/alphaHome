@@ -1,378 +1,161 @@
 # Hikyuu 集成指南
 
-## 概述
+本文档描述 AlphaHome 当前保留的 Hikyuu 相关能力。旧版文档中提到的 `scripts/production/exporters/hikyuu_day_export.py` 和 `research/projects/hikyuu_integration/benchmark_*.py` 当前不在主线代码中；如需恢复生产级日线导出或重跑基准，请以本页列出的现有 API 为基础新增脚本。
 
-本文档介绍如何将 AlphaHome 与 Hikyuu 量化框架集成，实现高效的数据导出、回测和策略分析。
+## 当前能力
 
-## 架构设计
+| 场景 | 当前入口 | 状态 |
+| --- | --- | --- |
+| Hikyuu 5 分钟 HDF5 导入 DolphinDB | `python -m alphahome.integrations.dolphindb.cli import-hikyuu-5min` / `scripts/import_all_hikyuu_to_ddb.ps1` | 生产可用 |
+| 从 Hikyuu H5 生成导入清单 | `scripts/generate_hikyuu_5min_tickers.py` | 可用 |
+| AlphaHome 日线数据导出到 Hikyuu HDF5 | `alphahome.providers.tools.hikyuu_h5_exporter.HikyuuH5Exporter` | API 可用，暂无生产 CLI |
+| 内存 K 线适配和指标/信号计算 | `alphahome.providers.tools.hikyuu_data_adapter` | 实验/研究用途 |
 
-### 集成路径
+## 配置
 
-我们提供了三种集成路径，适用于不同的使用场景：
-
-#### 路径 A: HDF5 数据管道
-- **用途**: 将 AlphaHome 数据导出为 Hikyuu 兼容的 HDF5 文件。
-- **特点**: 数据准备与回测分离，支持自动化、增量更新。
-- **适用场景**: 搭建自动化的数据同步流程，为原生回测提供数据源。
-
-#### 路径 B: 原生回测
-- **用途**: 使用 Hikyuu 原生引擎，读取 HDF5 文件进行回测。
-- **特点**: 充分利用 Hikyuu 的 C++ 核心性能，支持大规模、高复杂度回测。
-- **适用场景**: 大规模策略回测、参数优化（依赖路径 A 提供的数据）。
-
-#### 路径 C: 内存适配器
-- **用途**: 直接在内存中适配数据，计算指标和信号
-- **特点**: 低延迟，适合实时计算
-- **适用场景**: 实时交易、小规模策略验证
-
-## 安装配置
-
-### 1. 环境要求
-
-```bash
-# Python 依赖
-pip install hikyuu==2.6.8.5
-pip install pandas numpy h5py
-
-# 系统要求
-- Windows 10/11 或 Linux
-- 至少 8GB 内存（路径 C 需要更多内存）
-- 足够的磁盘空间存储 HDF5 数据
-```
-
-### 2. 配置文件
-
-在 `config.json` 中添加 Hikyuu 配置：
+AlphaHome 默认从 `~/.alphahome/config.json` 读取 Hikyuu 数据目录，也支持环境变量兜底：
 
 ```json
 {
   "backtesting": {
-    "hikyuu_data_dir": "E://stock"
+    "hikyuu_data_dir": "E:/stock"
   }
 }
 ```
 
-### 3. 数据目录结构
-
-```
-E://stock/
-├── sh_day.h5          # 上海市场日线数据
-├── sz_day.h5          # 深圳市场日线数据
-├── bj_day.h5          # 北京市场日线数据
-└── weight/            # 权息信息（可选）
-    ├── sh_weight.h5
-    ├── sz_weight.h5
-    └── bj_weight.h5
+```powershell
+$env:HIKYUU_DATA_DIR = "E:/stock"
 ```
 
-## 使用方法
+Hikyuu 自身的 Python 包没有在 `pyproject.toml` 中固定依赖。只有直接使用 Hikyuu 原生对象或内存适配器时，才需要在当前环境中额外安装兼容版本的 `hikyuu`。
 
-### 路径 A: HDF5 数据导出
+## 数据目录
 
-#### 1. 自动化脚本 (推荐)
+当前工具默认识别以下 HDF5 文件：
 
-运行生产脚本来进行自动化、增量的 HDF5 数据导出。
+```text
+E:/stock/
+├── sh_5min.h5
+├── sz_5min.h5
+├── bj_5min.h5
+├── sh_day.h5
+├── sz_day.h5
+└── bj_day.h5
+```
+
+5 分钟导入和日线导出都使用 Hikyuu 常见结构：`/data/{MKT}{CODE}`，例如 `/data/SZ000001`。
+
+## 5 分钟数据导入 DolphinDB
+
+先生成或更新 `ts_code` 清单：
+
+```powershell
+python scripts/generate_hikyuu_5min_tickers.py --hikyuu-dir E:/stock --output-dir scripts/tickers
+```
+
+初始化 DolphinDB 库表：
+
+```powershell
+python -m alphahome.integrations.dolphindb.cli init-kline5m
+```
+
+增量导入：
+
+```powershell
+python -m alphahome.integrations.dolphindb.cli import-hikyuu-5min --codes-file scripts/tickers/all.txt --incremental
+```
+
+PowerShell 一键脚本封装了清单、备份、重建和导入参数：
+
+```powershell
+.\scripts\import_all_hikyuu_to_ddb.ps1 -Incremental
+.\scripts\import_all_hikyuu_to_ddb.ps1 -InitTable
+.\scripts\import_all_hikyuu_to_ddb.ps1 -ResetDb -InitTable
+```
+
+更多 DolphinDB 参数见 [DolphinDB 集成](business/dolphindb_integration.md) 和 [tickers 说明](../scripts/tickers/README.md)。
+
+## 日线 HDF5 导出 API
+
+当前没有生产 CLI，但可在研究或维护脚本中直接使用 `HikyuuH5Exporter`：
 
 ```python
-# scripts/production/exporters/hikyuu_day_export.py
-python scripts/production/exporters/hikyuu_day_export.py --all-listed --start 20200101 --end 20231231
-```
-
-#### 2. 编程式导出 (可选)
-
-您也可以在自己的代码中调用导出器，手动执行导出。
-
-```python
+from alphahome.common.config_manager import get_hikyuu_data_dir
+from alphahome.common.db_manager import create_sync_manager
+from alphahome.providers import AlphaDataTool
 from alphahome.providers.tools.hikyuu_h5_exporter import HikyuuH5Exporter
-from alphahome.providers.data_access import AlphaDataTool
 
-# 初始化
-data_tool = AlphaDataTool(db_manager)
-exporter = HikyuuH5Exporter("E://stock")
-
-# 获取数据
 symbols = ["000001.SZ", "600519.SH"]
-start_date = "20200101"
-end_date = "20231231"
+start_date = "2020-01-01"
+end_date = "2024-12-31"
+
+db = create_sync_manager()
+data_tool = AlphaDataTool(db)
 
 raw_data = data_tool.get_stock_data(symbols, start_date, end_date)
 adj_factor = data_tool.get_adj_factor_data(symbols, start_date, end_date)
 
-# 导出数据
+exporter = HikyuuH5Exporter(get_hikyuu_data_dir() or "E:/stock")
 exporter.export_day_incremental(raw_data, adj_factor)
 ```
 
-### 路径 B: 原生回测
+输入 DataFrame 需要包含：
 
-此路径假定 HDF5 数据已通过 **路径 A** 准备就绪。
-
-#### 1. Hikyuu 回测
-
-```python
-import hikyuu as hk
-from hikyuu import *
-
-# 初始化 Hikyuu
-hk.hikyuu_init("~/.hikyuu/hikyuu.ini")
-
-# 创建股票对象
-stk = Stock("SZ000001")
-
-# 获取K线数据
-query_start = Datetime("20200101")
-query_end = Datetime("20231231")
-k = stk.get_kdata(Query(query_start, query_end))
-
-# 计算指标
-ma5 = MA(k, 5)
-ma20 = MA(k, 20)
-
-# 创建策略
-def my_strategy(k):
-    ma5 = MA(k, 5)
-    ma20 = MA(k, 20)
-    
-    # 金叉买入
-    c1 = Cross(ma5, ma20)
-    # 死叉卖出
-    c2 = Cross(ma20, ma5)
-    
-    return c1, c2
-
-# 回测
-sys = System(my_strategy, MM_FixedCount(100))
-sys.run(Stock("SZ000001"), Query(query_start, query_end))
+```text
+ts_code, trade_date, open, high, low, close, vol, amount
 ```
 
-#### 2. 性能基准测试
+复权因子 DataFrame 需要包含：
 
-```python
-# research/projects/hikyuu_integration/benchmark_b.py
-python research/projects/hikyuu_integration/benchmark_b.py
+```text
+ts_code, trade_date, adj_factor
 ```
 
-### 路径 C: 内存适配器
+导出器会按市场写入 `{sh,sz,bj}_day.h5`，并按 `datetime` 去重增量追加。
 
-#### 1. 数据适配
+## 内存适配器
+
+`HikyuuDataAdapter` 适合小样本指标验证。若本机未安装 `hikyuu`，适配器会回退到 pandas/numpy 直算或 mock 行为，不能替代正式回测引擎。
 
 ```python
 from alphahome.providers.tools.hikyuu_data_adapter import HikyuuDataAdapter
 
-# 初始化适配器
 adapter = HikyuuDataAdapter()
+kdata = adapter.create_kdata_from_dataframe(df, "sz000001")
 
-# 获取数据
-df = data_tool.get_stock_data(["000001.SZ"], "20200101", "20231231")
-
-# 转换为 KData
-kdata = adapter.create_kdata(df)
-
-# 计算指标
-ma5 = adapter.calculate_indicator(kdata, "MA", 5)
-ma20 = adapter.calculate_indicator(kdata, "MA", 20)
+ma5 = adapter.calculate_indicator(kdata, "MA", {"n": 5})
+signals = adapter.generate_signals(
+    kdata,
+    "MA_CROSS",
+    {"fast_n": 5, "slow_n": 20},
+)
 ```
 
-#### 2. 信号生成
+支持的指标包括 `MA`、`EMA`、`RSI`、`MACD`、`KDJ`、`BOLL`、`ATR`、`VOL`；支持的信号包括 `MA_CROSS`、`RSI_OVERBOUGHT`、`MACD_CROSS`。
+
+## 代码映射
 
 ```python
-from alphahome.providers.tools.hikyuu_data_adapter import HikyuuSignalGenerator
+from alphahome.providers import map_ts_code_to_hikyuu
 
-# 初始化信号生成器
-signal_gen = HikyuuSignalGenerator()
-
-# 生成移动平均交叉信号
-signals = signal_gen.generate_ma_cross_signal(kdata, fast_n=5, slow_n=20)
-
-# 生成 RSI 信号
-rsi_signals = signal_gen.generate_rsi_signal(kdata, n=14, oversold=30, overbought=70)
+map_ts_code_to_hikyuu("000001.SZ")  # "SZ000001"
+map_ts_code_to_hikyuu("600519.SH")  # "SH600519"
+map_ts_code_to_hikyuu("430047.BJ")  # "BJ430047"
 ```
 
-#### 3. 性能基准测试
+## 排障
 
-```python
-# research/projects/hikyuu_integration/benchmark_c.py
-python research/projects/hikyuu_integration/benchmark_c.py
-```
+| 问题 | 处理 |
+| --- | --- |
+| `Missing Hikyuu data dir` | 设置 `backtesting.hikyuu_data_dir`、`HIKYUU_DATA_DIR` 或命令行 `--hikyuu-data-dir` |
+| H5 文件没有 `/data` 组 | 先确认 Hikyuu 数据源是否完整，生成清单脚本会跳过不存在的市场文件 |
+| DolphinDB 出现重复行 | 使用 `.\scripts\import_all_hikyuu_to_ddb.ps1 -ResetDb -InitTable` 重建后全量导入 |
+| 日线导出字段缺失 | 确认输入列为 `ts_code/trade_date/open/high/low/close/vol/amount` |
+| Hikyuu 原生对象初始化失败 | 检查本机 Hikyuu 安装和 `~/.hikyuu/hikyuu.ini`；AlphaHome 配置只负责数据目录 |
 
-## 性能对比
+## 相关文档
 
-### 基准测试结果
-
-| 路径 | 数据规模 | 处理速度 | 内存使用 | 适用场景 |
-|------|----------|----------|----------|----------|
-| 路径 B | 5000股票×2年 | 200,000 bars/sec | 固定预加载 | 大规模回测 |
-| 路径 C | 50股票×500天 | 335,511 bars/sec | 线性增长 | 实时计算 |
-
-### 性能特征
-
-#### 路径 B (原生回测)
-- **优势**: 支持大规模回测，内存使用可控，性能高。
-- **劣势**: 依赖路径 A 预先准备的数据。
-- **适用**: 大规模策略回测、参数优化
-
-#### 路径 C (内存适配器)
-- **优势**: 低延迟，支持实时计算
-- **劣势**: 内存使用线性增长，不适合大规模回测
-- **适用**: 实时交易、小规模策略验证
-
-## 数据格式
-
-### HDF5 数据结构
-
-```python
-# 日线数据结构
-{
-    'closePrice': uint32,    # 收盘价 * 1000
-    'datetime': uint64,      # 日期时间 (yyyymmddHHMM)
-    'highPrice': uint32,     # 最高价 * 1000
-    'lowPrice': uint32,      # 最低价 * 1000
-    'openPrice': uint32,     # 开盘价 * 1000
-    'transAmount': uint64,   # 成交金额 * 10
-    'transCount': uint64     # 成交笔数
-}
-```
-
-### 股票代码映射
-
-```python
-# AlphaHome -> Hikyuu
-"000001.SZ" -> "SZ000001"
-"600519.SH" -> "SH600519"
-"430047.BJ" -> "BJ430047"
-```
-
-## 复权处理
-
-### 前复权计算
-
-```python
-# 自动前复权
-adj_factor = data_tool.get_adj_factor_data(symbols, start_date, end_date)
-exporter.export_day_incremental(raw_data, adj_factor)
-```
-
-### 复权因子数据源
-
-- **数据表**: `tushare.stock_adjfactor`
-- **字段**: `ts_code`, `trade_date`, `adj_factor`
-- **计算方式**: 前复权 (Forward Adjustment)
-
-## 常见问题
-
-### Q1: 为什么选择 HDF5 格式？
-
-**A**: HDF5 格式具有以下优势：
-- 高效的数据压缩和存储
-- 支持快速随机访问
-- 跨平台兼容性好
-- Hikyuu 原生支持
-
-### Q2: 如何处理退市股票？
-
-**A**: 默认导出所有股票（包括退市），避免未来信息泄露：
-```python
-# 获取所有股票（包括退市）
-stock_info = data_tool.get_stock_info(active_only=False)
-```
-
-### Q3: 内存不足怎么办？
-
-**A**: 推荐使用路径 B 进行大规模回测：
-- 路径 B 内存使用可控
-- 支持分批处理
-- 可分布式扩展
-
-### Q4: 如何优化回测性能？
-
-**A**: 性能优化建议：
-- 使用路径 B 进行大规模回测
-- 合理设置数据范围
-- 避免不必要的指标计算
-- 使用 Hikyuu 原生指标
-
-### Q5: 数据同步频率？
-
-**A**: 建议同步频率：
-- 日线数据：每日收盘后
-- 分钟数据：实时同步（如需要）
-- 复权因子：每月更新
-
-## 故障排除
-
-### 1. 数据库连接问题
-
-```python
-# 检查数据库配置
-from alphahome.common.config_manager import get_database_url
-print(get_database_url())
-```
-
-### 2. HDF5 文件损坏
-
-```python
-# 重新导出数据
-python scripts/production/exporters/hikyuu_day_export.py --all-listed --start 20200101 --end 20231231
-```
-
-### 3. 内存不足
-
-```python
-# 使用路径 B 替代路径 C
-# 减少同时处理的股票数量
-# 增加系统内存
-```
-
-### 4. 指标计算错误
-
-```python
-# 检查数据质量
-# 验证复权因子
-# 确认数据范围
-```
-
-## 开发指南
-
-### 1. 添加新指标
-
-```python
-# 在 hikyuu_data_adapter.py 中添加
-def calculate_custom_indicator(self, kdata, param1, param2):
-    # 实现自定义指标计算
-    pass
-```
-
-### 2. 扩展信号策略
-
-```python
-# 在 hikyuu_data_adapter.py 中添加
-def generate_custom_signal(self, kdata, **params):
-    # 实现自定义信号生成
-    pass
-```
-
-### 3. 性能优化
-
-```python
-# 使用向量化计算
-# 避免循环计算
-# 合理使用缓存
-```
-
-## 更新日志
-
-### v1.0.0 (2025-01-01)
-- 初始版本发布
-- 支持三种集成路径
-- 完整的基准测试
-- 详细的文档说明
-
-## 贡献指南
-
-1. Fork 项目
-2. 创建功能分支
-3. 提交更改
-4. 创建 Pull Request
-
-## 许可证
-
-本项目采用 MIT 许可证。
+- [配置指南](setup/configuration.md)
+- [DolphinDB 集成](business/dolphindb_integration.md)
+- [Hikyuu FAQ](hikyuu_faq.md)
+- [Hikyuu 性能说明](hikyuu_performance_analysis.md)

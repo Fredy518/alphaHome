@@ -56,6 +56,8 @@ class TinySoftTask(FetcherTask, abc.ABC):
         kwargs["task_config"] = task_config
         super().__init__(db_connection, **kwargs)
 
+        self._failed_symbols: List[Dict[str, str]] = []
+
         self.tinysoft_config = (tinysoft_config or get_tinysoft_config() or {}).copy()
         self.api = api or TinySoftAPI(
             user=self.tinysoft_config.get("user"),
@@ -143,6 +145,32 @@ class TinySoftTask(FetcherTask, abc.ABC):
         )
         self.cycle = str(task_config.get("cycle", cls.default_cycle))
         self.service = str(task_config.get("service", cls.default_service))
+
+    async def _pre_execute(self, stop_event: Optional[asyncio.Event] = None, **kwargs):
+        await super()._pre_execute(stop_event=stop_event, **kwargs)
+        self._failed_symbols = []
+
+    def _record_skipped_symbol(self, ts_code: str, error: Exception) -> None:
+        self._failed_symbols.append(
+            {
+                "ts_code": str(ts_code),
+                "error": str(error),
+            }
+        )
+
+    async def _post_execute(self, result, stop_event: Optional[asyncio.Event] = None, **kwargs):
+        await super()._post_execute(result, stop_event=stop_event, **kwargs)
+        if not self._failed_symbols:
+            return
+
+        failed_count = len(self._failed_symbols)
+        failed_sample = self._failed_symbols[:10]
+        result["skipped_symbol_count"] = failed_count
+        result["skipped_symbols"] = failed_sample
+        result["skipped_symbol_warning"] = f"Tinysoft 拉取过程中跳过了 {failed_count} 个失败标的"
+
+        if result.get("status") == "success":
+            result["status"] = "partial_success"
 
     @staticmethod
     def _normalize_cycle(cycle: Optional[str]) -> str:

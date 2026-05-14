@@ -387,6 +387,7 @@ class TinySoftStockIndustryVersionedTask(TinySoftTask):
             except Exception as e:
                 if not skip_failed_symbols:
                     raise
+                self._record_skipped_symbol(ts_code, e)
                 self.logger.warning("Tinysoft 行业拉取失败（跳过）: %s, 错误: %s", ts_code, e)
                 continue
 

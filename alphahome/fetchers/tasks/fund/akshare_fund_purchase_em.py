@@ -146,11 +146,11 @@ class AkShareFundPurchaseEmTask(AkShareTask):
         if columns_to_keep != available_columns:
             removed_columns = available_columns - columns_to_keep
             self.logger.debug(f"移除不需要的列: {removed_columns}")
-            data = data[list(columns_to_keep)]
+            data = data[list(columns_to_keep)].copy()
 
         # 添加快照日期（当前日期）
         if "snapshot_date" not in data.columns:
-            data["snapshot_date"] = datetime.now().strftime("%Y-%m-%d")
+            data.loc[:, "snapshot_date"] = datetime.now().strftime("%Y-%m-%d")
 
         return data
 

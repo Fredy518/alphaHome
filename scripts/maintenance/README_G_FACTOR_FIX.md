@@ -1,24 +1,26 @@
-# G因子排名和评分修复工具
+# G 因子排名和评分修复工具
 
-## 📋 概述
+## 概述
 
-本工具用于修复数据库中G因子的排名和评分计算问题。当子因子计算结果正确但排名和G评分有误时，可以使用此工具重新计算并更新数据。
+本工具用于修复数据库中 G 因子的排名和评分计算问题。当子因子计算结果正确但排名和 G 评分有误时，可以使用此工具重新计算并更新数据。
 
-## 🔧 修复内容
+## 修复内容
 
 ### 问题描述
+
 - 空值因子被错误排名到底部
 - 固定权重计算不考虑空值因子的影响
-- 导致G评分计算结果不合理
+- 导致 G 评分计算结果不合理
 
 ### 修复方案
+
 1. **排名计算修复**：
    - 空值因子保持为NaN，不参与排名
    - 只对有效值进行百分位排名计算
 
 2. **动态权重计算**：
    ```
-   Final_G_Score = (w1×Rank_ES×logic_ES + w2×Rank_EM×logic_EM + w3×Rank_RM×logic_RM + w4×Rank_PM×logic_PM) / (w1×logic_ES + w2×logic_EM + w3×logic_RM + w4×logic_PM)
+   Final_G_Score = (w1 * Rank_ES * logic_ES + w2 * Rank_EM * logic_EM + w3 * Rank_RM * logic_RM + w4 * Rank_PM * logic_PM) / (w1 * logic_ES + w2 * logic_EM + w3 * logic_RM + w4 * logic_PM)
    ```
    其中 `logic_X = 1 if Rank_X is not null else 0`
 
@@ -27,7 +29,9 @@
    - 其他因子权重按比例重新分配
    - 确保计算结果的合理性
 
-## 🚀 使用方法
+## 使用方法
+
+当前脚本的可执行参数以日期范围为主；如需修复单日，传入相同的 `--start_date` 和 `--end_date`。
 
 ### Python脚本（推荐）
 
@@ -36,7 +40,7 @@
 python scripts/maintenance/fix_g_factor_rankings_and_scores.py --start_date 2020-01-01 --end_date 2024-12-31
 
 # 单日修复
-python scripts/maintenance/fix_g_factor_rankings_and_scores.py --single_date 2024-01-01
+python scripts/maintenance/fix_g_factor_rankings_and_scores.py --start_date 2024-01-01 --end_date 2024-01-01
 
 # 试运行模式（不实际更新数据库）
 python scripts/maintenance/fix_g_factor_rankings_and_scores.py --start_date 2020-01-01 --end_date 2024-12-31 --dry_run
@@ -49,23 +53,22 @@ python scripts/maintenance/fix_g_factor_rankings_and_scores.py --start_date 2020
 scripts\maintenance\fix_g_factor_rankings.bat 2020-01-01 2024-12-31
 ```
 
-## 📊 参数说明
+## 参数说明
 
 | 参数 | 说明 | 示例 |
 |------|------|------|
 | `--start_date` | 开始日期 (YYYY-MM-DD) | `2020-01-01` |
 | `--end_date` | 结束日期 (YYYY-MM-DD) | `2024-12-31` |
-| `--single_date` | 单日修复 (YYYY-MM-DD) | `2024-01-01` |
 | `--dry_run` | 试运行模式 | 无值 |
 
-## ⚠️ 注意事项
+## 注意事项
 
 1. **数据备份**：运行前请确保已备份相关数据
 2. **数据库连接**：确保数据库连接正常
 3. **权限要求**：需要对 `pgs_factors.g_factor` 表有更新权限
 4. **运行环境**：需要在项目根目录下运行
 
-## 📈 修复效果
+## 修复效果
 
 ### 修复前
 - 空值因子被排名到底部（0分）
@@ -76,9 +79,9 @@ scripts\maintenance\fix_g_factor_rankings.bat 2020-01-01 2024-12-31
 - 空值因子不参与排名（保持NaN）
 - 动态权重计算：根据有效因子数量调整权重
 - 空值因子不影响最终评分
-- **重要修复**: 当部分子因子为空值时，G因子不会为0，而是基于有效子因子计算，确保评分的连续性
+- **重要修复**: 当部分子因子为空值时，G 因子不会为 0，而是基于有效子因子计算，确保评分的连续性
 
-## 🔍 验证方法
+## 验证方法
 
 ### 1. 检查空值处理
 ```sql
@@ -113,7 +116,7 @@ WHERE calc_date >= '2024-01-01'
 LIMIT 10;
 ```
 
-## 📝 日志说明
+## 日志说明
 
 修复过程中会输出详细日志：
 - 数据获取情况
@@ -121,7 +124,7 @@ LIMIT 10;
 - 数据库更新结果
 - 错误和警告信息
 
-## 🛠️ 故障排除
+## 故障排除
 
 ### 常见问题
 
@@ -140,9 +143,9 @@ LIMIT 10;
    - 调整数据库连接池
    - 监控系统资源
 
-## 📞 技术支持
+## 排查建议
 
 如遇到问题，请：
 1. 查看错误日志
 2. 检查数据库状态
-3. 联系技术支持团队
+3. 使用 `--dry_run` 复现并确认待更新行数

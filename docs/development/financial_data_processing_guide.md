@@ -6,6 +6,8 @@
 
 **⚠️ 重要提醒**: 本文档包含关键的数据处理逻辑，任何修改都可能影响因子计算的准确性，请谨慎操作。
 
+**当前代码入口**: PIT 生产实现位于 `scripts/production/data_updaters/pit/`，统一入口为 `pit_data_update_production.py`；Features 侧可复用的 PIT 物化视图配方位于 `alphahome/features/recipes/mv/stock/`。本文描述的是这些实现应遵守的数据口径和处理约定。
+
 ---
 
 ## 🎯 核心原则
@@ -722,10 +724,14 @@ DO UPDATE SET ...
 
 ---
 
-**📝 文档版本**: v1.1  
-**📅 最后更新**: 2025-08-08  
-**👤 维护者**: AlphaHome开发团队  
+**📝 文档版本**: v1.2
+**📅 最后更新**: 2026-05-12
+**👤 维护者**: AlphaHome开发团队
 **🔄 更新频率**: 根据业务需求和问题发现情况
+
+### 🆕 最新更新 (v1.2)
+- **当前入口校准**: 明确 PIT 生产代码位于 `scripts/production/data_updaters/pit/`，Features 物化视图位于 `alphahome/features/recipes/mv/stock/`
+- **文档定位校准**: 将本文定位为财务/PIT 口径规范，避免与生产脚本使用说明重复
 
 ### 🆕 最新更新 (v1.1)
 - **单季口径统一**: 明确所有数据源的`n_income`和`n_income_attr_p`均为单季值
