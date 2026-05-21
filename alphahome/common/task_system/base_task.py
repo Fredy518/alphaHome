@@ -7,7 +7,6 @@ from typing import Any, Callable, Dict, List, Optional, Union, Tuple
 
 import numpy as np
 import pandas as pd
-from ..db_manager import DBManager
 from ..constants import UpdateTypes
 
 
@@ -557,11 +556,17 @@ class BaseTask(ABC):
             "validation_mode": validation_mode
         }
 
-    async def _save_data(self, data: pd.DataFrame, stop_event: Optional[asyncio.Event] = None) -> Dict[str, Any]:
+    async def _save_data(
+        self,
+        data: pd.DataFrame,
+        stop_event: Optional[asyncio.Event] = None,
+        ensure_table: bool = True,
+    ) -> Dict[str, Any]:
         """将处理后的数据保存到数据库"""
-        await self._ensure_table_exists()
-        if stop_event and stop_event.is_set():
-            raise asyncio.CancelledError("任务在 _ensure_table_exists 后被取消")
+        if ensure_table:
+            await self._ensure_table_exists()
+            if stop_event and stop_event.is_set():
+                raise asyncio.CancelledError("任务在 _ensure_table_exists 后被取消")
 
         # 新增：在保存前根据主键去重
         if self.primary_keys and not data.empty:

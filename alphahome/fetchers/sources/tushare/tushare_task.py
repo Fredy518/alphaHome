@@ -40,6 +40,7 @@ class TushareTask(FetcherTask, abc.ABC):
     # Tushare 特有配置
     default_page_size = 5000
     default_rate_limit_delay = 65
+    default_stream_batches = True
 
     # 必须由具体任务定义的属性
     api_name: Optional[str] = None

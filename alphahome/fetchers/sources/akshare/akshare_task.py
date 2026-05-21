@@ -49,6 +49,7 @@ class AkShareTask(FetcherTask, abc.ABC):
     default_request_interval = 1.5  # 默认请求间隔（秒）
     default_max_retries = 3  # 默认最大重试次数
     default_retry_delay = 5  # 默认重试等待时间（秒）
+    default_stream_batches = True
 
     # 必须由具体任务定义的属性
     api_name: Optional[str] = None  # AkShare 函数名称

@@ -36,6 +36,10 @@ class FetcherTask(BaseTask, ABC):
     default_concurrent_limit = 5
     default_max_retries = 3
     default_retry_delay = 2
+    default_stream_batches = False
+    default_continue_on_stream_batch_failure = False
+    default_stream_save_batch_size = BaseTask.default_save_batch_size
+    default_stream_update_types = (UpdateTypes.FULL,)
     smart_lookback_days = 10
 
     def __init__(
@@ -77,6 +81,33 @@ class FetcherTask(BaseTask, ABC):
         self.task_specific_config = task_config or {}
         self._apply_config(self.task_specific_config)
 
+    @staticmethod
+    def _parse_bool(value: Any, default: bool = False) -> bool:
+        if isinstance(value, bool):
+            return value
+        if value is None:
+            return default
+        if isinstance(value, (int, float)):
+            return bool(value)
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {"1", "true", "yes", "y", "on"}:
+                return True
+            if normalized in {"0", "false", "no", "n", "off", ""}:
+                return False
+        return default
+
+    @staticmethod
+    def _parse_stream_update_types(value: Any, default: Any) -> set[str]:
+        raw_value = default if value is None else value
+        if isinstance(raw_value, str):
+            values = [item.strip() for item in raw_value.replace(";", ",").split(",")]
+        elif isinstance(raw_value, (list, tuple, set)):
+            values = [str(item).strip() for item in raw_value]
+        else:
+            values = [str(raw_value).strip()]
+        return {item.lower() for item in values if item}
+
     def _apply_config(self, task_config: Dict):
         """合并代码默认值和配置文件设置。"""
         cls = type(self)
@@ -84,6 +115,33 @@ class FetcherTask(BaseTask, ABC):
         self.concurrent_limit = int(task_config.get("concurrent_limit", cls.default_concurrent_limit))
         self.max_retries = int(task_config.get("max_retries", cls.default_max_retries))
         self.retry_delay = int(task_config.get("retry_delay", cls.default_retry_delay))
+        self.stream_batches = self._parse_bool(
+            task_config.get("stream_batches", cls.default_stream_batches),
+            cls.default_stream_batches,
+        )
+        self.continue_on_stream_batch_failure = self._parse_bool(
+            task_config.get(
+                "continue_on_stream_batch_failure",
+                cls.default_continue_on_stream_batch_failure,
+            ),
+            cls.default_continue_on_stream_batch_failure,
+        )
+        self.stream_save_batch_size = int(
+            task_config.get(
+                "stream_save_batch_size",
+                task_config.get(
+                    "stream_flush_rows",
+                    task_config.get(
+                        "save_batch_size",
+                        task_config.get("batch_size", cls.default_stream_save_batch_size),
+                    ),
+                ),
+            )
+        )
+        self.stream_update_types = self._parse_stream_update_types(
+            task_config.get("stream_update_types"),
+            cls.default_stream_update_types,
+        )
         self.smart_lookback_days = int(task_config.get("smart_lookback_days", cls.smart_lookback_days))
 
         # 处理数据保存批次大小配置 (优先使用save_batch_size，向后兼容batch_size)
@@ -95,8 +153,74 @@ class FetcherTask(BaseTask, ABC):
         self.logger.debug(
             f"'{self.name}': Applied config - concurrent_limit={self.concurrent_limit}, "
             f"max_retries={self.max_retries}, retry_delay={self.retry_delay}, "
-            f"save_batch_size={self.save_batch_size}"
+            f"save_batch_size={self.save_batch_size}, stream_batches={self.stream_batches}"
         )
+
+    def _should_stream_batches(self, kwargs: Optional[Dict[str, Any]] = None) -> bool:
+        params = kwargs or {}
+        stream_enabled = self._parse_bool(
+            params.get(
+                "stream_batches",
+                self.task_specific_config.get("stream_batches", self.stream_batches),
+            ),
+            self.stream_batches,
+        )
+        if not stream_enabled:
+            return False
+
+        stream_update_types = self._parse_stream_update_types(
+            params.get(
+                "stream_update_types",
+                self.task_specific_config.get(
+                    "stream_update_types",
+                    getattr(self, "stream_update_types", self.default_stream_update_types),
+                ),
+            ),
+            getattr(self, "stream_update_types", self.default_stream_update_types),
+        )
+        if "*" in stream_update_types or "all" in stream_update_types:
+            return True
+        update_type = str(params.get("update_type") or self.update_type or "").strip().lower()
+        return update_type in stream_update_types
+
+    def _continue_on_stream_batch_failure(self, kwargs: Optional[Dict[str, Any]] = None) -> bool:
+        params = kwargs or {}
+        return self._parse_bool(
+            params.get(
+                "continue_on_stream_batch_failure",
+                self.task_specific_config.get(
+                    "continue_on_stream_batch_failure",
+                    self.continue_on_stream_batch_failure,
+                ),
+            ),
+            self.continue_on_stream_batch_failure,
+        )
+
+    def _resolve_stream_save_batch_size(self, kwargs: Optional[Dict[str, Any]] = None) -> int:
+        params = kwargs or {}
+        raw_value = params.get(
+            "stream_save_batch_size",
+            params.get(
+                "stream_flush_rows",
+                self.task_specific_config.get(
+                    "stream_save_batch_size",
+                    self.task_specific_config.get(
+                        "stream_flush_rows",
+                        self.task_specific_config.get(
+                            "save_batch_size",
+                            self.task_specific_config.get(
+                                "batch_size",
+                                getattr(self, "stream_save_batch_size", self.default_stream_save_batch_size),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        )
+        try:
+            return max(1, int(raw_value))
+        except (TypeError, ValueError):
+            return max(1, int(self.default_stream_save_batch_size))
 
     @abstractmethod
     async def get_batch_list(self, **kwargs) -> List[Any]:
@@ -131,20 +255,37 @@ class FetcherTask(BaseTask, ABC):
             # 兼容 TIMESTAMP 类型日期列：统一转换为 date，避免 datetime/date 比较报错
             if isinstance(latest_date_in_db, datetime):
                 latest_date_in_db = latest_date_in_db.date()
+
+            end_dt = datetime.now().date()
             
             if latest_date_in_db:
-                start_dt = latest_date_in_db + timedelta(days=1) - timedelta(days=self.smart_lookback_days)
+                anchor_dt = latest_date_in_db
+                if anchor_dt > end_dt:
+                    self.logger.warning(
+                        "'%s' - 数据库最新日期 %s 晚于当前日期 %s，SMART 将以当前日期作为回看锚点，避免跳过历史修订窗口。",
+                        self.name,
+                        anchor_dt.strftime("%Y%m%d"),
+                        end_dt.strftime("%Y%m%d"),
+                    )
+                    anchor_dt = end_dt
+                start_dt = anchor_dt + timedelta(days=1) - timedelta(days=self.smart_lookback_days)
                 default_start_dt = datetime.strptime(self.default_start_date, "%Y%m%d").date()
                 start_dt = max(start_dt, default_start_dt)
             else:
                 start_dt = datetime.strptime(self.default_start_date, "%Y%m%d").date()
-            
-            end_dt = datetime.now().date()
-            
+
             if start_dt > end_dt:
                 self.logger.info(f"'{self.name}' - Data is already up to date. No batches to generate.")
                 return None
             start, end = start_dt.strftime("%Y%m%d"), end_dt.strftime("%Y%m%d")
+            self.logger.info(
+                "'%s' - SMART date range: latest_date=%s, lookback_days=%s, start_date=%s, end_date=%s",
+                self.name,
+                latest_date_in_db.strftime("%Y%m%d") if latest_date_in_db else None,
+                self.smart_lookback_days,
+                start,
+                end,
+            )
             
         elif self.update_type == UpdateTypes.FULL:
             start, end = self.default_start_date, datetime.now().strftime("%Y%m%d")
@@ -242,6 +383,320 @@ class FetcherTask(BaseTask, ABC):
             )
 
         return results
+
+    async def _get_effective_batch_list(self, **kwargs: Any) -> List[Any]:
+        date_range = await self._determine_date_range()
+        if not date_range:
+            return []
+
+        start_date = date_range["start_date"]
+        end_date = date_range["end_date"]
+        self._effective_start_date = start_date
+        self._effective_end_date = end_date
+
+        if self.start_date:
+            kwargs["start_date"] = self.start_date
+        if self.end_date:
+            kwargs["end_date"] = self.end_date
+        kwargs["update_type"] = self.update_type
+
+        batch_gen_params = {**kwargs, "start_date": start_date, "end_date": end_date}
+        from ..tools.calendar import reset_calendar_db_manager, set_calendar_db_manager
+
+        calendar_token = set_calendar_db_manager(self.db)
+        try:
+            return await self.get_batch_list(**batch_gen_params)
+        finally:
+            reset_calendar_db_manager(calendar_token)
+
+    async def _fetch_stream_batch_with_retry(
+        self,
+        batch: Any,
+        *,
+        stop_event: Optional[asyncio.Event],
+    ) -> Dict[str, Any]:
+        last_error = None
+        for attempt in range(self.max_retries):
+            if stop_event and stop_event.is_set():
+                raise asyncio.CancelledError
+            try:
+                params = await self.prepare_params(batch)
+                data = await self.fetch_batch(params, stop_event=stop_event)
+                return {"success": True, "batch": batch, "params": params, "data": data}
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                last_error = e
+                self.logger.warning(
+                    "'%s' - Streaming batch %s failed on attempt %s/%s. Error: %s",
+                    self.name,
+                    batch,
+                    attempt + 1,
+                    self.max_retries,
+                    e,
+                )
+                if attempt + 1 < self.max_retries:
+                    await asyncio.sleep(self.retry_delay * (attempt + 1))
+
+        return {
+            "success": False,
+            "batch": batch,
+            "error": str(last_error) if last_error else "unknown batch failure",
+        }
+
+    async def _process_validate_stream_frame(
+        self,
+        raw_data: pd.DataFrame,
+        *,
+        params: Dict[str, Any],
+        stop_event: Optional[asyncio.Event],
+        runtime_kwargs: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        if raw_data is None or raw_data.empty:
+            return {"data": None, "validation": True, "validation_details": None}
+
+        process_kwargs = {**runtime_kwargs, **params}
+        processed = self.process_data(raw_data, stop_event=stop_event, **process_kwargs)
+        if asyncio.iscoroutine(processed):
+            processed = await processed
+        if processed is None or (isinstance(processed, pd.DataFrame) and processed.empty):
+            return {"data": None, "validation": True, "validation_details": None}
+
+        validation_passed, validated_data, validation_details = self._validate_data(
+            processed,
+            stop_event=stop_event,
+            validation_mode=getattr(self, "validation_mode", "report"),
+        )
+        if validated_data is None or (isinstance(validated_data, pd.DataFrame) and validated_data.empty):
+            return {
+                "data": None,
+                "validation": validation_passed,
+                "validation_details": validation_details,
+            }
+
+        return {
+            "data": validated_data,
+            "validation": validation_passed,
+            "validation_details": validation_details,
+        }
+
+    async def _save_stream_buffer(
+        self,
+        buffer: List[pd.DataFrame],
+        *,
+        stop_event: Optional[asyncio.Event],
+        ensure_table: bool,
+    ) -> Dict[str, Any]:
+        if not buffer:
+            return {"rows": 0, "table_checked": False}
+        data = buffer[0] if len(buffer) == 1 else pd.concat(buffer, ignore_index=True)
+        save_result = await self._save_data(
+            data,
+            stop_event=stop_event,
+            ensure_table=ensure_table,
+        )
+        rows = save_result.get("rows", 0) if isinstance(save_result, dict) else 0
+        return {"rows": rows, "table_checked": True}
+
+    async def _process_validate_save_stream_frame(
+        self,
+        raw_data: pd.DataFrame,
+        *,
+        params: Dict[str, Any],
+        stop_event: Optional[asyncio.Event],
+        runtime_kwargs: Dict[str, Any],
+        ensure_table: bool,
+    ) -> Dict[str, Any]:
+        process_result = await self._process_validate_stream_frame(
+            raw_data,
+            params=params,
+            stop_event=stop_event,
+            runtime_kwargs=runtime_kwargs,
+        )
+        validated_data = process_result.get("data")
+        if validated_data is None or (isinstance(validated_data, pd.DataFrame) and validated_data.empty):
+            return {
+                "rows": 0,
+                "validation": process_result.get("validation", True),
+                "validation_details": process_result.get("validation_details"),
+                "table_checked": False,
+            }
+        save_result = await self._save_stream_buffer(
+            [validated_data],
+            stop_event=stop_event,
+            ensure_table=ensure_table,
+        )
+        return {
+            "rows": save_result.get("rows", 0),
+            "validation": process_result.get("validation", True),
+            "validation_details": process_result.get("validation_details"),
+            "table_checked": save_result.get("table_checked", False),
+        }
+
+    async def _execute_streaming(
+        self,
+        stop_event: Optional[asyncio.Event] = None,
+        **kwargs: Any,
+    ) -> Dict[str, Any]:
+        self.logger.info("'%s' - Streaming fetch/process/save enabled.", self.name)
+        await self._pre_execute(stop_event=stop_event, **kwargs)
+
+        batches = await self._get_effective_batch_list(**kwargs)
+        if not batches:
+            self.logger.info("'%s' - No batches to process. Task finished.", self.name)
+            return {"status": "no_data", "rows": 0, "task": self.name}
+
+        total_rows = 0
+        processed_batches = 0
+        empty_batches = 0
+        saved_batches = 0
+        failed_batches: List[Dict[str, Any]] = []
+        validation_passed_all = True
+        last_validation_details = None
+        table_checked = False
+        continue_on_failure = self._continue_on_stream_batch_failure(kwargs)
+        concurrency = max(1, int(getattr(self, "concurrent_limit", 1)))
+        stream_save_batch_size = self._resolve_stream_save_batch_size(kwargs)
+        save_buffer: List[pd.DataFrame] = []
+        save_buffer_rows = 0
+
+        progress_bar = tqdm(total=len(batches), desc=f"Executing {self.name}", unit="batch")
+        iterator = iter(batches)
+        pending: set[asyncio.Task] = set()
+
+        async def cancel_pending() -> None:
+            if not pending:
+                return
+            for item in pending:
+                item.cancel()
+            await asyncio.gather(*pending, return_exceptions=True)
+
+        def schedule_next() -> None:
+            try:
+                batch = next(iterator)
+            except StopIteration:
+                return
+            pending.add(
+                asyncio.create_task(
+                    self._fetch_stream_batch_with_retry(batch, stop_event=stop_event)
+                )
+            )
+
+        async def flush_save_buffer() -> None:
+            nonlocal save_buffer, save_buffer_rows, total_rows, saved_batches, table_checked
+            if not save_buffer:
+                return
+            save_result = await self._save_stream_buffer(
+                save_buffer,
+                stop_event=stop_event,
+                ensure_table=not table_checked,
+            )
+            total_rows += int(save_result.get("rows", 0) or 0)
+            if save_result.get("table_checked"):
+                table_checked = True
+                saved_batches += 1
+            save_buffer = []
+            save_buffer_rows = 0
+
+        for _ in range(min(concurrency, len(batches))):
+            schedule_next()
+
+        try:
+            while pending:
+                if stop_event and stop_event.is_set():
+                    raise asyncio.CancelledError
+
+                done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+                for task in done:
+                    batch_result = await task
+                    progress_bar.update(1)
+
+                    if not batch_result.get("success"):
+                        failed_batches.append(batch_result)
+                        if not continue_on_failure:
+                            await cancel_pending()
+                            sample = batch_result.get("error", "unknown batch failure")
+                            partial = f"; {total_rows} rows were already saved" if total_rows else ""
+                            raise RuntimeError(f"'{self.name}' - Streaming batch failed: {sample}{partial}")
+                        schedule_next()
+                        continue
+
+                    raw_data = batch_result.get("data")
+                    if raw_data is None or raw_data.empty:
+                        empty_batches += 1
+                        schedule_next()
+                        continue
+
+                    processed_batches += 1
+                    chunk_result = await self._process_validate_stream_frame(
+                        raw_data,
+                        params=batch_result.get("params") or {},
+                        stop_event=stop_event,
+                        runtime_kwargs=kwargs,
+                    )
+                    if not chunk_result.get("validation", True):
+                        validation_passed_all = False
+                    if chunk_result.get("validation_details") is not None:
+                        last_validation_details = chunk_result.get("validation_details")
+
+                    validated_data = chunk_result.get("data")
+                    if validated_data is not None and not validated_data.empty:
+                        save_buffer.append(validated_data)
+                        save_buffer_rows += len(validated_data)
+                        if save_buffer_rows >= stream_save_batch_size:
+                            await flush_save_buffer()
+
+                    schedule_next()
+        finally:
+            progress_bar.close()
+
+        await flush_save_buffer()
+
+        status = "no_data" if total_rows == 0 and not failed_batches else "success"
+        if failed_batches or not validation_passed_all:
+            status = "partial_success" if total_rows > 0 else "error"
+
+        final_result = {
+            "status": status,
+            "table": self.table_name,
+            "rows": total_rows,
+            "processed_batches": processed_batches,
+            "empty_batches": empty_batches,
+            "saved_batches": saved_batches,
+            "failed_batches": len(failed_batches),
+            "stream_batches": True,
+            "validation": validation_passed_all,
+            "validation_details": last_validation_details
+            or {
+                "status": "passed" if validation_passed_all else "failed",
+                "validation_mode": getattr(self, "validation_mode", "report"),
+            },
+        }
+        await self._post_execute(final_result, stop_event=stop_event)
+        self.logger.info("任务执行完成: %s", final_result)
+        return final_result
+
+    async def execute(
+        self,
+        stop_event: Optional[asyncio.Event] = None,
+        **kwargs: Any,
+    ):
+        if not self._should_stream_batches(kwargs):
+            return await super().execute(stop_event=stop_event, **kwargs)
+
+        try:
+            return await self._execute_streaming(stop_event=stop_event, **kwargs)
+        except asyncio.CancelledError:
+            self.logger.warning("任务 %s 被取消。", self.name)
+            return self._handle_error(asyncio.CancelledError("任务被用户取消"))
+        except Exception as e:
+            self.logger.error(
+                "任务执行失败: 类型=%s, 错误=%s",
+                type(e).__name__,
+                str(e),
+                exc_info=True,
+            )
+            return self._handle_error(e)
 
     async def _fetch_data(self, stop_event: Optional[asyncio.Event] = None, **kwargs) -> Optional[pd.DataFrame]:
         """
