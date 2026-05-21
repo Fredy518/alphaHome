@@ -11,7 +11,6 @@ Tinysoft 行业分类版本化任务（C2）
 
 from __future__ import annotations
 
-import asyncio
 import json
 import re
 from datetime import date
@@ -19,6 +18,7 @@ from typing import Any, Dict, Iterable, List, Optional, Set
 
 import pandas as pd
 
+from ....common.constants import UpdateTypes
 from ...sources.tinysoft import TinySoftTask
 from ...sources.tushare.batch_utils import normalize_date_range
 from ....common.task_system.task_decorator import task_register
@@ -39,14 +39,15 @@ class TinySoftStockIndustryVersionedTask(TinySoftTask):
     table_name = "stock_industry_versioned"
     primary_keys = ["ts_code", "trade_date", "industry_source"]
     date_column = "trade_date"
-    default_start_date = "20100101"
-    smart_lookback_days = 30
+    default_start_date = "20000101"
+    smart_lookback_days = 370
 
     default_concurrent_limit = 2
     default_query_timeout_ms = 45_000
     default_request_interval = 0.2
     default_cycle = "日线"
     default_symbol_batch_size = 50
+    default_smart_symbol_batch_size = 200
     default_skip_failed_symbols = True
     default_use_config_symbols = False
     default_symbols: List[str] = []
@@ -111,6 +112,26 @@ class TinySoftStockIndustryVersionedTask(TinySoftTask):
             return max(min_value, parsed)
         except (TypeError, ValueError):
             return max(min_value, int(default))
+
+    def _resolve_symbol_batch_size(self, kwargs: Dict[str, Any]) -> int:
+        symbol_batch_size = self._parse_positive_int(
+            kwargs.get(
+                "symbol_batch_size",
+                self.task_specific_config.get("symbol_batch_size", self.default_symbol_batch_size),
+            ),
+            self.default_symbol_batch_size,
+        )
+        update_type = str(kwargs.get("update_type") or "").strip().lower()
+        if update_type != UpdateTypes.SMART:
+            return symbol_batch_size
+
+        smart_raw = kwargs.get(
+            "smart_symbol_batch_size",
+            self.task_specific_config.get("smart_symbol_batch_size", self.default_smart_symbol_batch_size),
+        )
+        if smart_raw is None:
+            return symbol_batch_size
+        return self._parse_positive_int(smart_raw, symbol_batch_size)
 
     @staticmethod
     def _parse_symbol_list(raw_symbols: Any) -> List[str]:
@@ -287,13 +308,7 @@ class TinySoftStockIndustryVersionedTask(TinySoftTask):
             self.logger.warning("未获取到有效股票代码，任务将跳过。")
             return []
 
-        symbol_batch_size = self._parse_positive_int(
-            kwargs.get(
-                "symbol_batch_size",
-                self.task_specific_config.get("symbol_batch_size", self.default_symbol_batch_size),
-            ),
-            self.default_symbol_batch_size,
-        )
+        symbol_batch_size = self._resolve_symbol_batch_size(kwargs)
         table_id = self._parse_positive_int(
             kwargs.get(
                 "infoarray_table_id",
@@ -362,49 +377,24 @@ class TinySoftStockIndustryVersionedTask(TinySoftTask):
             self.query_timeout_ms,
         )
         use_service = params.get("service", self.service)
+        use_batch_infotable = self._parse_bool(
+            params.get(
+                "use_batch_infotable",
+                self.task_specific_config.get("use_batch_infotable", True),
+            ),
+            default=True,
+        )
 
-        merged_frames: List[pd.DataFrame] = []
-        for pair in symbol_pairs:
-            if stop_event and stop_event.is_set():
-                raise asyncio.CancelledError("Tinysoft 行业批次拉取被取消")
-
-            if not isinstance(pair, dict):
-                continue
-            ts_code = str(pair.get("ts_code") or "").strip()
-            stock = str(pair.get("stock") or "").strip()
-            if not ts_code or not stock:
-                continue
-
-            try:
-                df = await self.api.call_dataframe(
-                    "infoarray",
-                    table_id,
-                    stock=stock,
-                    service=use_service,
-                    timeout_ms=timeout_ms,
-                    stop_event=stop_event,
-                )
-            except Exception as e:
-                if not skip_failed_symbols:
-                    raise
-                self._record_skipped_symbol(ts_code, e)
-                self.logger.warning("Tinysoft 行业拉取失败（跳过）: %s, 错误: %s", ts_code, e)
-                continue
-
-            if df is None or df.empty:
-                continue
-
-            one = df.copy()
-            if "ts_code" not in one.columns:
-                one["ts_code"] = ts_code
-            if "StockID" not in one.columns and "stockid" not in {str(c).lower() for c in one.columns}:
-                one["StockID"] = stock
-            merged_frames.append(one)
-
-        if not merged_frames:
-            return None
-
-        return pd.concat(merged_frames, ignore_index=True)
+        return await self.fetch_infotable_for_symbol_pairs(
+            table_id=table_id,
+            symbol_pairs=symbol_pairs,
+            skip_failed_symbols=skip_failed_symbols,
+            service=use_service,
+            timeout_ms=timeout_ms,
+            stop_event=stop_event,
+            enable_batch=use_batch_infotable,
+            error_label="Tinysoft 行业",
+        )
 
     def _build_snapshots(
         self,

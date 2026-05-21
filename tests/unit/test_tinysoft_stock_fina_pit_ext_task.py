@@ -42,6 +42,35 @@ class _MultiSymbolApi:
         )
 
 
+class _BatchInfoTableApi:
+    def __init__(self):
+        self.batch_calls = 0
+        self.single_calls = 0
+        self.last_where_clause = "NOT_CALLED"
+        self.last_stocks = None
+
+    async def call_dataframe_for_stocks(self, func, table_id, **kwargs):
+        stock_list = list(kwargs.get("stocks"))
+        self.batch_calls += 1
+        self.last_stocks = stock_list
+        self.last_where_clause = kwargs.get("where_clause")
+        assert func == "infoarray"
+        assert table_id == 42
+        return pd.DataFrame(
+            {
+                "截止日": [20241231 for _ in stock_list],
+                "公布日": [20250320 for _ in stock_list],
+                "每股收益(摊薄)": ["2.15" for _ in stock_list],
+                "每股净资产": [22.1 for _ in stock_list],
+                "StockID": stock_list,
+            }
+        )
+
+    async def call_dataframe(self, *args, **kwargs):
+        self.single_calls += 1
+        return pd.DataFrame()
+
+
 def _make_task(task_config=None, db=None, api=None):
     return TinySoftStockFinaPitExtTask(
         db_connection=db if db is not None else object(),
@@ -167,6 +196,32 @@ async def test_fetch_batch_supports_symbol_pairs():
     )
     assert df is not None
     assert len(df) == 2
+    assert set(df["StockID"]) == {"SZ000001", "SH600000"}
+
+
+@pytest.mark.asyncio
+async def test_fetch_batch_prefers_batch_infotable_for_symbol_pairs():
+    api = _BatchInfoTableApi()
+    task = _make_task(db=_FakeDB(), api=api, task_config={"skip_failed_symbols": False})
+    df = await task.fetch_batch(
+        {
+            "finance_source": "report_42_main",
+            "table_id": 42,
+            "metric_defs": [{"metric_name": "eps_diluted", "field_id": 42002, "field_name": "每股收益(摊薄)"}],
+            "symbol_pairs": [
+                {"ts_code": "000001.SZ", "stock": "SZ000001"},
+                {"ts_code": "600000.SH", "stock": "SH600000"},
+            ],
+            "start_date": "20250301",
+            "service": "",
+            "timeout_ms": 45000,
+        }
+    )
+    assert df is not None
+    assert api.batch_calls == 1
+    assert api.single_calls == 0
+    assert api.last_stocks == ["SZ000001", "SH600000"]
+    assert api.last_where_clause == '["公布日"]>=20250301 or ["截止日"]>=20250301'
     assert set(df["StockID"]) == {"SZ000001", "SH600000"}
 
 

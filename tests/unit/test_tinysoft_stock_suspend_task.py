@@ -1,6 +1,7 @@
 import pandas as pd
 import pytest
 
+from alphahome.common.constants import UpdateTypes
 from alphahome.fetchers.tasks.stock.tinysoft_stock_suspend import TinySoftStockSuspendTask
 
 
@@ -40,6 +41,37 @@ class _MultiSymbolApi:
                 "StockID": [stock],
             }
         )
+
+
+class _BatchInfoTableApi:
+    def __init__(self):
+        self.batch_calls = 0
+        self.single_calls = 0
+        self.last_where_clause = "NOT_CALLED"
+        self.last_stocks = None
+
+    async def call_dataframe_for_stocks(self, func, table_id, **kwargs):
+        stock_list = list(kwargs.get("stocks"))
+        self.batch_calls += 1
+        self.last_stocks = stock_list
+        self.last_where_clause = kwargs.get("where_clause")
+        assert func == "infoarray"
+        assert table_id == 127
+        return pd.DataFrame(
+            {
+                "停牌开始日": [20260302 for _ in stock_list],
+                "停牌开始时间": ["09:30:00" for _ in stock_list],
+                "停牌截止日": [20260302 for _ in stock_list],
+                "停牌截止时间": ["10:30:00" for _ in stock_list],
+                "停牌期限": ["1小时" for _ in stock_list],
+                "停牌原因": ["临时停牌" for _ in stock_list],
+                "StockID": stock_list,
+            }
+        )
+
+    async def call_dataframe(self, *args, **kwargs):
+        self.single_calls += 1
+        return pd.DataFrame()
 
 
 def _make_task(task_config=None, db=None, api=None):
@@ -118,6 +150,29 @@ async def test_get_batch_list_uses_infoarray_table_id():
 
 
 @pytest.mark.asyncio
+async def test_smart_mode_uses_larger_symbol_batches_without_changing_full_batches():
+    rows = [{"ts_code": f"{i:06d}.SZ"} for i in range(1, 451)]
+    task = _make_task(
+        db=_FakeDB(rows=rows),
+        task_config={"symbol_batch_size": 50, "smart_symbol_batch_size": 200},
+    )
+
+    full_batches = await task.get_batch_list(
+        start_date="20260301",
+        end_date="20260331",
+        update_type=UpdateTypes.FULL,
+    )
+    smart_batches = await task.get_batch_list(
+        start_date="20260301",
+        end_date="20260331",
+        update_type=UpdateTypes.SMART,
+    )
+
+    assert [len(batch["symbol_pairs"]) for batch in full_batches] == [50] * 9
+    assert [len(batch["symbol_pairs"]) for batch in smart_batches] == [200, 200, 50]
+
+
+@pytest.mark.asyncio
 async def test_get_batch_list_defaults_start_date_when_missing():
     task = _make_task(
         db=_FakeDB(rows=[{"ts_code": "000001.SZ"}]),
@@ -148,6 +203,30 @@ async def test_fetch_batch_supports_symbol_pairs():
     )
     assert df is not None
     assert len(df) == 2
+    assert set(df["StockID"]) == {"SZ000001", "SH600000"}
+
+
+@pytest.mark.asyncio
+async def test_fetch_batch_prefers_batch_infotable_for_symbol_pairs():
+    api = _BatchInfoTableApi()
+    task = _make_task(db=_FakeDB(), api=api, task_config={"skip_failed_symbols": False})
+    df = await task.fetch_batch(
+        {
+            "symbol_pairs": [
+                {"ts_code": "000001.SZ", "stock": "SZ000001"},
+                {"ts_code": "600000.SH", "stock": "SH600000"},
+            ],
+            "infoarray_table_id": 127,
+            "start_date": "20260301",
+            "service": "",
+            "timeout_ms": 45000,
+        }
+    )
+    assert df is not None
+    assert api.batch_calls == 1
+    assert api.single_calls == 0
+    assert api.last_stocks == ["SZ000001", "SH600000"]
+    assert api.last_where_clause == '["停牌开始日"]>=20260301'
     assert set(df["StockID"]) == {"SZ000001", "SH600000"}
 
 
@@ -218,3 +297,7 @@ def test_process_data_uses_effective_window_when_kwargs_missing():
     processed = task.process_data(raw)
     assert len(processed) == 1
     assert str(processed.iloc[0]["trade_date"]) == "2026-03-02"
+
+
+def test_suspend_smart_lookback_covers_late_corrections():
+    assert TinySoftStockSuspendTask.smart_lookback_days >= 90

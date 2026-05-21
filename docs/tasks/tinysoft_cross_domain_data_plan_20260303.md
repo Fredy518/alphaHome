@@ -34,12 +34,12 @@
 | P0-3 | 股票 | 132 沪深港通持股明细 | `Infoarray` / 港股通每日、沪深股通季度 | 无 | 新建 `tinysoft.stock_hsgt_hold`（含披露频率标记） |
 | P0-4 | 股票 | 161 沪深股通卖空数据 | `Infoarray` / 每日 | 无 | 新建 `tinysoft.stock_hsgt_short_balance` |
 | P0-5 | 股票 | 151/152/153 转融通证券出借/转融券交易明细/转融券余量 | `Infoarray` / 每日 | `tushare.stock_margin*`（非同口径） | 新建 `tinysoft.stock_lending_*` 三表 |
-| P0-6 | 基金扩展 | 614 基金投资风格 | `Infoarray` / 季度 | 无 | 新建 `tinysoft.fund_style_ext` |
-| P0-7 | 基金扩展 | 622 风险调整收益及风险 | `Infoarray` / 每周六 | 无 | 新建 `tinysoft.fund_risk_adj_ext` |
-| P0-8 | 基金扩展 | 623 基金指数收益率 | `Infoarray` / 每周六 | 无 | 新建 `tinysoft.fund_category_index_ret` |
-| P0-9 | 基金扩展 | 625/626 基金经理业绩回报/风险调整收益 | `Infoarray` / 每周六 | `tushare.fund_manager`（静态履历） | 新建 `tinysoft.fund_manager_perf_ext`、`tinysoft.fund_manager_risk_ext` |
+| P0-6 | 基金扩展 | 614 基金投资风格 | `Infoarray` / 季度 | 可由持仓和本地风格定义计算 | 不立项；删除 `tinysoft.fund_style_ext` 采集任务 |
+| P0-7 | 基金扩展 | 622 风险调整收益及风险 | `Infoarray` / 每周六 | 可由净值/基准本地计算 | 不立项；删除 `tinysoft.fund_risk_adj_ext` 采集任务 |
+| P0-8 | 基金扩展 | 623 基金指数收益率 | `Infoarray` / 每周六 | 可由基金分类和净值面板计算 | 不立项；删除 `tinysoft.fund_category_index_ret` 采集任务 |
+| P0-9 | 基金扩展 | 625/626 基金经理业绩回报/风险调整收益 | `Infoarray` / 每周六 | 可由经理任期、基金净值和同类基准计算 | 不立项；删除 `tinysoft.fund_manager_perf_ext`、`tinysoft.fund_manager_risk_ext` 采集任务 |
 | P0-10 | 指数 | 753 市场交易日历 | `Infoarray` / 不定期 | `tushare.others_calendar`（单市场口径） | 新建 `tinysoft.market_calendar_multi` |
-| P0-11 | 指数 | 754-763 指数财务聚合指标（每股、盈利、偿债、经营、投资、现金流、估值、成长） | `report` / 季度 | `tushare.index_dailybasic`（日频估值简版） | 新建 `tinysoft.index_financial_agg`（指标字典化） |
+| P0-11 | 指数 | 754-763 指数财务聚合指标（每股、盈利、偿债、经营、投资、现金流、估值、成长） | `report` / 季度 | 可由成分、权重和股票 PIT 财务计算 | 不立项；删除 `tinysoft.index_financial_agg` 采集任务 |
 
 ### 3.2 P1：提质增强（已有相似表，但 TinySoft 口径更细）
 

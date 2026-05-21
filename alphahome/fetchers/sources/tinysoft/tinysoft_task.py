@@ -20,6 +20,7 @@ import pandas as pd
 from alphahome.common.config_manager import get_tinysoft_config
 from alphahome.fetchers.base.fetcher_task import FetcherTask
 from .tinysoft_api import TinySoftAPI
+from .tinysoft_opi_api import TinySoftOPIAPI
 
 
 class TinySoftTask(FetcherTask, abc.ABC):
@@ -32,6 +33,7 @@ class TinySoftTask(FetcherTask, abc.ABC):
     default_request_interval = 0.2
     default_cycle = "1分钟线"
     default_service = ""
+    default_stream_batches = True
 
     # 可选属性（由子类定义）
     fields: Optional[List[Any]] = None
@@ -59,21 +61,60 @@ class TinySoftTask(FetcherTask, abc.ABC):
         self._failed_symbols: List[Dict[str, str]] = []
 
         self.tinysoft_config = (tinysoft_config or get_tinysoft_config() or {}).copy()
-        self.api = api or TinySoftAPI(
+        self.api = api or self._build_api_from_config()
+
+    def _build_api_from_config(self):
+        mode = str(
+            self.tinysoft_config.get(
+                "mode",
+                self.tinysoft_config.get(
+                    "backend",
+                    self.tinysoft_config.get("api_mode", "pytsl"),
+                ),
+            )
+        ).strip().lower()
+
+        timeout_ms = self._coerce_int(
+            self.tinysoft_config.get("timeout_ms"),
+            self.query_timeout_ms,
+        )
+        request_interval = self._coerce_float(
+            self.tinysoft_config.get("request_interval"),
+            self.request_interval,
+        )
+        service = str(self.tinysoft_config.get("service") or self.service or "")
+
+        if mode in {"opi", "ts-opi", "http", "https"}:
+            return TinySoftOPIAPI(
+                user=self.tinysoft_config.get("user"),
+                password=self.tinysoft_config.get("password"),
+                opi_url=self.tinysoft_config.get("opi_url")
+                or self.tinysoft_config.get("base_url"),
+                auth_mode=str(self.tinysoft_config.get("opi_auth_mode") or "basic"),
+                session_key=self.tinysoft_config.get("session_key")
+                or self.tinysoft_config.get("opi_session_key")
+                or self.tinysoft_config.get("api_key"),
+                session_password=self.tinysoft_config.get("session_password")
+                or self.tinysoft_config.get("opi_session_password"),
+                service=service,
+                event_name=self.tinysoft_config.get("event_name"),
+                json_encode=str(self.tinysoft_config.get("json_encode") or "utf8"),
+                run_func_name=self.tinysoft_config.get("run_func_name"),
+                query_func_name=self.tinysoft_config.get("query_func_name"),
+                timeout_ms=timeout_ms,
+                request_interval=request_interval,
+                logger=self.logger,
+            )
+
+        return TinySoftAPI(
             user=self.tinysoft_config.get("user"),
             password=self.tinysoft_config.get("password"),
             host=self.tinysoft_config.get("host", TinySoftAPI.DEFAULT_HOST),
             port=self._coerce_int(self.tinysoft_config.get("port"), TinySoftAPI.DEFAULT_PORT),
             ini_path=self.tinysoft_config.get("ini_path"),
-            service=str(self.tinysoft_config.get("service") or self.service or ""),
-            timeout_ms=self._coerce_int(
-                self.tinysoft_config.get("timeout_ms"),
-                self.query_timeout_ms,
-            ),
-            request_interval=self._coerce_float(
-                self.tinysoft_config.get("request_interval"),
-                self.request_interval,
-            ),
+            service=service,
+            timeout_ms=timeout_ms,
+            request_interval=request_interval,
             logger=self.logger,
         )
 
@@ -157,6 +198,100 @@ class TinySoftTask(FetcherTask, abc.ABC):
                 "error": str(error),
             }
         )
+
+    @staticmethod
+    def _has_symbol_identifier(df: pd.DataFrame) -> bool:
+        columns = {str(col).lower() for col in df.columns}
+        return bool({"stockid", "ts_code", "tsl_code"} & columns) or "证券代码" in set(df.columns)
+
+    async def fetch_infotable_for_symbol_pairs(
+        self,
+        *,
+        table_id: int,
+        symbol_pairs: List[Dict[str, Any]],
+        where_clause: Optional[str] = None,
+        skip_failed_symbols: bool = True,
+        service: Optional[str] = None,
+        timeout_ms: Optional[int] = None,
+        stop_event: Optional[asyncio.Event] = None,
+        enable_batch: bool = True,
+        error_label: str = "Tinysoft",
+    ) -> Optional[pd.DataFrame]:
+        """Fetch InfoTable rows for a symbol batch, preferring one multi-stock call."""
+        valid_pairs: List[Dict[str, str]] = []
+        for pair in symbol_pairs:
+            if not isinstance(pair, dict):
+                continue
+            ts_code = str(pair.get("ts_code") or "").strip()
+            stock = str(pair.get("stock") or "").strip()
+            if not ts_code or not stock:
+                continue
+            valid_pairs.append({"ts_code": ts_code, "stock": stock})
+
+        if not valid_pairs:
+            return None
+
+        stocks = [pair["stock"] for pair in valid_pairs]
+        batch_method = getattr(self.api, "call_dataframe_for_stocks", None)
+        if enable_batch and len(stocks) > 1 and callable(batch_method):
+            try:
+                batch_df = await batch_method(
+                    "infoarray",
+                    table_id,
+                    stocks=stocks,
+                    where_clause=where_clause,
+                    service=service,
+                    timeout_ms=timeout_ms,
+                    stop_event=stop_event,
+                )
+                if batch_df is None or batch_df.empty:
+                    return None
+                if self._has_symbol_identifier(batch_df):
+                    return batch_df.copy()
+                self.logger.warning(
+                    "%s 批量拉取返回缺少 StockID/证券代码/ts_code，回退逐标的查询。",
+                    error_label,
+                )
+            except Exception as e:
+                self.logger.warning("%s 批量拉取失败，将回退逐标的查询: %s", error_label, e)
+
+        merged_frames: List[pd.DataFrame] = []
+        for pair in valid_pairs:
+            if stop_event and stop_event.is_set():
+                raise asyncio.CancelledError(f"{error_label} 批次拉取被取消")
+
+            ts_code = pair["ts_code"]
+            stock = pair["stock"]
+
+            try:
+                df = await self.api.call_dataframe(
+                    "infoarray",
+                    table_id,
+                    stock=stock,
+                    where_clause=where_clause,
+                    service=service,
+                    timeout_ms=timeout_ms,
+                    stop_event=stop_event,
+                )
+            except Exception as e:
+                if not skip_failed_symbols:
+                    raise
+                self._record_skipped_symbol(ts_code, e)
+                self.logger.warning("%s 拉取失败（跳过）: %s, 错误: %s", error_label, ts_code, e)
+                continue
+
+            if df is None or df.empty:
+                continue
+
+            one = df.copy()
+            if "StockID" not in one.columns and "stockid" not in {str(c).lower() for c in one.columns}:
+                one["StockID"] = stock
+            merged_frames.append(one)
+
+        if not merged_frames:
+            return None
+
+        return pd.concat(merged_frames, ignore_index=True)
 
     async def _post_execute(self, result, stop_event: Optional[asyncio.Event] = None, **kwargs):
         await super()._post_execute(result, stop_event=stop_event, **kwargs)

@@ -74,6 +74,7 @@ class TinySoftAPI:
 
         self._client = None
         self._client_lock = asyncio.Lock()
+        self._login_lock = asyncio.Lock()
         self._request_lock = asyncio.Lock()
         self._last_request_time = 0.0
 
@@ -144,29 +145,54 @@ class TinySoftAPI:
         return list(fields)
 
     @staticmethod
+    def _quote_tsl_string(value: Any) -> str:
+        if value is None:
+            raise ValueError("Tinysoft stock code cannot be empty")
+        text = str(value).strip()
+        if not text:
+            raise ValueError("Tinysoft stock code cannot be empty")
+        return "'" + text.replace("'", "''") + "'"
+
+    @classmethod
+    def _format_stock_selector(cls, stocks: Iterable[Any]) -> str:
+        normalized = []
+        for stock in stocks:
+            if stock is None:
+                continue
+            text = str(stock).strip()
+            if text:
+                normalized.append(text)
+        if not normalized:
+            raise ValueError("Tinysoft stock selector cannot be empty")
+        if len(normalized) == 1:
+            return cls._quote_tsl_string(normalized[0])
+        return "array(" + ",".join(cls._quote_tsl_string(stock) for stock in normalized) + ")"
+
+    @staticmethod
     def _is_login_error(error_code: int, message: str) -> bool:
         msg = (message or "").lower()
         return error_code in {-1, -13} or "login" in msg or "invalid user" in msg
 
     async def login(self, force: bool = False) -> None:
-        client = await self._get_client()
-        try:
-            if not force:
-                is_logined = int(await asyncio.to_thread(client.is_logined))
-                if is_logined == 1:
+        async with self._login_lock:
+            client = await self._get_client()
+            try:
+                if not force:
+                    is_logined = int(await asyncio.to_thread(client.is_logined))
+                    if is_logined == 1:
+                        return
+
+                result = int(await asyncio.to_thread(client.login))
+                if result == 1:
+                    self.logger.debug("Tinysoft 登录成功")
                     return
 
-            result = int(await asyncio.to_thread(client.login))
-            if result == 1:
-                self.logger.debug("Tinysoft 登录成功")
-                return
-
-            last_error = await self._safe_last_error(client)
-            raise TinySoftAuthError(f"Tinysoft 登录失败: {last_error}")
-        except TinySoftAuthError:
-            raise
-        except Exception as e:
-            raise TinySoftAuthError(f"Tinysoft 登录异常: {e}") from e
+                last_error = await self._safe_last_error(client)
+                raise TinySoftAuthError(f"Tinysoft 登录失败: {last_error}")
+            except TinySoftAuthError:
+                raise
+            except Exception as e:
+                raise TinySoftAuthError(f"Tinysoft 登录异常: {e}") from e
 
     async def logout(self) -> None:
         if self._client is None:
@@ -179,6 +205,11 @@ class TinySoftAPI:
         except Exception:
             # 注销失败不影响主流程
             pass
+
+    async def _discard_client(self, client=None) -> None:
+        async with self._client_lock:
+            if client is None or self._client is client:
+                self._client = None
 
     async def query(
         self,
@@ -234,7 +265,12 @@ class TinySoftAPI:
             await self._wait_for_request_slot()
 
             query_call = partial(client.query, **kwargs)
-            result = await asyncio.to_thread(query_call)
+            result = await self._to_thread_with_timeout(
+                query_call,
+                timeout_ms=timeout,
+                op_name="Tinysoft query",
+                client=client,
+            )
 
             if result is None:
                 return pd.DataFrame(columns=normalized_fields or [])
@@ -308,11 +344,37 @@ class TinySoftAPI:
             except Exception as e:
                 raise TinySoftAPIError(f"获取结果 value 失败: {e}") from e
 
+    async def _to_thread_with_timeout(
+        self,
+        func,
+        *args,
+        timeout_ms: Optional[int] = None,
+        op_name: str = "Tinysoft 调用",
+        client=None,
+        **kwargs,
+    ):
+        timeout = int(timeout_ms or self.timeout_ms or self.DEFAULT_TIMEOUT_MS)
+        try:
+            return await asyncio.wait_for(
+                asyncio.to_thread(func, *args, **kwargs),
+                timeout=max(0.001, timeout / 1000.0),
+            )
+        except asyncio.TimeoutError as e:
+            if client is not None:
+                await self._discard_client(client)
+                self.logger.warning(
+                    "%s 超时，已废弃当前 Tinysoft 客户端，下次请求将重新连接。timeout_ms=%s",
+                    op_name,
+                    timeout,
+                )
+            raise TinySoftAPIError(f"{op_name} 超时: timeout_ms={timeout}") from e
+
     async def exec(
         self,
         tsl_code: str,
         *,
         as_dataframe: bool = True,
+        timeout_ms: Optional[int] = None,
         stop_event: Optional[asyncio.Event] = None,
     ):
         """
@@ -321,6 +383,7 @@ class TinySoftAPI:
         Args:
             tsl_code: TSL 脚本字符串。
             as_dataframe: True 返回 DataFrame，False 返回原始 value()。
+            timeout_ms: 客户端调用硬超时，防止 pyTSL exec 无限等待。
             stop_event: 取消事件。
         """
         if stop_event and stop_event.is_set():
@@ -330,7 +393,13 @@ class TinySoftAPI:
         await self.login()
         await self._wait_for_request_slot()
 
-        result = await asyncio.to_thread(client.exec, tsl_code)
+        result = await self._to_thread_with_timeout(
+            client.exec,
+            tsl_code,
+            timeout_ms=timeout_ms,
+            op_name="Tinysoft exec",
+            client=client,
+        )
         return await self._parse_result(result, as_dataframe=as_dataframe)
 
     async def call(
@@ -339,6 +408,7 @@ class TinySoftAPI:
         *args,
         code: str = "",
         as_dataframe: bool = True,
+        timeout_ms: Optional[int] = None,
         stop_event: Optional[asyncio.Event] = None,
     ):
         """
@@ -349,6 +419,7 @@ class TinySoftAPI:
             *args: 传给函数的位置参数。
             code: 包含函数定义的 TSL 代码。
             as_dataframe: True 返回 DataFrame，False 返回原始 value()。
+            timeout_ms: 客户端调用硬超时。
             stop_event: 取消事件。
         """
         if stop_event and stop_event.is_set():
@@ -361,7 +432,15 @@ class TinySoftAPI:
         call_kwargs = {}
         if code:
             call_kwargs["code"] = code
-        result = await asyncio.to_thread(client.call, func_name, *args, **call_kwargs)
+        result = await self._to_thread_with_timeout(
+            client.call,
+            func_name,
+            *args,
+            timeout_ms=timeout_ms,
+            op_name=f"Tinysoft call({func_name})",
+            client=client,
+            **call_kwargs,
+        )
         return await self._parse_result(result, as_dataframe=as_dataframe)
 
     async def call_dataframe(
@@ -390,22 +469,85 @@ class TinySoftAPI:
             where_clause: 可选 TSL WHERE 条件（如 ``'["停牌开始日"]>=20260101'``）。
                           为 None 时拉取全量记录。
             service: 可选 service 参数（当前未使用，保留兼容）。
-            timeout_ms: 查询超时（当前未使用，保留兼容）。
+            timeout_ms: 查询硬超时。
             stop_event: 取消事件。
 
         Returns:
             pd.DataFrame: 返回表格数据。
         """
+        return await self.call_dataframe_for_stocks(
+            func_name,
+            table_id,
+            stocks=[stock],
+            where_clause=where_clause,
+            service=service,
+            timeout_ms=timeout_ms,
+            stop_event=stop_event,
+        )
+
+    async def call_dataframe_for_stocks(
+        self,
+        func_name: str,
+        table_id: int,
+        *,
+        stocks: Iterable[str],
+        where_clause: Optional[str] = None,
+        service: Optional[str] = None,
+        timeout_ms: Optional[int] = None,
+        stop_event: Optional[asyncio.Event] = None,
+    ) -> pd.DataFrame:
+        """
+        通过 exec 拉取单个或多个标的的 InfoArray / InfoTable 数据。
+
+        多标的调用使用 ``infotable ... of array('SZ000001','SH600000')``，
+        用于减少全市场 InfoTable 任务的在线请求数。``service`` 和
+        ``timeout_ms`` 由 pyTSL exec 外层硬超时控制。
+        """
         if stop_event and stop_event.is_set():
             raise asyncio.CancelledError("Tinysoft call_dataframe 被取消")
 
+        stock_selector = self._format_stock_selector(stocks)
         where_part = f" where {where_clause}" if where_clause else ""
         tsl_code = (
-            f"return select * from infotable {int(table_id)} of '{stock}'"
+            f"return select * from infotable {int(table_id)} of {stock_selector}"
             f"{where_part} end;"
         )
         self.logger.debug(
-            "call_dataframe: func=%s, table_id=%s, stock=%s, where=%s",
-            func_name, table_id, stock, where_clause or "(none)",
+            "call_dataframe_for_stocks: func=%s, table_id=%s, stocks=%s, where=%s",
+            func_name, table_id, stock_selector, where_clause or "(none)",
         )
-        return await self.exec(tsl_code, as_dataframe=True, stop_event=stop_event)
+        exec_kwargs = {"as_dataframe": True, "stop_event": stop_event}
+        if timeout_ms is not None:
+            exec_kwargs["timeout_ms"] = timeout_ms
+        return await self.exec(tsl_code, **exec_kwargs)
+
+    async def call_dataframe_table(
+        self,
+        func_name: str,
+        table_id: int,
+        *,
+        where_clause: Optional[str] = None,
+        service: Optional[str] = None,
+        timeout_ms: Optional[int] = None,
+        stop_event: Optional[asyncio.Event] = None,
+    ) -> pd.DataFrame:
+        """
+        通过 exec 拉取无需显式 ``of code`` 的 InfoTable 数据。
+
+        某些 Tinysoft 表（例如部分经理维度衍生表）在数据字典中未说明
+        取数代码；该方法保留无 ``of`` 的查询形态，供任务侧配置使用。
+        ``timeout_ms`` 由 pyTSL exec 外层硬超时控制。
+        """
+        if stop_event and stop_event.is_set():
+            raise asyncio.CancelledError("Tinysoft call_dataframe_table 被取消")
+
+        where_part = f" where {where_clause}" if where_clause else ""
+        tsl_code = f"return select * from infotable {int(table_id)}{where_part} end;"
+        self.logger.debug(
+            "call_dataframe_table: func=%s, table_id=%s, where=%s",
+            func_name, table_id, where_clause or "(none)",
+        )
+        exec_kwargs = {"as_dataframe": True, "stop_event": stop_event}
+        if timeout_ms is not None:
+            exec_kwargs["timeout_ms"] = timeout_ms
+        return await self.exec(tsl_code, **exec_kwargs)

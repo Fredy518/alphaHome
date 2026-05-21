@@ -71,13 +71,13 @@
 | `tinysoft.stock_lending_summary` | 151（正文标注150，待实测确认） | `(ts_code, trade_date, tenor_days, declare_type, data_type)` | `trade_date`, `ts_code` | `RANGE(trade_date,YEAR)` | `conflict=PK, update=all_non_pk` |
 | `tinysoft.stock_lending_trade` | 152 | `(ts_code, trade_date, tenor_days)` | `trade_date`, `ts_code` | `RANGE(trade_date,YEAR)` | `conflict=PK, update=all_non_pk` |
 | `tinysoft.stock_lending_balance` | 153 | `(ts_code, trade_date)` | `trade_date`, `ts_code` | `RANGE(trade_date,YEAR)` | `conflict=PK, update=all_non_pk` |
-| `tinysoft.fund_style_ext` | 614 | `(ts_code, report_date)` | `report_date`, `ts_code` | `NONE` | `conflict=PK, update=all_non_pk` |
-| `tinysoft.fund_risk_adj_ext` | 622 | `(ts_code, start_date, end_date, data_type)` | `end_date`, `ts_code` | `NONE` | `conflict=PK, update=all_non_pk` |
-| `tinysoft.fund_category_index_ret` | 623 | `(category_code, start_date, end_date, data_type)` | `end_date`, `category_code` | `NONE` | `conflict=PK, update=all_non_pk` |
-| `tinysoft.fund_manager_perf_ext` | 625 | `(manager_code, start_date, end_date, category_code)` | `end_date`, `manager_code` | `NONE` | `conflict=PK, update=all_non_pk` |
-| `tinysoft.fund_manager_risk_ext` | 626 | `(manager_code, start_date, end_date, category_code)` | `end_date`, `manager_code` | `NONE` | `conflict=PK, update=all_non_pk` |
+| `tinysoft.fund_style_ext` | 614 | - | - | - | 已弃用；风格标签由本地持仓和风格定义计算，不再作为 TinySoft 采集任务 |
+| `tinysoft.fund_risk_adj_ext` | 622 | - | - | - | 已弃用；风险调整指标由本地净值/基准链路计算，不再作为 TinySoft 采集任务 |
+| `tinysoft.fund_category_index_ret` | 623 | - | - | - | 已弃用；分类指数收益由本地分类和净值面板计算，不再作为 TinySoft 采集任务 |
+| `tinysoft.fund_manager_perf_ext` | 625 | - | - | - | 已弃用；经理业绩由本地经理任期、基金净值和同类基准计算，不再作为 TinySoft 采集任务 |
+| `tinysoft.fund_manager_risk_ext` | 626 | - | - | - | 已弃用；经理风险调整指标由本地净值/基准链路计算，不再作为 TinySoft 采集任务 |
 | `tinysoft.market_calendar_multi` | 753 | `(market_code, trade_date)` | `trade_date`, `market_code` | `NONE` | `conflict=PK, update=all_non_pk` |
-| `tinysoft.index_financial_agg` | 754-763 | `(index_code_raw, report_date, metric_table_id, metric_name, agg_method, sample_scope)` | `report_date`, `index_code_raw`, `metric_name` | `RANGE(report_date,YEAR)` | `conflict=PK, update=all_non_pk` |
+| `tinysoft.index_financial_agg` | 754-763 | - | - | - | 已弃用；指数财务聚合由本地成分、权重和股票 PIT 财务计算，不再作为 TinySoft 采集任务 |
 
 ### 3.2 提质预留（P1）
 

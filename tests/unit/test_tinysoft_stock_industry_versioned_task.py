@@ -46,6 +46,66 @@ class _MultiSymbolApi:
         )
 
 
+class _BatchInfoTableApi:
+    def __init__(self):
+        self.batch_calls = 0
+        self.single_calls = 0
+        self.last_where_clause = "NOT_CALLED"
+        self.last_stocks = None
+
+    async def call_dataframe_for_stocks(self, func, table_id, **kwargs):
+        stock_list = list(kwargs.get("stocks"))
+        self.batch_calls += 1
+        self.last_stocks = stock_list
+        self.last_where_clause = kwargs.get("where_clause")
+        assert func == "infoarray"
+        assert table_id == 139
+        rows = []
+        for stock in stock_list:
+            rows.extend(
+                [
+                    {
+                        "证券代码": stock,
+                        "属性代码": "SWHY440000",
+                        "属性名称": "申万金融服务",
+                        "级数": 1,
+                        "入选日期": 20260301,
+                        "剔除日期": 0,
+                        "最新标识": 1,
+                        "所属属性代码": "SWHY",
+                        "所属属性名称": "申万行业",
+                    },
+                    {
+                        "证券代码": stock,
+                        "属性代码": "SWHY440100",
+                        "属性名称": "申万银行",
+                        "级数": 2,
+                        "入选日期": 20260301,
+                        "剔除日期": 0,
+                        "最新标识": 1,
+                        "所属属性代码": "SWHY",
+                        "所属属性名称": "申万行业",
+                    },
+                    {
+                        "证券代码": stock,
+                        "属性代码": "SWHY440101",
+                        "属性名称": "申万股份制银行",
+                        "级数": 3,
+                        "入选日期": 20260301,
+                        "剔除日期": 0,
+                        "最新标识": 1,
+                        "所属属性代码": "SWHY",
+                        "所属属性名称": "申万行业",
+                    },
+                ]
+            )
+        return pd.DataFrame(rows)
+
+    async def call_dataframe(self, *args, **kwargs):
+        self.single_calls += 1
+        return pd.DataFrame()
+
+
 def _make_task(task_config=None, db=None, api=None):
     return TinySoftStockIndustryVersionedTask(
         db_connection=db if db is not None else object(),
@@ -152,6 +212,31 @@ async def test_fetch_batch_supports_symbol_pairs():
     assert set(df["证券代码"]) == {"SZ000001", "SH600000"}
 
 
+@pytest.mark.asyncio
+async def test_fetch_batch_prefers_batch_infotable_for_symbol_pairs():
+    api = _BatchInfoTableApi()
+    task = _make_task(db=_FakeDB(), api=api, task_config={"skip_failed_symbols": False})
+    df = await task.fetch_batch(
+        {
+            "symbol_pairs": [
+                {"ts_code": "000001.SZ", "stock": "SZ000001"},
+                {"ts_code": "600000.SH", "stock": "SH600000"},
+            ],
+            "infoarray_table_id": 139,
+            "start_date": "20260301",
+            "end_date": "20260302",
+            "service": "",
+            "timeout_ms": 45000,
+        }
+    )
+    assert df is not None
+    assert api.batch_calls == 1
+    assert api.single_calls == 0
+    assert api.last_stocks == ["SZ000001", "SH600000"]
+    assert api.last_where_clause is None
+    assert set(df["证券代码"]) == {"SZ000001", "SH600000"}
+
+
 # ---------- WHERE clause tests ----------
 
 
@@ -173,6 +258,10 @@ async def test_fetch_batch_never_passes_where_clause():
     assert api.last_where_clause is None, (
         "行业分类任务不应传递 where_clause（需要完整上下文重建快照）"
     )
+
+
+def test_industry_versioned_smart_lookback_covers_historical_rebuilds():
+    assert TinySoftStockIndustryVersionedTask.smart_lookback_days >= 370
 
 
 def test_process_data_uses_effective_window_when_kwargs_missing():

@@ -183,17 +183,45 @@ class ConfigManager:
         result = tiny_cfg.copy()
 
         # 基础字段
+        if not result.get("mode"):
+            result["mode"] = os.environ.get("TINYSOFT_MODE", os.environ.get("TINYSOFT_API_MODE", "pytsl"))
         if not result.get("user"):
-            result["user"] = os.environ.get("TINYSOFT_USER", "")
+            result["user"] = os.environ.get("TINYSOFT_USER", os.environ.get("TINYDATA_USER", ""))
         if not result.get("password"):
-            result["password"] = os.environ.get("TINYSOFT_PASSWORD", "")
+            result["password"] = os.environ.get(
+                "TINYSOFT_PASSWORD",
+                os.environ.get("TINYDATA_PASSWORD", ""),
+            )
         if not result.get("host"):
-            result["host"] = os.environ.get("TINYSOFT_HOST", "tsl.tinysoft.com.cn")
+            result["host"] = os.environ.get(
+                "TINYSOFT_HOST",
+                os.environ.get("TINYDATA_HOST", "tsl.tinysoft.com.cn"),
+            )
+        if not result.get("opi_url"):
+            result["opi_url"] = os.environ.get("TINYSOFT_OPI_URL", "https://opi.tinysoft.com.cn")
+        if not result.get("opi_auth_mode"):
+            result["opi_auth_mode"] = os.environ.get("TINYSOFT_OPI_AUTH_MODE", "basic")
+        if not result.get("session_key"):
+            result["session_key"] = os.environ.get(
+                "TINYSOFT_SESSION_KEY",
+                os.environ.get("TINYSOFT_OPI_SESSION_KEY", ""),
+            )
+        if not result.get("session_password"):
+            result["session_password"] = os.environ.get(
+                "TINYSOFT_SESSION_PASSWORD",
+                os.environ.get("TINYSOFT_OPI_SESSION_PASSWORD", ""),
+            )
+        if not result.get("json_encode"):
+            result["json_encode"] = os.environ.get("TINYSOFT_OPI_JSON_ENCODE", "utf8")
+        if not result.get("run_func_name"):
+            result["run_func_name"] = os.environ.get("TINYSOFT_OPI_RUN_FUNC_NAME", "")
+        if not result.get("query_func_name"):
+            result["query_func_name"] = os.environ.get("TINYSOFT_OPI_QUERY_FUNC_NAME", "")
 
         # 端口
         port_val = result.get("port")
         if port_val in (None, ""):
-            port_val = os.environ.get("TINYSOFT_PORT", 443)
+            port_val = os.environ.get("TINYSOFT_PORT", os.environ.get("TINYDATA_PORT", 443))
         try:
             result["port"] = int(port_val)
         except (TypeError, ValueError):
@@ -201,7 +229,7 @@ class ConfigManager:
 
         # 可选 ini 文件
         if not result.get("ini_path"):
-            ini_path = os.environ.get("TINYSOFT_INI")
+            ini_path = os.environ.get("TINYSOFT_INI") or os.environ.get("TINYDATA_INI")
             if ini_path:
                 result["ini_path"] = ini_path
 
@@ -212,7 +240,10 @@ class ConfigManager:
         # 超时（毫秒）
         timeout_val = result.get("timeout_ms")
         if timeout_val in (None, ""):
-            timeout_val = os.environ.get("TINYSOFT_TIMEOUT_MS", 30000)
+            timeout_val = os.environ.get(
+                "TINYSOFT_TIMEOUT_MS",
+                os.environ.get("TINYDATA_TIMEOUT_MS", 30000),
+            )
         try:
             result["timeout_ms"] = int(timeout_val)
         except (TypeError, ValueError):
@@ -221,7 +252,10 @@ class ConfigManager:
         # 请求间隔（秒）
         interval_val = result.get("request_interval")
         if interval_val in (None, ""):
-            interval_val = os.environ.get("TINYSOFT_REQUEST_INTERVAL", 0.2)
+            interval_val = os.environ.get(
+                "TINYSOFT_REQUEST_INTERVAL",
+                os.environ.get("TINYDATA_REQUEST_INTERVAL", 0.2),
+            )
         try:
             result["request_interval"] = float(interval_val)
         except (TypeError, ValueError):
