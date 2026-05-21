@@ -4,13 +4,35 @@ import logging
 import os
 import time
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
-import aiohttp
 import pandas as pd
 from aiolimiter import AsyncLimiter
 
 from alphahome.fetchers.exceptions import TushareAuthError
+
+if TYPE_CHECKING:
+    import aiohttp
+
+
+_AIOHTTP_MODULE = None
+
+
+class _LazyAiohttpProxy:
+    def __getattr__(self, name: str):
+        return getattr(_get_aiohttp_module(), name)
+
+
+def _get_aiohttp_module():
+    global _AIOHTTP_MODULE
+    if _AIOHTTP_MODULE is None:
+        import aiohttp as aiohttp_module
+
+        _AIOHTTP_MODULE = aiohttp_module
+    return _AIOHTTP_MODULE
+
+
+aiohttp = _LazyAiohttpProxy()
 
 
 def _concat_dataframes(frames: List[pd.DataFrame]) -> pd.DataFrame:
@@ -207,6 +229,14 @@ class TushareAPI:
                 self.logger.debug(f"动态为 API {api_name} 创建速率控制锁")
         return TushareAPI._api_rate_limit_locks[api_name]
 
+    @staticmethod
+    def _redact_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Return a log-safe payload copy without exposing API credentials."""
+        safe_payload = payload.copy()
+        if safe_payload.get("token"):
+            safe_payload["token"] = "***REDACTED***"
+        return safe_payload
+
     async def query(
         self,
         api_name: str,
@@ -273,7 +303,6 @@ class TushareAPI:
         request_count = 0
 
         fields_str = _fields_to_str(fields)
-
         timeout = aiohttp.ClientTimeout(
             total=120,
             connect=30,
@@ -322,7 +351,7 @@ class TushareAPI:
                                     if response.status != 200:
                                         error_text = await response.text()
                                         self.logger.error(
-                                            f"Tushare API 请求失败 ({api_name}): 状态码: {response.status}, URL: {self.http_url}, Payload: {payload}, 响应: {error_text}"
+                                            f"Tushare API 请求失败 ({api_name}): 状态码: {response.status}, URL: {self.http_url}, Payload: {self._redact_payload(payload)}, 响应: {error_text}"
                                         )
                                         if 500 <= response.status < 600 and attempt < max_retries:
                                             delay = _retry_delay_seconds(attempt)
@@ -354,7 +383,7 @@ class TushareAPI:
                         if result.get("code") != 0:
                             error_msg = result.get("msg", "未知错误")
                             self.logger.error(
-                                f"Tushare API 返回错误 ({api_name}): Code: {result.get('code')}, Msg: {error_msg}, Payload: {payload}"
+                                f"Tushare API 返回错误 ({api_name}): Code: {result.get('code')}, Msg: {error_msg}, Payload: {self._redact_payload(payload)}"
                             )
                             if result.get("code") == 50101 and self._is_offset_limit_50101(error_msg, params):
                                 self.logger.warning(
@@ -472,7 +501,6 @@ class TushareAPI:
         consecutive_empty_pages = 0  # 新增：连续空页计数器
         max_consecutive_empty_before_stop = 3  # 新增：连续多少次空页后停止的阈值
         request_count = 0  # 用于日志记录分页次数
-
         # 分页循环
         while has_more:
             request_count += 1
@@ -529,7 +557,7 @@ class TushareAPI:
                             if response.status != 200:
                                 error_text = await response.text()
                                 self.logger.error(
-                                    f"Tushare API 请求失败 ({api_name}): 状态码: {response.status}, URL: {self.http_url}, Payload: {payload}, 响应: {error_text}"
+                                    f"Tushare API 请求失败 ({api_name}): 状态码: {response.status}, URL: {self.http_url}, Payload: {self._redact_payload(payload)}, 响应: {error_text}"
                                 )
                                 raise ValueError(
                                     f"Tushare API 请求失败({api_name})，状态码: {response.status}, 响应: {error_text}"
@@ -539,7 +567,7 @@ class TushareAPI:
                             if result.get("code") != 0:
                                 error_msg = result.get("msg", "未知错误")
                                 self.logger.error(
-                                    f"Tushare API 返回错误 ({api_name}): Code: {result.get('code')}, Msg: {error_msg}, Payload: {payload}"
+                                    f"Tushare API 返回错误 ({api_name}): Code: {result.get('code')}, Msg: {error_msg}, Payload: {self._redact_payload(payload)}"
                                 )
                                 if result.get("code") == 40203:
                                     self.logger.warning(

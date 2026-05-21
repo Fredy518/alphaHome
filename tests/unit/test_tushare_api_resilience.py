@@ -259,3 +259,17 @@ async def test_offset_split_raises_on_failed_subrange(monkeypatch):
             end_date="20240131",
             limit=5000,
         )
+
+
+def test_tushare_api_redacts_token_from_log_payload():
+    payload = {
+        "api_name": "cyq_perf",
+        "token": "secret-token",
+        "params": {"ts_code": "600000.SH"},
+        "fields": "ts_code",
+    }
+
+    redacted = TushareAPI._redact_payload(payload)
+
+    assert redacted["token"] == "***REDACTED***"
+    assert payload["token"] == "secret-token"

@@ -19,6 +19,9 @@ from alphahome.common.task_system.task_decorator import task_register
 # logger 由 Task 基类提供
 # logger = logging.getLogger(__name__)
 
+FINANCIAL_OPTION_EXCHANGES = ("CFFEX", "SSE", "SZSE")
+FINANCIAL_OPTION_TS_SUFFIXES = ("CFX", "SH", "SZ")
+
 
 @task_register()
 class TushareOptionBasicTask(TushareTask):
@@ -37,6 +40,7 @@ class TushareOptionBasicTask(TushareTask):
     # 考虑到需要按交易所分批，可以适当增加并发限制
     default_concurrent_limit = 10
     default_page_size = 10000  # 试验最大单次返回12000行
+    option_exchanges = FINANCIAL_OPTION_EXCHANGES
 
     # 2. TushareTask 特有属性
     api_name = "opt_basic"
@@ -117,13 +121,31 @@ class TushareOptionBasicTask(TushareTask):
         生成批处理参数列表。对于 opt_basic，按交易所分批获取。
         使用包含常见期货和股票期权交易所的列表。
         """
-        # 包含常见期货和股票期权交易所的列表 (待验证哪些支持 opt_basic)
-        exchanges = ["CFFEX", "SSE", "SZSE"] # 暂时只获取金融期权合约
-        batch_list = [{"exchange": exc} for exc in exchanges]
+        batch_list = [{"exchange": exc} for exc in self.option_exchanges]
         self.logger.info(
             f"任务 {self.name}: 按交易所分批获取模式，生成 {len(batch_list)} 个批次。"
         )
         return batch_list
+
+    def process_data(self, data: pd.DataFrame, **kwargs) -> pd.DataFrame:
+        df = super().process_data(data, **kwargs)
+        if not isinstance(df, pd.DataFrame) or df.empty:
+            return df
+
+        if "exchange" in df.columns:
+            exchange = df["exchange"].fillna("").astype(str).str.upper().str.strip()
+            mask = exchange.isin(self.option_exchanges)
+        elif "ts_code" in df.columns:
+            suffix = df["ts_code"].fillna("").astype(str).str.upper().str.rsplit(".", n=1).str[-1]
+            mask = suffix.isin(FINANCIAL_OPTION_TS_SUFFIXES)
+        else:
+            mask = pd.Series(False, index=df.index)
+
+        filtered = df.loc[mask].copy()
+        dropped = len(df) - len(filtered)
+        if dropped:
+            self.logger.info("任务 %s: 已过滤 %s 条商品期权 basic 记录。", self.name, dropped)
+        return filtered
 
     # 7. 数据验证规则 (真正生效的验证机制)
     validations = [

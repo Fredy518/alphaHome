@@ -717,7 +717,7 @@ async def _get_stock_codes_from_sources(
             df = await api_instance.query(
                 api_name="stock_basic",
                 fields=[code_column],
-                params={"list_status": "L"},  # 只获取上市状态的股票
+                list_status="L",  # 只获取上市状态的股票
             )
 
             if df is not None and not df.empty:

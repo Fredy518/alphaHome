@@ -36,7 +36,7 @@ class TushareStockChipsTask(TushareTask):
 
     # --- 代码级默认配置 (会被 config.json 覆盖) --- #
     default_concurrent_limit = 5
-    default_page_size = 5000  # API限制单次最大5000条
+    default_page_size = 6000  # API限制单次最大6000条
 
     # 2. 自定义索引
     indexes = [
@@ -108,7 +108,8 @@ class TushareStockChipsTask(TushareTask):
     async def get_batch_list(self, **kwargs: Any) -> List[Dict[str, Any]]:
         """使用 BatchPlanner 生成批处理参数列表
 
-        为每个交易日生成单独的批次，使用 trade_date 参数。
+        cyq_perf 接口要求传入 ts_code，因此按股票代码生成批次，并为每个
+        批次附带统一的 start_date/end_date 日期窗口。
 
         Args:
             **kwargs: 查询参数，包括start_date、end_date、ts_code等
@@ -119,7 +120,6 @@ class TushareStockChipsTask(TushareTask):
         start_date_overall = kwargs.get("start_date")
         end_date_overall = kwargs.get("end_date")
         ts_code = kwargs.get("ts_code")  # 可选的股票代码
-        exchange = kwargs.get("exchange", "SSE")  # 传递 exchange 给日历工具
 
         # 确定总体起止日期
         if not start_date_overall:
@@ -150,21 +150,26 @@ class TushareStockChipsTask(TushareTask):
         )
 
         try:
-            # 使用标准的单日期批次生成工具
-            from ...sources.tushare.batch_utils import generate_single_date_batches
+            from ...sources.tushare.batch_utils import generate_stock_code_batches
 
-            # 准备附加参数
-            additional_params = {"fields": ",".join(self.fields or [])}
+            additional_params = {
+                "fields": ",".join(self.fields or []),
+                "start_date": start_date_overall,
+                "end_date": end_date_overall,
+            }
 
-            batch_list = await generate_single_date_batches(
-                start_date=start_date_overall,
-                end_date=end_date_overall,
-                date_field="trade_date",  # 指定日期字段名
-                ts_code=ts_code,
-                exchange=exchange,
-                additional_params=additional_params,
-                logger=self.logger,
-            )
+            if ts_code:
+                batch_list = [{**additional_params, "ts_code": ts_code}]
+            else:
+                batch_list = await generate_stock_code_batches(
+                    db_connection=self.db,
+                    table_name="tushare.stock_basic",
+                    code_column="ts_code",
+                    filter_condition=None,
+                    api_instance=self.api,
+                    additional_params=additional_params,
+                    logger=self.logger,
+                )
 
             self.logger.info(f"任务 {self.name}: 成功生成 {len(batch_list)} 个批次")
             return batch_list

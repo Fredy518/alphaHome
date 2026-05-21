@@ -90,7 +90,7 @@ class TushareCBondPriceChgTask(TushareTask):
     async def get_batch_list(self, **kwargs: Any) -> List[Dict]:
         """
         生成批处理参数列表。
-        从 tushare.cbond_basic 表获取所有可转债代码，每10个 ts_code 组成一个多值字符串分批获取。
+        从 tushare.cbond_basic 表获取所有可转债代码，每300个 ts_code 组成一个多值字符串分批获取。
         """
         # 从 cbond_basic 表获取所有转债代码
         query = 'SELECT DISTINCT ts_code FROM "tushare"."cbond_basic" ORDER BY ts_code'
@@ -102,9 +102,9 @@ class TushareCBondPriceChgTask(TushareTask):
 
         ts_codes = [r["ts_code"] for r in records]
         total_count = len(ts_codes)
-        batch_size = 10  # 每批10个 ts_code
+        batch_size = 300  # 每批300个 ts_code
         
-        # 按每10个分组
+        # 按每300个分组
         batches = []
         for i in range(0, total_count, batch_size):
             batch_codes = ts_codes[i:i + batch_size]
@@ -144,7 +144,7 @@ class TushareCBondPriceChgTask(TushareTask):
 1. 全量更新：设置 update_type="full" 或通过GUI选择"全量更新"
    - 会清空现有数据，重新获取所有可转债转股价变动信息
    - 不管增量还是全量模式，都进行全量更新
-   - 从 tushare.cbond_basic 表获取所有转债代码，每10个 ts_code 组成一个多值字符串分批获取
+   - 从 tushare.cbond_basic 表获取所有转债代码，每300个 ts_code 组成一个多值字符串分批获取
 2. 权限要求：本接口需单独开权限（跟积分没关系）
 3. 单次限量：2000条，总量不限制
 
@@ -153,6 +153,6 @@ class TushareCBondPriceChgTask(TushareTask):
 - 全量更新会清空现有数据并重新获取
 - 主键为 (ts_code, change_date)，同一个转债可能有多次转股价变动记录
 - 数据包含初始转股价格、修正前转股价格、修正后转股价格等信息
-- 每批处理10个转债代码，避免单次请求数据量过大
+- 每批处理300个转债代码，避免单次请求数据量过大
 """
 

@@ -11,14 +11,27 @@ from dataclasses import asdict, dataclass
 from datetime import datetime
 from html import unescape
 from html.parser import HTMLParser
-from typing import Any, Dict, Iterable, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Optional
 from urllib.parse import urljoin
 
-import aiohttp
 import pandas as pd
 
 from ...base.fetcher_task import FetcherTask
 from ....common.task_system.task_decorator import task_register
+
+if TYPE_CHECKING:
+    import aiohttp
+
+_AIOHTTP_MODULE = None
+
+
+def _get_aiohttp_module():
+    global _AIOHTTP_MODULE
+    if _AIOHTTP_MODULE is None:
+        import aiohttp as aiohttp_module
+
+        _AIOHTTP_MODULE = aiohttp_module
+    return _AIOHTTP_MODULE
 
 
 USER_AGENT = (
@@ -425,11 +438,13 @@ def expand_table_grid(rows: List[List[HtmlCell]]) -> List[List[str]]:
 
 class HttpClient:
     def __init__(self, request_sleep: float = 0.0, timeout_seconds: int = 30) -> None:
+        aiohttp = _get_aiohttp_module()
         self.request_sleep = max(float(request_sleep), 0.0)
         self.timeout = aiohttp.ClientTimeout(total=timeout_seconds)
-        self.session: Optional[aiohttp.ClientSession] = None
+        self.session: Optional["aiohttp.ClientSession"] = None
 
     async def __aenter__(self) -> "HttpClient":
+        aiohttp = _get_aiohttp_module()
         self.session = aiohttp.ClientSession(headers={"User-Agent": USER_AGENT}, timeout=self.timeout)
         return self
 

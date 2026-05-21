@@ -8,14 +8,13 @@ import os
 from datetime import timedelta
 from typing import Any, Dict, List, Optional, Tuple, Union
 
-import asyncpg
 import pandas as pd
 
 logger = logging.getLogger(__name__)
 
 # 全局交易日历数据缓存
 _TRADE_CAL_CACHE: Dict[Tuple[str, str, str, str], pd.DataFrame] = {}
-_DB_POOL: Optional[asyncpg.Pool] = None
+_DB_POOL: Optional[Any] = None
 _CALENDAR_DB_MANAGER: contextvars.ContextVar[Optional[Any]] = contextvars.ContextVar(
     "alphahome_calendar_db_manager",
     default=None,
@@ -162,10 +161,12 @@ def _load_db_config() -> Optional[Dict[str, Any]]:
 
 
 # 新的辅助函数：获取数据库连接池
-async def _get_db_pool() -> Optional[asyncpg.Pool]:
+async def _get_db_pool() -> Optional[Any]:
     """获取或初始化数据库连接池。"""
     global _DB_POOL
     if _DB_POOL is None or _DB_POOL._closed:  # 检查连接池是否需要初始化或已关闭
+        import asyncpg
+
         db_settings = _load_db_config()
         if not db_settings:
             logger.error("无法初始化数据库连接池：加载数据库设置失败。")
