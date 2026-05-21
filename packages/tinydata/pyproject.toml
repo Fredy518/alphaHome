@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tinydata"
+version = "0.1.0"
+description = "A lightweight Tinysoft/pyTSL data client with pandas-friendly dataset APIs."
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [
+  { name = "AlphaHome" }
+]
+dependencies = [
+  "pandas>=2.2",
+  "pyarrow>=15",
+  "platformdirs>=4",
+  "pydantic>=2",
+  "python-dateutil>=2.8",
+]
+
+[project.optional-dependencies]
+tinysoft = [
+  "tspytsl>=1.9",
+]
+test = [
+  "pytest>=7",
+  "pytest-asyncio>=0.21",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["tinydata", "tinydata.*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = ["--strict-markers", "--tb=short"]
+markers = [
+  "requires_tinysoft: tests that require a real Tinysoft account and pyTSL connection",
+]
