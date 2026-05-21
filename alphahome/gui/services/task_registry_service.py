@@ -66,6 +66,16 @@ def toggle_processing_select(row_index: int):
             _send_response_callback("PROCESSING_TASK_LIST_UPDATE", _processing_task_cache)
 
 
+def _is_hidden_from_collection_gui(task_name: str, task_class: Any) -> bool:
+    """Return True when a registered fetch task should stay available but hidden in the GUI list."""
+    if _GUI_EXCLUDE_TINYSOFT_MINUTE_FETCH.match(task_name):
+        return True
+    return bool(
+        getattr(task_class, "hide_from_gui", False)
+        or getattr(task_class, "hide_from_gui_collection", False)
+    )
+
+
 async def handle_get_collection_tasks():
     """处理获取'fetch'类型任务列表的请求。"""
     global _collection_task_cache
@@ -81,7 +91,8 @@ async def handle_get_collection_tasks():
         task_names = sorted(fetch_tasks.keys()) if isinstance(fetch_tasks, dict) else sorted(fetch_tasks)
 
         for name in task_names:
-            if _GUI_EXCLUDE_TINYSOFT_MINUTE_FETCH.match(name):
+            task_class = fetch_tasks.get(name) if isinstance(fetch_tasks, dict) else None
+            if _is_hidden_from_collection_gui(name, task_class):
                 continue
             try:
                 task_instance = await UnifiedTaskFactory.get_task(name)

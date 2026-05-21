@@ -92,7 +92,9 @@ async def initialize_controller(response_callback):
 
     # 导入fetchers模块以触发任务注册（修复Phase 1-3中GUI不显示任务的问题）
     logger.info("正在导入数据采集任务模块...")
-    import alphahome.fetchers  # 触发任务注册
+    from alphahome.fetchers import tasks as fetcher_tasks
+
+    fetcher_tasks.discover_tasks()
 
     logger.info("正在初始化所有后端控制器逻辑模块...")
     

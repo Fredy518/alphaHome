@@ -18,9 +18,9 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-import alphahome.fetchers  # noqa: F401  # 触发任务注册
 from alphahome.common.constants import UpdateTypes
 from alphahome.common.task_system import UnifiedTaskFactory
+from alphahome.fetchers.tasks import discover_tasks
 from alphahome.fetchers.tools.calendar import get_last_trade_day, is_trade_day
 
 
@@ -208,6 +208,7 @@ def resolve_target_date(raw: str | None) -> date:
 
 async def async_main(args: argparse.Namespace) -> Dict[str, Any]:
     target_date = resolve_target_date(args.target_date)
+    discover_tasks()
     await UnifiedTaskFactory.initialize()
     try:
         if args.mode == "refresh":

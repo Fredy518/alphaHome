@@ -1,11 +1,7 @@
-from .tushare_future_basic import TushareFutureBasicTask
-from .tushare_future_daily import TushareFutureDailyTask
-from .tushare_future_holding import TushareFutureHoldingTask
-from .tushare_future_mapping import TushareFutureMappingTask
+"""Future fetcher task modules.
 
-__all__ = [
-    "TushareFutureBasicTask",
-    "TushareFutureDailyTask",
-    "TushareFutureHoldingTask",
-    "TushareFutureMappingTask",
-]
+Import concrete modules directly, or call ``alphahome.fetchers.tasks.discover_tasks``
+to register every task.
+"""
+
+__all__: list[str] = []

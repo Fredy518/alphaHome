@@ -1,9 +1,7 @@
-from .excel_fastrategy_basic import ExcelFastategyBasicTask
-from .excel_fastrategy_fof_versus import ExcelFastategyFofVersusTask
-from .excel_fastrategy_portfolio import ExcelFastategyPortfolioTask
+"""Fastrategy fetcher task modules.
 
-__all__ = [
-    "ExcelFastategyBasicTask",
-    "ExcelFastategyFofVersusTask",
-    "ExcelFastategyPortfolioTask",
-]
+Import concrete modules directly, or call ``alphahome.fetchers.tasks.discover_tasks``
+to register every task.
+"""
+
+__all__: list[str] = []

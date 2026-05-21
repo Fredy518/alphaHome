@@ -15,10 +15,9 @@ _ROOT = Path(__file__).resolve().parents[1]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-import alphahome.fetchers.tasks  # noqa: F401 — register tasks
-
 from alphahome.common.constants import UpdateTypes
 from alphahome.common.task_system.task_factory import UnifiedTaskFactory
+from alphahome.fetchers.tasks import discover_tasks
 
 TASKS = (
     "tinysoft_stock_suspend",
@@ -29,6 +28,7 @@ TASKS = (
 
 async def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+    discover_tasks()
     await UnifiedTaskFactory.initialize()
     try:
         for name in TASKS:

@@ -1,4 +1,7 @@
-from .tushare_others_hktradecal import TushareOthersHktradecalTask
-from .tushare_others_tradecal import TushareOthersTradecalTask
+"""Other fetcher task modules.
 
-__all__ = ["TushareOthersTradecalTask", "TushareOthersHktradecalTask"]
+Import concrete modules directly, or call ``alphahome.fetchers.tasks.discover_tasks``
+to register every task.
+"""
+
+__all__: list[str] = []

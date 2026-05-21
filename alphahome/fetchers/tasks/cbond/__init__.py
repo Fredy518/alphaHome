@@ -1,20 +1,7 @@
-# cbond 包初始化文件
-from .tushare_cbond_basic import TushareCBondBasicTask
-from .tushare_cbond_daily import TushareCBondDailyTask
-from .tushare_cbond_factor_pro import TushareCbondFactorProTask
-from .tushare_cbond_issue import TushareCBondIssueTask
-from .tushare_cbond_call import TushareCBondCallTask
-from .tushare_cbond_rate import TushareCBondRateTask
-# from .tushare_cbond_price_chg import TushareCBondPriceChgTask
-from .tushare_cbond_share import TushareCBondShareTask
+"""Convertible bond fetcher task modules.
 
-__all__ = [
-    "TushareCBondBasicTask",
-    "TushareCBondDailyTask",
-    "TushareCbondFactorProTask",
-    "TushareCBondIssueTask",
-    "TushareCBondCallTask",
-    "TushareCBondRateTask",
-    # "TushareCBondPriceChgTask",
-    "TushareCBondShareTask",
-]
+Import concrete modules directly, or call ``alphahome.fetchers.tasks.discover_tasks``
+to register every task.
+"""
+
+__all__: list[str] = []

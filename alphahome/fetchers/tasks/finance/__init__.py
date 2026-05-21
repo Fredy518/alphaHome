@@ -1,35 +1,7 @@
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
+"""Finance fetcher task modules.
 
-"""
-财务数据相关任务模块
-
-包含以下任务：
-- 资产负债表 (balancesheet)
-- 现金流量表 (cashflow)
-- 利润表 (income)
-- 业绩快报 (express)
-- 业绩预告 (forecast)
-- 财务指标 (indicator)
-- 财报披露计划 (disclosure)
+Import concrete modules directly, or call ``alphahome.fetchers.tasks.discover_tasks``
+to register every task.
 """
 
-from .tushare_fina_balancesheet import TushareFinaBalancesheetTask
-from .tushare_fina_cashflow import TushareFinaCashflowTask
-from .tushare_fina_disclosure import TushareFinaDisclosureTask
-from .tushare_fina_express import TushareFinaExpressTask
-from .tushare_fina_forecast import TushareFinaForecastTask
-from .tushare_fina_income import TushareFinaIncomeTask
-from .tushare_fina_indicator import TushareFinaIndicatorTask
-from .tushare_fina_mainbz import TushareFinaMainbzTask
-
-__all__ = [
-    "TushareFinaBalancesheetTask",
-    "TushareFinaCashflowTask",
-    "TushareFinaIncomeTask",
-    "TushareFinaExpressTask",
-    "TushareFinaForecastTask",
-    "TushareFinaIndicatorTask",
-    "TushareFinaDisclosureTask",
-    "TushareFinaMainbzTask",
-]
+__all__: list[str] = []

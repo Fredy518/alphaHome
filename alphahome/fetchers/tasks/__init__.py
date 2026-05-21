@@ -1,12 +1,30 @@
-# 任务包
-from .finance import *  # 导入所有财务任务类
-from .fund import *  # 导入所有基金任务类
-from .fastrategy import *  # 导入所有基金投顾策略任务类
-from .future import *  # 导入所有期货任务类
-from .hk import *  # 导入所有港股任务类
-from .index import *  # 导入所有指数任务类
-from .macro import *  # 导入所有宏观数据任务类
-from .option import *  # 导入所有期权任务类
-from .others import *  # 导入所有其他任务类
-from .stock import *  # 导入所有股票任务类
-from .cbond import *  # 导入所有可转债任务类
+"""Fetcher task package.
+
+Concrete task modules register themselves via decorators when imported.  Importing
+this package stays cheap; callers that need the full registry should call
+``discover_tasks()`` explicitly.
+"""
+
+from __future__ import annotations
+
+import importlib
+import pkgutil
+
+_DISCOVERED = False
+
+
+def discover_tasks(*, force_reload: bool = False) -> None:
+    """Import all concrete task modules to populate the task registry."""
+    global _DISCOVERED
+    if _DISCOVERED and not force_reload:
+        return
+
+    for module_info in pkgutil.walk_packages(__path__, prefix=f"{__name__}."):
+        if module_info.ispkg:
+            continue
+        importlib.import_module(module_info.name)
+
+    _DISCOVERED = True
+
+
+__all__ = ["discover_tasks"]

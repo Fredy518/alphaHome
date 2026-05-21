@@ -1,6 +1,6 @@
 import inspect
 import logging
-from typing import Any, Dict, List, Optional, Type
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Type
 
 from ..config_manager import (
     get_database_url,
@@ -9,8 +9,10 @@ from ..config_manager import (
     get_tushare_token,
     reload_config as _reload_config,
 )
-from ..db_manager import DBManager
 from .base_task import BaseTask
+
+if TYPE_CHECKING:
+    from ..db_manager import DBManager
 
 logger = logging.getLogger("unified_task_factory")
 
@@ -23,10 +25,16 @@ class UnifiedTaskFactory:
     """
 
     # 类变量
-    _db_manager: Optional[DBManager] = None
+    _db_manager: Optional["DBManager"] = None
     _task_instances: Dict[str, BaseTask] = {}
     _task_registry: Dict[str, Type[BaseTask]] = {}
     _initialized: bool = False
+
+    @staticmethod
+    def _create_db_manager(db_url: str) -> "DBManager":
+        from ..db_manager import DBManager
+
+        return DBManager(db_url)
 
     @classmethod
     def register_task(cls, task_name, task_class):
@@ -59,7 +67,7 @@ class UnifiedTaskFactory:
         # 只有在获得有效 db_url 后才继续
         logger.info(f"尝试使用数据库 URL 初始化 UnifiedTaskFactory: {db_url}")
         try:
-            cls._db_manager = DBManager(db_url)
+            cls._db_manager = cls._create_db_manager(db_url)
             await cls._db_manager.connect()
             cls._initialized = True
             logger.info(f"UnifiedTaskFactory 初始化成功: db_url={db_url}")
@@ -106,7 +114,7 @@ class UnifiedTaskFactory:
 
             # 3. 使用新 URL 重新初始化 DBManager
             logger.info("正在使用新 URL 创建新的 DBManager 实例...")
-            cls._db_manager = DBManager(new_db_url)
+            cls._db_manager = cls._create_db_manager(new_db_url)
             await cls._db_manager.connect()  # 连接失败会抛出异常
 
             # 4. 清空旧的任务实例缓存，因为它们可能持有旧的 db_manager 或旧配置

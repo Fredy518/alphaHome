@@ -41,6 +41,7 @@ from alphahome.common.logging_utils import get_logger
 from alphahome.common.task_system import UnifiedTaskFactory
 from alphahome.common.constants import UpdateTypes
 from alphahome.common.config_manager import get_database_url
+from alphahome.fetchers.tasks import discover_tasks
 
 logger = get_logger(__name__)
 
@@ -93,6 +94,7 @@ class DataCollectionProductionUpdater:
                 raise ValueError("无法获取数据库连接字符串，请检查配置文件")
 
             self.db_manager = create_async_manager(db_url)
+            discover_tasks()
             await UnifiedTaskFactory.initialize()
 
             logger.info("[SUCCESS] 数据库连接和任务工厂初始化成功")

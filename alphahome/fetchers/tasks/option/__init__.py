@@ -1,4 +1,7 @@
-from .tushare_option_basic import TushareOptionBasicTask
-from .tushare_option_daily import TushareOptionDailyTask
+"""Option fetcher task modules.
 
-__all__ = ["TushareOptionBasicTask", "TushareOptionDailyTask"]
+Import concrete modules directly, or call ``alphahome.fetchers.tasks.discover_tasks``
+to register every task.
+"""
+
+__all__: list[str] = []

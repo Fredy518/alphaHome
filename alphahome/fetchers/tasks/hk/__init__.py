@@ -1,10 +1,7 @@
-# Initializes the hk tasks module
-from .tushare_hk_basic import TushareHKBasicTask
+"""HK fetcher task modules.
 
-# from .tushare_hk_dailyadj import TushareHkDailyadjTask # 新增的任务
+Import concrete modules directly, or call ``alphahome.fetchers.tasks.discover_tasks``
+to register every task.
+"""
 
-__all__ = [
-    # "TushareHKAdjFactorTask", # 已删除
-    "TushareHKBasicTask",
-    # "TushareHkDailyadjTask"
-]
+__all__: list[str] = []

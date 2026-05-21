@@ -18,11 +18,8 @@ from ..common.task_system import (
     get_task_types,
 )
 
-# 导入所有具体的数据采集任务（这会触发任务注册）
-from . import tasks
-
-# 注册所有任务到统一工厂 (此步骤已不再需要，因为注册是即时的)
-# register_tasks_to_factory()
+# 具体任务注册由调用方显式调用 alphahome.fetchers.tasks.discover_tasks() 触发。
+# 避免导入任意 fetcher 子模块时连带加载所有任务和外部客户端依赖。
 
 # 主要导出
 __all__ = [
