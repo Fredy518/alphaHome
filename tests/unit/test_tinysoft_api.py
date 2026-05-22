@@ -53,6 +53,30 @@ async def test_call_dataframe_for_stocks_builds_infotable_query():
 
 
 @pytest.mark.asyncio
+async def test_call_dataframe_for_stocks_builds_projected_infotable_query():
+    api = TinySoftAPI(user="u", password="p")
+    captured = {}
+
+    async def fake_exec(tsl_code, *, as_dataframe=True, stop_event=None):
+        captured["tsl_code"] = tsl_code
+        return pd.DataFrame({"StockID": ["SZ000001"]})
+
+    api.exec = fake_exec
+    await api.call_dataframe_for_stocks(
+        "infoarray",
+        349,
+        stocks=["SZ000001"],
+        fields=["StockID", "占净值比例(%)"],
+        where_clause='["截止日"]>=20250301',
+    )
+
+    assert captured["tsl_code"] == (
+        "return select [\"StockID\"],[\"占净值比例(%)\"] from infotable 349 of 'SZ000001' "
+        'where ["截止日"]>=20250301 end;'
+    )
+
+
+@pytest.mark.asyncio
 async def test_call_dataframe_for_stocks_passes_timeout_to_exec():
     api = TinySoftAPI(user="u", password="p")
     captured = {}
@@ -98,6 +122,28 @@ async def test_call_dataframe_table_builds_full_table_query():
         'return select * from infotable 625 where ["截止日"]>=20260301 end;'
     )
     assert len(df) == 1
+
+
+@pytest.mark.asyncio
+async def test_call_dataframe_table_builds_projected_full_table_query():
+    api = TinySoftAPI(user="u", password="p")
+    captured = {}
+
+    async def fake_exec(tsl_code, *, as_dataframe=True, stop_event=None):
+        captured["tsl_code"] = tsl_code
+        return pd.DataFrame({"基金经理代码": ["M001"]})
+
+    api.exec = fake_exec
+    await api.call_dataframe_table(
+        "infoarray",
+        625,
+        fields=["基金经理代码", "开始日"],
+        where_clause='["截止日"]>=20260301',
+    )
+
+    assert captured["tsl_code"] == (
+        'return select ["基金经理代码"],["开始日"] from infotable 625 where ["截止日"]>=20260301 end;'
+    )
 
 
 @pytest.mark.asyncio

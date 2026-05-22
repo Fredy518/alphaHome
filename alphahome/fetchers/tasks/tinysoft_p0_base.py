@@ -249,6 +249,8 @@ class TinySoftP0InfoArrayTask(TinySoftTask):
     default_stream_batches = True
     default_continue_on_stream_batch_failure = False
     default_include_raw_json = True
+    default_use_field_projection = True
+    default_fallback_to_select_all_on_projection_error = True
     default_codes: List[str] = []
     code_config_keys: Sequence[str] = ("codes", "tinysoft_codes")
     code_column: str = "source_code"
@@ -351,6 +353,82 @@ class TinySoftP0InfoArrayTask(TinySoftTask):
             ),
             default=self.default_include_raw_json,
         )
+
+    def _use_field_projection(self, kwargs: Optional[Dict[str, Any]] = None) -> bool:
+        params = kwargs or {}
+        return parse_bool(
+            params.get(
+                "use_field_projection",
+                self.task_specific_config.get("use_field_projection", self.default_use_field_projection),
+            ),
+            default=self.default_use_field_projection,
+        )
+
+    def _fallback_to_select_all_on_projection_error(self, kwargs: Optional[Dict[str, Any]] = None) -> bool:
+        params = kwargs or {}
+        return parse_bool(
+            params.get(
+                "fallback_to_select_all_on_projection_error",
+                self.task_specific_config.get(
+                    "fallback_to_select_all_on_projection_error",
+                    self.default_fallback_to_select_all_on_projection_error,
+                ),
+            ),
+            default=self.default_fallback_to_select_all_on_projection_error,
+        )
+
+    @staticmethod
+    def _coerce_query_field_list(raw_values: Any) -> List[str]:
+        if raw_values is None:
+            return []
+        if isinstance(raw_values, str):
+            items: Iterable[Any] = re.split(r"[,;\n]+", raw_values)
+        elif isinstance(raw_values, (list, tuple, set)):
+            items = raw_values
+        else:
+            items = [raw_values]
+        return [str(item).strip() for item in items if str(item or "").strip()]
+
+    @staticmethod
+    def _query_field_key(field: Any) -> str:
+        return str(field or "").strip().lower()
+
+    def _resolve_query_fields(self, kwargs: Optional[Dict[str, Any]] = None) -> Optional[List[str]]:
+        if not self._use_field_projection(kwargs):
+            return None
+
+        params = kwargs or {}
+        configured = params.get(
+            "query_fields",
+            self.task_specific_config.get(
+                "query_fields",
+                params.get("fields", self.task_specific_config.get("fields")),
+            ),
+        )
+        source_fields = (
+            self._coerce_query_field_list(configured)
+            if configured is not None
+            else list(self.field_mapping.keys())
+        )
+
+        fields: List[str] = []
+        seen = set()
+
+        def add_field(field: Any) -> None:
+            text = str(field or "").strip()
+            key = self._query_field_key(text)
+            if not text or key in seen:
+                return
+            fields.append(text)
+            seen.add(key)
+
+        for field in source_fields:
+            add_field(field)
+        add_field("StockID")
+        if self.where_date_field:
+            add_field(self.where_date_field)
+
+        return fields or None
 
     def _should_stream_batches(self, kwargs: Optional[Dict[str, Any]] = None) -> bool:
         return super()._should_stream_batches(kwargs)
@@ -793,19 +871,37 @@ class TinySoftP0InfoArrayTask(TinySoftTask):
         code: str,
         table_id: int,
         where_clause: Optional[str],
+        fields: Optional[Sequence[Any]],
+        fallback_to_select_all_on_projection_error: bool,
         service: Optional[str],
         timeout_ms: Optional[int],
         stop_event: Optional[asyncio.Event],
     ) -> Optional[pd.DataFrame]:
-        df = await self.api.call_dataframe(
-            "infoarray",
-            table_id,
-            stock=code,
-            where_clause=where_clause,
-            service=service,
-            timeout_ms=timeout_ms,
-            stop_event=stop_event,
-        )
+        try:
+            df = await self.api.call_dataframe(
+                "infoarray",
+                table_id,
+                stock=code,
+                where_clause=where_clause,
+                fields=fields,
+                service=service,
+                timeout_ms=timeout_ms,
+                stop_event=stop_event,
+            )
+        except Exception as exc:
+            if not fields or not fallback_to_select_all_on_projection_error:
+                raise
+            self.logger.warning("%s 字段投影单代码查询失败，回退 select *: %s, 代码: %s", self.name, exc, code)
+            df = await self.api.call_dataframe(
+                "infoarray",
+                table_id,
+                stock=code,
+                where_clause=where_clause,
+                fields=None,
+                service=service,
+                timeout_ms=timeout_ms,
+                stop_event=stop_event,
+            )
         if df is None or df.empty:
             return None
         out = df.copy()
@@ -836,19 +932,36 @@ class TinySoftP0InfoArrayTask(TinySoftTask):
             default=self.default_use_batch_infotable,
         )
         where_clause = self._build_where_clause(params.get("start_date"), params.get("end_date"))
+        query_fields = self._resolve_query_fields(params)
+        projection_fallback = self._fallback_to_select_all_on_projection_error(params)
 
         if params.get("full_table"):
             method = getattr(self.api, "call_dataframe_table", None)
             if not callable(method):
                 raise RuntimeError("TinySoftAPI 不支持 call_dataframe_table")
-            return await method(
-                "infoarray",
-                table_id,
-                where_clause=where_clause,
-                service=service,
-                timeout_ms=timeout_ms,
-                stop_event=stop_event,
-            )
+            try:
+                return await method(
+                    "infoarray",
+                    table_id,
+                    where_clause=where_clause,
+                    fields=query_fields,
+                    service=service,
+                    timeout_ms=timeout_ms,
+                    stop_event=stop_event,
+                )
+            except Exception as exc:
+                if not query_fields or not projection_fallback:
+                    raise
+                self.logger.warning("%s 字段投影全表查询失败，回退 select *: %s", self.name, exc)
+                return await method(
+                    "infoarray",
+                    table_id,
+                    where_clause=where_clause,
+                    fields=None,
+                    service=service,
+                    timeout_ms=timeout_ms,
+                    stop_event=stop_event,
+                )
 
         codes = [str(code).strip().upper() for code in params.get("codes", []) if str(code).strip()]
         if not codes:
@@ -862,17 +975,41 @@ class TinySoftP0InfoArrayTask(TinySoftTask):
                     table_id,
                     stocks=codes,
                     where_clause=where_clause,
+                    fields=query_fields,
                     service=service,
                     timeout_ms=timeout_ms,
                     stop_event=stop_event,
                 )
+            except Exception as e:
+                if query_fields and projection_fallback:
+                    self.logger.warning("%s 字段投影批量拉取失败，回退 select *: %s", self.name, e)
+                    try:
+                        batch_df = await batch_method(
+                            "infoarray",
+                            table_id,
+                            stocks=codes,
+                            where_clause=where_clause,
+                            fields=None,
+                            service=service,
+                            timeout_ms=timeout_ms,
+                            stop_event=stop_event,
+                        )
+                    except Exception as fallback_error:
+                        self.logger.warning("%s 批量拉取失败，将回退逐代码查询: %s", self.name, fallback_error)
+                    else:
+                        if batch_df is None or batch_df.empty:
+                            return None
+                        if self._has_symbol_identifier(batch_df):
+                            return batch_df.copy()
+                        self.logger.warning("%s 批量结果缺少标识列，回退逐代码查询。", self.name)
+                else:
+                    self.logger.warning("%s 批量拉取失败，将回退逐代码查询: %s", self.name, e)
+            else:
                 if batch_df is None or batch_df.empty:
                     return None
                 if self._has_symbol_identifier(batch_df):
                     return batch_df.copy()
                 self.logger.warning("%s 批量结果缺少标识列，回退逐代码查询。", self.name)
-            except Exception as e:
-                self.logger.warning("%s 批量拉取失败，将回退逐代码查询: %s", self.name, e)
 
         frames: List[pd.DataFrame] = []
         for code in codes:
@@ -883,6 +1020,8 @@ class TinySoftP0InfoArrayTask(TinySoftTask):
                     code=code,
                     table_id=table_id,
                     where_clause=where_clause,
+                    fields=query_fields,
+                    fallback_to_select_all_on_projection_error=projection_fallback,
                     service=service,
                     timeout_ms=timeout_ms,
                     stop_event=stop_event,

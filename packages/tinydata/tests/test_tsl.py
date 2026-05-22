@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from tinydata.errors import TinyDataCodePoolError
-from tinydata.infotable import build_infotable_query, build_where_clause, format_stock_selector
+from tinydata.infotable import build_infotable_query, build_where_clause, format_select_fields, format_stock_selector
 
 
 def test_format_stock_selector_single_and_array():
@@ -14,6 +14,10 @@ def test_format_stock_selector_single_and_array():
 def test_build_where_clause_dates():
     clause = build_where_clause(start_date="20230101", end_date="20231231", date_field="截止日")
     assert clause == '["截止日"]>=20230101 and ["截止日"]<=20231231'
+
+
+def test_format_select_fields_quotes_plain_names_with_parentheses():
+    assert format_select_fields(["StockID", "占净值比例(%)"]) == '["StockID"], ["占净值比例(%)"]'
 
 
 def test_build_infotable_query_with_codes_and_fields():

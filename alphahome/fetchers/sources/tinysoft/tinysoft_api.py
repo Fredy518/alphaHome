@@ -13,6 +13,7 @@ Tinysoft pyTSL API 封装层
 
 import asyncio
 import logging
+import re
 import time
 from functools import partial
 from typing import Any, Iterable, List, Optional
@@ -143,6 +144,26 @@ class TinySoftAPI:
         if isinstance(fields, list):
             return fields
         return list(fields)
+
+    @staticmethod
+    def _format_infotable_select_field(field: Any) -> Optional[str]:
+        raw = str(field or "").strip()
+        if not raw:
+            return None
+        lowered = raw.lower()
+        if raw.startswith("[") or " as " in lowered:
+            return raw
+        if re.match(r"^[A-Za-z_][A-Za-z0-9_.]*\s*\(", raw):
+            return raw
+        return f'["{raw}"]'
+
+    @classmethod
+    def _format_infotable_select_fields(cls, fields: Optional[Iterable[Any]]) -> str:
+        if not fields:
+            return "*"
+        formatted = [cls._format_infotable_select_field(field) for field in fields]
+        selected = [field for field in formatted if field]
+        return ",".join(selected) if selected else "*"
 
     @staticmethod
     def _quote_tsl_string(value: Any) -> str:
@@ -450,6 +471,7 @@ class TinySoftAPI:
         *,
         stock: str = "",
         where_clause: Optional[str] = None,
+        fields: Optional[Iterable[Any]] = None,
         service: Optional[str] = None,
         timeout_ms: Optional[int] = None,
         stop_event: Optional[asyncio.Event] = None,
@@ -459,7 +481,7 @@ class TinySoftAPI:
 
         等价 TSL::
 
-            select * from infotable {table_id} of '{stock}' [where {where_clause}] end;
+            select {fields or *} from infotable {table_id} of '{stock}' [where {where_clause}] end;
 
         Args:
             func_name: 逻辑上的数据函数名（如 ``"infoarray"``），仅用于日志；
@@ -468,6 +490,7 @@ class TinySoftAPI:
             stock: 天软格式股票代码（如 ``"SZ000001"``）。
             where_clause: 可选 TSL WHERE 条件（如 ``'["停牌开始日"]>=20260101'``）。
                           为 None 时拉取全量记录。
+            fields: 可选字段投影列表；为 None 时使用 ``select *``。
             service: 可选 service 参数（当前未使用，保留兼容）。
             timeout_ms: 查询硬超时。
             stop_event: 取消事件。
@@ -480,6 +503,7 @@ class TinySoftAPI:
             table_id,
             stocks=[stock],
             where_clause=where_clause,
+            fields=fields,
             service=service,
             timeout_ms=timeout_ms,
             stop_event=stop_event,
@@ -492,6 +516,7 @@ class TinySoftAPI:
         *,
         stocks: Iterable[str],
         where_clause: Optional[str] = None,
+        fields: Optional[Iterable[Any]] = None,
         service: Optional[str] = None,
         timeout_ms: Optional[int] = None,
         stop_event: Optional[asyncio.Event] = None,
@@ -507,14 +532,15 @@ class TinySoftAPI:
             raise asyncio.CancelledError("Tinysoft call_dataframe 被取消")
 
         stock_selector = self._format_stock_selector(stocks)
+        select_part = self._format_infotable_select_fields(fields)
         where_part = f" where {where_clause}" if where_clause else ""
         tsl_code = (
-            f"return select * from infotable {int(table_id)} of {stock_selector}"
+            f"return select {select_part} from infotable {int(table_id)} of {stock_selector}"
             f"{where_part} end;"
         )
         self.logger.debug(
-            "call_dataframe_for_stocks: func=%s, table_id=%s, stocks=%s, where=%s",
-            func_name, table_id, stock_selector, where_clause or "(none)",
+            "call_dataframe_for_stocks: func=%s, table_id=%s, stocks=%s, fields=%s, where=%s",
+            func_name, table_id, stock_selector, select_part, where_clause or "(none)",
         )
         exec_kwargs = {"as_dataframe": True, "stop_event": stop_event}
         if timeout_ms is not None:
@@ -527,6 +553,7 @@ class TinySoftAPI:
         table_id: int,
         *,
         where_clause: Optional[str] = None,
+        fields: Optional[Iterable[Any]] = None,
         service: Optional[str] = None,
         timeout_ms: Optional[int] = None,
         stop_event: Optional[asyncio.Event] = None,
@@ -541,11 +568,12 @@ class TinySoftAPI:
         if stop_event and stop_event.is_set():
             raise asyncio.CancelledError("Tinysoft call_dataframe_table 被取消")
 
+        select_part = self._format_infotable_select_fields(fields)
         where_part = f" where {where_clause}" if where_clause else ""
-        tsl_code = f"return select * from infotable {int(table_id)}{where_part} end;"
+        tsl_code = f"return select {select_part} from infotable {int(table_id)}{where_part} end;"
         self.logger.debug(
-            "call_dataframe_table: func=%s, table_id=%s, where=%s",
-            func_name, table_id, where_clause or "(none)",
+            "call_dataframe_table: func=%s, table_id=%s, fields=%s, where=%s",
+            func_name, table_id, select_part, where_clause or "(none)",
         )
         exec_kwargs = {"as_dataframe": True, "stop_event": stop_event}
         if timeout_ms is not None:

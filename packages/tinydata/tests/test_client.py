@@ -37,6 +37,34 @@ def test_opi_exec_posts_run_payload_and_returns_dataframe():
     assert call["headers"]["Authorization"] == "Basic " + base64.b64encode(b"u:p").decode("ascii")
 
 
+def test_opi_exec_escapes_non_ascii_request_body(monkeypatch):
+    captured = {}
+
+    class FakeResponse:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self):
+            return b'[{"ok":1}]'
+
+    def fake_urlopen(request, timeout=None):
+        captured["data"] = request.data
+        return FakeResponse()
+
+    monkeypatch.setattr("tinydata.client.urlopen", fake_urlopen)
+    client = TinyClient(TinyDataConfig(user="u", password="p", request_interval=0))
+
+    client.exec('return select ["公司中文简称"] from infotable 10 of \'SH600000\' end;')
+
+    assert b"\\u516c\\u53f8\\u4e2d\\u6587\\u7b80\\u79f0" in captured["data"]
+    assert "公司中文简称".encode("utf-8") not in captured["data"]
+
+
 def test_opi_query_translates_to_markettable_tsl():
     transport = CaptureTransport({"body": [{"date": "2026-05-21 09:31:00", "StockID": "SZ000001"}]})
     client = TinyClient(

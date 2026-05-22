@@ -544,6 +544,7 @@ class TinySoftOPIAPI:
         *,
         stock: str = "",
         where_clause: Optional[str] = None,
+        fields: Optional[Iterable[Any]] = None,
         service: Optional[str] = None,
         timeout_ms: Optional[int] = None,
         stop_event: Optional[asyncio.Event] = None,
@@ -553,6 +554,7 @@ class TinySoftOPIAPI:
             table_id,
             stocks=[stock],
             where_clause=where_clause,
+            fields=fields,
             service=service,
             timeout_ms=timeout_ms,
             stop_event=stop_event,
@@ -565,6 +567,7 @@ class TinySoftOPIAPI:
         *,
         stocks: Iterable[str],
         where_clause: Optional[str] = None,
+        fields: Optional[Iterable[Any]] = None,
         service: Optional[str] = None,
         timeout_ms: Optional[int] = None,
         stop_event: Optional[asyncio.Event] = None,
@@ -572,9 +575,10 @@ class TinySoftOPIAPI:
         if stop_event and stop_event.is_set():
             raise asyncio.CancelledError("Tinysoft OPI call_dataframe cancelled")
         stock_selector = self._format_stock_selector(stocks)
+        select_part = TinySoftAPI._format_infotable_select_fields(fields)
         where_part = f" where {where_clause}" if where_clause else ""
         tsl_code = (
-            f"return select * from infotable {int(table_id)} of {stock_selector}"
+            f"return select {select_part} from infotable {int(table_id)} of {stock_selector}"
             f"{where_part} end;"
         )
         return await self.exec(
@@ -590,14 +594,16 @@ class TinySoftOPIAPI:
         table_id: int,
         *,
         where_clause: Optional[str] = None,
+        fields: Optional[Iterable[Any]] = None,
         service: Optional[str] = None,
         timeout_ms: Optional[int] = None,
         stop_event: Optional[asyncio.Event] = None,
     ) -> pd.DataFrame:
         if stop_event and stop_event.is_set():
             raise asyncio.CancelledError("Tinysoft OPI call_dataframe_table cancelled")
+        select_part = TinySoftAPI._format_infotable_select_fields(fields)
         where_part = f" where {where_clause}" if where_clause else ""
-        tsl_code = f"return select * from infotable {int(table_id)}{where_part} end;"
+        tsl_code = f"return select {select_part} from infotable {int(table_id)}{where_part} end;"
         return await self.exec(
             tsl_code,
             as_dataframe=True,

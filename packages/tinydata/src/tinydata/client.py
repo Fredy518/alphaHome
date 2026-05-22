@@ -180,7 +180,9 @@ class TinyClient:
             )
             status, _response_headers, body = self._unpack_transport_response(response)
         else:
-            request_body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+            # TS-OPI /Service/Run/ rejects raw non-ASCII JSON bodies for TSL
+            # scripts with Chinese field names. Match aiohttp's default escaped JSON.
+            request_body = json.dumps(payload).encode("utf-8")
             request = Request(url, data=request_body, headers=headers, method="POST")
             try:
                 with urlopen(request, timeout=max(0.001, timeout / 1000.0)) as response:

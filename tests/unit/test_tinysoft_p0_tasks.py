@@ -83,12 +83,14 @@ class _BatchApi:
         self.table_calls = 0
         self.last_stocks = None
         self.last_where_clause = None
+        self.last_fields = None
 
     async def call_dataframe_for_stocks(self, func, table_id, **kwargs):
         stocks = list(kwargs.get("stocks") or [])
         self.batch_calls += 1
         self.last_stocks = stocks
         self.last_where_clause = kwargs.get("where_clause")
+        self.last_fields = kwargs.get("fields")
         if table_id == 625:
             return pd.DataFrame(
                 {
@@ -115,6 +117,7 @@ class _BatchApi:
     async def call_dataframe(self, func, table_id, **kwargs):
         self.single_calls += 1
         self.last_where_clause = kwargs.get("where_clause")
+        self.last_fields = kwargs.get("fields")
         if table_id == 625:
             stock = kwargs.get("stock")
             return pd.DataFrame(
@@ -135,6 +138,7 @@ class _BatchApi:
     async def call_dataframe_table(self, func, table_id, **kwargs):
         self.table_calls += 1
         self.last_where_clause = kwargs.get("where_clause")
+        self.last_fields = kwargs.get("fields")
         return pd.DataFrame(
             {
                 "基金经理代码": ["M001"],
@@ -144,6 +148,15 @@ class _BatchApi:
                 "同类别基金": ["TSJJ0209"],
             }
         )
+
+
+class _ProjectionFailBatchApi(_BatchApi):
+    async def call_dataframe_for_stocks(self, func, table_id, **kwargs):
+        if kwargs.get("fields") is not None:
+            self.batch_calls += 1
+            self.last_fields = kwargs.get("fields")
+            raise RuntimeError("unknown projected field")
+        return await super().call_dataframe_for_stocks(func, table_id, **kwargs)
 
 
 class _FofHoldingApi:
@@ -352,6 +365,63 @@ async def test_p0_fetch_batch_prefers_batch_query_with_date_window():
     assert api.single_calls == 0
     assert api.last_stocks == ["SZ000001", "SH600000"]
     assert api.last_where_clause == '["截止日"]>=20260301 and ["截止日"]<=20260302'
+
+
+@pytest.mark.asyncio
+async def test_p0_fetch_batch_projects_declared_fields_by_default():
+    api = _BatchApi()
+    task = _make_task(TinySoftStockLendingBalanceTask, api=api)
+
+    await task.fetch_batch(
+        {
+            "codes": ["SZ000001", "SH600000"],
+            "infoarray_table_id": 153,
+            "start_date": "20260301",
+            "end_date": "20260302",
+        }
+    )
+
+    assert api.last_fields == ["StockID", "证券代码", "截止日", "余量", "余额"]
+
+
+@pytest.mark.asyncio
+async def test_p0_fetch_batch_can_disable_field_projection():
+    api = _BatchApi()
+    task = _make_task(
+        TinySoftStockLendingBalanceTask,
+        api=api,
+        task_config={"use_field_projection": False},
+    )
+
+    await task.fetch_batch(
+        {
+            "codes": ["SZ000001", "SH600000"],
+            "infoarray_table_id": 153,
+            "start_date": "20260301",
+            "end_date": "20260302",
+        }
+    )
+
+    assert api.last_fields is None
+
+
+@pytest.mark.asyncio
+async def test_p0_fetch_batch_falls_back_to_select_all_on_projection_error():
+    api = _ProjectionFailBatchApi()
+    task = _make_task(TinySoftStockLendingBalanceTask, api=api)
+
+    df = await task.fetch_batch(
+        {
+            "codes": ["SZ000001", "SH600000"],
+            "infoarray_table_id": 153,
+            "start_date": "20260301",
+            "end_date": "20260302",
+        }
+    )
+
+    assert df is not None
+    assert api.batch_calls == 2
+    assert api.last_fields is None
 
 
 @pytest.mark.asyncio

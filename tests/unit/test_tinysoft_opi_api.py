@@ -61,6 +61,54 @@ async def test_opi_call_dataframe_for_stocks_builds_infotable_tsl():
 
 
 @pytest.mark.asyncio
+async def test_opi_call_dataframe_for_stocks_builds_projected_infotable_tsl():
+    transport = _CaptureTransport({"body": [{"StockID": "SZ000001"}]})
+    api = TinySoftOPIAPI(
+        user="u",
+        password="p",
+        transport=transport,
+        request_interval=0,
+    )
+
+    await api.call_dataframe_for_stocks(
+        "infoarray",
+        349,
+        stocks=["SZ000001"],
+        fields=["StockID", "占净值比例(%)"],
+        where_clause='["截止日"]>=20260101',
+    )
+
+    body = transport.calls[0]["json"]["body"]
+    assert body == (
+        "return select [\"StockID\"],[\"占净值比例(%)\"] from infotable 349 of 'SZ000001' "
+        'where ["截止日"]>=20260101 end;'
+    )
+
+
+@pytest.mark.asyncio
+async def test_opi_call_dataframe_table_builds_projected_infotable_tsl():
+    transport = _CaptureTransport({"body": [{"基金经理代码": "M001"}]})
+    api = TinySoftOPIAPI(
+        user="u",
+        password="p",
+        transport=transport,
+        request_interval=0,
+    )
+
+    await api.call_dataframe_table(
+        "infoarray",
+        625,
+        fields=["基金经理代码", "开始日"],
+        where_clause='["截止日"]>=20260101',
+    )
+
+    body = transport.calls[0]["json"]["body"]
+    assert body == (
+        'return select ["基金经理代码"],["开始日"] from infotable 625 where ["截止日"]>=20260101 end;'
+    )
+
+
+@pytest.mark.asyncio
 async def test_opi_query_translates_to_markettable_tsl():
     transport = _CaptureTransport(
         {

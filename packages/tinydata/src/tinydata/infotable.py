@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import time
 from dataclasses import dataclass
 from typing import Any, Iterable, List, Optional, Sequence
@@ -36,7 +37,12 @@ def format_select_fields(fields: Optional[Sequence[str]]) -> str:
         raw = str(field).strip()
         if not raw:
             continue
-        if raw.startswith("[") or "(" in raw or "." in raw:
+        lowered = raw.lower()
+        if (
+            raw.startswith("[")
+            or " as " in lowered
+            or re.match(r"^[A-Za-z_][A-Za-z0-9_.]*\s*\(", raw)
+        ):
             formatted.append(raw)
         else:
             formatted.append(f'["{raw}"]')

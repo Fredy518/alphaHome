@@ -90,6 +90,19 @@ def process_dataset_frame(df: pd.DataFrame, spec: DatasetSpec) -> pd.DataFrame:
     return out[ordered_columns]
 
 
+def _dataset_query_fields(spec: DatasetSpec) -> Sequence[str]:
+    fields = []
+    seen = set()
+    for field_name in spec.field_mapping:
+        text = str(field_name or "").strip()
+        key = text.lower()
+        if not text or key in seen:
+            continue
+        fields.append(text)
+        seen.add(key)
+    return tuple(fields)
+
+
 def fetch_dataset(
     spec: DatasetSpec,
     *,
@@ -120,6 +133,7 @@ def fetch_dataset(
             )
         query_codes = pool_codes
 
+    query_fields = _dataset_query_fields(spec)
     cache_params = {
         "codes": query_codes,
         "start_date": start_date,
@@ -128,6 +142,7 @@ def fetch_dataset(
         "trade_date": trade_date,
         "table_id": spec.table_id,
         "field_version": spec.field_version,
+        "fields": query_fields,
     }
     manager = CacheManager()
     key = make_cache_key(spec.name, cache_params)
@@ -143,6 +158,7 @@ def fetch_dataset(
         start_date=start_date,
         end_date=end_date,
         date_field=spec.date_field,
+        fields=query_fields,
         allow_full_table=spec.allow_full_table,
         options=InfoTableOptions(code_batch_size=spec.code_batch_size),
     )
