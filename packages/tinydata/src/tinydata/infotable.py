@@ -110,7 +110,7 @@ def _exec_with_retries(client: Any, tsl_code: str, *, options: InfoTableOptions)
     for attempt in range(options.retries):
         try:
             return client.exec(tsl_code, as_dataframe=True, timeout_ms=options.timeout_ms)
-        except Exception as exc:  # pyTSL error types are normalized by TinyClient.
+        except Exception as exc:  # OPI error types are normalized by TinyClient.
             last_error = exc
             if attempt + 1 < options.retries:
                 time.sleep(options.retry_delay * (attempt + 1))

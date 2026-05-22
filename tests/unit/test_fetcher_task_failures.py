@@ -26,8 +26,9 @@ class _FailingBatchFetcherTask(FetcherTask):
 
 
 class _StreamingDB:
-    def __init__(self):
+    def __init__(self, events=None):
         self.saved_chunks = []
+        self.events = events
 
     async def get_latest_date(self, task, date_column):
         return None
@@ -46,6 +47,8 @@ class _StreamingDB:
 
     async def upsert(self, df, target, conflict_columns, update_columns, timestamp_column=None):
         self.saved_chunks.append(df.copy())
+        if self.events is not None:
+            self.events.append(("save", len(df)))
         return len(df)
 
 
@@ -106,6 +109,41 @@ async def test_streaming_execute_processes_each_batch_and_buffers_saves():
     assert result["saved_batches"] == 2
     assert task.process_call_lengths == [1, 1, 1]
     assert [len(chunk) for chunk in db.saved_chunks] == [2, 1]
+
+
+@pytest.mark.asyncio
+async def test_streaming_progress_advances_after_flush(monkeypatch):
+    events = []
+
+    class _ProgressBar:
+        def __init__(self, *args, **kwargs):
+            events.append(("open", kwargs.get("total")))
+
+        def update(self, value):
+            events.append(("progress", value))
+
+        def set_postfix(self, *args, **kwargs):
+            return None
+
+        def close(self):
+            events.append(("close", None))
+
+    monkeypatch.setattr(fetcher_task_module, "tqdm", _ProgressBar)
+    db = _StreamingDB(events=events)
+    task = _StreamingBatchFetcherTask(
+        db_connection=db,
+        update_type=UpdateTypes.FULL,
+        task_config={"stream_batches": True, "concurrent_limit": 1, "stream_save_batch_size": 1},
+    )
+
+    result = await task.execute()
+
+    assert result["status"] == "success"
+    save_positions = [idx for idx, event in enumerate(events) if event[0] == "save"]
+    progress_positions = [idx for idx, event in enumerate(events) if event[0] == "progress"]
+    assert len(save_positions) == 3
+    assert len(progress_positions) == 3
+    assert all(save_idx < progress_idx for save_idx, progress_idx in zip(save_positions, progress_positions))
 
 
 @pytest.mark.asyncio

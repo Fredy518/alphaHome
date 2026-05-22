@@ -559,6 +559,9 @@ class FetcherTask(BaseTask, ABC):
         stream_save_batch_size = self._resolve_stream_save_batch_size(kwargs)
         save_buffer: List[pd.DataFrame] = []
         save_buffer_rows = 0
+        save_buffer_batch_count = 0
+        progress_completed_batches = 0
+        progress_log_interval = max(1, min(50, len(batches) // 20 or 1))
 
         progress_bar = tqdm(total=len(batches), desc=f"Executing {self.name}", unit="batch")
         iterator = iter(batches)
@@ -582,10 +585,44 @@ class FetcherTask(BaseTask, ABC):
                 )
             )
 
+        def update_stream_progress(batch_count: int = 1) -> None:
+            nonlocal progress_completed_batches
+            if batch_count <= 0:
+                return
+
+            progress_bar.update(batch_count)
+            progress_completed_batches += batch_count
+            progress_bar.set_postfix(
+                rows=total_rows,
+                buffered=save_buffer_rows,
+                saves=saved_batches,
+                empty=empty_batches,
+                failed=len(failed_batches),
+                refresh=False,
+            )
+            if (
+                progress_completed_batches <= 3
+                or progress_completed_batches >= len(batches)
+                or progress_completed_batches % progress_log_interval == 0
+            ):
+                self.logger.info(
+                    "'%s' - Streaming progress: %s/%s batches handled, %s rows saved, "
+                    "%s rows buffered, %s empty, %s failed.",
+                    self.name,
+                    progress_completed_batches,
+                    len(batches),
+                    total_rows,
+                    save_buffer_rows,
+                    empty_batches,
+                    len(failed_batches),
+                )
+
         async def flush_save_buffer() -> None:
-            nonlocal save_buffer, save_buffer_rows, total_rows, saved_batches, table_checked
+            nonlocal save_buffer, save_buffer_rows, save_buffer_batch_count
+            nonlocal total_rows, saved_batches, table_checked
             if not save_buffer:
                 return
+            buffered_batch_count = save_buffer_batch_count
             save_result = await self._save_stream_buffer(
                 save_buffer,
                 stop_event=stop_event,
@@ -597,6 +634,8 @@ class FetcherTask(BaseTask, ABC):
                 saved_batches += 1
             save_buffer = []
             save_buffer_rows = 0
+            save_buffer_batch_count = 0
+            update_stream_progress(buffered_batch_count)
 
         for _ in range(min(concurrency, len(batches))):
             schedule_next()
@@ -609,21 +648,23 @@ class FetcherTask(BaseTask, ABC):
                 done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
                 for task in done:
                     batch_result = await task
-                    progress_bar.update(1)
 
                     if not batch_result.get("success"):
                         failed_batches.append(batch_result)
                         if not continue_on_failure:
+                            update_stream_progress(1)
                             await cancel_pending()
                             sample = batch_result.get("error", "unknown batch failure")
                             partial = f"; {total_rows} rows were already saved" if total_rows else ""
                             raise RuntimeError(f"'{self.name}' - Streaming batch failed: {sample}{partial}")
+                        update_stream_progress(1)
                         schedule_next()
                         continue
 
                     raw_data = batch_result.get("data")
                     if raw_data is None or raw_data.empty:
                         empty_batches += 1
+                        update_stream_progress(1)
                         schedule_next()
                         continue
 
@@ -643,14 +684,16 @@ class FetcherTask(BaseTask, ABC):
                     if validated_data is not None and not validated_data.empty:
                         save_buffer.append(validated_data)
                         save_buffer_rows += len(validated_data)
+                        save_buffer_batch_count += 1
                         if save_buffer_rows >= stream_save_batch_size:
                             await flush_save_buffer()
+                    else:
+                        update_stream_progress(1)
 
                     schedule_next()
+            await flush_save_buffer()
         finally:
             progress_bar.close()
-
-        await flush_save_buffer()
 
         status = "no_data" if total_rows == 0 and not failed_batches else "success"
         if failed_batches or not validation_passed_all:

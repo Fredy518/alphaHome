@@ -1,97 +1,98 @@
 from __future__ import annotations
 
-import time
+import base64
 
 import pandas as pd
 import pytest
 
 from tinydata.client import TinyClient
 from tinydata.config import TinyDataConfig
-from tinydata.errors import TinyDataAuthError, TinyDataTimeoutError
+from tinydata.errors import TinyDataAuthError, TinyDataQueryError
 
 
-class FakeResult:
-    def __init__(self, error=0, message="ok", df=None, value=None):
-        self._error = error
-        self._message = message
-        self._df = df if df is not None else pd.DataFrame({"x": [1]})
-        self._value = value
+class CaptureTransport:
+    def __init__(self, response):
+        self.response = response
+        self.calls = []
 
-    def error(self):
-        return self._error
-
-    def message(self):
-        return self._message
-
-    def dataframe(self):
-        return self._df
-
-    def value(self):
-        return self._value
+    def __call__(self, **kwargs):
+        self.calls.append(kwargs)
+        return self.response
 
 
-class FakePyTSLClient:
-    login_result = 1
-    sleep_seconds = 0
-
-    def __init__(self, *args):
-        self.args = args
-        self.logged_in = False
-
-    def is_logined(self):
-        return 1 if self.logged_in else 0
-
-    def login(self):
-        if self.login_result == 1:
-            self.logged_in = True
-        return self.login_result
-
-    def last_error(self):
-        return "bad login"
-
-    def exec(self, code):
-        if self.sleep_seconds:
-            time.sleep(self.sleep_seconds)
-        return FakeResult(df=pd.DataFrame({"code": [code]}))
-
-
-class FakePyTSLModule:
-    Client = FakePyTSLClient
-
-
-def test_client_exec_success():
-    FakePyTSLClient.login_result = 1
-    FakePyTSLClient.sleep_seconds = 0
+def test_opi_exec_posts_run_payload_and_returns_dataframe():
+    transport = CaptureTransport({"body": [{"StockID": "SZ000001", "close": 10.5}]})
     client = TinyClient(
-        TinyDataConfig(user="u", password="p", request_interval=0, timeout_ms=1000),
-        pytsl_module=FakePyTSLModule,
+        TinyDataConfig(user="u", password="p", request_interval=0),
+        transport=transport,
     )
 
-    df = client.exec("return 1;")
-    assert df.loc[0, "code"] == "return 1;"
+    df = client.exec("return select * from infotable 42 of 'SZ000001' end;")
+
+    assert isinstance(df, pd.DataFrame)
+    assert df.iloc[0]["StockID"] == "SZ000001"
+    call = transport.calls[0]
+    assert call["path"] == "/Service/Run/"
+    assert call["json"] == {"body": "return select * from infotable 42 of 'SZ000001' end;"}
+    assert call["headers"]["Authorization"] == "Basic " + base64.b64encode(b"u:p").decode("ascii")
 
 
-def test_client_login_failure():
-    FakePyTSLClient.login_result = 0
+def test_opi_query_translates_to_markettable_tsl():
+    transport = CaptureTransport({"body": [{"date": "2026-05-21 09:31:00", "StockID": "SZ000001"}]})
     client = TinyClient(
-        TinyDataConfig(user="u", password="p", request_interval=0, timeout_ms=1000),
-        pytsl_module=FakePyTSLModule,
+        TinyDataConfig(user="u", password="p", request_interval=0, service="auto"),
+        transport=transport,
     )
 
+    df = client.query(
+        stock="SZ000001",
+        cycle="1分钟线",
+        begin_time="2026-05-21 09:30:00",
+        end_time="2026-05-21 15:00:00",
+        fields=["date", "StockID"],
+    )
+
+    assert len(df) == 1
+    call = transport.calls[0]
+    body = call["json"]["body"]
+    assert "setsysparam(pn_cycle(),cy_1m());" in body
+    assert 'datetimetostr(["date"]) as "date"' in body
+    assert "from markettable datekey 20260521.093000T to 20260521.150000T" in body
+    assert "of 'SZ000001' end;" in body
+    assert call["headers"]["TS-EVENTNAME"] == "auto"
+
+
+def test_session_key_exec_requires_wrapper_function():
+    client = TinyClient(
+        TinyDataConfig(opi_auth_mode="session-key", session_key="s", request_interval=0),
+        transport=CaptureTransport({"body": []}),
+    )
+
+    with pytest.raises(TinyDataQueryError, match="run_func_name"):
+        client.exec("return 1;")
+
+
+def test_session_key_call_uses_session_uri_and_bearer_header():
+    transport = CaptureTransport({"body": [{"ok": 1}]})
+    client = TinyClient(
+        TinyDataConfig(opi_auth_mode="session-key", session_key="s", session_password="p", request_interval=0),
+        transport=transport,
+    )
+
+    df = client.call("my/wrapper", {"body": "return 1;"})
+
+    assert df.to_dict("records") == [{"ok": 1}]
+    call = transport.calls[0]
+    assert call["path"] == "/Service/Session/Call/my/wrapper"
+    assert call["headers"]["Authorization"] == "Bearer s:p"
+
+
+def test_missing_basic_credentials_raise_auth_error():
+    client = TinyClient(TinyDataConfig(user="", password="", request_interval=0), transport=CaptureTransport({}))
     with pytest.raises(TinyDataAuthError):
         client.exec("return 1;")
-    FakePyTSLClient.login_result = 1
 
 
-def test_client_timeout_discards_client():
-    FakePyTSLClient.login_result = 1
-    FakePyTSLClient.sleep_seconds = 0.05
-    client = TinyClient(
-        TinyDataConfig(user="u", password="p", request_interval=0, timeout_ms=1),
-        pytsl_module=FakePyTSLModule,
-    )
-
-    with pytest.raises(TinyDataTimeoutError):
-        client.exec("return slow;", timeout_ms=1)
-    assert client._client is None
-    FakePyTSLClient.sleep_seconds = 0
+def test_payload_to_dataframe_supports_columns_rows_shape():
+    df = TinyClient._payload_to_dataframe({"columns": ["StockID", "close"], "rows": [["SZ000001", 10.5]]})
+    assert df.to_dict("records") == [{"StockID": "SZ000001", "close": 10.5}]

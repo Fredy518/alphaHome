@@ -1,6 +1,6 @@
 # tinydata
 
-`tinydata` 是一个基于 pyTSL / 天软的轻量级直连数据接口包。它在 AlphaHome 仓库内孵化，但运行时不依赖 AlphaHome、AlphaDB、GUI 或任务系统。
+`tinydata` 是一个基于天软 TS-OPI 的轻量级直连数据接口包。它在 AlphaHome 仓库内孵化，但运行时不依赖 AlphaHome、AlphaDB、GUI 或任务系统，也不使用 pyTSL 本地登录会话。
 
 ## 安装
 
@@ -9,12 +9,6 @@
 ```bash
 cd packages/tinydata
 pip install -e ".[test]"
-```
-
-真实连接天软时安装：
-
-```bash
-pip install -e ".[tinysoft]"
 ```
 
 ## 配置
@@ -27,8 +21,8 @@ import tinydata as td
 td.configure(
     user="your_user",
     password="your_password",
-    host="tsl.tinysoft.com.cn",
-    port=443,
+    opi_url="https://opi.tinysoft.com.cn",
+    opi_auth_mode="basic",
     timeout_ms=60000,
 )
 ```
@@ -38,9 +32,12 @@ td.configure(
 ```text
 TINYDATA_USER
 TINYDATA_PASSWORD
-TINYDATA_HOST
-TINYDATA_PORT
-TINYDATA_INI
+TINYDATA_OPI_URL
+TINYDATA_OPI_AUTH_MODE
+TINYDATA_OPI_SESSION_KEY
+TINYDATA_OPI_SESSION_PASSWORD
+TINYDATA_OPI_RUN_FUNC_NAME
+TINYDATA_OPI_QUERY_FUNC_NAME
 TINYDATA_CACHE_DIR
 TINYDATA_CODE_DIR
 ```
@@ -51,10 +48,22 @@ TINYDATA_CODE_DIR
 [tinydata]
 user = "your_user"
 password = "your_password"
-host = "tsl.tinysoft.com.cn"
-port = 443
+opi_url = "https://opi.tinysoft.com.cn"
+opi_auth_mode = "basic"
 timeout_ms = 60000
 request_interval = 0.2
+```
+
+如果使用 SESSION-KEY / API-KEY 模式：
+
+```toml
+[tinydata]
+opi_url = "https://opi.tinysoft.com.cn"
+opi_auth_mode = "session-key"
+session_key = "your_session_key"
+session_password = "optional_session_password"
+run_func_name = "your_run_wrapper"
+query_func_name = "your_query_wrapper"
 ```
 
 ## 代码池

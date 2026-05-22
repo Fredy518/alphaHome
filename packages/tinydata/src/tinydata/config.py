@@ -15,6 +15,8 @@ except ModuleNotFoundError:  # pragma: no cover
 
 DEFAULT_HOST = "tsl.tinysoft.com.cn"
 DEFAULT_PORT = 443
+DEFAULT_OPI_URL = "https://opi.tinysoft.com.cn"
+DEFAULT_OPI_AUTH_MODE = "basic"
 DEFAULT_TIMEOUT_MS = 60_000
 DEFAULT_REQUEST_INTERVAL = 0.2
 DEFAULT_HOME = Path.home() / ".tinydata"
@@ -32,6 +34,14 @@ class TinyDataConfig:
     host: str = DEFAULT_HOST
     port: int = DEFAULT_PORT
     ini_path: str = ""
+    opi_url: str = DEFAULT_OPI_URL
+    opi_auth_mode: str = DEFAULT_OPI_AUTH_MODE
+    session_key: str = ""
+    session_password: str = ""
+    service: str = ""
+    json_encode: str = "utf8"
+    run_func_name: str = ""
+    query_func_name: str = ""
     cache_dir: Path = DEFAULT_CACHE_DIR
     code_dir: Path = DEFAULT_CODE_DIR
     request_interval: float = DEFAULT_REQUEST_INTERVAL
@@ -44,6 +54,14 @@ class TinyDataConfig:
             "host": self.host,
             "port": self.port,
             "ini_path": self.ini_path,
+            "opi_url": self.opi_url,
+            "opi_auth_mode": self.opi_auth_mode,
+            "session_key": "***" if self.session_key else "",
+            "session_password": "***" if self.session_password else "",
+            "service": self.service,
+            "json_encode": self.json_encode,
+            "run_func_name": self.run_func_name,
+            "query_func_name": self.query_func_name,
             "cache_dir": str(self.cache_dir),
             "code_dir": str(self.code_dir),
             "request_interval": self.request_interval,
@@ -112,6 +130,24 @@ def get_config(overrides: Optional[Mapping[str, Any]] = None) -> TinyDataConfig:
         "host": os.environ.get("TINYDATA_HOST"),
         "port": os.environ.get("TINYDATA_PORT"),
         "ini_path": os.environ.get("TINYDATA_INI"),
+        "opi_url": os.environ.get("TINYDATA_OPI_URL") or os.environ.get("TINYSOFT_OPI_URL"),
+        "opi_auth_mode": os.environ.get("TINYDATA_OPI_AUTH_MODE") or os.environ.get("TINYSOFT_OPI_AUTH_MODE"),
+        "session_key": (
+            os.environ.get("TINYDATA_OPI_SESSION_KEY")
+            or os.environ.get("TINYDATA_SESSION_KEY")
+            or os.environ.get("TINYSOFT_OPI_SESSION_KEY")
+            or os.environ.get("TINYSOFT_SESSION_KEY")
+        ),
+        "session_password": (
+            os.environ.get("TINYDATA_OPI_SESSION_PASSWORD")
+            or os.environ.get("TINYDATA_SESSION_PASSWORD")
+            or os.environ.get("TINYSOFT_OPI_SESSION_PASSWORD")
+            or os.environ.get("TINYSOFT_SESSION_PASSWORD")
+        ),
+        "service": os.environ.get("TINYDATA_SERVICE") or os.environ.get("TINYSOFT_SERVICE"),
+        "json_encode": os.environ.get("TINYDATA_OPI_JSON_ENCODE") or os.environ.get("TINYSOFT_OPI_JSON_ENCODE"),
+        "run_func_name": os.environ.get("TINYDATA_OPI_RUN_FUNC_NAME") or os.environ.get("TINYSOFT_OPI_RUN_FUNC_NAME"),
+        "query_func_name": os.environ.get("TINYDATA_OPI_QUERY_FUNC_NAME") or os.environ.get("TINYSOFT_OPI_QUERY_FUNC_NAME"),
         "cache_dir": os.environ.get("TINYDATA_CACHE_DIR"),
         "code_dir": os.environ.get("TINYDATA_CODE_DIR"),
         "request_interval": os.environ.get("TINYDATA_REQUEST_INTERVAL"),
@@ -130,6 +166,14 @@ def get_config(overrides: Optional[Mapping[str, Any]] = None) -> TinyDataConfig:
         host=str(merged.get("host") or DEFAULT_HOST),
         port=_coerce_int(merged.get("port"), DEFAULT_PORT),
         ini_path=str(merged.get("ini_path") or ""),
+        opi_url=str(merged.get("opi_url") or DEFAULT_OPI_URL),
+        opi_auth_mode=str(merged.get("opi_auth_mode") or DEFAULT_OPI_AUTH_MODE),
+        session_key=str(merged.get("session_key") or ""),
+        session_password=str(merged.get("session_password") or ""),
+        service=str(merged.get("service") or ""),
+        json_encode=str(merged.get("json_encode") or "utf8"),
+        run_func_name=str(merged.get("run_func_name") or ""),
+        query_func_name=str(merged.get("query_func_name") or ""),
         cache_dir=_coerce_path(merged.get("cache_dir"), DEFAULT_CACHE_DIR),
         code_dir=_coerce_path(merged.get("code_dir"), DEFAULT_CODE_DIR),
         request_interval=_coerce_float(

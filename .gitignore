@@ -20,6 +20,15 @@ data_module/config.json
 # Ignore log files
 *.log
 
+# Ignore local non-code reference assets and ad-hoc exports
+*.pdf
+*.xlsx
+*.xls
+*.docx
+*.pptx
+*_dump.txt
+import_dump.txt
+
 # Ignore IDE/Editor specific files
 .idea/
 .vscode/

@@ -40,6 +40,7 @@ class TushareCBondPriceChgTask(TushareTask):
     # --- 代码级默认配置 (会被 config.json 覆盖) --- #
     default_concurrent_limit = 1  # 全量更新，设置为串行执行以简化
     default_page_size = 2000  # 单次最大2000条
+    default_code_batch_size = 300
     update_type = "full"  # 明确指定为全量更新任务类型
 
     # 2. TushareTask 特有属性
@@ -87,10 +88,26 @@ class TushareCBondPriceChgTask(TushareTask):
         },  # 新增 update_time 索引
     ]
 
+    def _resolve_code_batch_size(self, kwargs: Dict[str, Any]) -> int:
+        raw_value = kwargs.get(
+            "code_batch_size",
+            self.task_specific_config.get("code_batch_size", self.default_code_batch_size),
+        )
+        try:
+            return max(1, int(raw_value))
+        except (TypeError, ValueError):
+            self.logger.warning(
+                "任务 %s: code_batch_size=%r 无效，使用默认值 %s。",
+                self.name,
+                raw_value,
+                self.default_code_batch_size,
+            )
+            return self.default_code_batch_size
+
     async def get_batch_list(self, **kwargs: Any) -> List[Dict]:
         """
         生成批处理参数列表。
-        从 tushare.cbond_basic 表获取所有可转债代码，每300个 ts_code 组成一个多值字符串分批获取。
+        从 tushare.cbond_basic 表获取所有可转债代码，按批量大小拼接为多值 ts_code 字符串获取。
         """
         # 从 cbond_basic 表获取所有转债代码
         query = 'SELECT DISTINCT ts_code FROM "tushare"."cbond_basic" ORDER BY ts_code'
@@ -102,9 +119,9 @@ class TushareCBondPriceChgTask(TushareTask):
 
         ts_codes = [r["ts_code"] for r in records]
         total_count = len(ts_codes)
-        batch_size = 300  # 每批300个 ts_code
+        batch_size = self._resolve_code_batch_size(kwargs)
         
-        # 按每300个分组
+        # cb_price_chg 的 ts_code 支持多值输入，避免按单票生成过多批次。
         batches = []
         for i in range(0, total_count, batch_size):
             batch_codes = ts_codes[i:i + batch_size]

@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "tinydata"
 version = "0.1.0"
-description = "A lightweight Tinysoft/pyTSL data client with pandas-friendly dataset APIs."
+description = "A lightweight Tinysoft TS-OPI data client with pandas-friendly dataset APIs."
 readme = "README.md"
 requires-python = ">=3.9"
 authors = [
@@ -20,9 +20,6 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-tinysoft = [
-  "tspytsl>=1.9",
-]
 test = [
   "pytest>=7",
   "pytest-asyncio>=0.21",
@@ -39,5 +36,5 @@ python_classes = ["Test*"]
 python_functions = ["test_*"]
 addopts = ["--strict-markers", "--tb=short"]
 markers = [
-  "requires_tinysoft: tests that require a real Tinysoft account and pyTSL connection",
+  "requires_tinysoft: tests that require a real Tinysoft TS-OPI connection",
 ]
