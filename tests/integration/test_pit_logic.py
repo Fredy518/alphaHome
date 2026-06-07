@@ -12,11 +12,11 @@ from datetime import datetime
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from research.tools.context import ResearchContext
-# PIT功能已重构到生产脚本，导入路径已更新
-# 旧路径: from research.pit_data import PITIncomeQuarterlyManager, PITBalanceQuarterlyManager, PITFinancialIndicatorsManager
-from scripts.production.data_updaters.pit.pit_income_quarterly_manager import PITIncomeQuarterlyManager
-from scripts.production.data_updaters.pit.pit_balance_quarterly_manager import PITBalanceQuarterlyManager
-from scripts.production.data_updaters.pit.pit_financial_indicators_manager import PITFinancialIndicatorsManager
+from alphahome.pit import (
+    PITBalanceQuarterlyManager,
+    PITFinancialIndicatorsManager,
+    PITIncomeQuarterlyManager,
+)
 
 def main():
     print("🧪 测试修正后的PIT逻辑...")

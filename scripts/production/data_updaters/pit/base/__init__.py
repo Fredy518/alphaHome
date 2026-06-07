@@ -1,9 +1,5 @@
-# PIT脚本基础模块
-from .pit_table_manager import PITTableManager
-from .pit_config import PITConfig
+"""Compatibility exports for PIT base classes."""
 
-__all__ = [
-    'PITTableManager',
-    'PITConfig',
-]
+from alphahome.pit.base import PITConfig, PITTableManager
 
+__all__ = ["PITConfig", "PITTableManager"]

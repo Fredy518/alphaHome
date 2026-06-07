@@ -1,12 +1,5 @@
-"""
-PIT 衍生指标计算器集合
-- 生产版计算器（适配层，后续将完全下沉实现）
-- MVP 计算器（精简回退）
-"""
+"""Compatibility exports for package PIT calculators."""
 
-from .financial_indicators_calculator import FinancialIndicatorsCalculator
+from alphahome.pit.calculators import FinancialIndicatorsCalculator
 
-__all__ = [
-    'FinancialIndicatorsCalculator',
-]
-
+__all__ = ["FinancialIndicatorsCalculator"]
