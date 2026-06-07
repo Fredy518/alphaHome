@@ -327,17 +327,23 @@ class FactorEngine:
         return list(dates)
 
     def resolve_work_items(self) -> List[FactorWorkItem]:
-        mode = "backfill" if self.config.mode == "auto" else self.config.mode
+        mode = self.config.mode
         factor_types = self.normalized_factor_types()
         work_items: List[FactorWorkItem] = []
 
         if self.config.dates or self.config.missing_mode in {"batch_missing", "recent_missing"}:
             dates = self.resolve_dates()
+            filtered_dates_by_factor = {}
             for factor_type in factor_types:
-                factor_dates = dates
                 if self.config.missing_mode == "none" and self.config.mode == "incremental":
-                    factor_dates = self.filter_missing_dates(factor_type, dates)
-                for calc_date in factor_dates:
+                    filtered_dates_by_factor[factor_type] = set(self.filter_missing_dates(factor_type, dates))
+                else:
+                    filtered_dates_by_factor[factor_type] = set(dates)
+
+            for calc_date in dates:
+                for factor_type in factor_types:
+                    if calc_date not in filtered_dates_by_factor[factor_type]:
+                        continue
                     work_items.append(
                         FactorWorkItem(
                             factor_type=factor_type,
@@ -411,7 +417,7 @@ class FactorEngine:
         return getattr(calculator, method_name)(
             start_date=item.start_date,
             end_date=item.end_date,
-            mode=item.mode,
+            mode=None if item.mode == "auto" else item.mode,
         )
 
     def _calculator_for_factor(self, factor_type: str) -> Any:

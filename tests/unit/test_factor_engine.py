@@ -186,6 +186,7 @@ def test_run_executes_year_ranges_as_batch_items():
             end_year=2021,
             worker_id=1,
             total_workers=2,
+            mode="backfill",
         ),
         p_calculator=p_calculator,
     )
