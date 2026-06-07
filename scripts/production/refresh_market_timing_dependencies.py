@@ -38,9 +38,13 @@ class TaskSpec:
 
 PROFILE_TASKS: Dict[str, List[TaskSpec]] = {
     "alphasniper": [
+        TaskSpec("tushare_stock_daily", "data_date_today"),
+        TaskSpec("tushare_fund_daily", "data_date_today"),
         TaskSpec("tushare_stock_dailybasic", "data_date_today"),
     ],
     "betanavigator": [
+        TaskSpec("tushare_stock_daily", "data_date_today"),
+        TaskSpec("tushare_fund_daily", "data_date_today"),
         TaskSpec("tushare_stock_dailybasic", "data_date_today"),
         TaskSpec("tushare_stock_margin", "data_date_trade_lag", data_lag_trade_days=1),
         TaskSpec("tushare_future_daily", "data_date_today"),
