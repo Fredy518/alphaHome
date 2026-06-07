@@ -11,7 +11,7 @@
 import asyncio
 import re
 from datetime import datetime
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 import inspect
 
 from ...common.logging_utils import get_logger
@@ -27,6 +27,10 @@ _GUI_EXCLUDE_TINYSOFT_MINUTE_FETCH = re.compile(r"^tinysoft_.*_minute$")
 _collection_task_cache: List[Dict[str, Any]] = []
 _processing_task_cache: List[Dict[str, Any]] = []
 _send_response_callback: Optional[Callable] = None
+
+
+def _quote_identifier(value: str) -> str:
+    return f'"{str(value).replace(chr(34), chr(34) * 2)}"'
 
 
 def initialize_task_registry(response_callback: Callable):
@@ -285,42 +289,136 @@ async def _update_tasks_with_latest_timestamp(task_cache: List[Dict[str, Any]]):
             task_detail["latest_update_time"] = "N/A (DB Error)"
         return
 
-    async def update_single_task(task_detail: Dict[str, Any]):
-        task_start_time = time.time()
-        table_name = task_detail.get("table_name")
-        task_name = task_detail.get("name", "未知任务")
-
-        if table_name:
-            try:
-                # 修复: 传递整个task_detail字典，而不是只有name
-                # TableNameResolver可以从字典中正确解析出data_source和table_name
-                latest_time = await db_manager.get_latest_update_time(
-                    task_detail
-                )
-                if latest_time:
-                    task_detail["latest_update_time"] = format_datetime_for_display(latest_time)
-                else:
-                    task_detail["latest_update_time"] = "无数据"
-
-                task_duration = time.time() - task_start_time
-                if task_duration > 3.0:  # 只记录耗时超过3秒的任务
-                    logger.debug(f"任务 {task_name} 查询耗时: {task_duration:.2f}秒")
-
-            except Exception as e:
-                task_duration = time.time() - task_start_time
-                logger.warning(
-                    f"查询 {table_name} 最新时间失败 (耗时: {task_duration:.2f}秒): {e}"
-                )
-                task_detail["latest_update_time"] = "查询失败"
-        else:
+    resolver = getattr(db_manager, "resolver", None)
+    table_to_tasks: Dict[Tuple[str, str], List[Dict[str, Any]]] = {}
+    for task_detail in task_cache:
+        if not task_detail.get("table_name"):
             task_detail["latest_update_time"] = "无对应表"
+            continue
+        try:
+            schema, table_name = resolver.get_schema_and_table(task_detail) if resolver else (
+                task_detail.get("data_source") or "public",
+                task_detail["table_name"],
+            )
+            key = (schema, table_name)
+            table_to_tasks.setdefault(key, []).append(task_detail)
+        except Exception as e:
+            logger.warning("解析任务 %s 的目标表失败: %s", task_detail.get("name", "未知任务"), e)
+            task_detail["latest_update_time"] = "查询失败"
 
-    # 使用 asyncio.gather 并发更新所有任务
-    tasks = [update_single_task(task) for task in task_cache]
-    await asyncio.gather(*tasks)
+    if table_to_tasks:
+        try:
+            latest_by_table = await _fetch_latest_update_times_batch(db_manager, list(table_to_tasks.keys()))
+            for key, tasks in table_to_tasks.items():
+                latest_time = latest_by_table.get(key)
+                display_value = format_datetime_for_display(latest_time) if latest_time else "无数据"
+                for task_detail in tasks:
+                    task_detail["latest_update_time"] = display_value
+        except Exception as e:
+            logger.warning("批量查询任务最新时间失败，回退逐任务查询: %s", e)
+
+            async def update_single_task(task_detail: Dict[str, Any]):
+                task_start_time = time.time()
+                table_name = task_detail.get("table_name")
+                task_name = task_detail.get("name", "未知任务")
+                if not table_name:
+                    task_detail["latest_update_time"] = "无对应表"
+                    return
+                try:
+                    latest_time = await db_manager.get_latest_update_time(task_detail)
+                    task_detail["latest_update_time"] = (
+                        format_datetime_for_display(latest_time) if latest_time else "无数据"
+                    )
+                    task_duration = time.time() - task_start_time
+                    if task_duration > 3.0:
+                        logger.debug(f"任务 {task_name} 查询耗时: {task_duration:.2f}秒")
+                except Exception as exc:
+                    task_duration = time.time() - task_start_time
+                    logger.warning(
+                        f"查询 {table_name} 最新时间失败 (耗时: {task_duration:.2f}秒): {exc}"
+                    )
+                    task_detail["latest_update_time"] = "查询失败"
+
+            await asyncio.gather(*(update_single_task(task) for task in task_cache))
 
     total_duration = time.time() - start_time
     logger.info(f"完成所有任务时间戳更新，总耗时: {total_duration:.2f}秒")
+
+
+async def _fetch_latest_update_times_batch(
+    db_manager: Any,
+    tables: List[Tuple[str, str]],
+    *,
+    chunk_size: int = 75,
+) -> Dict[Tuple[str, str], Optional[datetime]]:
+    """Batch query latest update_time values for GUI task refresh."""
+    if not tables:
+        return {}
+
+    unique_tables = list(dict.fromkeys(tables))
+    schemas = [schema for schema, _ in unique_tables]
+    table_names = [table for _, table in unique_tables]
+    column_rows = await db_manager.fetch(
+        """
+        WITH requested(schema_name, table_name) AS (
+            SELECT * FROM unnest($1::text[], $2::text[])
+        )
+        SELECT
+            r.schema_name,
+            r.table_name,
+            t.table_name IS NOT NULL AS table_exists,
+            c.column_name IS NOT NULL AS has_update_time
+        FROM requested r
+        LEFT JOIN information_schema.tables t
+          ON t.table_schema = r.schema_name
+         AND t.table_name = r.table_name
+         AND t.table_type IN ('BASE TABLE', 'VIEW')
+        LEFT JOIN information_schema.columns c
+          ON c.table_schema = r.schema_name
+         AND c.table_name = r.table_name
+         AND c.column_name = 'update_time'
+        """,
+        schemas,
+        table_names,
+    )
+
+    latest_by_table: Dict[Tuple[str, str], Optional[datetime]] = {
+        key: None for key in unique_tables
+    }
+    queryable_tables: List[Tuple[str, str]] = []
+    missing_tables = 0
+    missing_update_time = 0
+    for row in column_rows:
+        key = (row["schema_name"], row["table_name"])
+        if not row["table_exists"]:
+            missing_tables += 1
+            continue
+        if not row["has_update_time"]:
+            missing_update_time += 1
+            continue
+        queryable_tables.append(key)
+
+    if missing_tables or missing_update_time:
+        logger.debug(
+            "任务时间戳批量刷新: %s 个表不存在，%s 个表缺少 update_time 列。",
+            missing_tables,
+            missing_update_time,
+        )
+
+    for start in range(0, len(queryable_tables), chunk_size):
+        chunk = queryable_tables[start : start + chunk_size]
+        union_parts = []
+        for index, (schema, table_name) in enumerate(chunk):
+            qualified = f"{_quote_identifier(schema)}.{_quote_identifier(table_name)}"
+            union_parts.append(
+                f"SELECT {index}::int AS idx, MAX({_quote_identifier('update_time')}) AS latest_time "
+                f"FROM {qualified}"
+            )
+        rows = await db_manager.fetch("\nUNION ALL\n".join(union_parts))
+        for row in rows:
+            latest_by_table[chunk[int(row["idx"])]] = row["latest_time"]
+
+    return latest_by_table
 
 
 # --- 用于向后兼容的函数别名 ---
