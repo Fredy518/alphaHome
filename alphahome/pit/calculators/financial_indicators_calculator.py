@@ -1005,6 +1005,10 @@ class FinancialIndicatorsCalculator:
                 # 限制数值范围：-999999 到 999999（适合numeric(18,6)）
                 df[col] = df[col].clip(-999999, 999999)
 
+                # 与批量保存路径的 DECIMAL(10,4) 保持一致，避免 single-backfill
+                # 写入比批量路径更多小数位而造成结果漂移。
+                df[col] = df[col].round(4)
+
                 # 检查是否有清理
                 if not df[col].equals(original_values):
                     cleaned_count += 1

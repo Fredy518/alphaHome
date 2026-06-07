@@ -443,13 +443,41 @@ class PFactorCalculator:
             query = "SELECT * FROM get_trading_stocks_optimized(%s)"
             result = self.context.query_dataframe(query, (calc_date,))
 
+            optimized_codes: List[str] = []
             if result is not None and not result.empty:
-                stock_codes = result['ts_code'].tolist()
-                self.logger.info(f"{calc_date} 获取到 {len(stock_codes)} 只在交易股票（已排除退市股票）")
+                optimized_codes = result['ts_code'].dropna().tolist()
+
+            stock_basic_codes: List[str] = []
+            try:
+                # 兼容旧生产脚本口径：tushare.stock_basic 覆盖北交所 BJ/920xxx 等
+                # get_trading_stocks_optimized 在部分库环境只返回 SH/SZ。
+                stock_basic_query = """
+                SELECT ts_code
+                FROM tushare.stock_basic
+                WHERE list_date <= %s
+                  AND (delist_date IS NULL OR delist_date > %s)
+                ORDER BY ts_code
+                """
+                stock_basic = self.context.query_dataframe(stock_basic_query, (calc_date, calc_date))
+                if stock_basic is not None and not stock_basic.empty:
+                    stock_basic_codes = stock_basic['ts_code'].dropna().tolist()
+            except Exception as fallback_error:
+                self.logger.warning(f"{calc_date} stock_basic股票池补充失败: {fallback_error}")
+
+            stock_codes = sorted(set(optimized_codes) | set(stock_basic_codes))
+            if stock_codes:
+                added = len(set(stock_basic_codes) - set(optimized_codes))
+                if added > 0:
+                    self.logger.info(
+                        f"{calc_date} 股票池补充 {added} 只 stock_basic 在籍股票，"
+                        f"合计 {len(stock_codes)} 只"
+                    )
+                else:
+                    self.logger.info(f"{calc_date} 获取到 {len(stock_codes)} 只在交易股票（已排除退市股票）")
                 return stock_codes
-            else:
-                self.logger.warning(f"{calc_date} 未找到在交易股票数据")
-                return []
+
+            self.logger.warning(f"{calc_date} 未找到在交易股票数据")
+            return []
 
         except Exception as e:
             self.logger.error(f"获取 {calc_date} 股票列表失败: {e}")

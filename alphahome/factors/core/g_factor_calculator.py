@@ -1005,27 +1005,27 @@ class GFactorCalculator:
             在交易股票代码列表
         """
         try:
-            # 优先使用统一的在籍可交易股票集合（与P因子口径一致）
-            query_primary = "SELECT * FROM get_trading_stocks_optimized(%s)"
-            df_primary = self.context.query_dataframe(query_primary, (calc_date,))
-
-            if df_primary is not None and not df_primary.empty:
-                stock_codes = df_primary['ts_code'].tolist()
-                self.logger.info(f"{calc_date} 获取到 {len(stock_codes)} 只在交易股票（优化函数）")
-                return stock_codes
-
-            # 回退：使用当日已有P因子数据的股票集合
-            self.logger.warning(f"{calc_date} 优化函数无返回，回退到P因子股票集合")
-            query_fallback = """
+            # G 因子直接依赖同日 P 因子；同日 P 因子集合是最终股票池。
+            # 不能用优化函数的活跃股票集合做并集，否则会把当日没有 P 因子的
+            # 股票用历史 P 记录算出过期 as-of 的 G 因子。
+            query_p_factor = """
             SELECT DISTINCT ts_code
             FROM pgs_factors.p_factor
             WHERE calc_date = %s
             ORDER BY ts_code
             """
-            df_fb = self.context.query_dataframe(query_fallback, (calc_date,))
-            if df_fb is not None and not df_fb.empty:
-                stock_codes = df_fb['ts_code'].tolist()
-                self.logger.info(f"{calc_date} 回退集合包含 {len(stock_codes)} 只股票")
+            df_p_factor = self.context.query_dataframe(query_p_factor, (calc_date,))
+            if df_p_factor is not None and not df_p_factor.empty:
+                stock_codes = sorted(set(df_p_factor['ts_code'].dropna().tolist()))
+                self.logger.info(f"{calc_date} G因子股票池使用同日P因子集合: {len(stock_codes)} 只")
+                return stock_codes
+
+            self.logger.warning(f"{calc_date} 未找到同日P因子，回退到优化函数股票池")
+            query_primary = "SELECT * FROM get_trading_stocks_optimized(%s)"
+            df_primary = self.context.query_dataframe(query_primary, (calc_date,))
+            if df_primary is not None and not df_primary.empty:
+                stock_codes = sorted(set(df_primary['ts_code'].dropna().tolist()))
+                self.logger.info(f"{calc_date} 获取到 {len(stock_codes)} 只在交易股票（优化函数）")
                 return stock_codes
 
             self.logger.warning(f"{calc_date} 未获取到股票列表")

@@ -70,22 +70,53 @@ python scripts/production/data_updaters/pit/pit_income_quarterly_manager.py --mo
 ## Verification
 
 - Unit baseline before refactor: `317 passed, 1 warning`
-- Unit suite after factor/PIT consolidation: `328 passed, 1 warning`
+- Unit suite after factor/PIT consolidation: `331 passed, 1 warning`
 - Added tests: `tests/unit/test_factor_engine.py` with 11 tests covering date generation, quarter parsing/range expansion, worker sharding, mutual exclusion validation, missing-date filtering, recent-missing determinism, and mock calculator execution.
+- Added DB-consistency regression tests:
+  - `tests/unit/test_factor_stock_universe.py`
+  - `tests/unit/test_pit_financial_indicators_precision.py`
 - `python -c "import alphahome"` passes.
 - `python -m py_compile` over `alphahome`, `scripts`, and relevant research wrappers passes.
 - Preserved factor and PIT script `--help` checks pass.
 
-## Remaining DB Validation
+## DB Write Validation
 
-Not run in this refactor because DB/API credentials and end-to-end writes are outside the automated gate:
+Completed on 2026-06-07 against local AlphaDB with full row snapshots and restore after validation writes.
 
-- P factor one-date dry run and one limited real calculation against `pgs_factors.p_factor`.
-- G factor one-date run after confirming same-date P data exists.
+Sample and commands:
+
+- Factor date: `2026-05-08`
+- PIT stock/date: `600000.SH`, `2026-04-30`
+- P factor: `python scripts/production/factor_calculators/p_factor/calculate_p_factor_for_specific_dates.py --dates 2026-05-08`
+- G factor: `python scripts/production/factor_calculators/g_factor/calculate_g_factor_for_specific_dates.py --dates 2026-05-08`
+- PIT balance: `python scripts/production/data_updaters/pit/pit_balance_quarterly_manager.py --mode single-backfill --ts-code 600000.SH --start-date 2026-04-30 --end-date 2026-04-30 --batch-size 50`
+- PIT income: same single-stock/date window
+- PIT financial indicators: same single-stock/date window
+
+Initial validation found two consistency gaps, both fixed before the final pass:
+
+- P/G factor universe drift: `get_trading_stocks_optimized()` omitted BJ/`920xxx.BJ` names that existed in pre-refactor factor outputs. P now unions optimized output with `tushare.stock_basic`; G now uses same-date P factor rows as its exact universe.
+- PIT financial indicators precision drift: small single-backfill writes kept more decimal places than the batch path. Numeric indicator cleaning now rounds to 4 decimals, matching the existing batch-save `DECIMAL(10,4)` behavior.
+
+Final DB validation result:
+
+| Scope | Before rows | After write rows | Business columns consistent | Restore consistent |
+| --- | ---: | ---: | --- | --- |
+| `pgs_factors.p_factor` | 5511 | 5511 | yes | yes |
+| `pgs_factors.g_factor` | 5511 | 5511 | yes | yes |
+| `pgs_factors.pit_balance_quarterly` | 1 | 1 | yes | yes |
+| `pgs_factors.pit_income_quarterly` | 1 | 1 | yes | yes |
+| `pgs_factors.pit_financial_indicators` | 1 | 1 | yes | yes |
+
+The validation restored the sampled rows after write checks, so production table contents were returned to the pre-validation snapshot.
+
+## Remaining DB/API Validation
+
+Still not run in this refactor:
+
 - PIT `--target all --mode incremental` with a small `--days`/manual limit path where available.
-- Single-stock PIT balance/income/financial-indicators backfill for one known liquid stock.
 - Verify PIT DDL loading from `alphahome/pit/database/*.sql` on an initialized AlphaDB.
-- Confirm no row-count or score distribution drift on a sampled date set versus pre-refactor outputs.
+- Remote API refresh from Tushare/Tinysoft was not invoked; this validation used the local DB source tables and package/script write paths.
 
 ## Notes
 
