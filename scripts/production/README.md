@@ -19,8 +19,7 @@ scripts/production/
 │       ├── pit_financial_indicators_manager.py
 │       ├── pit_industry_classification_manager.py
 │       ├── base/
-│       ├── calculators/
-│       └── database/
+│       └── calculators/
 ├── factor_calculators/
 │   ├── batch_calculate_missing_factors.py
 │   ├── batch_calculate_recent_missing_factors.py
@@ -53,6 +52,8 @@ python scripts/production/data_updaters/tushare/data_collection_smart_update_pro
 
 ## PIT 更新
 
+PIT 业务实现位于 `alphahome.pit`；本目录文件保留为兼容入口。
+
 ```bash
 python scripts/production/data_updaters/pit/pit_data_update_production.py --target all --mode incremental
 python scripts/production/data_updaters/pit/pit_data_update_production.py --target balance income --mode incremental
@@ -80,6 +81,8 @@ python scripts/production/data_updaters/pit/pit_industry_classification_manager.
 ```
 
 ## P/G 因子
+
+P/G 因子业务实现位于 `alphahome.factors`；本目录文件保留为兼容入口。
 
 ### 单日或指定日期补算
 

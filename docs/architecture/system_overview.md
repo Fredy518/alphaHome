@@ -24,10 +24,17 @@ alphahome/
 │   ├── base/                  # FetcherTask
 │   ├── sources/               # tushare / akshare / tinysoft / excel
 │   └── tasks/                 # 具体采集任务
+├── factors/
+│   ├── core/                  # P/G factor calculators
+│   └── pipelines/             # FactorEngine 与兼容 CLI 调度
 ├── features/
 │   ├── cards/                 # feature card YAML
 │   ├── recipes/               # MV/Python recipes
 │   └── storage/               # MV 初始化、刷新、校验
+├── pit/
+│   ├── base/                  # PITConfig / PITTableManager
+│   ├── calculators/           # 财务指标 calculator
+│   └── database/              # PIT DDL SQL
 ├── integrations/              # 外部系统集成预留
 ├── providers/                 # AlphaDataTool
 └── gui/                       # Tkinter GUI
@@ -40,8 +47,8 @@ flowchart LR
     Sources[Tushare / AkShare / Tinysoft / Excel] --> Fetchers[fetchers tasks]
     Fetchers --> AlphaDB[(PostgreSQL / AlphaDB)]
     AlphaDB --> Rawdata[rawdata views]
-    AlphaDB --> PIT[PIT production scripts]
-    PIT --> FactorPG[P/G factor scripts]
+    AlphaDB --> PIT[alphahome.pit managers]
+    PIT --> FactorPG[alphahome.factors FactorEngine]
     AlphaDB --> Features[features MV recipes]
     AlphaDB --> Providers[AlphaDataTool / ResearchContext]
 ```
@@ -81,8 +88,8 @@ BaseTask
 | 目录 | 用途 |
 | --- | --- |
 | `scripts/production/data_updaters/tushare/` | 所有 fetch 任务的生产级智能更新 |
-| `scripts/production/data_updaters/pit/` | PIT 表更新与财务指标计算 |
-| `scripts/production/factor_calculators/` | P/G 因子补算和并行计算 |
+| `scripts/production/data_updaters/pit/` | PIT 表更新与财务指标计算的兼容入口，真实实现位于 `alphahome.pit` |
+| `scripts/production/factor_calculators/` | P/G 因子补算和并行计算的兼容入口，真实实现位于 `alphahome.factors` |
 | `scripts/database/` | AlphaDB 到 NAS 的逻辑同步/恢复 |
 
 ## 已下线组件

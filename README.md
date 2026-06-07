@@ -9,6 +9,8 @@ AlphaHome 是一个面向个人和内部投研环境的量化数据与离线特�
 | `alphahome.fetchers` | 可用 | 统一任务框架，已覆盖 Tushare、AkShare、Tinysoft、Excel 等数据源任务 |
 | `alphahome.common` | 可用 | 配置、数据库、日志、任务生命周期、批处理规划等基础设施 |
 | `alphahome.features` | 可用 | 离线特征和物化视图，当前有 36 张 feature card、36 个 MV recipe、1 个 Python recipe |
+| `alphahome.factors` | 可用 | P/G 因子 calculator、统一 FactorEngine 和生产脚本调度 helper |
+| `alphahome.pit` | 可用 | PIT 财务表 manager、财务指标 calculator 和 PIT 更新协调器 |
 | `alphahome.providers` | 部分可用 | 面向研究脚本的简化数据访问工具 `AlphaDataTool` |
 | `alphahome.gui` | 可用但偏内部工具 | Tkinter GUI，用于查看配置、选择并运行数据采集任务 |
 | `alphahome.cli` | 已下线 | 仅保留空壳包兼容导入；不再安装 `ah` / `alphahome-cli` / `refresh-materialized-view` |
@@ -81,18 +83,20 @@ python scripts/production/factor_calculators/g_factor/calculate_g_factor_for_spe
 alphahome/
 ├── common/          # 配置、数据库、日志、任务系统、批处理规划
 ├── fetchers/        # 数据源基类与具体采集任务
+├── factors/         # P/G 因子计算器与统一执行引擎
 ├── features/        # feature cards、MV recipes、存储/刷新/校验工具
 ├── integrations/    # 外部系统集成预留
+├── pit/             # PIT 财务表更新与财务指标计算
 ├── providers/       # 研究侧简化数据访问
 └── gui/             # Tkinter GUI
 
 scripts/
-├── production/      # 生产数据更新、PIT、因子脚本
+├── production/      # 生产数据更新、PIT、因子兼容入口
 └── database/        # 本地/NAS 同步脚本
 
 research/
-├── pgs_factor/      # P/G 因子研究与历史生产实现
-├── pit_data/        # PIT 研究侧实现
+├── pgs_factor/      # P/G 因子研究入口，计算实现引用 alphahome.factors
+├── pit_data/        # PIT 研究入口，计算实现引用 alphahome.pit
 └── tools/           # ResearchContext / ResearchPipeline
 ```
 
