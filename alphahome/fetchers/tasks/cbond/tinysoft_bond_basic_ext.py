@@ -41,6 +41,7 @@ class TinySoftBondBasicExtTask(TinySoftP0InfoArrayTask):
     primary_keys = ["bond_code_raw"]
     date_column = None
     default_start_date = "19900101"
+    smart_refresh_interval_days = 30
     default_code_batch_size = 500
     default_smart_code_batch_size = 2000
     code_config_keys = ("bond_codes", "ts_codes", "ts_code", "codes")

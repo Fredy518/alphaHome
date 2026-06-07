@@ -5,8 +5,10 @@ from alphahome.common.constants import UpdateTypes
 from alphahome.fetchers.sources.tinysoft import TinySoftTask
 from alphahome.fetchers.tasks.tinysoft_p0_base import TinySoftP0InfoArrayTask
 from alphahome.fetchers.tasks.fund.tinysoft_fund_p0_ext import (
+    TinySoftFundAbsHoldingDetailTask,
     TinySoftFundAssetAllocTask,
     TinySoftFundBasicExtTask,
+    TinySoftFundBondAllocTask,
     TinySoftFundBondHoldingDetailTask,
     TinySoftFundBrokerSeatTask,
     TinySoftFundCbondHoldingDetailTask,
@@ -19,23 +21,31 @@ from alphahome.fetchers.tasks.fund.tinysoft_fund_p0_ext import (
     TinySoftFundManagerExtTask,
     TinySoftFundStockHoldingDetailTask,
     TinySoftFundStockTradeSummaryTask,
+    TinySoftFundTopHolderTask,
 )
 from alphahome.fetchers.tasks.index.tinysoft_index_p0_cross_domain import (
     TinySoftIndexBasicExtTask,
     TinySoftIndexMemberVersionedTask,
     TinySoftMarketCalendarMultiTask,
 )
-from alphahome.fetchers.tasks.stock.tinysoft_stock_p0_cross_domain import (
-    TinySoftStockBasicExtTask,
-    TinySoftStockHsgtHoldTask,
-    TinySoftStockHsgtShortBalanceTask,
-    TinySoftStockHsgtTop10Task,
-    TinySoftStockLendingBalanceTask,
-    TinySoftStockPledgeBalanceTask,
-    TinySoftStockPledgeRateTask,
+from alphahome.fetchers.tasks.stock.tinysoft_stock_basic_ext import TinySoftStockBasicExtTask
+from alphahome.fetchers.tasks.stock.tinysoft_stock_events_ext import (
+    TinySoftStockHolderChangeExtTask,
     TinySoftStockPublicTradeInfoTask,
     TinySoftStockRepurchaseExtTask,
     TinySoftStockUnlockScheduleTask,
+)
+from alphahome.fetchers.tasks.stock.tinysoft_stock_hsgt_ext import (
+    TinySoftStockHsgtHoldTask,
+    TinySoftStockHsgtShortBalanceTask,
+    TinySoftStockHsgtTop10Task,
+)
+from alphahome.fetchers.tasks.stock.tinysoft_stock_lending_ext import (
+    TinySoftStockLendingBalanceTask,
+)
+from alphahome.fetchers.tasks.stock.tinysoft_stock_pledge_ext import (
+    TinySoftStockPledgeBalanceTask,
+    TinySoftStockPledgeRateTask,
 )
 from alphahome.fetchers.tasks.cbond.tinysoft_bond_basic_ext import TinySoftBondBasicExtTask
 from alphahome.fetchers.tasks.future.tinysoft_future_basic_ext import (
@@ -165,7 +175,14 @@ class _FofHoldingApi:
 
     async def call_dataframe_for_stocks(self, func, table_id, **kwargs):
         stocks = list(kwargs.get("stocks") or [])
-        self.calls.append({"table_id": table_id, "stocks": stocks, "where_clause": kwargs.get("where_clause")})
+        self.calls.append(
+            {
+                "table_id": table_id,
+                "stocks": stocks,
+                "where_clause": kwargs.get("where_clause"),
+                "fields": kwargs.get("fields"),
+            }
+        )
         if table_id == 302:
             rows = []
             for stock in stocks:
@@ -211,7 +228,14 @@ class _FofHoldingApi:
 class _SelectiveFofMetadataApi(_FofHoldingApi):
     async def call_dataframe_for_stocks(self, func, table_id, **kwargs):
         stocks = list(kwargs.get("stocks") or [])
-        self.calls.append({"table_id": table_id, "stocks": stocks, "where_clause": kwargs.get("where_clause")})
+        self.calls.append(
+            {
+                "table_id": table_id,
+                "stocks": stocks,
+                "where_clause": kwargs.get("where_clause"),
+                "fields": kwargs.get("fields"),
+            }
+        )
         if table_id == 302:
             rows = []
             for stock in stocks:
@@ -257,7 +281,14 @@ class _SelectiveFofMetadataApi(_FofHoldingApi):
 class _FundMainCodeReportApi(_FofHoldingApi):
     async def call_dataframe_for_stocks(self, func, table_id, **kwargs):
         stocks = list(kwargs.get("stocks") or [])
-        self.calls.append({"table_id": table_id, "stocks": stocks, "where_clause": kwargs.get("where_clause")})
+        self.calls.append(
+            {
+                "table_id": table_id,
+                "stocks": stocks,
+                "where_clause": kwargs.get("where_clause"),
+                "fields": kwargs.get("fields"),
+            }
+        )
         if table_id == 302:
             return pd.DataFrame(
                 {
@@ -282,6 +313,30 @@ class _FundMainCodeReportApi(_FofHoldingApi):
                     "债券类型": ["" for _ in stocks],
                     "是否处于转股期": ["否" for _ in stocks],
                     "备注": ["" for _ in stocks],
+                }
+            )
+        return pd.DataFrame()
+
+
+class _SplitFund302Api(_FundMainCodeReportApi):
+    async def call_dataframe_for_stocks(self, func, table_id, **kwargs):
+        stocks = list(kwargs.get("stocks") or [])
+        self.calls.append(
+            {
+                "table_id": table_id,
+                "stocks": stocks,
+                "where_clause": kwargs.get("where_clause"),
+                "fields": kwargs.get("fields"),
+            }
+        )
+        if table_id == 302:
+            if len(stocks) > 2:
+                raise TimeoutError("simulated timeout")
+            return pd.DataFrame(
+                {
+                    "StockID": stocks,
+                    "不同收费模式基金主代码": stocks,
+                    "母基金代码": ["" for _ in stocks],
                 }
             )
         return pd.DataFrame()
@@ -478,10 +533,9 @@ def test_stock_hsgt_hold_and_short_balance_process_codes():
     hold_task = _make_task(TinySoftStockHsgtHoldTask)
     hold_raw = pd.DataFrame(
         {
-            "request_code": ["HG000004"],
+            "StockID": ["SZ000001"],
+            "StockName": ["平安银行"],
             "截止日": [20240930],
-            "股票代码": ["000001"],
-            "股票名称": ["平安银行"],
             "股数": ["123456"],
             "占总股本比例(%)": ["1.23"],
         }
@@ -490,6 +544,8 @@ def test_stock_hsgt_hold_and_short_balance_process_codes():
     hold = hold_task.process_data(hold_raw)
 
     assert len(hold) == 1
+    assert hold.iloc[0]["channel_code"] == "HG000004"
+    assert hold.iloc[0]["security_code_raw"] == "SZ000001"
     assert hold.iloc[0]["ts_code"] == "000001.SZ"
     assert hold.iloc[0]["disclosure_cycle"] == "quarterly"
     assert hold.iloc[0]["holding_volume"] == pytest.approx(123456)
@@ -497,9 +553,9 @@ def test_stock_hsgt_hold_and_short_balance_process_codes():
     short_task = _make_task(TinySoftStockHsgtShortBalanceTask)
     short_raw = pd.DataFrame(
         {
-            "request_code": ["HG000002"],
+            "StockID": ["SH600000"],
+            "StockName": ["浦发银行"],
             "截止日": [20260331],
-            "股票代码": ["600000"],
             "可供卖空股数余额": ["8888"],
         }
     )
@@ -507,8 +563,31 @@ def test_stock_hsgt_hold_and_short_balance_process_codes():
     short = short_task.process_data(short_raw)
 
     assert len(short) == 1
+    assert short.iloc[0]["channel_code"] == "HG000002"
+    assert short.iloc[0]["security_code_raw"] == "SH600000"
     assert short.iloc[0]["ts_code"] == "600000.SH"
     assert short.iloc[0]["short_balance_volume"] == pytest.approx(8888)
+
+
+@pytest.mark.asyncio
+async def test_stock_hsgt_hold_and_short_balance_use_stock_code_batches():
+    db = _CodeDB(
+        rows=[
+            _RecordLike(ts_code="000001.SZ"),
+            _RecordLike(ts_code="430001.BJ"),
+            _RecordLike(ts_code="600000.SH"),
+        ]
+    )
+
+    for cls in [TinySoftStockHsgtHoldTask, TinySoftStockHsgtShortBalanceTask]:
+        task = _make_task(cls, db=db, task_config={"code_batch_size": 50})
+        batches = await task.get_batch_list(
+            start_date="20260301",
+            end_date="20260331",
+            update_type=UpdateTypes.FULL,
+        )
+
+        assert [batch["codes"] for batch in batches] == [["SZ000001", "SH600000"]]
 
 
 def test_stock_p1_event_and_pledge_tasks_process_core_fields():
@@ -626,6 +705,18 @@ async def test_fund_fof_holding_detail_maps_share_classes_to_main_codes():
     assert row["nav_ratio_pct"] == pytest.approx(2.34)
     assert row["rank_no"] == 1
     assert bool(row["is_related_fund"]) is True
+    assert api.calls[0]["table_id"] == 302
+    assert api.calls[0]["fields"] == [
+        "StockID",
+        "基金名称",
+        "基金简称",
+        "基金类型",
+        "交易方式",
+        "投资风格",
+        "投资类型",
+        "不同收费模式基金主代码",
+        "母基金代码",
+    ]
     assert api.calls[-1]["table_id"] == 349
     assert api.calls[-1]["where_clause"] == '["截止日"]>=20260301 and ["截止日"]<=20260331'
 
@@ -654,6 +745,17 @@ async def test_fund_fof_holding_detail_identifies_fof_from_tinysoft_302_metadata
 
     assert [call["table_id"] for call in api.calls[:1]] == [302]
     assert api.calls[0]["stocks"] == ["OF000001", "OF000002", "OF000003"]
+    assert api.calls[0]["fields"] == [
+        "StockID",
+        "基金名称",
+        "基金简称",
+        "基金类型",
+        "交易方式",
+        "投资风格",
+        "投资类型",
+        "不同收费模式基金主代码",
+        "母基金代码",
+    ]
     assert [batch["codes"] for batch in batches] == [["OF000002"]]
 
 
@@ -708,6 +810,8 @@ async def test_fund_bond_holding_detail_maps_main_codes_and_processes_fields():
     processed = task.process_data(df)
 
     assert batches[0]["codes"] == ["OF006872"]
+    assert api.calls[0]["table_id"] == 302
+    assert api.calls[0]["fields"] == ["StockID", "不同收费模式基金主代码", "母基金代码"]
     assert api.calls[-1]["table_id"] == 342
     assert api.calls[-1]["where_clause"] == '["截止日"]>=20260301 and ["截止日"]<=20260331'
     assert len(processed) == 1
@@ -717,6 +821,36 @@ async def test_fund_bond_holding_detail_maps_main_codes_and_processes_fields():
     assert row["bond_ts_code"] == "019766.SH"
     assert row["market_value"] == pytest.approx(36442028.67)
     assert bool(row["is_convertible_period"]) is False
+
+
+@pytest.mark.asyncio
+async def test_fund_main_code_mapping_splits_timeout_batches():
+    api = _SplitFund302Api()
+    task = _make_task(
+        TinySoftFundBondHoldingDetailTask,
+        api=api,
+        db=_CodeDB(
+            rows=[
+                _RecordLike(ts_code="000001.OF"),
+                _RecordLike(ts_code="000002.OF"),
+                _RecordLike(ts_code="000003.OF"),
+                _RecordLike(ts_code="000004.OF"),
+            ],
+            columns=["ts_code", "status"],
+        ),
+        task_config={"fund_302_batch_size": 4, "fund_302_min_batch_size": 2},
+    )
+
+    batches = await task.get_batch_list(
+        start_date="20260301",
+        end_date="20260331",
+        update_type=UpdateTypes.SMART,
+    )
+
+    fund_302_calls = [call for call in api.calls if call["table_id"] == 302]
+    assert [len(call["stocks"]) for call in fund_302_calls] == [4, 2, 2]
+    assert all(call["fields"] == ["StockID", "不同收费模式基金主代码", "母基金代码"] for call in fund_302_calls)
+    assert batches[0]["codes"] == ["OF000001", "OF000002", "OF000003", "OF000004"]
 
 
 def test_fund_asset_alloc_processes_full_asset_bucket_fields():
@@ -1242,6 +1376,35 @@ def test_market_calendar_multi_accepts_stockid_from_batch_fetch():
     assert processed["is_trade_day"].tolist() == [True, False]
 
 
+def test_stock_holder_change_accepts_long_holder_names():
+    task = _make_task(TinySoftStockHolderChangeExtTask)
+    long_holder_name = (
+        "Pacven Walden Ventures V, L.P., Pacven Walden Ventures Parallel V-A C.V., "
+        "Pacven Walden Ventures Parallel V-B C.V., Pacven Walden Ventures V Associates Fund, L.P., "
+        "Pacven Walden Management Company Limited"
+    )
+    raw = pd.DataFrame(
+        {
+            "StockID": ["SZ300001"],
+            "变动开始日": [20200101],
+            "变动截止日": [20200131],
+            "公布日": [20200201],
+            "股东名称": [long_holder_name],
+            "变动原因": ["集中竞价"],
+            "变动方向": ["减持"],
+            "变动数量": [100],
+            "变动后持股数": [1000],
+        }
+    )
+
+    processed = task.process_data(raw, start_date="20200101", end_date="20201231")
+
+    assert len(long_holder_name) > 200
+    assert task.schema_def["holder_name"]["type"] == "VARCHAR(512)"
+    assert len(processed) == 1
+    assert processed.loc[0, "holder_name"] == long_holder_name
+
+
 def test_index_member_versioned_processes_event_dates():
     task = _make_task(TinySoftIndexMemberVersionedTask)
     raw = pd.DataFrame(
@@ -1268,7 +1431,7 @@ def test_index_member_versioned_processes_event_dates():
     assert str(row["latest_change_date"]) == "2025-12-31"
 
 
-def test_revision_sensitive_tinysoft_p0_tasks_use_wider_smart_lookback():
+def test_revision_sensitive_tinysoft_p0_tasks_use_bounded_smart_policy():
     assert TinySoftBondBasicExtTask.smart_lookback_days >= 30
     assert TinySoftFutureBasicExtTask.smart_lookback_days >= 30
     assert TinySoftFutureProductMappingExtTask.smart_lookback_days >= 30
@@ -1276,17 +1439,40 @@ def test_revision_sensitive_tinysoft_p0_tasks_use_wider_smart_lookback():
     assert TinySoftStockBasicExtTask.smart_lookback_days >= 30
     assert TinySoftStockLendingBalanceTask.smart_lookback_days >= 30
     assert TinySoftMarketCalendarMultiTask.smart_lookback_days >= 370
-    assert TinySoftFundAssetAllocTask.smart_lookback_days >= 370
-    assert TinySoftFundBasicExtTask.smart_lookback_days >= 370
-    assert TinySoftFundBondHoldingDetailTask.smart_lookback_days >= 370
-    assert TinySoftFundClassificationInfoTask.smart_lookback_days >= 370
-    assert TinySoftFundClassificationMemberTask.smart_lookback_days >= 370
-    assert TinySoftFundFinancialQuarterlyExtTask.smart_lookback_days >= 370
-    assert TinySoftFundFofHoldingDetailTask.smart_lookback_days >= 370
-    assert TinySoftFundHolderStructureTask.smart_lookback_days >= 370
-    assert TinySoftFundManagerExtTask.smart_lookback_days >= 370
-    assert TinySoftFundStockHoldingDetailTask.smart_lookback_days >= 370
-    assert TinySoftIndexBasicExtTask.smart_lookback_days >= 370
+    daily_fund_disclosure_tasks = [
+        TinySoftFundAbsHoldingDetailTask,
+        TinySoftFundAssetAllocTask,
+        TinySoftFundBasicExtTask,
+        TinySoftFundBondAllocTask,
+        TinySoftFundBondHoldingDetailTask,
+        TinySoftFundBrokerSeatTask,
+        TinySoftFundCbondHoldingDetailTask,
+        TinySoftFundFinancialQuarterlyExtTask,
+        TinySoftFundFofHoldingDetailTask,
+        TinySoftFundHolderStructureTask,
+        TinySoftFundIndustryAllocTask,
+        TinySoftFundManagerExtTask,
+        TinySoftFundStockHoldingDetailTask,
+        TinySoftFundStockTradeSummaryTask,
+        TinySoftFundTopHolderTask,
+    ]
+    for task_cls in daily_fund_disclosure_tasks:
+        assert task_cls.smart_lookback_days == 120
+    assert TinySoftFundClassificationInfoTask.smart_lookback_days == 3700
+    assert TinySoftFundClassificationMemberTask.smart_lookback_days == 3700
+    assert TinySoftFundBasicExtTask.smart_refresh_interval_days == 30
+    assert TinySoftFundBrokerSeatTask.smart_refresh_interval_days == 30
+    assert TinySoftFundCbondHoldingDetailTask.smart_refresh_interval_days == 30
+    assert TinySoftFundClassificationInfoTask.smart_refresh_interval_days == 30
+    assert TinySoftFundClassificationMemberTask.smart_refresh_interval_days == 30
+    assert TinySoftFundFinancialQuarterlyExtTask.smart_refresh_interval_days == 7
+    assert TinySoftFundFofHoldingDetailTask.smart_refresh_interval_days == 30
+    assert TinySoftFundHolderStructureTask.smart_refresh_interval_days == 7
+    assert TinySoftFundStockTradeSummaryTask.smart_refresh_interval_days == 30
+    assert TinySoftBondBasicExtTask.smart_refresh_interval_days == 30
+    assert TinySoftIndexBasicExtTask.smart_refresh_interval_days == 30
+    assert TinySoftIndexMemberVersionedTask.smart_refresh_interval_days == 30
+    assert TinySoftStockBasicExtTask.smart_refresh_interval_days == 30
 
 
 def test_tinysoft_tasks_stream_batches_by_default():

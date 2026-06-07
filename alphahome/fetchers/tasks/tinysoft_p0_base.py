@@ -378,6 +378,29 @@ class TinySoftP0InfoArrayTask(TinySoftTask):
         )
 
     @staticmethod
+    def _is_transport_error(exc: Exception) -> bool:
+        message = str(exc).lower()
+        transport_markers = (
+            "cannot connect",
+            "connection",
+            "connect call failed",
+            "connection reset",
+            "connection refused",
+            "timeout",
+            "timed out",
+            "ssl:",
+            "aiohttp",
+            "winerror",
+            "temporary failure",
+            "name or service not known",
+            "network",
+            "信号灯超时时间已到",
+            "连接",
+            "超时",
+        )
+        return any(marker in message for marker in transport_markers)
+
+    @staticmethod
     def _coerce_query_field_list(raw_values: Any) -> List[str]:
         if raw_values is None:
             return []
@@ -889,6 +912,8 @@ class TinySoftP0InfoArrayTask(TinySoftTask):
                 stop_event=stop_event,
             )
         except Exception as exc:
+            if self._is_transport_error(exc):
+                raise
             if not fields or not fallback_to_select_all_on_projection_error:
                 raise
             self.logger.warning("%s 字段投影单代码查询失败，回退 select *: %s, 代码: %s", self.name, exc, code)
@@ -950,6 +975,8 @@ class TinySoftP0InfoArrayTask(TinySoftTask):
                     stop_event=stop_event,
                 )
             except Exception as exc:
+                if self._is_transport_error(exc):
+                    raise
                 if not query_fields or not projection_fallback:
                     raise
                 self.logger.warning("%s 字段投影全表查询失败，回退 select *: %s", self.name, exc)
@@ -981,6 +1008,8 @@ class TinySoftP0InfoArrayTask(TinySoftTask):
                     stop_event=stop_event,
                 )
             except Exception as e:
+                if self._is_transport_error(e):
+                    raise
                 if query_fields and projection_fallback:
                     self.logger.warning("%s 字段投影批量拉取失败，回退 select *: %s", self.name, e)
                     try:
@@ -995,6 +1024,8 @@ class TinySoftP0InfoArrayTask(TinySoftTask):
                             stop_event=stop_event,
                         )
                     except Exception as fallback_error:
+                        if self._is_transport_error(fallback_error):
+                            raise
                         self.logger.warning("%s 批量拉取失败，将回退逐代码查询: %s", self.name, fallback_error)
                     else:
                         if batch_df is None or batch_df.empty:
@@ -1027,6 +1058,8 @@ class TinySoftP0InfoArrayTask(TinySoftTask):
                     stop_event=stop_event,
                 )
             except Exception as e:
+                if self._is_transport_error(e):
+                    raise
                 if not skip_failed_codes:
                     raise
                 self._record_skipped_symbol(code, e)

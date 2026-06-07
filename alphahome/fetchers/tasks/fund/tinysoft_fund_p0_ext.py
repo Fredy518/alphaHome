@@ -81,13 +81,31 @@ FOF_METADATA_FIELDS = (
     "type",
 )
 
+FUND_302_MAIN_CODE_FIELDS = ("StockID", "不同收费模式基金主代码", "母基金代码")
+FUND_302_PARENT_CODE_FIELDS = ("StockID", "母基金代码")
+FUND_302_FOF_METADATA_FIELDS = (
+    "StockID",
+    "基金名称",
+    "基金简称",
+    "基金类型",
+    "交易方式",
+    "投资风格",
+    "投资类型",
+    "不同收费模式基金主代码",
+    "母基金代码",
+)
+
+FUND_DISCLOSURE_SMART_LOOKBACK_DAYS = 120
+
 
 class TinySoftFundCodeInfoArrayTask(TinySoftP0InfoArrayTask):
     domain = "fund"
     default_start_date = "20180101"
-    smart_lookback_days = 370
+    smart_lookback_days = FUND_DISCLOSURE_SMART_LOOKBACK_DAYS
     default_code_batch_size = 40
     default_smart_code_batch_size = 120
+    default_fund_302_batch_size = 500
+    default_fund_302_min_batch_size = 50
     code_config_keys = ("ts_codes", "ts_code", "fund_codes", "codes")
     default_symbol_source_tables = [
         "tushare.fund_basic",
@@ -102,6 +120,64 @@ class TinySoftFundCodeInfoArrayTask(TinySoftP0InfoArrayTask):
         for raw_code in raw_codes:
             codes.append(ts_code_to_tinysoft_symbol_any(raw_code) or str(raw_code).strip().upper())
         return list(dict.fromkeys(code for code in codes if code))
+
+    def _resolve_fund_302_batch_size(self) -> int:
+        raw = self.task_specific_config.get(
+            "fund_302_batch_size",
+            self.task_specific_config.get("fund_code_mapping_batch_size", self.default_fund_302_batch_size),
+        )
+        try:
+            return max(1, int(raw))
+        except (TypeError, ValueError):
+            return self.default_fund_302_batch_size
+
+    def _resolve_fund_302_min_batch_size(self) -> int:
+        raw = self.task_specific_config.get(
+            "fund_302_min_batch_size",
+            self.task_specific_config.get("fund_code_mapping_min_batch_size", self.default_fund_302_min_batch_size),
+        )
+        try:
+            return max(1, int(raw))
+        except (TypeError, ValueError):
+            return self.default_fund_302_min_batch_size
+
+    async def _fetch_fund_302_metadata(self, chunk: List[str], fields: tuple[str, ...]) -> pd.DataFrame:
+        try:
+            return await self.api.call_dataframe_for_stocks(
+                "infoarray",
+                302,
+                stocks=chunk,
+                where_clause=None,
+                fields=list(fields),
+                service=self.service,
+                timeout_ms=self.query_timeout_ms,
+            )
+        except Exception as exc:
+            min_batch_size = self._resolve_fund_302_min_batch_size()
+            if len(chunk) <= min_batch_size:
+                raise
+            split_at = max(1, len(chunk) // 2)
+            self.logger.warning(
+                "基金302元数据查询失败，将拆分批次重试: batch_size=%s, split=%s/%s, error=%s",
+                len(chunk),
+                split_at,
+                len(chunk) - split_at,
+                exc,
+            )
+            frames: List[pd.DataFrame] = []
+            for part in (chunk[:split_at], chunk[split_at:]):
+                if not part:
+                    continue
+                try:
+                    part_df = await self._fetch_fund_302_metadata(part, fields)
+                except Exception as part_exc:
+                    self.logger.warning("基金302元数据子批次查询失败，将跳过该子批次: %s", part_exc)
+                    continue
+                if part_df is not None and not part_df.empty:
+                    frames.append(part_df)
+            if frames:
+                return pd.concat(frames, ignore_index=True)
+            raise
 
     async def _load_codes_from_db(self, *, silent: bool = False) -> List[str]:
         if not self.db:
@@ -188,9 +264,11 @@ class TinySoftFundMainCodeInfoArrayTask(TinySoftFundCodeInfoArrayTask):
     """Fund report tables that must be queried by main share-class code."""
 
     default_start_date = "19980101"
-    smart_lookback_days = 550
+    smart_lookback_days = FUND_DISCLOSURE_SMART_LOOKBACK_DAYS
     default_code_batch_size = 50
     default_smart_code_batch_size = 500
+    default_save_batch_size = 50000
+    default_stream_save_batch_size = 50000
     default_stream_batches = True
     code_config_keys = ("fund_codes", "ts_codes", "ts_code", "codes")
 
@@ -207,18 +285,11 @@ class TinySoftFundMainCodeInfoArrayTask(TinySoftFundCodeInfoArrayTask):
 
         main_codes: List[str] = []
         unresolved = set(unique_codes)
-        batch_size = 1000
+        batch_size = self._resolve_fund_302_batch_size()
         for i in range(0, len(unique_codes), batch_size):
             chunk = unique_codes[i : i + batch_size]
             try:
-                df = await self.api.call_dataframe_for_stocks(
-                    "infoarray",
-                    302,
-                    stocks=chunk,
-                    where_clause=None,
-                    service=self.service,
-                    timeout_ms=self.query_timeout_ms,
-                )
+                df = await self._fetch_fund_302_metadata(chunk, FUND_302_MAIN_CODE_FIELDS)
             except Exception as e:
                 self.logger.warning("基金主代码映射查询失败，将使用原始代码继续: %s", e)
                 continue
@@ -259,9 +330,11 @@ class TinySoftFundParentCodeInfoArrayTask(TinySoftFundCodeInfoArrayTask):
     """Fund report tables queried by own code, except structured funds use parent code."""
 
     default_start_date = "19980101"
-    smart_lookback_days = 550
+    smart_lookback_days = FUND_DISCLOSURE_SMART_LOOKBACK_DAYS
     default_code_batch_size = 50
     default_smart_code_batch_size = 500
+    default_save_batch_size = 50000
+    default_stream_save_batch_size = 50000
     default_stream_batches = True
 
     async def _resolve_codes(self, **kwargs: Any) -> List[str]:
@@ -277,18 +350,11 @@ class TinySoftFundParentCodeInfoArrayTask(TinySoftFundCodeInfoArrayTask):
 
         resolved: List[str] = []
         unresolved = set(unique_codes)
-        batch_size = 1000
+        batch_size = self._resolve_fund_302_batch_size()
         for i in range(0, len(unique_codes), batch_size):
             chunk = unique_codes[i : i + batch_size]
             try:
-                df = await self.api.call_dataframe_for_stocks(
-                    "infoarray",
-                    302,
-                    stocks=chunk,
-                    where_clause=None,
-                    service=self.service,
-                    timeout_ms=self.query_timeout_ms,
-                )
+                df = await self._fetch_fund_302_metadata(chunk, FUND_302_PARENT_CODE_FIELDS)
             except Exception as e:
                 self.logger.warning("基金母代码映射查询失败，将使用原始代码继续: %s", e)
                 continue
@@ -316,6 +382,7 @@ class TinySoftFundBasicExtTask(TinySoftFundCodeInfoArrayTask):
     primary_keys = ["ts_code"]
     date_column = None
     default_start_date = "19900101"
+    smart_refresh_interval_days = 30
     default_code_batch_size = 100
     default_smart_code_batch_size = 1000
     infoarray_table_id = 302
@@ -606,7 +673,8 @@ class TinySoftFundFinancialQuarterlyExtTask(TinySoftFundParentCodeInfoArrayTask)
     primary_keys = ["ts_code", "report_date"]
     date_column = "report_date"
     default_start_date = "19980101"
-    smart_lookback_days = 550
+    smart_lookback_days = FUND_DISCLOSURE_SMART_LOOKBACK_DAYS
+    smart_refresh_interval_days = 7
     default_code_batch_size = 50
     default_smart_code_batch_size = 500
     default_stream_batches = True
@@ -692,8 +760,9 @@ class TinySoftFundFofHoldingDetailTask(TinySoftFundCodeInfoArrayTask):
     primary_keys = ["ts_code", "report_date", "rank_no", "holding_code_raw"]
     date_column = "report_date"
     default_start_date = "20170101"
-    # FOF持仓按季报/中报/年报披露，SMART需要覆盖较长的迟到披露与修正窗口。
-    smart_lookback_days = 550
+    # FOF持仓按季报/中报/年报披露，SMART覆盖日常迟到披露与修正窗口。
+    smart_lookback_days = FUND_DISCLOSURE_SMART_LOOKBACK_DAYS
+    smart_refresh_interval_days = 30
     default_code_batch_size = 50
     default_smart_code_batch_size = 500
     code_config_keys = ("fund_codes", "ts_codes", "ts_code", "codes")
@@ -873,18 +942,11 @@ class TinySoftFundFofHoldingDetailTask(TinySoftFundCodeInfoArrayTask):
 
         main_codes: List[str] = []
         failed_metadata_batches = 0
-        batch_size = 1000
+        batch_size = self._resolve_fund_302_batch_size()
         for i in range(0, len(unique_codes), batch_size):
             chunk = unique_codes[i : i + batch_size]
             try:
-                df = await self.api.call_dataframe_for_stocks(
-                    "infoarray",
-                    302,
-                    stocks=chunk,
-                    where_clause=None,
-                    service=self.service,
-                    timeout_ms=self.query_timeout_ms,
-                )
+                df = await self._fetch_fund_302_metadata(chunk, FUND_302_FOF_METADATA_FIELDS)
             except Exception as e:
                 failed_metadata_batches += 1
                 self.logger.warning("FOF元数据识别查询失败，将尝试其他批次: %s", e)
@@ -941,18 +1003,11 @@ class TinySoftFundFofHoldingDetailTask(TinySoftFundCodeInfoArrayTask):
 
         main_codes: List[str] = []
         unresolved = set(unique_codes)
-        batch_size = 1000
+        batch_size = self._resolve_fund_302_batch_size()
         for i in range(0, len(unique_codes), batch_size):
             chunk = unique_codes[i : i + batch_size]
             try:
-                df = await self.api.call_dataframe_for_stocks(
-                    "infoarray",
-                    302,
-                    stocks=chunk,
-                    where_clause=None,
-                    service=self.service,
-                    timeout_ms=self.query_timeout_ms,
-                )
+                df = await self._fetch_fund_302_metadata(chunk, FUND_302_MAIN_CODE_FIELDS)
             except Exception as e:
                 self.logger.warning("FOF主代码映射查询失败，将使用原始代码继续: %s", e)
                 continue
@@ -1289,6 +1344,7 @@ class TinySoftFundBondAllocTask(TinySoftFundMainCodeInfoArrayTask):
     table_name = "fund_bond_alloc"
     primary_keys = ["ts_code", "report_date", "bond_category"]
     date_column = "report_date"
+    smart_refresh_interval_days = 7
     infoarray_table_id = 340
     source_table_name = "基金.债券配置"
     where_date_field = "截止日"
@@ -1412,6 +1468,7 @@ class TinySoftFundAbsHoldingDetailTask(TinySoftFundMainCodeInfoArrayTask):
     table_name = "fund_abs_holding_detail"
     primary_keys = ["ts_code", "report_date", "rank_no", "asset_code_raw"]
     date_column = "report_date"
+    smart_refresh_interval_days = 30
     infoarray_table_id = 350
     source_table_name = "基金.资产支持证券明细"
     where_date_field = "截止日"
@@ -1473,6 +1530,7 @@ class TinySoftFundCbondHoldingDetailTask(TinySoftFundMainCodeInfoArrayTask):
     table_name = "fund_cbond_holding_detail"
     primary_keys = ["ts_code", "report_date", "rank_no", "cbond_code_raw"]
     date_column = "report_date"
+    smart_refresh_interval_days = 30
     infoarray_table_id = 354
     source_table_name = "基金.可转债明细"
     where_date_field = "截止日"
@@ -1535,7 +1593,8 @@ class TinySoftFundTopHolderTask(TinySoftFundCodeInfoArrayTask):
     primary_keys = ["ts_code", "report_date", "holder_name", "holder_type"]
     date_column = "report_date"
     default_start_date = "19980101"
-    smart_lookback_days = 550
+    smart_lookback_days = FUND_DISCLOSURE_SMART_LOOKBACK_DAYS
+    smart_refresh_interval_days = 7
     default_code_batch_size = 80
     default_smart_code_batch_size = 500
     default_stream_batches = True
@@ -1592,7 +1651,8 @@ class TinySoftFundHolderStructureTask(TinySoftFundCodeInfoArrayTask):
     primary_keys = ["ts_code", "report_date"]
     date_column = "report_date"
     default_start_date = "19980101"
-    smart_lookback_days = 550
+    smart_lookback_days = FUND_DISCLOSURE_SMART_LOOKBACK_DAYS
+    smart_refresh_interval_days = 7
     default_code_batch_size = 100
     default_smart_code_batch_size = 800
     default_stream_batches = True
@@ -1660,6 +1720,7 @@ class TinySoftFundStockTradeSummaryTask(TinySoftFundMainCodeInfoArrayTask):
     table_name = "fund_stock_trade_summary"
     primary_keys = ["ts_code", "report_date", "serial_no", "security_code_raw", "change_type"]
     date_column = "report_date"
+    smart_refresh_interval_days = 30
     default_smart_code_batch_size = 400
     infoarray_table_id = 319
     source_table_name = "基金.累计买入和卖出"
@@ -1725,6 +1786,7 @@ class TinySoftFundBrokerSeatTask(TinySoftFundMainCodeInfoArrayTask):
     table_name = "fund_broker_seat"
     primary_keys = ["ts_code", "report_date", "broker_name"]
     date_column = "report_date"
+    smart_refresh_interval_days = 30
     default_smart_code_batch_size = 400
     infoarray_table_id = 332
     source_table_name = "基金.交易席位情况"
@@ -1803,6 +1865,7 @@ class TinySoftFundClassificationInfoBaseTask(TinySoftP0InfoArrayTask):
     domain = "fund"
     default_start_date = "19000101"
     smart_lookback_days = 3700
+    smart_refresh_interval_days = 30
     default_code_batch_size = 80
     default_smart_code_batch_size = 500
     where_date_field = None
@@ -1890,6 +1953,7 @@ class TinySoftFundClassificationMemberTask(TinySoftFundCodeInfoArrayTask):
     date_column = "latest_change_date"
     default_start_date = "19000101"
     smart_lookback_days = 3700
+    smart_refresh_interval_days = 30
     default_code_batch_size = 80
     default_smart_code_batch_size = 1000
     default_stream_batches = True

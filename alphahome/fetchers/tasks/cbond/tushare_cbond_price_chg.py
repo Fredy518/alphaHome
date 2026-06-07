@@ -18,17 +18,22 @@ import pandas as pd
 
 # 确认导入路径正确 (相对于当前文件)
 from ...sources.tushare.tushare_task import TushareTask
-from ....common.task_system.task_decorator import task_register
 
 # logger 由 Task 基类提供
 # logger = logging.getLogger(__name__)
 
 
-@task_register()
 class TushareCBondPriceChgTask(TushareTask):
-    """获取可转债转股价变动 (全量更新)"""
+    """Archived Tushare implementation for historical reference.
+
+    This task is intentionally not registered. The production replacement is
+    ``tinysoft_cbond_price_chg`` because the Tushare endpoint requires separate
+    permission/credits and is not reliable for daily updates in this project.
+    """
 
     # 1. 核心属性
+    archived = True
+    archived_replacement = "tinysoft_cbond_price_chg"
     domain = "cbond"  # 业务域标识
     name = "tushare_cbond_price_chg"
     description = "获取可转债转股价变动"

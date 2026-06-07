@@ -8,6 +8,7 @@ discover_tasks(force_reload=True)
 
 RECOMMENDED_FULL_STARTS = {
     "tinysoft_bond_basic_ext": "19900101",
+    "tinysoft_cbond_price_chg": "19900101",
     "tinysoft_fund_abs_holding_detail": "19980101",
     "tinysoft_fund_asset_alloc": "19980101",
     "tinysoft_fund_basic_ext": "19900101",

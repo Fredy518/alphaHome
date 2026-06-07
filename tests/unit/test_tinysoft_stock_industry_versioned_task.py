@@ -262,6 +262,7 @@ async def test_fetch_batch_never_passes_where_clause():
 
 def test_industry_versioned_smart_lookback_covers_historical_rebuilds():
     assert TinySoftStockIndustryVersionedTask.smart_lookback_days >= 370
+    assert TinySoftStockIndustryVersionedTask.smart_refresh_interval_days == 7
 
 
 def test_process_data_uses_effective_window_when_kwargs_missing():

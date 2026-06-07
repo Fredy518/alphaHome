@@ -118,6 +118,7 @@ alphahome/fetchers/sources/tushare/tushare_data_transformer.py
 alphahome/fetchers/sources/tushare/tushare_task.py
 alphahome/fetchers/tasks/__init__.py
 alphahome/fetchers/tasks/cbond/__init__.py
+alphahome/fetchers/tasks/cbond/tinysoft_cbond_price_chg.py
 alphahome/fetchers/tasks/cbond/tushare_cbond_basic.py
 alphahome/fetchers/tasks/cbond/tushare_cbond_call.py
 alphahome/fetchers/tasks/cbond/tushare_cbond_daily.py
@@ -199,11 +200,16 @@ alphahome/fetchers/tasks/others/__init__.py
 alphahome/fetchers/tasks/others/tushare_others_hktradecal.py
 alphahome/fetchers/tasks/others/tushare_others_tradecal.py
 alphahome/fetchers/tasks/stock/__init__.py
-alphahome/fetchers/tasks/stock/akshare_stock_analyst_rank_em.py
 alphahome/fetchers/tasks/stock/akshare_stock_limitup_reason.py
+alphahome/fetchers/tasks/stock/tinysoft_stock_basic_ext.py
+alphahome/fetchers/tasks/stock/tinysoft_stock_events_ext.py
 alphahome/fetchers/tasks/stock/tinysoft_stock_fina_pit_ext.py
+alphahome/fetchers/tasks/stock/tinysoft_stock_hsgt_ext.py
 alphahome/fetchers/tasks/stock/tinysoft_stock_industry_versioned.py
+alphahome/fetchers/tasks/stock/tinysoft_stock_lending_ext.py
 alphahome/fetchers/tasks/stock/tinysoft_stock_minute.py
+alphahome/fetchers/tasks/stock/tinysoft_stock_p0_base.py
+alphahome/fetchers/tasks/stock/tinysoft_stock_pledge_ext.py
 alphahome/fetchers/tasks/stock/tinysoft_stock_suspend.py
 alphahome/fetchers/tasks/stock/tushare_stock_adjfactor.py
 alphahome/fetchers/tasks/stock/tushare_stock_ahcomparison.py

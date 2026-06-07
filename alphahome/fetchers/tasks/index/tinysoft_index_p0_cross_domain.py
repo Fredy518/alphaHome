@@ -71,6 +71,7 @@ class TinySoftIndexCodeInfoArrayTask(TinySoftP0InfoArrayTask):
     domain = "index"
     default_start_date = "20000101"
     smart_lookback_days = 370
+    smart_refresh_interval_days = 7
     default_code_batch_size = 1
     default_smart_code_batch_size = 5
     default_codes = DEFAULT_INDEX_CODES
@@ -196,6 +197,7 @@ class TinySoftIndexMemberVersionedTask(TinySoftIndexCodeInfoArrayTask):
     table_name = "index_member_versioned"
     primary_keys = ["index_code_raw", "con_code_raw", "in_date"]
     date_column = "latest_change_date"
+    smart_refresh_interval_days = 30
     where_date_field = None
     infoarray_table_id = 752
     source_table_name = "指数.指数成份"
@@ -272,6 +274,7 @@ class TinySoftIndexBasicExtTask(TinySoftIndexCodeInfoArrayTask):
     primary_keys = ["index_code_raw"]
     date_column = None
     default_start_date = "19900101"
+    smart_refresh_interval_days = 30
     default_code_batch_size = 100
     default_smart_code_batch_size = 500
     infoarray_table_id = 750

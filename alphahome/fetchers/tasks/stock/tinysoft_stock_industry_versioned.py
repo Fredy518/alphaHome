@@ -41,6 +41,7 @@ class TinySoftStockIndustryVersionedTask(TinySoftTask):
     date_column = "trade_date"
     default_start_date = "20000101"
     smart_lookback_days = 370
+    smart_refresh_interval_days = 7
 
     default_concurrent_limit = 2
     default_query_timeout_ms = 45_000
