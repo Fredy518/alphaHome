@@ -5,7 +5,7 @@ G因子年度并行计算启动器
 自动启动多个终端窗口，每个负责不同年份的计算
 
 使用方法：
-python scripts/analysis/start_parallel_g_factor_calculation.py --start_year 2020 --end_year 2024 --workers 10
+python scripts/production/factor_calculators/g_factor/start_parallel_g_factor_calculation.py --start_year 2020 --end_year 2024 --workers 10
 """
 
 import argparse

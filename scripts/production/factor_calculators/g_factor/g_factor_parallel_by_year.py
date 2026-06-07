@@ -5,7 +5,7 @@ G因子年度并行计算脚本
 支持按年度分割计算，实现"土法"并行
 
 使用方法：
-python scripts/analysis/g_factor_parallel_by_year.py --start_year 2020 --end_year 2024 --worker_id 0 --total_workers 10
+python scripts/production/factor_calculators/g_factor/g_factor_parallel_by_year.py --start_year 2020 --end_year 2024 --worker_id 0 --total_workers 10
 """
 
 import sys

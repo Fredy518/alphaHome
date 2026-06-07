@@ -87,9 +87,8 @@ alphahome/
 └── gui/             # Tkinter GUI
 
 scripts/
-├── production/      # 生产数据更新、PIT、因子、数据库维护脚本
-├── database/        # 本地/NAS 同步与数据库维护脚本
-└── maintenance/     # 数据修复脚本
+├── production/      # 生产数据更新、PIT、因子脚本
+└── database/        # 本地/NAS 同步脚本
 
 research/
 ├── pgs_factor/      # P/G 因子研究与历史生产实现

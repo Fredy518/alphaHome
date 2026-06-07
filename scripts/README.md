@@ -9,9 +9,7 @@ scripts/
 ├── features_init.py
 ├── features_validate_pit.py
 ├── initialize_materialized_views.py
-├── analysis/
 ├── database/
-├── maintenance/
 └── production/
 ```
 
@@ -42,25 +40,14 @@ python scripts/production/factor_calculators/g_factor/calculate_g_factor_for_spe
 ### 数据库维护
 
 ```bash
-python scripts/production/database/migrate_bse_code_mapping.py --dry-run
 python scripts/database/alphadb_nas_logical_sync.py --help
-```
-
-### 一次性维护
-
-```bash
-python scripts/maintenance/fix_stock_limitup_reason_ts_code.py --help
-python scripts/maintenance/fix_tushare_fund_share_sz_trade_date.py --help
-python scripts/maintenance/fix_g_factor_rankings_and_scores.py --help
 ```
 
 ## 目录说明
 
 | 目录 | 用途 |
 | --- | --- |
-| `analysis/` | 数据口径校准、覆盖率分析、因子差异调查等分析脚本 |
-| `database/` | AlphaDB / NAS 同步、恢复、逻辑复制和数据库级维护 |
-| `maintenance/` | 一次性或低频数据修复 |
+| `database/` | AlphaDB / NAS 同步、恢复、逻辑复制 |
 | `production/` | 日常生产脚本，详见 [production README](production/README.md) |
 
 历史 `scripts/pit/` 入口已迁移到 `scripts/production/data_updaters/pit/`。

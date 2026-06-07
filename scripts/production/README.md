@@ -21,8 +21,6 @@ scripts/production/
 │       ├── base/
 │       ├── calculators/
 │       └── database/
-├── database/
-│   └── migrate_bse_code_mapping.py
 ├── factor_calculators/
 │   ├── batch_calculate_missing_factors.py
 │   ├── batch_calculate_recent_missing_factors.py
@@ -128,22 +126,10 @@ python scripts/production/refresh_market_timing_dependencies.py --profile betana
 - `alphasniper`
 - `betanavigator`
 
-## 数据库维护
-
-北交所代码映射迁移：
-
-```bash
-python scripts/production/database/migrate_bse_code_mapping.py --dry-run
-python scripts/production/database/migrate_bse_code_mapping.py --dry-run --verbose
-python scripts/production/database/migrate_bse_code_mapping.py --tables stock_daily stock_dividend
-```
-
-执行实际迁移前必须先跑 `--dry-run` 并备份。
-
 ## 运行建议
 
 - 生产脚本都应从仓库根目录执行。
 - 大规模更新先降低 `--workers` 验证，再逐步提高。
-- 全量 PIT、全量因子和数据库维护脚本执行前先备份。
+- 全量 PIT 和全量因子执行前先备份。
 - 同一目标表不要并发运行多个写入脚本。
 - 日志异常先保留命令、时间、配置和完整 traceback，便于复盘。

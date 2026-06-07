@@ -83,9 +83,7 @@ BaseTask
 | `scripts/production/data_updaters/tushare/` | 所有 fetch 任务的生产级智能更新 |
 | `scripts/production/data_updaters/pit/` | PIT 表更新与财务指标计算 |
 | `scripts/production/factor_calculators/` | P/G 因子补算和并行计算 |
-| `scripts/production/database/` | 北交所代码映射等数据库维护 |
 | `scripts/database/` | AlphaDB 到 NAS 的逻辑同步/恢复 |
-| `scripts/maintenance/` | 一次性数据修复 |
 
 ## 已下线组件
 
