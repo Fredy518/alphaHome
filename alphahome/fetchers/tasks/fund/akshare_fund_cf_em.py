@@ -18,13 +18,11 @@ AkShare 基金拆分数据任务（fund_cf_em）
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
 from ...sources.akshare.akshare_task import AkShareTask
-from ....common.constants import UpdateTypes
 from ....common.task_system.task_decorator import task_register
 
 
@@ -48,6 +46,7 @@ class AkShareFundCfEmTask(AkShareTask):
     date_column = "split_date"
     # 单批次任务的默认起始日期（用于兼容性）
     default_start_date = "20050101"
+    smart_refresh_interval_days = 30
 
     # 缓存基金代码映射表（实例级别）
     _fund_code_to_ts_code_cache: Optional[Dict[str, str]] = None
@@ -112,10 +111,6 @@ class AkShareFundCfEmTask(AkShareTask):
 
         fund_cf_em 接口一次性返回所有历史数据。
         """
-        update_type = kwargs.get("update_type", UpdateTypes.SMART)
-        if await self._should_skip_by_recent_update_time(update_type, max_age_days=30):
-            return []
-
         self.logger.info(f"任务 {self.name}: 生成单批次参数（一次性获取所有历史数据）")
         return [{}]  # 返回空参数字典
 

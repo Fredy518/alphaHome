@@ -28,6 +28,7 @@ class AkShareIndexCsindexAllTask(AkShareTask):
     primary_keys = ["index_code"]
     date_column = "publish_date"
     default_start_date = "20050101"
+    smart_refresh_interval_days = 30
 
     api_name = "index_csindex_all"
     api_params: Optional[Dict[str, Any]] = None
@@ -129,9 +130,6 @@ class AkShareIndexCsindexAllTask(AkShareTask):
         return data[keep]
 
     async def get_batch_list(self, **kwargs) -> List[Dict]:
-        update_type = kwargs.get("update_type")
-        if await self._should_skip_by_recent_update_time(update_type, max_age_days=30):
-            return []
         return [{}]
 
 

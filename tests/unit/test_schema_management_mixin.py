@@ -37,3 +37,18 @@ def test_normalize_index_columns_invalid_returns_none(
     mixin: SchemaManagementMixin, raw_columns
 ) -> None:
     assert mixin._normalize_index_columns(raw_columns) is None
+
+
+def test_build_update_time_index_sql_uses_canonical_single_column_index(
+    mixin: SchemaManagementMixin,
+) -> None:
+    index_name, sql = mixin._build_update_time_index_sql(
+        "tushare.stock_daily",
+        "stock_daily",
+    )
+
+    assert index_name == "idx_stock_daily_update_time"
+    assert sql == (
+        'CREATE INDEX IF NOT EXISTS "idx_stock_daily_update_time" '
+        'ON tushare.stock_daily ("update_time");'
+    )

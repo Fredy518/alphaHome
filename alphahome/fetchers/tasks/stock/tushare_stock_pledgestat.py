@@ -13,11 +13,9 @@ Tushare 股权质押统计数据任务
 权限要求: 需要至少120积分
 """
 
-from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional
+from typing import Dict, List
 
 from ...sources.tushare.tushare_task import TushareTask
-from ...tools.calendar import is_trade_day
 from ....common.task_system.task_decorator import task_register
 from ....common.constants import UpdateTypes
 
@@ -29,7 +27,7 @@ class TushareStockPledgeStatTask(TushareTask):
     实现要求:
     - API 只支持按 ts_code 查询
     - 全量更新: 遍历所有股票代码获取数据
-    - 智能增量: 检查是否超过1个月未更新且当天为非交易日
+    - 智能增量: 由 smart_refresh_interval_days 控制近期更新跳过；未跳过时遍历所有股票代码
     """
 
     # 1. 核心属性
@@ -41,6 +39,7 @@ class TushareStockPledgeStatTask(TushareTask):
     default_start_date = "20140101"
     data_source = "tushare"
     domain = "stock"
+    smart_refresh_interval_days = 30
 
     # --- 默认配置 ---
     default_concurrent_limit = 3
@@ -106,19 +105,13 @@ class TushareStockPledgeStatTask(TushareTask):
         生成批处理参数列表。
 
         - 全量更新：遍历所有股票代码
-        - 智能增量：检查是否超过1个月未更新且当天为非交易日
+        - 智能增量：由 FetcherTask.smart_refresh_interval_days 控制近期更新跳过；
+          未跳过时遍历所有股票代码
         - 手动增量：跳过执行（API不支持日期范围查询）
         """
         update_type = kwargs.get("update_type", UpdateTypes.FULL)
 
-        if update_type == UpdateTypes.SMART:
-            should_update = await self._should_perform_full_update()
-            if not should_update:
-                self.logger.info(f"任务 {self.name}: 智能增量 - 不满足全量更新条件，跳过执行")
-                return []
-            else:
-                self.logger.info(f"任务 {self.name}: 智能增量 - 满足全量更新条件，转为全量更新")
-        elif update_type != UpdateTypes.FULL:
+        if update_type not in (UpdateTypes.FULL, UpdateTypes.SMART):
             self.logger.warning(
                 f"任务 {self.name}: 此任务仅支持全量更新 (FULL) 和智能增量 (SMART)。"
                 f"当前更新类型为 '{update_type}'，任务将跳过执行。"
@@ -165,50 +158,6 @@ class TushareStockPledgeStatTask(TushareTask):
         except Exception as e:
             self.logger.error(f"查询 tushare.stock_basic 表失败: {e}", exc_info=True)
             return []
-
-    async def _should_perform_full_update(self) -> bool:
-        """
-        检查数据表是否满足全量更新的条件：
-        1. 数据表超过1个月未更新
-        2. 当天为非交易日
-
-        只有同时满足两个条件才返回True。
-        """
-        try:
-            query = f"SELECT MAX(update_time) as last_update FROM {self.data_source}.{self.table_name}"
-            result = await self.db.fetch(query)
-
-            if not result or not result[0]["last_update"]:
-                self.logger.info(f"表 {self.table_name} 没有更新时间记录，需要执行全量更新")
-                return True
-
-            last_update = result[0]["last_update"]
-            current_time = datetime.now()
-            time_diff = current_time - last_update
-
-            # 检查是否超过1个月 (30天)
-            is_over_one_month = time_diff > timedelta(days=30)
-
-            # 检查当天是否为非交易日
-            today_str = current_time.strftime("%Y%m%d")
-            is_trading_day = await is_trade_day(today_str)
-            is_non_trading_day = not is_trading_day
-
-            self.logger.info(
-                f"表 {self.table_name} 最后更新时间为 {last_update}，"
-                f"距离现在 {time_diff.days} 天，是否超过1个月: {is_over_one_month}，"
-                f"当天 {today_str} 是否为非交易日: {is_non_trading_day}"
-            )
-
-            if is_over_one_month and is_non_trading_day:
-                self.logger.info(f"表 {self.table_name} 满足全量更新条件")
-                return True
-            else:
-                return False
-
-        except Exception as e:
-            self.logger.error(f"检查表 {self.table_name} 更新时间失败: {e}", exc_info=True)
-            return True
 
 
 __all__ = ["TushareStockPledgeStatTask"]

@@ -206,6 +206,23 @@ class _LatestDateDB:
         return self.latest_date
 
 
+class _RecentUpdateDB:
+    def __init__(self, latest_update_time, latest_date=None):
+        self.latest_update_time = latest_update_time
+        self.latest_date = latest_date
+        self.latest_date_calls = 0
+
+    async def table_exists(self, target):
+        return True
+
+    async def get_latest_update_time(self, target):
+        return self.latest_update_time
+
+    async def get_latest_date(self, task, date_column):
+        self.latest_date_calls += 1
+        return self.latest_date
+
+
 class _FrozenDateTime:
     @classmethod
     def now(cls):
@@ -228,3 +245,35 @@ async def test_smart_date_range_uses_today_anchor_when_latest_date_is_future(mon
     date_range = await task._determine_date_range()
 
     assert date_range == {"start_date": "20260421", "end_date": "20260520"}
+
+
+@pytest.mark.asyncio
+async def test_smart_refresh_interval_skips_recently_updated_table(monkeypatch):
+    monkeypatch.setattr(fetcher_task_module, "datetime", _FrozenDateTime)
+    db = _RecentUpdateDB(datetime(2026, 5, 19, 12, 0), latest_date=date(2026, 5, 10))
+    task = _FailingBatchFetcherTask(
+        db_connection=db,
+        update_type=UpdateTypes.SMART,
+        task_config={"smart_refresh_interval_days": 7},
+    )
+
+    date_range = await task._determine_date_range()
+
+    assert date_range is None
+    assert db.latest_date_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_smart_refresh_interval_allows_expired_table(monkeypatch):
+    monkeypatch.setattr(fetcher_task_module, "datetime", _FrozenDateTime)
+    db = _RecentUpdateDB(datetime(2026, 5, 1, 12, 0), latest_date=date(2026, 5, 10))
+    task = _FailingBatchFetcherTask(
+        db_connection=db,
+        update_type=UpdateTypes.SMART,
+        task_config={"smart_lookback_days": 3, "smart_refresh_interval_days": 7},
+    )
+
+    date_range = await task._determine_date_range()
+
+    assert date_range == {"start_date": "20260508", "end_date": "20260520"}
+    assert db.latest_date_calls == 1

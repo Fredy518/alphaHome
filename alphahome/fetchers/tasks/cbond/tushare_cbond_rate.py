@@ -11,15 +11,12 @@
 限量: 单次最大2000条数据，总量不限制
 """
 
-import logging
-from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
 # 确认导入路径正确 (相对于当前文件)
 from ...sources.tushare.tushare_task import TushareTask
-from ...tools.calendar import is_trade_day
 from ....common.constants import UpdateTypes
 from ....common.task_system.task_decorator import task_register
 
@@ -45,6 +42,7 @@ class TushareCBondRateTask(TushareTask):
     date_column = "rate_start_date"  # 增量更新使用的日期字段
     default_start_date = "19900101"  # 默认起始日期
     smart_lookback_days = 30  # 智能增量模式下，回看30天（付息期通常较长）
+    smart_refresh_interval_days = 30
 
     # --- 代码级默认配置 (会被 config.json 覆盖) --- #
     default_concurrent_limit = 1  # 默认并发限制
@@ -99,68 +97,14 @@ class TushareCBondRateTask(TushareTask):
     # 8. 验证模式配置 - 使用报告模式记录验证结果
     validation_mode = "report"  # 报告验证结果但保留所有数据
 
-    async def _determine_date_range(self) -> Optional[Dict[str, str]]:
-        """
-        智能增量模式：仅在满足“超过1个月未更新且当天为非交易日”时执行全量更新。
-        """
-        if self.update_type != UpdateTypes.SMART:
-            return await super()._determine_date_range()
-
-        should_update = await self._should_perform_full_update()
-        # 记录本次智能增量是否允许全量更新，供 get_batch_list 使用
-        self._smart_full_update_allowed = should_update
-        if not should_update:
-            self.logger.info(
-                f"任务 {self.name}: 智能增量 - 不满足全量更新条件（超过1个月未更新且当天为非交易日），跳过执行"
-            )
-            return None
-
-        self.logger.info(f"任务 {self.name}: 智能增量 - 满足全量更新条件，转为全量更新")
-        end_date = datetime.now().strftime("%Y%m%d")
-        return {"start_date": self.default_start_date, "end_date": end_date}
-
-    async def _should_perform_full_update(self) -> bool:
-        """
-        检查是否满足全量更新条件：
-        1) 超过1个月未更新（以 max(update_time) 为准）
-        2) 当天为非交易日
-        """
-        try:
-            query = f'SELECT MAX(update_time) as last_update FROM "{self.data_source}"."{self.table_name}"'
-            result = await self.db.fetch(query)
-
-            if not result or not result[0]["last_update"]:
-                self.logger.info(f"表 {self.table_name} 没有更新时间记录，需要执行全量更新")
-                return True
-
-            last_update = result[0]["last_update"]
-            current_time = datetime.now()
-            time_diff = current_time - last_update
-            is_over_one_month = time_diff > timedelta(days=30)
-
-            today_str = current_time.strftime("%Y%m%d")
-            is_trading_day = await is_trade_day(today_str)
-            is_non_trading_day = not is_trading_day
-
-            self.logger.info(
-                f"表 {self.table_name} 最后更新时间为 {last_update}，"
-                f"距离现在 {time_diff.days} 天，是否超过1个月: {is_over_one_month}，"
-                f"当天 {today_str} 是否为非交易日: {is_non_trading_day}"
-            )
-
-            return bool(is_over_one_month and is_non_trading_day)
-        except Exception as e:
-            self.logger.error(f"检查表 {self.table_name} 更新时间失败: {e}", exc_info=True)
-            # 检查失败时，为安全起见，默认允许更新（避免长期不更新）
-            return True
-
     async def get_batch_list(self, **kwargs: Any) -> List[Dict[str, Any]]:
         """
         生成批处理参数列表。
 
         策略说明:
         1. 全量更新模式：返回空 ts_code 的参数字典，但必须显式传入 fields 参数
-        2. 增量更新模式：获取所有 ts_code，然后分批查询（单一批次，但显式传入 fields）
+        2. SMART 模式：由 smart_refresh_interval_days 控制近期更新跳过；未跳过时按全量批次获取
+        3. 增量更新模式：获取所有 ts_code，然后分批查询（单一批次，但显式传入 fields）
         """
         update_type = kwargs.get("update_type")
 

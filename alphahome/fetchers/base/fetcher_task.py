@@ -41,6 +41,7 @@ class FetcherTask(BaseTask, ABC):
     default_stream_save_batch_size = BaseTask.default_save_batch_size
     default_stream_update_types = (UpdateTypes.FULL,)
     smart_lookback_days = 10
+    smart_refresh_interval_days: Optional[int] = None
 
     def __init__(
         self,
@@ -143,6 +144,14 @@ class FetcherTask(BaseTask, ABC):
             cls.default_stream_update_types,
         )
         self.smart_lookback_days = int(task_config.get("smart_lookback_days", cls.smart_lookback_days))
+        raw_refresh_interval = task_config.get(
+            "smart_refresh_interval_days",
+            cls.smart_refresh_interval_days,
+        )
+        if raw_refresh_interval in (None, ""):
+            self.smart_refresh_interval_days = None
+        else:
+            self.smart_refresh_interval_days = int(raw_refresh_interval)
 
         # 处理数据保存批次大小配置 (优先使用save_batch_size，向后兼容batch_size)
         self.save_batch_size = int(
@@ -242,6 +251,7 @@ class FetcherTask(BaseTask, ABC):
     async def _determine_date_range(self) -> Optional[Dict[str, str]]:
         """根据更新类型确定并返回开始和结束日期。"""
         self.logger.info(f"'{self.name}' - Determining date range for update_type='{self.update_type}'...")
+        self._smart_skip_reason = None
         
         start, end = None, None
         
@@ -251,6 +261,9 @@ class FetcherTask(BaseTask, ABC):
             start, end = self.start_date, self.end_date
             
         elif self.update_type == UpdateTypes.SMART:
+            if await self._should_skip_smart_by_recent_update_time():
+                return None
+
             latest_date_in_db = await self.get_latest_date_for_task()
             # 兼容 TIMESTAMP 类型日期列：统一转换为 date，避免 datetime/date 比较报错
             if isinstance(latest_date_in_db, datetime):
@@ -294,6 +307,48 @@ class FetcherTask(BaseTask, ABC):
             raise ValueError(f"Unsupported update_type: {self.update_type}")
             
         return {"start_date": start, "end_date": end}
+
+    async def _should_skip_smart_by_recent_update_time(self) -> bool:
+        """Skip SMART refreshes for tables that are intentionally low-frequency."""
+        if self.update_type != UpdateTypes.SMART:
+            return False
+
+        interval_days = getattr(self, "smart_refresh_interval_days", None)
+        if interval_days is None or interval_days <= 0:
+            return False
+
+        try:
+            if not await self.db.table_exists(self):
+                return False
+
+            getter = getattr(self.db, "get_latest_update_time", None)
+            if callable(getter):
+                latest_update_time = await getter(self)
+            else:
+                latest_update_time = await self.db.get_latest_date(self, "update_time")
+            if not latest_update_time:
+                return False
+
+            if not isinstance(latest_update_time, datetime):
+                latest_update_time = pd.to_datetime(latest_update_time).to_pydatetime()
+            latest_update_time = latest_update_time.replace(tzinfo=None)
+
+            age = datetime.now() - latest_update_time
+            if age <= timedelta(days=interval_days):
+                self._smart_skip_reason = (
+                    f"SMART 模式检测到表最近更新时间 {latest_update_time}，"
+                    f"{interval_days} 天内无需重复拉取，自动跳过。"
+                )
+                self.logger.info("%s: %s", self.name, self._smart_skip_reason)
+                return True
+        except Exception as e:
+            self.logger.warning(
+                "%s: SMART 最近更新时间跳过判断失败，将继续执行: %s",
+                self.name,
+                e,
+            )
+
+        return False
 
     async def _execute_batches(self, batches: List[Any], stop_event: Optional[asyncio.Event] = None) -> List[Any]:
         """
@@ -764,9 +819,13 @@ class FetcherTask(BaseTask, ABC):
             elif self.update_type == UpdateTypes.SMART:
                 date_range = await self._determine_date_range()
                 if not date_range:
-                    self.logger.warning(
-                        f"任务 {self.name}: 无法确定智能增量更新的日期范围，将跳过执行。"
-                    )
+                    skip_reason = getattr(self, "_smart_skip_reason", None)
+                    if skip_reason:
+                        self.logger.info("任务 %s: %s", self.name, skip_reason)
+                    else:
+                        self.logger.warning(
+                            f"任务 {self.name}: 无法确定智能增量更新的日期范围，将跳过执行。"
+                        )
                     return None
                 start_date, end_date = date_range["start_date"], date_range["end_date"]
 

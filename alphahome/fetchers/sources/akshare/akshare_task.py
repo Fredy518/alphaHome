@@ -13,9 +13,7 @@
 
 import abc
 import asyncio
-import logging
-from datetime import datetime, timedelta
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
@@ -235,44 +233,6 @@ class AkShareTask(FetcherTask, abc.ABC):
         """
         return ""
 
-    async def _should_skip_by_recent_update_time(
-        self,
-        update_type: str,
-        *,
-        max_age_days: int = 30,
-    ) -> bool:
-        """
-        对于无法通过 API 参数限定时间范围的任务：
-        - SMART 模式下，如果数据库表最近更新在 max_age_days 内，自动跳过
-        - 否则允许执行“全量/覆盖式”获取
-        """
-        if update_type != UpdateTypes.SMART:
-            return False
-
-        try:
-            table_exists = await self.db.table_exists(self)
-            if not table_exists:
-                return False
-
-            latest_update_time = await self.db.get_latest_update_time(self)
-            if not latest_update_time:
-                return False
-
-            age = datetime.now() - latest_update_time
-            if age <= timedelta(days=max_age_days):
-                self.logger.info(
-                    f"{self.name}: SMART 模式检测到表最近更新时间 {latest_update_time}，"
-                    f"{max_age_days} 天内无需重复拉取，自动跳过。"
-                )
-                return True
-
-            return False
-        except Exception as e:
-            self.logger.warning(
-                f"{self.name}: SMART 模式更新时间跳过判断失败，将继续执行: {e}"
-            )
-            return False
-
 
 class AkShareSingleBatchTask(AkShareTask):
     """
@@ -339,13 +299,9 @@ class AkShareNoDateSingleBatchTask(AkShareTask):
     对结果进行过滤，从而实现“只回写所需时间窗”的增量效果。
     """
 
+    smart_refresh_interval_days = 1
+
     async def get_batch_list(self, **kwargs) -> List[Dict]:
-        update_type = kwargs.get("update_type", UpdateTypes.SMART)
-
-        # SMART 模式下做一次“近期更新跳过”保护，避免短时间重复全量回溯
-        if await self._should_skip_by_recent_update_time(update_type, max_age_days=1):
-            return []
-
         batch_params: Dict[str, Any] = {}
         if self.api_params:
             batch_params.update(self.api_params)

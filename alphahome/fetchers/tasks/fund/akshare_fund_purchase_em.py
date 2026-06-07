@@ -17,14 +17,12 @@ AkShare 基金申购数据任务（fund_purchase_em）
 
 from __future__ import annotations
 
-import asyncio
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
 from ...sources.akshare.akshare_task import AkShareTask
-from ....common.constants import UpdateTypes
 from ....common.task_system.task_decorator import task_register
 
 
@@ -49,6 +47,7 @@ class AkShareFundPurchaseEmTask(AkShareTask):
     # 快照接口不支持历史回补，这里保留一个占位起始日，
     # 仅用于兼容 FetcherTask 的 FULL/SMART 日期窗口计算。
     default_start_date = "20000101"
+    smart_refresh_interval_days = 1
 
     # 2) AkShare 特有属性
     api_name = "fund_purchase_em"
@@ -102,10 +101,6 @@ class AkShareFundPurchaseEmTask(AkShareTask):
 
         fund_purchase_em 接口一次性返回所有基金的最新申购状态（快照）。
         """
-        update_type = kwargs.get("update_type", UpdateTypes.SMART)
-        if await self._should_skip_by_recent_update_time(update_type, max_age_days=1):
-            return []
-
         self.logger.info(f"任务 {self.name}: 生成单批次参数（一次性获取最新申购状态数据）")
         return [{}]  # 返回空参数字典
 

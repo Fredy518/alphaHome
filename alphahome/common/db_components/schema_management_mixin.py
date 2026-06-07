@@ -62,6 +62,80 @@ class SchemaManagementMixin:
     - 为DataOperationsMixin提供表结构信息
     """
 
+    @staticmethod
+    def _build_update_time_index_name(table_name: str) -> str:
+        """Return the canonical update_time index name for a data table."""
+        normalized_table_name = table_name.strip('"')
+        return f"idx_{normalized_table_name}_update_time"
+
+    def _build_update_time_index_sql(self, resolved_table_name: str, simple_name: str) -> tuple[str, str]:
+        index_name = self._build_update_time_index_name(simple_name)
+        sql = (
+            f'CREATE INDEX IF NOT EXISTS "{index_name}" '
+            f'ON {resolved_table_name} ("update_time");'
+        )
+        return index_name, sql
+
+    async def _has_single_column_update_time_index(
+        self,
+        conn: Any,
+        *,
+        schema: str,
+        simple_name: str,
+    ) -> bool:
+        return bool(
+            await conn.fetchval(
+                """
+                SELECT EXISTS (
+                    SELECT 1
+                    FROM pg_class t
+                    JOIN pg_namespace n ON n.oid = t.relnamespace
+                    JOIN pg_index ix ON ix.indrelid = t.oid
+                    JOIN pg_attribute a
+                      ON a.attrelid = t.oid
+                     AND a.attnum = ANY(ix.indkey)
+                    WHERE n.nspname = $1
+                      AND t.relname = $2
+                      AND ix.indisvalid
+                      AND ix.indnkeyatts = 1
+                      AND a.attname = 'update_time'
+                );
+                """,
+                schema,
+                simple_name,
+            )
+        )
+
+    async def _ensure_update_time_index(
+        self,
+        *,
+        conn: Optional[Any],
+        schema: str,
+        resolved_table_name: str,
+        simple_name: str,
+    ) -> Optional[str]:
+        if conn is None:
+            if self.pool is None:  # type: ignore
+                await self.connect()  # type: ignore
+            async with self.pool.acquire() as acquired_conn:  # type: ignore
+                return await self._ensure_update_time_index(
+                    conn=acquired_conn,
+                    schema=schema,
+                    resolved_table_name=resolved_table_name,
+                    simple_name=simple_name,
+                )
+
+        if await self._has_single_column_update_time_index(
+            conn,
+            schema=schema,
+            simple_name=simple_name,
+        ):
+            return None
+
+        index_name, sql = self._build_update_time_index_sql(resolved_table_name, simple_name)
+        await conn.execute(sql)
+        return index_name
+
     async def table_exists(self, target: Any) -> bool:
         """检查表是否存在
 
@@ -348,10 +422,14 @@ class SchemaManagementMixin:
                 async with conn.transaction():
                     for col_name in missing_cols:
                         col_type = desired_types[col_name]
-                        # update_time handled later as well; ADD COLUMN here is safe and idempotent
+                        default_clause = (
+                            " DEFAULT CURRENT_TIMESTAMP"
+                            if auto_add_update_time and col_name == "update_time"
+                            else ""
+                        )
                         sql = (
                             f'ALTER TABLE {resolved_table_name} '
-                            f'ADD COLUMN IF NOT EXISTS "{col_name}" {col_type};'
+                            f'ADD COLUMN IF NOT EXISTS "{col_name}" {col_type}{default_clause};'
                         )
                         await conn.execute(sql)
                         actions.append(f"add_column:{col_name}")
@@ -424,40 +502,48 @@ class SchemaManagementMixin:
                     (f"widen_varchar:{col_name}:{existing_len}->{desired_len}", sql)
                 )
 
-        if not pending_ddls:
-            return {"status": "ok", "actions": []}
+        if pending_ddls:
+            async with self.pool.acquire() as conn:  # type: ignore
+                async with conn.transaction():
+                    base_oid, rels, drop_order, view_defs = await self._collect_dependent_views_closure(
+                        conn, schema, table
+                    )
 
-        async with self.pool.acquire() as conn:  # type: ignore
-            async with conn.transaction():
-                base_oid, rels, drop_order, view_defs = await self._collect_dependent_views_closure(
-                    conn, schema, table
-                )
+                    if base_oid is None:
+                        return {"status": "skipped", "reason": "table_not_found", "actions": []}
 
-                if base_oid is None:
-                    return {"status": "skipped", "reason": "table_not_found", "actions": []}
+                    if not drop_order and any(r.get("kind") == "m" for r in rels.values()):
+                        return {
+                            "status": "skipped",
+                            "reason": "dependent_materialized_views",
+                            "actions": [],
+                        }
 
-                if not drop_order and any(r.get("kind") == "m" for r in rels.values()):
-                    return {
-                        "status": "skipped",
-                        "reason": "dependent_materialized_views",
-                        "actions": [],
-                    }
+                    for oid in drop_order:
+                        r = rels[oid]
+                        fq = f'{self._quote_ident(r["schema"])}.{self._quote_ident(r["name"])}'
+                        await conn.execute(f"DROP VIEW IF EXISTS {fq};")
 
-                for oid in drop_order:
-                    r = rels[oid]
-                    fq = f'{self._quote_ident(r["schema"])}.{self._quote_ident(r["name"])}'
-                    await conn.execute(f"DROP VIEW IF EXISTS {fq};")
+                    for action, sql in pending_ddls:
+                        await conn.execute(sql)
+                        actions.append(action)
 
-                for action, sql in pending_ddls:
-                    await conn.execute(sql)
-                    actions.append(action)
+                    for oid in reversed(drop_order):
+                        r = rels[oid]
+                        fq = f'{self._quote_ident(r["schema"])}.{self._quote_ident(r["name"])}'
+                        view_def = view_defs.get(oid)
+                        if view_def:
+                            await conn.execute(f"CREATE OR REPLACE VIEW {fq} AS {view_def};")
 
-                for oid in reversed(drop_order):
-                    r = rels[oid]
-                    fq = f'{self._quote_ident(r["schema"])}.{self._quote_ident(r["name"])}'
-                    view_def = view_defs.get(oid)
-                    if view_def:
-                        await conn.execute(f"CREATE OR REPLACE VIEW {fq} AS {view_def};")
+        if auto_add_update_time:
+            ensured_index = await self._ensure_update_time_index(
+                conn=None,
+                schema=schema,
+                resolved_table_name=resolved_table_name,
+                simple_name=table,
+            )
+            if ensured_index:
+                actions.append(f"create_index:{ensured_index}")
 
         return {"status": "ok", "actions": actions}
 
@@ -620,6 +706,21 @@ class SchemaManagementMixin:
                             )
                             await conn.execute(create_index_sql) # type: ignore
                             self.logger.info(f"索引 '{index_name}' 创建成功或已存在。") # type: ignore
+
+                    # 所有自动维护 update_time 的采集表都必须有 update_time 单列索引。
+                    # 放在自定义索引之后执行，避免任务已经声明 update_time 索引时重复创建。
+                    if auto_add_update_time:
+                        index_name_update_time = await self._ensure_update_time_index(
+                            conn=conn,
+                            schema=schema,
+                            resolved_table_name=resolved_table_name,
+                            simple_name=simple_name,
+                        )
+                        if index_name_update_time:
+                            self.logger.info(
+                                "索引 '%s' 创建成功或已存在。",
+                                index_name_update_time,
+                            )  # type: ignore
 
                 except Exception as e:
                     self.logger.error( # type: ignore

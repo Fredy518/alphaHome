@@ -11,7 +11,7 @@ AkShare 中证指数成分股（CSIndex）
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Dict, Iterable, List, Optional
 
 import pandas as pd
 
@@ -50,6 +50,7 @@ class AkShareIndexStockConsCsindexTask(AkShareTask):
     primary_keys = ["index_code", "const_code", "as_of_date"]
     date_column = "as_of_date"
     default_start_date = "20050101"
+    smart_refresh_interval_days = 30
 
     api_name = "index_stock_cons_csindex"
 
@@ -167,8 +168,6 @@ class AkShareIndexStockConsCsindexTask(AkShareTask):
 
     async def get_batch_list(self, **kwargs) -> List[Dict]:
         update_type = kwargs.get("update_type", UpdateTypes.SMART)
-        if await self._should_skip_by_recent_update_time(update_type, max_age_days=30):
-            return []
         symbols = _normalize_index_symbols(kwargs.get("symbol"), kwargs.get("symbols"))
 
         if not symbols:
