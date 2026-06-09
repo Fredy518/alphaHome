@@ -418,7 +418,8 @@ class PFactorCalculator:
             if result.empty:
                 return dates
 
-            existing_dates = set(result['calc_date'].dt.strftime('%Y-%m-%d').tolist())
+            existing_series = pd.to_datetime(result['calc_date'], errors='coerce').dropna()
+            existing_dates = set(existing_series.dt.strftime('%Y-%m-%d').tolist())
             missing_dates = [date for date in dates if date not in existing_dates]
 
             self.logger.info(f"总日期: {len(dates)}, 已有数据: {len(existing_dates)}, 缺失数据: {len(missing_dates)}")

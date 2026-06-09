@@ -1,3 +1,5 @@
+from datetime import date
+
 import pandas as pd
 
 from alphahome.factors.core.g_factor_calculator import GFactorCalculator
@@ -49,3 +51,31 @@ def test_g_factor_stock_universe_includes_same_day_p_factor_codes():
         "600000.SH",
         "920000.BJ",
     ]
+
+
+def test_p_factor_filter_missing_dates_accepts_python_date_values(caplog):
+    context = FakeFactorContext(
+        [
+            ("pgs_factors.p_factor", pd.DataFrame({"calc_date": [date(2026, 6, 5)]})),
+        ]
+    )
+    calculator = PFactorCalculator(context=context)
+
+    assert calculator._filter_missing_dates(["2026-06-05", "2026-06-12"]) == [
+        "2026-06-12"
+    ]
+    assert "过滤缺失日期失败" not in caplog.text
+
+
+def test_g_factor_filter_missing_dates_accepts_python_date_values(caplog):
+    context = FakeFactorContext(
+        [
+            ("pgs_factors.g_factor", pd.DataFrame({"calc_date": [date(2026, 6, 5)]})),
+        ]
+    )
+    calculator = GFactorCalculator(context=context)
+
+    assert calculator._filter_missing_dates(["2026-06-05", "2026-06-12"]) == [
+        "2026-06-12"
+    ]
+    assert "过滤缺失日期失败" not in caplog.text

@@ -8,9 +8,10 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Iterable, List, Optional, Sequence
+from typing import Any, Iterable, List, Optional, Sequence
 
 from alphahome.factors.core import GFactorCalculator, PFactorCalculator
+from alphahome.factors.core.context import ensure_factor_context
 from alphahome.factors.pipelines.factor_engine import (
     FactorEngine,
     FactorEngineConfig,
@@ -102,8 +103,12 @@ def run_missing_factors(
         dry_run=dry_run,
         log_level=log_level,
     )
-    engine = FactorEngine(config)
-    missing_dates = engine.resolve_dates()
+    context = ensure_factor_context()
+    try:
+        engine = FactorEngine(config, context=context)
+        missing_dates = engine.resolve_dates()
+    finally:
+        _close_factor_context(context)
 
     if not missing_dates:
         print("没有发现缺失的因子数据")
@@ -136,8 +141,12 @@ def run_recent_missing_factors(months: int, log_level: str = "INFO", factor_type
         mode="backfill",
         log_level=log_level,
     )
-    engine = FactorEngine(config)
-    missing_dates = engine.resolve_dates()
+    context = ensure_factor_context()
+    try:
+        engine = FactorEngine(config, context=context)
+        missing_dates = engine.resolve_dates()
+    finally:
+        _close_factor_context(context)
 
     if not missing_dates:
         print("没有发现缺失的因子数据")
@@ -339,6 +348,13 @@ def _run_dates_p_then_g(dates: Sequence[str], factor_types: Sequence[str], log_l
     totals["total_time"] = time.time() - started_at
     totals["details"] = details
     return totals
+
+
+def _close_factor_context(context: Any) -> None:
+    db_manager = getattr(context, "db_manager", None)
+    close_sync = getattr(db_manager, "close_sync", None)
+    if callable(close_sync):
+        close_sync()
 
 
 def _print_grouped_dates(dates: Sequence[str], key_length: int) -> None:

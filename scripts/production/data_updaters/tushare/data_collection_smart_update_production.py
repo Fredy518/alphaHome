@@ -409,7 +409,9 @@ class DataCollectionProductionUpdater:
         if self.stats['failed_tasks'] > 0:
             print("   - 检查失败任务的网络连接或 API 权限")
             print("   - 查看详细日志了解具体错误原因")
-        if self.stats['successful_tasks'] / max(self.stats['total_tasks'], 1) < 0.8:
+        if self.dry_run and self.stats['failed_tasks'] == 0:
+            print("   - 干运行完成，任务发现和调度链路正常")
+        elif self.stats['successful_tasks'] / max(self.stats['total_tasks'], 1) < 0.8:
             print("   - 成功率较低，建议降低并发数或增加重试次数")
         else:
             print("   - 更新执行成功，数据已保持最新状态")
@@ -492,6 +494,9 @@ class DataCollectionProductionUpdater:
             self.print_execution_summary(results)
 
             # 返回成功状态
+            if self.dry_run:
+                return self.stats['failed_tasks'] == 0
+
             success_rate = self.stats['successful_tasks'] / max(self.stats['total_tasks'], 1)
             return success_rate >= 0.8  # 80% 成功率视为整体成功
 
