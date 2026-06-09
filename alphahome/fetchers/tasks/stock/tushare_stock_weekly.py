@@ -224,7 +224,7 @@ class TushareStockWeeklyTask(TushareTask):
             
             # 过滤掉无效的股票代码
             if "ts_code" in data.columns:
-                data = data[data["ts_code"].str.contains(r'\.(?:SZ|SH)$', na=False)].copy()
+                data = data[data["ts_code"].str.contains(r'\.(?:SZ|SH|BJ)$', na=False)].copy()
             
             filtered_count = len(data)
             

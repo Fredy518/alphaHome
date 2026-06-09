@@ -53,6 +53,25 @@ class _FakeClientSession:
         return _FakeRequestContext(_enter)
 
 
+class _FakeStatusClientSession:
+    def __init__(self, responses):
+        self._responses = list(responses)
+        self.post_calls = 0
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+    def post(self, url, json):
+        def _enter():
+            self.post_calls += 1
+            return self._responses.pop(0)
+
+        return _FakeRequestContext(_enter)
+
+
 @pytest.mark.asyncio
 async def test_tushare_api_retries_on_server_disconnected(monkeypatch):
     api = TushareAPI(token="test", logger=logging.getLogger("test"))
@@ -97,6 +116,41 @@ async def test_tushare_api_retries_on_server_disconnected(monkeypatch):
 
     assert fake_session.post_calls == 3
     assert list(df.columns) == ["date"]
+    assert df.iloc[0]["date"] == "20260122"
+
+
+@pytest.mark.asyncio
+async def test_tushare_api_retries_http_5xx_on_outer_attempt(monkeypatch):
+    api = TushareAPI(token="test", logger=logging.getLogger("test"))
+
+    async def _no_wait(_api_name: str):
+        return None
+
+    async def _no_sleep(_seconds: float):
+        return None
+
+    monkeypatch.setattr(api, "_wait_for_rate_limit_slot", _no_wait)
+    monkeypatch.setattr(tushare_api_module.asyncio, "sleep", _no_sleep)
+
+    response_json = {
+        "code": 0,
+        "data": {"fields": ["date"], "items": [["20260122"]]},
+    }
+    fake_session = _FakeStatusClientSession(
+        [
+            _FakeResponse(500, {"error": "temporary"}),
+            _FakeResponse(200, response_json),
+        ]
+    )
+
+    def _session_factory(*args, **kwargs):
+        return fake_session
+
+    monkeypatch.setattr(tushare_api_module.aiohttp, "ClientSession", _session_factory)
+
+    df = await api.query(api_name="daily", fields="date", max_retries=2)
+
+    assert fake_session.post_calls == 2
     assert df.iloc[0]["date"] == "20260122"
 
 

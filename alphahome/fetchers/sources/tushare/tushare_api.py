@@ -337,6 +337,7 @@ class TushareAPI:
                         raise asyncio.CancelledError
 
                     try:
+                        retry_http_error = False
                         # 允许 40203（速率限制）在内部等待并继续请求，不计入连接层重试策略
                         while True:
                             await self._wait_for_rate_limit_slot(api_name)
@@ -359,12 +360,16 @@ class TushareAPI:
                                                 f"Tushare API 服务器错误 ({api_name})，将重试 {attempt}/{max_retries}，等待 {delay:.1f}s。状态码: {response.status}"
                                             )
                                             await _sleep_with_stop(delay)
-                                            continue
+                                            retry_http_error = True
+                                            break
                                         raise ValueError(
                                             f"Tushare API 请求失败({api_name})，状态码: {response.status}, 响应: {error_text}"
                                         )
 
                                     result = await response.json()
+
+                            if retry_http_error:
+                                break
 
                             if result.get("code") == 40203:
                                 error_msg = result.get("msg", "未知错误")
@@ -376,6 +381,9 @@ class TushareAPI:
                                 continue
 
                             break
+
+                        if retry_http_error:
+                            continue
 
                         if result is None:
                             raise RuntimeError(f"Tushare API ({api_name}) 未获得有效响应。参数: {params}")

@@ -172,6 +172,6 @@ class TushareStockDailyTask(TushareTask):
             self.logger.error(
                 f"任务 {self.name}: 生成批次时出错: {e}", exc_info=True
             )
-            return []
+            raise
 
 

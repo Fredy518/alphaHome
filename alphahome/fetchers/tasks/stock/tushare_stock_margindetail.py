@@ -207,7 +207,7 @@ class TushareStockMarginDetailTask(TushareTask):
 
         except Exception as e:
             self.logger.error(f"任务 {self.name}: BatchPlanner 生成批次时出错: {e}", exc_info=True)
-            return []
+            raise
 
     async def pre_execute(self, stop_event: Optional[asyncio.Event] = None, **kwargs):
         """任务执行前的准备工作"""

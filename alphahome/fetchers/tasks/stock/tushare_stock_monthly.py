@@ -200,7 +200,7 @@ class TushareStockMonthlyTask(TushareTask):
 
         except Exception as e:
             self.logger.error(f"任务 {self.name}: 生成批次时出错: {e}", exc_info=True)
-            return []
+            raise
 
     async def fetch_batch(self, batch_params: Dict, stop_event: Optional[Any] = None) -> Optional[pd.DataFrame]:
         """重写批次获取方法，添加数据过滤
@@ -223,7 +223,7 @@ class TushareStockMonthlyTask(TushareTask):
 
             # 过滤掉无效的股票代码
             if "ts_code" in data.columns:
-                data = data[data["ts_code"].str.contains(r'\.(?:SZ|SH)$', na=False)].copy()
+                data = data[data["ts_code"].str.contains(r'\.(?:SZ|SH|BJ)$', na=False)].copy()
 
             filtered_count = len(data)
 
