@@ -13,6 +13,7 @@ from typing import Callable, Dict, Optional, Any
 import appdirs
 
 from ...common.logging_utils import get_logger
+from ...common.config_manager import redact_url
 from ...common.task_system import UnifiedTaskFactory
 from ...common.db_manager import create_async_manager
 
@@ -144,7 +145,7 @@ async def test_database_connection(db_url: str) -> Dict[str, Any]:
 
     temp_manager = None
     try:
-        logger.info(f"正在尝试使用URL连接到数据库: {db_url[:db_url.find('@')]}...")
+        logger.info(f"正在尝试使用URL连接到数据库: {redact_url(db_url)}...")
         temp_manager = create_async_manager(db_url)
         
         # test_connection 返回布尔值，需要检查其结果

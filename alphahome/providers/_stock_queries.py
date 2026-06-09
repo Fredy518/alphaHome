@@ -178,6 +178,8 @@ class StockQueries:
             包含股票行情数据的DataFrame
         """
         symbols = self._normalize_symbols(symbols)
+        if not symbols:
+            return pd.DataFrame()
         table_name = self._get_stock_daily_table()
         
         # 构建参数化SQL查询（防止SQL注入）

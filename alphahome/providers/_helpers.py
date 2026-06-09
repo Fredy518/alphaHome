@@ -291,6 +291,8 @@ class DataHelpers:
         if symbols is not None:
             if isinstance(symbols, str):
                 symbols = [symbols]
+            if not symbols:
+                return pd.DataFrame()
             placeholders = ','.join(['%s'] * len(symbols))
             where_conditions.append(f"ts_code IN ({placeholders})")
             query_params.extend(symbols)

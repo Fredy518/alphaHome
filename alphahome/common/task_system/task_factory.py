@@ -7,6 +7,7 @@ from ..config_manager import (
     get_task_config,
     get_tinysoft_config,
     get_tushare_token,
+    redact_url,
     reload_config as _reload_config,
 )
 from .base_task import BaseTask
@@ -65,14 +66,15 @@ class UnifiedTaskFactory:
             return  # 或者直接返回，保持未初始化状态
 
         # 只有在获得有效 db_url 后才继续
-        logger.info(f"尝试使用数据库 URL 初始化 UnifiedTaskFactory: {db_url}")
+        safe_db_url = redact_url(db_url)
+        logger.info(f"尝试使用数据库 URL 初始化 UnifiedTaskFactory: {safe_db_url}")
         try:
             cls._db_manager = cls._create_db_manager(db_url)
             await cls._db_manager.connect()
             cls._initialized = True
-            logger.info(f"UnifiedTaskFactory 初始化成功: db_url={db_url}")
+            logger.info(f"UnifiedTaskFactory 初始化成功: db_url={safe_db_url}")
         except Exception as e:
-            logger.exception(f"使用 URL {db_url} 连接数据库失败")
+            logger.exception(f"使用 URL {safe_db_url} 连接数据库失败")
             cls._db_manager = None
             cls._initialized = False
             # 向上抛出异常，让 controller 知道初始化失败
@@ -110,7 +112,7 @@ class UnifiedTaskFactory:
                 cls._db_manager = None
                 raise ValueError("新配置中缺少数据库 URL")
 
-            logger.info(f"加载到新的数据库 URL: {new_db_url}")
+            logger.info(f"加载到新的数据库 URL: {redact_url(new_db_url)}")
 
             # 3. 使用新 URL 重新初始化 DBManager
             logger.info("正在使用新 URL 创建新的 DBManager 实例...")

@@ -58,7 +58,7 @@ await handle_request("RUN_TASKS", task_data)
 import asyncio
 from typing import Any, Callable, Dict, List, Optional
 
-from ..common.config_manager import _config_manager as config_manager
+from ..common.config_manager import _config_manager as config_manager, redact_sensitive_config
 from ..common.db_manager import DBManager  # 添加 DBManager 导入
 from ..common.logging_utils import get_logger, setup_logging
 from ..common.schema_migrator import run_migration_check, run_refactoring_check
@@ -246,7 +246,8 @@ async def handle_request(command: str, data: Optional[Dict[str, Any]] = None):
     - GET_STORAGE_SETTINGS: 获取存储设置
     - SAVE_STORAGE_SETTINGS: 保存存储设置
     """
-    logger.debug(f"Controller received command: {command} with data: {data}")
+    global db_manager
+    logger.debug(f"Controller received command: {command} with data: {redact_sensitive_config(data)}")
     data = data or {}
 
     try:
@@ -279,6 +280,7 @@ async def handle_request(command: str, data: Optional[Dict[str, Any]] = None):
         elif command == "SAVE_STORAGE_SETTINGS":
             # The configuration service now handles saving and reloading.
             await configuration_service.handle_save_settings(data)
+            db_manager = UnifiedTaskFactory.get_db_manager()
             
             # After reloading, we need to refresh the UI task list
             await handle_get_collection_tasks()

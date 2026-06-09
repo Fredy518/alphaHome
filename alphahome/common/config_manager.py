@@ -4,10 +4,48 @@ import os
 import shutil
 from threading import Lock
 from typing import Any, Dict, Optional
+from urllib.parse import urlsplit, urlunsplit
 
 import appdirs
 
 logger = logging.getLogger("config_manager")
+
+SENSITIVE_KEYWORDS = ("password", "token", "secret", "session_password", "api_key")
+
+
+def redact_url(url: Optional[str]) -> str:
+    """Return a log-safe database URL with credentials removed."""
+    if not url:
+        return ""
+    try:
+        parts = urlsplit(url)
+        if not parts.netloc:
+            return "***REDACTED***"
+        host_part = parts.hostname or ""
+        if parts.port:
+            host_part = f"{host_part}:{parts.port}"
+        user_part = f"{parts.username}:***@" if parts.username else ""
+        return urlunsplit((parts.scheme, f"{user_part}{host_part}", parts.path, parts.query, parts.fragment))
+    except Exception:
+        return "***REDACTED***"
+
+
+def redact_sensitive_config(value: Any) -> Any:
+    """Recursively redact credentials before logging configuration-like payloads."""
+    if isinstance(value, dict):
+        redacted = {}
+        for key, item in value.items():
+            key_text = str(key).lower()
+            if any(keyword in key_text for keyword in SENSITIVE_KEYWORDS):
+                redacted[key] = "***REDACTED***"
+            elif "url" in key_text and isinstance(item, str):
+                redacted[key] = redact_url(item)
+            else:
+                redacted[key] = redact_sensitive_config(item)
+        return redacted
+    if isinstance(value, list):
+        return [redact_sensitive_config(item) for item in value]
+    return value
 
 
 class ConfigManager:
@@ -101,7 +139,7 @@ class ConfigManager:
 
         self._config_cache = final_config
         self._config_loaded = True
-        logger.debug(f"配置已加载并缓存: {final_config}")
+        logger.debug(f"配置已加载并缓存: {redact_sensitive_config(final_config)}")
         return self._config_cache
 
     def reload_config(self):

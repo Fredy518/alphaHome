@@ -315,12 +315,15 @@ class IndexQueries:
         Returns:
             包含指数基本信息的DataFrame
         """
-        table_name = self._get_index_basic_table()
-        
-        # 构建参数化查询条件
         if index_codes is not None:
             if isinstance(index_codes, str):
                 index_codes = [index_codes]
+            if not index_codes:
+                return pd.DataFrame()
+        table_name = self._get_index_basic_table()
+
+        # 构建参数化查询条件
+        if index_codes is not None:
             placeholders = ','.join(['%s'] * len(index_codes))
             where_clause = f"WHERE ts_code IN ({placeholders})"
             query_params = index_codes

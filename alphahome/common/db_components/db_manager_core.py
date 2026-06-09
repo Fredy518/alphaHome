@@ -2,7 +2,7 @@ import asyncio
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 from contextlib import asynccontextmanager
 
 import asyncpg
@@ -104,6 +104,7 @@ class DBManagerCore:
         if self.mode == "async":
             # 异步模式：使用 asyncpg
             self.pool = None
+            self._connect_lock = asyncio.Lock()
             self._sync_lock = threading.Lock()
             self._loop = None
             self._executor = None
@@ -168,28 +169,26 @@ class DBManagerCore:
         try:
             # 直接解析连接字符串
             parsed = urlparse(self.connection_string)
+            if parsed.scheme not in {"postgresql", "postgres"}:
+                raise ValueError(f"不支持的数据库URL协议: {parsed.scheme or '<empty>'}")
+            if not parsed.hostname:
+                raise ValueError("数据库URL缺少host")
+            database = parsed.path.lstrip("/") if parsed.path else ""
+            if not database:
+                raise ValueError("数据库URL缺少database")
 
             self._conn_params = {
-                "host": parsed.hostname or "localhost",
+                "host": parsed.hostname,
                 "port": parsed.port or 5432,
-                "user": parsed.username or "postgres",
-                "password": parsed.password or "",
-                "database": parsed.path.lstrip("/") if parsed.path else "postgres",
+                "user": unquote(parsed.username) if parsed.username else "postgres",
+                "password": unquote(parsed.password) if parsed.password else "",
+                "database": unquote(database),
                 "client_encoding": "utf8"
             }
-            
+
         except Exception as e:
             self.logger.error(f"解析连接字符串失败: {e}")
-            # 使用默认参数
-            self._conn_params = {
-                "host": "localhost",
-                "port": 5432,
-                "user": "postgres",
-                "password": "",
-                "database": "postgres",
-                "client_encoding": "utf8",
-                "options": "-c client_encoding=utf8"
-            }
+            raise ValueError(f"无效的数据库连接字符串: {e}") from e
 
     def _get_sync_connection(self):
         """获取线程本地的数据库连接（仅同步模式）
@@ -374,38 +373,45 @@ class DBManagerCore:
             raise RuntimeError("connect 方法只能在异步模式下使用")
 
         if self.pool is None:
-            try:
-                # 获取连接池配置（支持配置文件覆盖）
-                pool_config = self._get_pool_config()
+            async with self._connect_lock:
+                if self.pool is not None:
+                    return
+                await self._connect_unlocked()
 
-                self.pool = await asyncpg.create_pool(
-                    self.connection_string,
-                    min_size=pool_config.get('min_size', 5),
-                    max_size=pool_config.get('max_size', 25),
-                    command_timeout=pool_config.get('command_timeout', 180),
-                    max_queries=pool_config.get('max_queries', 50000),
-                    max_inactive_connection_lifetime=pool_config.get('max_inactive_connection_lifetime', 300),
-                    server_settings=pool_config.get('server_settings', {
-                        'application_name': 'alphahome_fetcher',
-                        'tcp_keepalives_idle': '600',
-                        'tcp_keepalives_interval': '30',
-                        'tcp_keepalives_count': '3',
-                        'jit': 'off'  # 关闭JIT以提高小查询性能
-                    })
-                )
+    async def _connect_unlocked(self):
+        """Create the async pool; caller must hold _connect_lock."""
+        try:
+            # 获取连接池配置（支持配置文件覆盖）
+            pool_config = self._get_pool_config()
 
-                self.logger.info(
-                    f"优化的异步数据库连接池创建成功 "
-                    f"(min_size={pool_config.get('min_size', 5)}, "
-                    f"max_size={pool_config.get('max_size', 25)}, "
-                    f"command_timeout={pool_config.get('command_timeout', 180)}s)"
-                )
-                
-                # 初始化 rawdata schema（用于统一数据视图映射）
-                await self._initialize_rawdata_schema()
-            except Exception as e:
-                self.logger.error(f"异步数据库连接池创建失败: {str(e)}")
-                raise
+            self.pool = await asyncpg.create_pool(
+                self.connection_string,
+                min_size=pool_config.get('min_size', 5),
+                max_size=pool_config.get('max_size', 25),
+                command_timeout=pool_config.get('command_timeout', 180),
+                max_queries=pool_config.get('max_queries', 50000),
+                max_inactive_connection_lifetime=pool_config.get('max_inactive_connection_lifetime', 300),
+                server_settings=pool_config.get('server_settings', {
+                    'application_name': 'alphahome_fetcher',
+                    'tcp_keepalives_idle': '600',
+                    'tcp_keepalives_interval': '30',
+                    'tcp_keepalives_count': '3',
+                    'jit': 'off'  # 关闭JIT以提高小查询性能
+                })
+            )
+
+            self.logger.info(
+                f"优化的异步数据库连接池创建成功 "
+                f"(min_size={pool_config.get('min_size', 5)}, "
+                f"max_size={pool_config.get('max_size', 25)}, "
+                f"command_timeout={pool_config.get('command_timeout', 180)}s)"
+            )
+
+            # 初始化 rawdata schema（用于统一数据视图映射）
+            await self._initialize_rawdata_schema()
+        except Exception as e:
+            self.logger.error(f"异步数据库连接池创建失败: {str(e)}")
+            raise
 
     async def _initialize_rawdata_schema(self):
         """
