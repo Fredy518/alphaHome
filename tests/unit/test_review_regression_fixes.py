@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from alphahome.common.config_manager import redact_sensitive_config, redact_url
+from alphahome.common.config_manager import ConfigManager, redact_sensitive_config, redact_url
 from alphahome.common.db_manager import DBManager
 from alphahome.factors.core.p_factor_calculator import PFactorCalculator
 from alphahome.pit.calculators.financial_indicators_calculator import FinancialIndicatorsCalculator
@@ -48,6 +48,14 @@ def test_sync_db_url_parser_rejects_missing_database_and_decodes_credentials():
 
     with pytest.raises(ValueError):
         DBManager("postgresql://localhost", mode="sync")
+
+
+def test_config_getters_tolerate_missing_nested_keys(monkeypatch):
+    manager = ConfigManager()
+    monkeypatch.setattr(manager, "load_config", lambda: {"database": {}, "api": {}})
+
+    assert manager.get_database_url() is None
+    assert manager.get_tushare_token() == ""
 
 
 def test_financial_indicator_cleaning_preserves_missing_values():

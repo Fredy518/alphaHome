@@ -198,11 +198,13 @@ class ConfigManager:
 
     def get_database_url(self) -> Optional[str]:
         """获取数据库连接URL"""
-        return self.load_config()["database"]["url"]
+        database_config = self.load_config().get("database", {})
+        return database_config.get("url") if isinstance(database_config, dict) else None
 
     def get_tushare_token(self) -> str:
         """获取Tushare API Token"""
-        return self.load_config()["api"]["tushare_token"]
+        api_config = self.load_config().get("api", {})
+        return api_config.get("tushare_token", "") if isinstance(api_config, dict) else ""
 
     def get_tinysoft_config(self) -> Dict[str, Any]:
         """
