@@ -30,6 +30,7 @@ _show_history_mode = False  # False: 只显示当前会话, True: 显示所有�
 # 任务停止控制
 _global_stop_event = None
 _current_running_tasks = []  # 跟踪当前运行的任务
+_is_running = False
 
 def set_response_callback(callback):
     """设置响应回调函数。"""
@@ -130,7 +131,7 @@ async def run_tasks(
     use_insert_mode: bool = False,
 ):
     """Runs a list of selected tasks with the given parameters."""
-    global _global_stop_event, _current_running_tasks
+    global _global_stop_event, _current_running_tasks, _is_running
     
     if not db_manager:
         logger.error("DB Manager not initialized in run_tasks.")
@@ -138,12 +139,27 @@ async def run_tasks(
             _send_response_callback("LOG", {"level": "error", "message": "数据库未连接，无法执行任务。"})
         return
 
+    if _is_running:
+        log_msg = "已有任务正在运行，本次运行请求已忽略。"
+        logger.warning(log_msg)
+        if _send_response_callback:
+            _send_response_callback("LOG", {"level": "warning", "message": log_msg})
+        return
+
+    _is_running = True
+
     # 创建新的停止事件
     _global_stop_event = asyncio.Event()
     _current_running_tasks = []
     
     # 首先确保task_status表存在
-    await _ensure_task_status_table_exists(db_manager)
+    try:
+        await _ensure_task_status_table_exists(db_manager)
+    except Exception:
+        _is_running = False
+        _global_stop_event = None
+        _current_running_tasks = []
+        raise
 
     total_tasks = len(tasks_to_run)
     
@@ -332,6 +348,7 @@ async def run_tasks(
         if _send_response_callback:
             _send_response_callback("LOG", {"level": "info", "message": "所有任务已处理完毕。"})
         # 清理停止事件
+        _is_running = False
         _global_stop_event = None
         _current_running_tasks = []
         # 最后再刷新一次状态

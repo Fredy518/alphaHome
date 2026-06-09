@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
+import asyncio
 from unittest.mock import AsyncMock
 
 import pytest
@@ -20,6 +21,22 @@ class _TaskWithoutIncrementalCapabilityMethod:
 
     async def execute(self, stop_event=None, **kwargs):
         self.executed = True
+        return {"status": "success", "rows": 1}
+
+
+class _BlockingTask:
+    data_source = "akshare"
+
+    def __init__(self):
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+
+    def get_display_name(self) -> str:
+        return "blocking_task"
+
+    async def execute(self, stop_event=None, **kwargs):
+        self.started.set()
+        await self.release.wait()
         return {"status": "success", "rows": 1}
 
 
@@ -51,6 +68,47 @@ async def test_run_tasks_handles_task_without_incremental_capability_method(monk
         use_insert_mode=False,
     )
     assert task.executed is True
+
+
+@pytest.mark.asyncio
+async def test_run_tasks_ignores_concurrent_run_request(monkeypatch):
+    task = _BlockingTask()
+    create_task_instance = AsyncMock(return_value=task)
+
+    monkeypatch.setattr(task_execution_service, "_is_running", False)
+    monkeypatch.setattr(task_execution_service, "_send_response_callback", None)
+    monkeypatch.setattr(task_execution_service, "_ensure_task_status_table_exists", AsyncMock())
+    monkeypatch.setattr(task_execution_service, "_record_task_status", AsyncMock())
+    monkeypatch.setattr(task_execution_service, "get_all_task_status", AsyncMock())
+    monkeypatch.setattr(
+        task_execution_service.UnifiedTaskFactory,
+        "create_task_instance",
+        create_task_instance,
+    )
+
+    first_run = asyncio.create_task(
+        task_execution_service.run_tasks(
+            db_manager=object(),
+            tasks_to_run=[{"task_name": "blocking_task"}],
+            start_date=None,
+            end_date=None,
+            exec_mode="智能增量",
+        )
+    )
+    await task.started.wait()
+
+    await task_execution_service.run_tasks(
+        db_manager=object(),
+        tasks_to_run=[{"task_name": "second_task"}],
+        start_date=None,
+        end_date=None,
+        exec_mode="智能增量",
+    )
+
+    assert create_task_instance.await_count == 1
+
+    task.release.set()
+    await first_run
 
 
 class _TaskWithoutIncrementalSupport:
