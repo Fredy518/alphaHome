@@ -50,7 +50,7 @@ All retained scripts become thin entrypoints or compatibility modules. CLI flags
 | Path | Disposition | Compatibility contract |
 | --- | --- | --- |
 | `scripts/production/factor_calculators/p_factor/production_p_factor_calculator.py` | Replace with thin import/export shim | `ProductionPFactorCalculator()` remains importable without explicit context. |
-| `scripts/production/factor_calculators/p_factor/production_p_factor_runner.py` | Thin entry | Preserve `--start-date`, `--end-date`, `--mode`, retry/log/dry-run/validation flags. |
+| `scripts/production/factor_calculators/p_factor/production_p_factor_runner.py` | Thin entry | Preserve `--start-date`, `--end-date`, `--mode`, log/dry-run/validation flags. |
 | `scripts/production/factor_calculators/p_factor/calculate_p_factor_for_specific_dates.py` | Thin entry | Preserve `--dates` and `--log-level`. |
 | `scripts/production/factor_calculators/p_factor/p_factor_parallel_by_year.py` | Thin entry | Preserve `--start_year`, `--end_year`, `--worker_id`, `--total_workers`. |
 | `scripts/production/factor_calculators/p_factor/p_factor_parallel_by_quarter.py` | Thin entry | Preserve `--worker_id`, `--total_workers`, `--quarter`, `--start_quarter`, `--end_quarter`. |

@@ -44,7 +44,7 @@ DEFAULT_SUBSCRIPTION = "alphadb_nas_sub"
 DEFAULT_DUMP_JOBS = 8
 DEFAULT_RESTORE_JOBS = 6
 DEFAULT_COMPRESS_LEVEL = 0
-DEFAULT_PROXY_PORT = 15432
+DEFAULT_PROXY_PORT = 0
 DEFAULT_DUMP_DIR = Path("D:/alphadb_nas_parallel_dump")
 META_FILE = "codex_parallel_rebuild_meta.json"
 
@@ -476,8 +476,18 @@ def run_logical_sync(
 def maybe_cleanup_dump(dump_dir: Path, cleanup: bool) -> None:
     if not cleanup:
         return
-    shutil.rmtree(dump_dir)
-    LOGGER.info("已删除 dump 目录: %s", dump_dir)
+    resolved = dump_dir.resolve(strict=True)
+    protected_paths = {
+        Path(resolved.anchor).resolve(),
+        PROJECT_ROOT.resolve(),
+        Path.home().resolve(),
+    }
+    if resolved in protected_paths:
+        raise RuntimeError(f"拒绝删除受保护目录: {resolved}")
+    if not (resolved / META_FILE).is_file():
+        raise RuntimeError(f"拒绝删除缺少 {META_FILE} 标记的目录: {resolved}")
+    shutil.rmtree(resolved)
+    LOGGER.info("已删除 dump 目录: %s", resolved)
 
 
 def main() -> int:

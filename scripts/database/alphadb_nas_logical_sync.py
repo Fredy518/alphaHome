@@ -57,7 +57,8 @@ DEFAULT_PUBLICATION = "alphadb_nas_pub"
 DEFAULT_SUBSCRIPTION = "alphadb_nas_sub"
 DEFAULT_SLOT = "alphadb_nas_slot"
 DEFAULT_REPLICATION_USER = "alphadb_sync"
-DEFAULT_PROXY_PORT = 15432
+DEFAULT_PROXY_PORT = 0
+DEFAULT_PROXY_BIND_HOST = "127.0.0.1"
 
 MIN_MAX_REPLICATION_SLOTS = 16
 MIN_MAX_WAL_SENDERS = 16
@@ -1049,7 +1050,7 @@ def bootstrap(args: argparse.Namespace) -> int:
     )
 
     with local_tcp_proxy(
-        bind_host="0.0.0.0",
+        bind_host=args.proxy_bind_host,
         bind_port=args.proxy_port,
         target_host="127.0.0.1",
         target_port=port_from_url(local_url),
@@ -1092,7 +1093,7 @@ def sync_now(args: argparse.Namespace) -> int:
     LOGGER.info("检测到当前本机对 NAS 的可达 IP: %s", local_ip)
 
     with local_tcp_proxy(
-        bind_host="0.0.0.0",
+        bind_host=args.proxy_bind_host,
         bind_port=args.proxy_port,
         target_host="127.0.0.1",
         target_port=port_from_url(local_url),
@@ -1198,6 +1199,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_PROXY_PORT,
         help="若大于 0，则在本机启动 Python TCP 代理供 NAS 回连；设为 0 则直接连接 PostgreSQL 端口",
     )
+    bootstrap_parser.add_argument(
+        "--proxy-bind-host",
+        default=DEFAULT_PROXY_BIND_HOST,
+        help="本机TCP代理绑定地址；如需供局域网NAS访问，请显式设置为 0.0.0.0",
+    )
     bootstrap_parser.set_defaults(handler=bootstrap)
 
     sync_parser = subparsers.add_parser(
@@ -1219,6 +1225,11 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=DEFAULT_PROXY_PORT,
         help="若大于 0，则在本机启动 Python TCP 代理供 NAS 回连；设为 0 则直接连接 PostgreSQL 端口",
+    )
+    sync_parser.add_argument(
+        "--proxy-bind-host",
+        default=DEFAULT_PROXY_BIND_HOST,
+        help="本机TCP代理绑定地址；如需供局域网NAS访问，请显式设置为 0.0.0.0",
     )
     sync_parser.add_argument(
         "--wait-seconds",

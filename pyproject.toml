@@ -10,7 +10,7 @@ authors = [
 ]
 description = "AlphaHome 数据管理工具"
 readme = "README.md" # 假设您有 README.md 文件
-requires-python = ">=3.9" # 根据您的项目实际使用的 Python 版本调整
+requires-python = ">=3.10" # 仓库脚本已使用 Python 3.10+ 语法
 classifiers = [
     "Programming Language :: Python :: 3",
     "License :: OSI Approved :: MIT License", # 假设您选择 MIT 许可证, 如果不同请修改
