@@ -654,8 +654,6 @@ class GFactorCalculator:
             DELETE FROM pgs_factors.g_factor
             WHERE calc_date = %s
             """
-            self.context.db_manager.execute_sync(delete_query, (calc_date,))
-            self.logger.info(f"已删除计算日期 {calc_date} 的所有旧G因子数据")
 
             # 准备插入数据
             insert_data = []
@@ -678,16 +676,6 @@ class GFactorCalculator:
                     row['ann_date']
                 ))
 
-            # 批量插入
-            insert_query = """
-            INSERT INTO pgs_factors.g_factor
-            (ts_code, calc_date, data_source, g_efficiency_surprise, g_efficiency_momentum,
-             g_revenue_momentum, g_profit_momentum, rank_es, rank_em, rank_rm, rank_pm,
-             g_score, data_timeliness_weight, calculation_status, ann_date)
-            VALUES %s
-            """
-
-            # 使用同步方法逐条插入数据（使用正确的表结构）
             insert_query = """
             INSERT INTO pgs_factors.g_factor (
                 ts_code, calc_date, ann_date, data_source,
@@ -702,44 +690,47 @@ class GFactorCalculator:
             )
             """
 
-            # 逐条插入（已删除旧数据，无需ON CONFLICT）
-            success_count = 0
-            for data_tuple in insert_data:
-                try:
-                    # 数据结构: (ts_code, calc_date, data_source, g_efficiency_surprise, g_efficiency_momentum,
-                    #           g_revenue_momentum, g_profit_momentum, rank_es, rank_em, rank_rm, rank_pm,
-                    #           g_score, data_timeliness_weight, calculation_status, ann_date)
-                    # 重新排序以匹配INSERT语句的字段顺序
+            db_manager = self.context.db_manager
+            if not hasattr(db_manager, "_get_sync_connection"):
+                raise RuntimeError("G因子保存需要同步DBManager以保证delete+insert事务原子性")
 
-                    new_data_tuple = (
-                        data_tuple[0],   # ts_code
-                        data_tuple[1],   # calc_date
-                        data_tuple[14],  # ann_date
-                        data_tuple[2],   # data_source
-                        data_tuple[3],   # g_efficiency_surprise
-                        data_tuple[4],   # g_efficiency_momentum
-                        data_tuple[5],   # g_revenue_momentum
-                        data_tuple[6],   # g_profit_momentum
-                        data_tuple[7],   # rank_es
-                        data_tuple[8],   # rank_em
-                        data_tuple[9],   # rank_rm
-                        data_tuple[10],  # rank_pm
-                        data_tuple[11],  # g_score
-                        data_tuple[12],  # data_timeliness_weight
-                        data_tuple[13]   # calculation_status
-                    )
+            connection = db_manager._get_sync_connection()
+            try:
+                with connection.cursor() as cursor:
+                    cursor.execute(delete_query, (calc_date,))
+                    self.logger.info(f"已删除计算日期 {calc_date} 的所有旧G因子数据")
 
-                    self.context.db_manager.execute_sync(insert_query, new_data_tuple)
-                    success_count += 1
-                except Exception as e:
-                    self.logger.error(f"插入G因子数据失败 {data_tuple[0]}: {e}")
+                    for data_tuple in insert_data:
+                        new_data_tuple = (
+                            data_tuple[0],   # ts_code
+                            data_tuple[1],   # calc_date
+                            data_tuple[14],  # ann_date
+                            data_tuple[2],   # data_source
+                            data_tuple[3],   # g_efficiency_surprise
+                            data_tuple[4],   # g_efficiency_momentum
+                            data_tuple[5],   # g_revenue_momentum
+                            data_tuple[6],   # g_profit_momentum
+                            data_tuple[7],   # rank_es
+                            data_tuple[8],   # rank_em
+                            data_tuple[9],   # rank_rm
+                            data_tuple[10],  # rank_pm
+                            data_tuple[11],  # g_score
+                            data_tuple[12],  # data_timeliness_weight
+                            data_tuple[13]   # calculation_status
+                        )
+                        cursor.execute(insert_query, new_data_tuple)
+                connection.commit()
+                success_count = len(insert_data)
+            except Exception:
+                connection.rollback()
+                raise
 
             self.logger.info(f"成功保存 {success_count}/{len(insert_data)} 条G因子记录")
             return success_count
 
         except Exception as e:
             self.logger.error(f"保存G因子结果失败: {e}")
-            return 0
+            raise
 
     def _log_performance_stats(self, success_count: int, failed_count: int):
         """记录性能统计信息"""

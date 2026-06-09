@@ -633,25 +633,25 @@ class PFactorCalculator:
 
         self.logger.info(f"开始标准化处理 {len(df)} 只股票的财务指标")
 
-        # 1. 财务指标标准化处理 (异常值截断 + 分位数排名)
+        # 1. 先应用行业特殊处理，避免金融股异常GPA进入横截面标准化
+        df = self._apply_industry_special_handling(df, as_of_date)
+
+        # 2. 财务指标标准化处理 (异常值截断 + 分位数排名)
         df = self._standardize_financial_indicators(df)
 
-        # 2. 向量化计算P评分 (基于标准化后的指标)
+        # 3. 向量化计算P评分 (基于标准化后的指标)
         df['p_score'] = self._calculate_p_score_vectorized_mvp(df)
 
-        # 3. 计算P排名 (在同一计算日期下的排名，使用连续排名)
+        # 4. 计算P排名 (在同一计算日期下的排名，使用连续排名)
         # 处理NaN和无穷大值，确保排名计算正常
         df['p_score'] = df['p_score'].fillna(0)  # NaN填充为0分
         df['p_score'] = df['p_score'].replace([np.inf, -np.inf], [100, 0])  # 无穷大处理
         df['p_rank'] = df['p_score'].rank(method='min', ascending=False, na_option='bottom').astype(int)
 
-        # 4. 映射财务指标到P因子表字段 (保持原始值用于存储)
+        # 5. 映射财务指标到P因子表字段 (保持原始值用于存储)
         df['gpa'] = df['gpa_ttm']
         df['roe_excl'] = df['roe_excl_ttm']
         df['roa_excl'] = df['roa_excl_ttm']
-
-        # 5. 应用行业特殊处理 (在标准化之后)
-        df = self._apply_industry_special_handling(df, as_of_date)
 
         # 6. 重新计算受行业特殊处理影响的P评分和排名
         # 如果有股票的GPA被设为NULL，需要重新计算P评分
@@ -743,12 +743,16 @@ class PFactorCalculator:
             # 应用GPA特殊处理
             mask_special_gpa = df_with_industry['requires_special_gpa_handling'] == True
             mask_null_gpa = df_with_industry['gpa_calculation_method'] == 'null'
+            special_gpa_mask = mask_special_gpa & mask_null_gpa
 
-            # 对需要特殊处理的股票，将GPA设为NULL
-            df_with_industry.loc[mask_special_gpa & mask_null_gpa, 'gpa'] = None
+            # 对需要特殊处理的股票，将GPA设为NULL；预标准化阶段优先剔除gpa_ttm
+            if 'gpa_ttm' in df_with_industry.columns:
+                df_with_industry.loc[special_gpa_mask, 'gpa_ttm'] = np.nan
+            if 'gpa' in df_with_industry.columns:
+                df_with_industry.loc[special_gpa_mask, 'gpa'] = None
 
             # 记录特殊处理的股票
-            special_stocks = df_with_industry[mask_special_gpa & mask_null_gpa]['ts_code'].unique()
+            special_stocks = df_with_industry[special_gpa_mask]['ts_code'].unique()
             if len(special_stocks) > 0:
                 self.logger.info(f"对 {len(special_stocks)} 只金融股应用GPA特殊处理: {list(special_stocks)}")
 
@@ -1034,69 +1038,54 @@ class PFactorCalculator:
         WHERE calc_date = %s
         """
 
-        self.context.db_manager.execute_sync(delete_sql, (calc_date,))
-        self.logger.info(f"已删除计算日期 {calc_date} 的所有旧P因子数据")
-
-        # 构建批量插入SQL（不再需要ON CONFLICT，因为已删除旧数据）
-        insert_sql = """
-        INSERT INTO pgs_factors.p_factor
-        (ts_code, calc_date, gpa, roe_excl, roa_excl, p_score, data_quality, ann_date, data_source)
-        VALUES %s
+        insert_query = """
+        INSERT INTO pgs_factors.p_factor (
+            ts_code, calc_date, ann_date, end_date, data_source,
+            p_score, p_rank,
+            gpa, roe_excl, roa_excl,
+            net_margin_ttm, operating_margin_ttm, roi_ttm,
+            asset_turnover_ttm, equity_multiplier,
+            debt_to_asset_ratio, equity_ratio,
+            revenue_yoy_growth, n_income_yoy_growth, operate_profit_yoy_growth,
+            data_quality, calculation_status
+        ) VALUES (
+            %s, %s, %s, %s, %s,
+            %s, %s,
+            %s, %s, %s,
+            %s, %s, %s,
+            %s, %s,
+            %s, %s,
+            %s, %s, %s,
+            %s, %s
+        )
         """
-        
-        # 准备数据 (遵循PIT原则，保持真实的ann_date)
-        values = []
-        for _, row in p_factors.iterrows():
-            values.append((
-                row['ts_code'],
-                row['calc_date'],
-                row['gpa'],
-                row['roe_excl'],
-                row['roa_excl'],
-                row['p_score'],
-                row['data_quality'],
-                row.get('ann_date', row.get('end_date')),  # 优先使用真实的ann_date
-                row['data_source']
-            ))
-        
-        # 批量插入 - 使用完整字段的逐条插入方式（已删除旧数据，无需ON CONFLICT）
-        for _, row in p_factors.iterrows():
-            insert_query = """
-            INSERT INTO pgs_factors.p_factor (
-                ts_code, calc_date, ann_date, end_date, data_source,
-                p_score, p_rank,
-                gpa, roe_excl, roa_excl,
-                net_margin_ttm, operating_margin_ttm, roi_ttm,
-                asset_turnover_ttm, equity_multiplier,
-                debt_to_asset_ratio, equity_ratio,
-                revenue_yoy_growth, n_income_yoy_growth, operate_profit_yoy_growth,
-                data_quality, calculation_status
-            ) VALUES (
-                %s, %s, %s, %s, %s,
-                %s, %s,
-                %s, %s, %s,
-                %s, %s, %s,
-                %s, %s,
-                %s, %s,
-                %s, %s, %s,
-                %s, %s
-            )
-            """
 
-            # 准备参数值
-            params = (
-                row['ts_code'], row['calc_date'], row['ann_date'], row['end_date'], row['data_source'],
-                row['p_score'], row['p_rank'],
-                row['gpa'], row['roe_excl'], row['roa_excl'],
-                row['net_margin_ttm'], row['operating_margin_ttm'], row['roi_ttm'],
-                row['asset_turnover_ttm'], row['equity_multiplier'],
-                row['debt_to_asset_ratio'], row['equity_ratio'],
-                row['revenue_yoy_growth'], row['n_income_yoy_growth'], row['operate_profit_yoy_growth'],
-                row['data_quality'], row['calculation_status']
-            )
+        db_manager = self.context.db_manager
+        if not hasattr(db_manager, "_get_sync_connection"):
+            raise RuntimeError("P因子保存需要同步DBManager以保证delete+insert事务原子性")
 
-            # 执行单条插入
-            self.context.db_manager.execute_sync(insert_query, params)
+        connection = db_manager._get_sync_connection()
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute(delete_sql, (calc_date,))
+                self.logger.info(f"已删除计算日期 {calc_date} 的所有旧P因子数据")
+
+                for _, row in p_factors.iterrows():
+                    params = (
+                        row['ts_code'], row['calc_date'], row['ann_date'], row['end_date'], row['data_source'],
+                        row['p_score'], row['p_rank'],
+                        row['gpa'], row['roe_excl'], row['roa_excl'],
+                        row['net_margin_ttm'], row['operating_margin_ttm'], row['roi_ttm'],
+                        row['asset_turnover_ttm'], row['equity_multiplier'],
+                        row['debt_to_asset_ratio'], row['equity_ratio'],
+                        row['revenue_yoy_growth'], row['n_income_yoy_growth'], row['operate_profit_yoy_growth'],
+                        row['data_quality'], row['calculation_status']
+                    )
+                    cursor.execute(insert_query, params)
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
     
     def _log_performance_stats(self, success_count: int, failed_count: int) -> None:
         """记录性能统计"""

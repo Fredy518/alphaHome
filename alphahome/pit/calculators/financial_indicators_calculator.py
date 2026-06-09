@@ -424,7 +424,7 @@ class FinancialIndicatorsCalculator:
 
             # 修复TTM计算：使用基于当前报告期的最近4个季度数据，而不是最早的4条记录
             # 1. 按end_date降序排序，确保最新的数据在前
-            sorted_data = financial_data.sort_values('end_date', ascending=False)
+            sorted_data = financial_data.sort_values('end_date', ascending=False).reset_index(drop=True)
 
             # 2. 找到当前记录在排序后的位置
             current_idx = None
@@ -438,7 +438,7 @@ class FinancialIndicatorsCalculator:
             # 3. 获取当前记录之后（更早的）的3条记录，加上当前记录，共4条记录用于TTM计算
             if current_idx is not None:
                 # 获取当前记录之后的数据（按时间倒序，所以之后的数据是更早的报告期）
-                ttm_candidates = sorted_data.loc[current_idx:]
+                ttm_candidates = sorted_data.iloc[current_idx:]
                 ttm_data = ttm_candidates.head(4)  # 取最近的4个报告期（包括当前）
             else:
                 # 回退方案：如果找不到当前记录，使用最旧的4条记录
@@ -896,8 +896,8 @@ class FinancialIndicatorsCalculator:
         latest_balance AS (
             SELECT ts_code, end_date, ann_date, tot_assets, tot_equity,
                    ROW_NUMBER() OVER (
-                       PARTITION BY ts_code
-                       ORDER BY end_date DESC, ann_date DESC
+                       PARTITION BY ts_code, end_date
+                       ORDER BY ann_date DESC
                    ) as rn
             FROM pgs_factors.pit_balance_quarterly
             WHERE ann_date <= %s AND data_source IN ('report','express') AND ts_code = ANY(%s)
@@ -911,7 +911,8 @@ class FinancialIndicatorsCalculator:
                     ELSE 'income_only' END as data_completeness,
                CASE WHEN b.end_date IS NOT NULL THEN ABS(i.end_date::date - b.end_date::date) ELSE NULL END as balance_sheet_lag
         FROM (SELECT * FROM latest_income WHERE rn=1) i
-        LEFT JOIN (SELECT * FROM latest_balance WHERE rn=1) b ON b.ts_code = i.ts_code
+        LEFT JOIN (SELECT * FROM latest_balance WHERE rn=1) b
+            ON b.ts_code = i.ts_code AND b.end_date = i.end_date
         WHERE (b.tot_assets IS NOT NULL OR i.data_source IN ('forecast','forecast_direct','forecast_calculated'))
         ORDER BY i.ts_code, i.end_date DESC
         """
@@ -996,11 +997,8 @@ class FinancialIndicatorsCalculator:
                 # 先将列转换为数值类型，然后处理None和NaN值
                 df[col] = pd.to_numeric(df[col], errors='coerce')
 
-                # 处理None和NaN值
-                df[col] = df[col].fillna(0.0)
-
-                # 处理无穷大和异常大值（避免numeric溢出）
-                df[col] = df[col].replace([float('inf'), -float('inf')], 0.0)
+                # 保留缺失值为NULL，仅清理无法入库的无穷大和异常大值
+                df[col] = df[col].replace([float('inf'), -float('inf')], np.nan)
 
                 # 限制数值范围：-999999 到 999999（适合numeric(18,6)）
                 df[col] = df[col].clip(-999999, 999999)

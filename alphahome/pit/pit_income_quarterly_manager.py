@@ -998,27 +998,27 @@ class PITIncomeQuarterlyManager(PITTableManager):
                         valid_mask = est.notna()
                         if valid_mask.any():
                             # 【关键修复】建立正确的索引对应关系，避免错位问题
-                            valid_merged = merged[valid_mask].copy()
-                            valid_est = est[valid_mask]
+                            valid_merged = merged.loc[valid_mask, ['ts_code', 'end_date', 'ann_date']].copy()
+                            valid_merged['estimated_n_income_attr_p'] = est.loc[valid_mask].to_numpy()
 
                             # 为merged添加work的原始索引信息
-                            work_remaining_data = work.loc[remaining, ['ts_code','end_date','ann_date','n_income']].copy()
+                            work_remaining_data = work.loc[remaining, ['ts_code','end_date','ann_date']].copy()
                             work_remaining_data['work_idx'] = work_remaining_data.index
 
                             # 合并以建立正确对应关系
                             update_data = work_remaining_data.merge(
-                                valid_merged[['ts_code','end_date','ann_date','n_income_attr_p']],
-                                left_on=['ts_code','end_date','ann_date','n_income'],
-                                right_on=['ts_code','end_date','ann_date','n_income_attr_p'],
+                                valid_merged,
+                                on=['ts_code','end_date','ann_date'],
                                 how='inner'  # 只保留匹配的行
                             )
 
                             batch_update_count = 0
                             for _, row in update_data.iterrows():
                                 work_idx = row['work_idx']
-                                if pd.isna(work.at[work_idx, 'n_income_attr_p']) and pd.notna(row.get('n_income_attr_p')):
+                                estimated_value = row.get('estimated_n_income_attr_p')
+                                if pd.isna(work.at[work_idx, 'n_income_attr_p']) and pd.notna(estimated_value):
                                     # 【修复】数据类型转换
-                                    work.at[work_idx, 'n_income_attr_p'] = pd.to_numeric(row['n_income_attr_p'], errors='coerce')
+                                    work.at[work_idx, 'n_income_attr_p'] = pd.to_numeric(estimated_value, errors='coerce')
                                     if 'conversion_status' in work.columns:
                                         work.at[work_idx, 'conversion_status'] = 'EST_RPT_RATIO_DB'
                                     batch_update_count += 1

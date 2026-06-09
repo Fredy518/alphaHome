@@ -188,8 +188,22 @@ class PITDataUpdateCoordinator:
 
         if parallel:
             # 并行执行
+            task_names = [name for name, _ in update_tasks]
             tasks = [task for _, task in update_tasks]
-            await asyncio.gather(*tasks, return_exceptions=True)
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            failures = [
+                (task_name, result)
+                for task_name, result in zip(task_names, results)
+                if isinstance(result, Exception)
+            ]
+            if failures:
+                for task_name, error in failures:
+                    logger.error(
+                        f"并行PIT任务失败: {task_name}: {error}",
+                        exc_info=(type(error), error, error.__traceback__),
+                    )
+                failed_names = ", ".join(task_name for task_name, _ in failures)
+                raise RuntimeError(f"并行PIT更新失败: {failed_names}")
         else:
             # 顺序执行
             for task_name, task in update_tasks:

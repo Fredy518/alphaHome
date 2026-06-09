@@ -64,6 +64,7 @@ class BaseTask(ABC):
 
         # 设置保存批次大小
         self.save_batch_size = self.task_config.get("save_batch_size", self.default_save_batch_size)
+        self.allow_partial_batch_save = bool(self.task_config.get("allow_partial_batch_save", False))
 
         # 设置任务特定配置
         if hasattr(self, "set_config") and callable(self.set_config):
@@ -633,7 +634,12 @@ class BaseTask(ABC):
         # 获取实际的保存批次大小
         save_batch_size = getattr(self, "save_batch_size", self.default_save_batch_size)
 
-        if not data.empty and save_batch_size > 0 and len(data) > save_batch_size:
+        if (
+            self.allow_partial_batch_save
+            and not data.empty
+            and save_batch_size > 0
+            and len(data) > save_batch_size
+        ):
             self.logger.info(f"数据量较大 ({len(data)} 行)，将分批保存，每批 {save_batch_size} 行。")
             num_batches = (len(data) + save_batch_size - 1) // save_batch_size
             for i in range(num_batches):
@@ -648,7 +654,13 @@ class BaseTask(ABC):
                 affected_rows = await self._save_to_database(batch_data, stop_event=stop_event)
                 total_affected_rows += affected_rows
         else:
-            self.logger.info(f"数据量 ({len(data)} 行) 小于等于批次大小 ({save_batch_size} 行)，将一次性保存。")
+            if not data.empty and save_batch_size > 0 and len(data) > save_batch_size:
+                self.logger.info(
+                    f"数据量 ({len(data)} 行) 超过批次大小 ({save_batch_size} 行)，"
+                    "默认使用一次性原子保存；如需旧的部分批量写入行为，请设置 allow_partial_batch_save=True。"
+                )
+            else:
+                self.logger.info(f"数据量 ({len(data)} 行) 小于等于批次大小 ({save_batch_size} 行)，将一次性保存。")
             total_affected_rows = await self._save_to_database(data, stop_event=stop_event)
 
         if stop_event and stop_event.is_set():
@@ -683,9 +695,8 @@ class BaseTask(ABC):
                 try:
                     await self.db.ensure_table_schema_compatible(self)
                 except Exception as e:
-                    self.logger.warning(
-                        f"表结构兼容检查失败（不影响建表流程，可能影响后续写入）: {e}"
-                    )
+                    self.logger.error(f"表结构兼容检查失败，停止任务以避免后续部分写入: {e}")
+                    raise
 
         # 表创建完成后，自动创建 rawdata 视图（如果表是新创建的，或者已存在）
         # 注意：第一次调用时表刚创建，后续调用时表已存在都会尝试创建视图
