@@ -1,7 +1,8 @@
 import pandas as pd
 import pytest
 
-from alphahome.fetchers.sources.tinysoft import TinySoftAPIError, TinySoftOPIAPI
+import alphahome.fetchers.sources.tinysoft.tinysoft_opi_api as opi_api_module
+from alphahome.fetchers.sources.tinysoft import TinySoftAPIError, TinySoftOPIAPI, TinySoftRateLimitError
 from alphahome.fetchers.tasks.stock.tinysoft_stock_minute import TinySoftStockMinuteTask
 
 
@@ -13,6 +14,17 @@ class _CaptureTransport:
     async def __call__(self, **kwargs):
         self.calls.append(kwargs)
         return self.response
+
+
+class _SequenceTransport:
+    def __init__(self, responses):
+        self.responses = list(responses)
+        self.calls = []
+
+    async def __call__(self, **kwargs):
+        self.calls.append(kwargs)
+        idx = min(len(self.calls) - 1, len(self.responses) - 1)
+        return self.responses[idx]
 
 
 @pytest.mark.asyncio
@@ -144,6 +156,108 @@ async def test_opi_query_translates_to_markettable_tsl():
     assert "from markettable datekey 20260521.093000T to 20260521.150000T" in body
     assert "of 'SZ000001' end;" in body
     assert transport.calls[0]["headers"]["TS-EVENTNAME"] == "auto"
+
+
+@pytest.mark.asyncio
+async def test_opi_query_panel_translates_to_markettable_array_tsl():
+    transport = _CaptureTransport(
+        {
+            "body": [
+                {"date": "2026-05-21 09:31:00", "StockID": "SZ000001", "close": 10.5},
+                {"date": "2026-05-21 09:31:00", "StockID": "SH600000", "close": 9.8},
+            ]
+        }
+    )
+    api = TinySoftOPIAPI(user="u", password="p", transport=transport, request_interval=0)
+
+    df = await api.query_panel(
+        stocks=["SZ000001", "SH600000"],
+        cycle="1分钟线",
+        begin_time="2026-05-21 09:30:00",
+        end_time="2026-05-21 15:00:00",
+        fields=["date", "StockID", "close"],
+    )
+
+    assert len(df) == 2
+    body = transport.calls[0]["json"]["body"]
+    assert "from markettable datekey 20260521.093000T to 20260521.150000T" in body
+    assert "of array('SZ000001','SH600000') end;" in body
+
+
+@pytest.mark.asyncio
+async def test_opi_request_retries_429_with_retry_after():
+    transport = _SequenceTransport(
+        [
+            (429, {"Retry-After": "0"}, {"code": 429, "message": "too many requests"}),
+            {"body": [{"StockID": "SZ000001", "close": 10.5}]},
+        ]
+    )
+    api = TinySoftOPIAPI(user="u", password="p", transport=transport, request_interval=0)
+
+    df = await api.exec("return 1;")
+
+    assert len(df) == 1
+    assert len(transport.calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_opi_request_raises_rate_limit_after_retries():
+    transport = _SequenceTransport(
+        [
+            (429, {"Retry-After": "0"}, {"code": 429, "message": "too many requests"}),
+            (429, {"Retry-After": "0"}, {"code": 429, "message": "too many requests"}),
+        ]
+    )
+    api = TinySoftOPIAPI(user="u", password="p", transport=transport, request_interval=0)
+    api.RATE_LIMIT_MAX_ATTEMPTS = 2
+
+    with pytest.raises(TinySoftRateLimitError):
+        await api.exec("return 1;")
+
+    assert len(transport.calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_opi_reuses_aiohttp_session(monkeypatch):
+    sessions = []
+
+    class _FakeResponse:
+        status = 200
+        headers = {}
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def read(self):
+            return b'{"body":[]}'
+
+    class _FakeSession:
+        def __init__(self):
+            self.closed = False
+            self.post_calls = []
+            sessions.append(self)
+
+        def post(self, url, *, headers=None, json=None, timeout=None):
+            self.post_calls.append({"url": url, "headers": headers, "json": json, "timeout": timeout})
+            return _FakeResponse()
+
+        async def close(self):
+            self.closed = True
+
+    monkeypatch.setattr(opi_api_module.aiohttp, "ClientSession", _FakeSession)
+
+    api = TinySoftOPIAPI(user="u", password="p", request_interval=0)
+    await api.exec("return 1;")
+    await api.exec("return 2;")
+
+    assert len(sessions) == 1
+    assert len(sessions[0].post_calls) == 2
+
+    await api.close()
+    assert sessions[0].closed is True
 
 
 def test_tinysoft_task_uses_opi_backend_when_configured():

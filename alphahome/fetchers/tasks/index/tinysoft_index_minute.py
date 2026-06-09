@@ -447,35 +447,6 @@ class TinySoftIndexMinuteTask(TinySoftStockMinuteTask):
         return final_batches
 
     async def fetch_batch(self, params: Dict[str, Any], stop_event=None) -> Optional[pd.DataFrame]:
-        symbol_pairs = params.get("symbol_pairs")
-        if isinstance(symbol_pairs, list) and symbol_pairs:
-            merged_frames: List[pd.DataFrame] = []
-            for pair in symbol_pairs:
-                if stop_event and stop_event.is_set():
-                    break
-
-                stock = (pair or {}).get("stock")
-                if not stock:
-                    continue
-
-                single_params = params.copy()
-                single_params.pop("symbol_pairs", None)
-                single_params["stock"] = stock
-                single_params["ts_code"] = (
-                    (pair or {}).get("ts_code")
-                    or tinysoft_index_symbol_to_ts_code(stock)
-                    or stock
-                )
-
-                frame = await super().fetch_batch(single_params, stop_event=stop_event)
-                if frame is None or frame.empty:
-                    continue
-                merged_frames.append(frame)
-
-            if not merged_frames:
-                return None
-            return pd.concat(merged_frames, ignore_index=True)
-
         return await super().fetch_batch(params, stop_event=stop_event)
 
     def process_data(self, data, **kwargs):

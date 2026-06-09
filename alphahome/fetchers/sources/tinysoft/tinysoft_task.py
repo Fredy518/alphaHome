@@ -204,6 +204,25 @@ class TinySoftTask(FetcherTask, abc.ABC):
         columns = {str(col).lower() for col in df.columns}
         return bool({"stockid", "ts_code", "tsl_code"} & columns) or "证券代码" in set(df.columns)
 
+    @staticmethod
+    def _ensure_market_query_fields(fields: Optional[Iterable[Any]]) -> Optional[List[Any]]:
+        if fields is None:
+            return None
+
+        field_list = list(fields)
+        lowered = {str(field).strip().lower() for field in field_list}
+
+        def add_field(field: str) -> None:
+            if field.lower() not in lowered:
+                field_list.append(field)
+                lowered.add(field.lower())
+
+        if not ({"date", "trade_time"} & lowered):
+            add_field("date")
+        if not ({"stockid", "ts_code", "tsl_code", "证券代码"} & lowered):
+            add_field("StockID")
+        return field_list
+
     async def fetch_infotable_for_symbol_pairs(
         self,
         *,
@@ -293,6 +312,116 @@ class TinySoftTask(FetcherTask, abc.ABC):
 
         return pd.concat(merged_frames, ignore_index=True)
 
+    async def fetch_market_for_symbol_pairs(
+        self,
+        *,
+        symbol_pairs: List[Dict[str, Any]],
+        cycle: str,
+        begin_time: Any,
+        end_time: Any,
+        fields: Optional[Iterable[Any]] = None,
+        rate: int = 0,
+        rateday: Any = None,
+        precision: Any = None,
+        viewpoint: Any = None,
+        cyclefilter: Any = None,
+        service: Optional[str] = None,
+        timeout_ms: Optional[int] = None,
+        stop_event: Optional[asyncio.Event] = None,
+        enable_batch: bool = True,
+        skip_failed_symbols: bool = False,
+        error_label: str = "Tinysoft market",
+    ) -> Optional[pd.DataFrame]:
+        """Fetch markettable rows for a symbol batch, preferring one panel call."""
+        valid_pairs: List[Dict[str, str]] = []
+        for pair in symbol_pairs:
+            if not isinstance(pair, dict):
+                continue
+            ts_code = str(pair.get("ts_code") or "").strip()
+            stock = str(pair.get("stock") or "").strip()
+            if not ts_code or not stock:
+                continue
+            valid_pairs.append({"ts_code": ts_code, "stock": stock})
+
+        if not valid_pairs:
+            return None
+
+        query_fields = self._ensure_market_query_fields(fields)
+        stocks = [pair["stock"] for pair in valid_pairs]
+        panel_method = getattr(self.api, "query_panel", None)
+        if enable_batch and len(stocks) > 1 and callable(panel_method):
+            try:
+                panel_df = await panel_method(
+                    stocks=stocks,
+                    cycle=cycle,
+                    begin_time=begin_time,
+                    end_time=end_time,
+                    fields=query_fields,
+                    rate=rate,
+                    rateday=rateday,
+                    precision=precision,
+                    viewpoint=viewpoint,
+                    cyclefilter=cyclefilter,
+                    service=service,
+                    timeout_ms=timeout_ms,
+                    stop_event=stop_event,
+                )
+                if panel_df is None or panel_df.empty:
+                    return None
+                if self._has_symbol_identifier(panel_df):
+                    return panel_df.copy()
+                self.logger.warning(
+                    "%s 批量行情返回缺少 StockID/证券代码/ts_code，回退逐标的查询。",
+                    error_label,
+                )
+            except Exception as e:
+                self.logger.warning("%s 批量行情拉取失败，将回退逐标的查询: %s", error_label, e)
+
+        merged_frames: List[pd.DataFrame] = []
+        for pair in valid_pairs:
+            if stop_event and stop_event.is_set():
+                raise asyncio.CancelledError(f"{error_label} 批次拉取被取消")
+
+            ts_code = pair["ts_code"]
+            stock = pair["stock"]
+            try:
+                df = await self.api.query(
+                    stock=stock,
+                    cycle=cycle,
+                    begin_time=begin_time,
+                    end_time=end_time,
+                    fields=query_fields,
+                    rate=rate,
+                    rateday=rateday,
+                    precision=precision,
+                    viewpoint=viewpoint,
+                    cyclefilter=cyclefilter,
+                    service=service,
+                    timeout_ms=timeout_ms,
+                    stop_event=stop_event,
+                )
+            except Exception as e:
+                if not skip_failed_symbols:
+                    raise
+                self._record_skipped_symbol(ts_code, e)
+                self.logger.warning("%s 拉取失败（跳过）: %s, 错误: %s", error_label, ts_code, e)
+                continue
+
+            if df is None or df.empty:
+                continue
+
+            one = df.copy()
+            if not self._has_symbol_identifier(one):
+                one["StockID"] = stock
+            if "ts_code" not in one.columns:
+                one["ts_code"] = ts_code
+            merged_frames.append(one)
+
+        if not merged_frames:
+            return None
+
+        return pd.concat(merged_frames, ignore_index=True)
+
     async def _post_execute(self, result, stop_event: Optional[asyncio.Event] = None, **kwargs):
         await super()._post_execute(result, stop_event=stop_event, **kwargs)
         if not self._failed_symbols:
@@ -346,6 +475,36 @@ class TinySoftTask(FetcherTask, abc.ABC):
         params: Dict[str, Any],
         stop_event: Optional[asyncio.Event] = None,
     ) -> Optional[pd.DataFrame]:
+        symbol_pairs = params.get("symbol_pairs")
+        if isinstance(symbol_pairs, list) and symbol_pairs:
+            cycle = self._normalize_cycle(params.get("cycle", self.cycle))
+            fields: Optional[Iterable[Any]] = params.get("fields", self.fields)
+            service = params.get("service", self.service)
+            timeout_ms = self._coerce_int(params.get("timeout_ms"), self.query_timeout_ms)
+            rate = self._coerce_int(params.get("rate"), 0)
+            data = await self.fetch_market_for_symbol_pairs(
+                symbol_pairs=symbol_pairs,
+                cycle=cycle,
+                begin_time=params.get("begin_time"),
+                end_time=params.get("end_time"),
+                fields=fields,
+                rate=rate,
+                rateday=params.get("rateday"),
+                precision=params.get("precision"),
+                viewpoint=params.get("viewpoint"),
+                cyclefilter=params.get("cyclefilter"),
+                service=service,
+                timeout_ms=timeout_ms,
+                stop_event=stop_event,
+                enable_batch=self._parse_bool(params.get("enable_batch_market_query", True), True),
+                skip_failed_symbols=self._parse_bool(params.get("skip_failed_symbols", False), False),
+                error_label=str(params.get("error_label") or "Tinysoft market"),
+            )
+            if data is None or data.empty:
+                self.logger.debug("Tinysoft 批量行情批次无数据: %s", params)
+                return None
+            return data
+
         stock = params.get("stock")
         begin_time = params.get("begin_time")
         end_time = params.get("end_time")

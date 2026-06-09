@@ -82,6 +82,7 @@ class TinySoftStockMinuteTask(TinySoftTask):
     default_request_interval = 0.2
     default_cycle = "1分钟线"
     default_batch_days = 1
+    default_symbol_batch_size = 50
     default_symbols = ["000001.SZ"]
 
     # pyTSL 返回字段建议包含 date / StockID / OHLC / vol / amount
@@ -202,11 +203,22 @@ class TinySoftStockMinuteTask(TinySoftTask):
             self.logger.warning("未获取到有效股票代码，任务将跳过。")
             return []
 
-        batch_days = self.task_specific_config.get("batch_days", self.default_batch_days)
-        try:
-            batch_days = max(1, int(batch_days))
-        except (TypeError, ValueError):
-            batch_days = self.default_batch_days
+        batch_days = self._parse_positive_int(
+            kwargs.get("batch_days", self.task_specific_config.get("batch_days", self.default_batch_days)),
+            self.default_batch_days,
+        )
+        symbol_batch_raw = kwargs.get(
+            "symbol_batch_size",
+            self.task_specific_config.get("symbol_batch_size", self.default_symbol_batch_size),
+        )
+        all_symbols_in_one_group = str(symbol_batch_raw).strip() == "0" or self._parse_bool(
+            kwargs.get(
+                "all_symbols_in_one_group",
+                self.task_specific_config.get("all_symbols_in_one_group", False),
+            ),
+            default=False,
+        )
+        symbol_batch_size = self._parse_positive_int(symbol_batch_raw, self.default_symbol_batch_size)
 
         date_batches = await generate_natural_day_batches(
             start_date=start_date,
@@ -218,28 +230,40 @@ class TinySoftStockMinuteTask(TinySoftTask):
         if not date_batches:
             return []
 
+        symbol_pairs = [{"ts_code": ts_code, "stock": ts_code_to_tinysoft_symbol(ts_code)} for ts_code in symbols]
+        if all_symbols_in_one_group:
+            symbol_groups = [symbol_pairs]
+        else:
+            symbol_groups = [
+                symbol_pairs[i : i + symbol_batch_size]
+                for i in range(0, len(symbol_pairs), symbol_batch_size)
+            ]
+
         final_batches: List[Dict[str, Any]] = []
-        for ts_code in symbols:
-            stock = ts_code_to_tinysoft_symbol(ts_code)
+        for symbol_group in symbol_groups:
+            if not symbol_group:
+                continue
             for b in date_batches:
-                final_batches.append(
-                    {
-                        "ts_code": ts_code,
-                        "stock": stock,
-                        "cycle": self.cycle,
-                        "begin_time": _to_datetime_bound(b["start_date"], is_start=True),
-                        "end_time": _to_datetime_bound(b["end_date"], is_start=False),
-                        "fields": self.fields,
-                        "service": self.service,
-                        "timeout_ms": self.query_timeout_ms,
-                    }
-                )
+                batch_params: Dict[str, Any] = {
+                    "symbol_pairs": symbol_group,
+                    "cycle": self.cycle,
+                    "begin_time": _to_datetime_bound(b["start_date"], is_start=True),
+                    "end_time": _to_datetime_bound(b["end_date"], is_start=False),
+                    "fields": self.fields,
+                    "service": self.service,
+                    "timeout_ms": self.query_timeout_ms,
+                }
+                if len(symbol_group) == 1:
+                    batch_params["ts_code"] = symbol_group[0]["ts_code"]
+                    batch_params["stock"] = symbol_group[0]["stock"]
+                final_batches.append(batch_params)
 
         self.logger.info(
-            "任务 %s: 生成 %s 个批次（%s 个标的 x %s 个时间批次）",
+            "任务 %s: 生成 %s 个批次（%s 个标的, %s 个标的组 x %s 个时间批次）",
             self.name,
             len(final_batches),
             len(symbols),
+            len(symbol_groups),
             len(date_batches),
         )
         return final_batches
@@ -250,10 +274,10 @@ class TinySoftStockMinuteTask(TinySoftTask):
             return None
 
         df = data.copy()
-        if "ts_code" not in df.columns:
+        if "ts_code" not in df.columns and params.get("ts_code"):
             df["ts_code"] = params.get("ts_code")
 
-        lower_cols = {c.lower() for c in df.columns}
+        lower_cols = {str(c).lower() for c in df.columns}
         if "stockid" not in lower_cols and params.get("stock"):
             df["StockID"] = params["stock"]
 

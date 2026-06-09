@@ -23,7 +23,7 @@ from urllib.parse import quote
 import aiohttp
 import pandas as pd
 
-from .tinysoft_api import TinySoftAPI, TinySoftAPIError, TinySoftAuthError
+from .tinysoft_api import TinySoftAPI, TinySoftAPIError, TinySoftAuthError, TinySoftRateLimitError
 
 
 TransportResponse = Any
@@ -36,6 +36,8 @@ class TinySoftOPIAPI:
     DEFAULT_BASE_URL = "https://opi.tinysoft.com.cn"
     DEFAULT_TIMEOUT_MS = TinySoftAPI.DEFAULT_TIMEOUT_MS
     DEFAULT_REQUEST_INTERVAL = TinySoftAPI.DEFAULT_REQUEST_INTERVAL
+    RATE_LIMIT_BACKOFF_SECONDS = 1.0
+    RATE_LIMIT_MAX_ATTEMPTS = 3
 
     def __init__(
         self,
@@ -76,6 +78,8 @@ class TinySoftOPIAPI:
 
         self._request_lock = asyncio.Lock()
         self._last_request_time = 0.0
+        self._session: Optional[aiohttp.ClientSession] = None
+        self._session_lock = asyncio.Lock()
 
     async def _wait_for_request_slot(self) -> None:
         async with self._request_lock:
@@ -84,6 +88,18 @@ class TinySoftOPIAPI:
             if elapsed < self.request_interval:
                 await asyncio.sleep(self.request_interval - elapsed)
             self._last_request_time = time.monotonic()
+
+    async def _get_session(self) -> aiohttp.ClientSession:
+        async with self._session_lock:
+            if self._session is None or self._session.closed:
+                self._session = aiohttp.ClientSession()
+            return self._session
+
+    async def close(self) -> None:
+        async with self._session_lock:
+            if self._session is not None and not self._session.closed:
+                await self._session.close()
+            self._session = None
 
     def _auth_headers(self) -> Dict[str, str]:
         if self.auth_mode in {"none", "no-auth"}:
@@ -187,6 +203,65 @@ class TinySoftOPIAPI:
         if code_text and code_text not in {"0", "200", "success", "ok"}:
             raise TinySoftAPIError(f"Tinysoft OPI returned error: code={code}, message={message}")
 
+    @staticmethod
+    def _is_rate_limit_payload(payload: Any) -> bool:
+        if not isinstance(payload, dict):
+            return False
+        lowered = {str(k).lower(): v for k, v in payload.items()}
+        code = lowered.get("code", lowered.get("error_code", lowered.get("status")))
+        message = lowered.get("message", lowered.get("msg", lowered.get("error")))
+        if str(code).strip() == "429":
+            return True
+        return "too many requests" in str(message or "").lower()
+
+    @staticmethod
+    def _parse_retry_after(headers: Optional[Dict[str, str]]) -> Optional[float]:
+        if not headers:
+            return None
+        value: Optional[str] = None
+        for key, header_value in headers.items():
+            if str(key).lower() == "retry-after":
+                value = str(header_value).strip()
+                break
+        if not value:
+            return None
+        try:
+            delay = float(value)
+        except ValueError:
+            return None
+        if delay < 0:
+            return None
+        return min(delay, 60.0)
+
+    def _rate_limit_retry_delay(self, attempt: int, headers: Optional[Dict[str, str]]) -> float:
+        retry_after = self._parse_retry_after(headers)
+        if retry_after is not None:
+            return retry_after
+        return min(8.0, self.RATE_LIMIT_BACKOFF_SECONDS * (2**attempt))
+
+    async def _retry_or_raise_rate_limit(
+        self,
+        decoded: Any,
+        *,
+        attempt: int,
+        max_attempts: int,
+        headers: Optional[Dict[str, str]] = None,
+    ) -> bool:
+        if attempt + 1 < max_attempts:
+            delay = self._rate_limit_retry_delay(attempt, headers)
+            self.logger.warning(
+                "Tinysoft OPI returned HTTP 429; retrying in %.1fs (%s/%s).",
+                delay,
+                attempt + 2,
+                max_attempts,
+            )
+            await asyncio.sleep(delay)
+            return True
+        raise TinySoftRateLimitError(
+            "Tinysoft OPI HTTP 429: request limit or concurrent session limit exceeded "
+            f"after {max_attempts} attempts. Response: {decoded}"
+        )
+
     async def _request_json(
         self,
         path: str,
@@ -202,38 +277,49 @@ class TinySoftOPIAPI:
         timeout = int(timeout_ms or self.timeout_ms or self.DEFAULT_TIMEOUT_MS)
         headers = self._headers(service=service, extra=extra_headers)
         url = self._url(path)
+        max_attempts = max(1, int(self.RATE_LIMIT_MAX_ATTEMPTS))
 
-        await self._wait_for_request_slot()
+        for attempt in range(max_attempts):
+            await self._wait_for_request_slot()
 
-        if self.transport is not None:
-            response = self.transport(
-                path=path,
-                url=url,
-                headers=headers,
-                json=payload,
-                timeout_ms=timeout,
-            )
-            if inspect.isawaitable(response):
-                response = await response
-            status, response_headers, body = self._unpack_transport_response(response)
-        else:
-            client_timeout = aiohttp.ClientTimeout(total=max(0.001, timeout / 1000.0))
-            try:
-                async with aiohttp.ClientSession(timeout=client_timeout) as session:
-                    async with session.post(url, headers=headers, json=payload) as resp:
+            if self.transport is not None:
+                response = self.transport(
+                    path=path,
+                    url=url,
+                    headers=headers,
+                    json=payload,
+                    timeout_ms=timeout,
+                )
+                if inspect.isawaitable(response):
+                    response = await response
+                status, response_headers, body = self._unpack_transport_response(response)
+            else:
+                client_timeout = aiohttp.ClientTimeout(total=max(0.001, timeout / 1000.0))
+                try:
+                    session = await self._get_session()
+                    async with session.post(url, headers=headers, json=payload, timeout=client_timeout) as resp:
                         status = int(resp.status)
                         response_headers = dict(resp.headers)
                         body = await resp.read()
-            except asyncio.TimeoutError as exc:
-                raise TinySoftAPIError(f"Tinysoft OPI request timeout: timeout_ms={timeout}") from exc
-            except aiohttp.ClientError as exc:
-                raise TinySoftAPIError(f"Tinysoft OPI request failed: {exc}") from exc
+                except asyncio.TimeoutError as exc:
+                    raise TinySoftAPIError(f"Tinysoft OPI request timeout: timeout_ms={timeout}") from exc
+                except aiohttp.ClientError as exc:
+                    raise TinySoftAPIError(f"Tinysoft OPI request failed: {exc}") from exc
 
-        decoded = self._decode_body(body)
-        if status < 200 or status >= 300:
-            raise TinySoftAPIError(f"Tinysoft OPI HTTP {status}: {decoded}")
-        self._maybe_raise_payload_error(decoded)
-        return decoded
+            decoded = self._decode_body(body)
+            if (status == 429 or self._is_rate_limit_payload(decoded)) and await self._retry_or_raise_rate_limit(
+                decoded,
+                attempt=attempt,
+                max_attempts=max_attempts,
+                headers=response_headers,
+            ):
+                continue
+            if status < 200 or status >= 300:
+                raise TinySoftAPIError(f"Tinysoft OPI HTTP {status}: {decoded}")
+            self._maybe_raise_payload_error(decoded)
+            return decoded
+
+        raise TinySoftRateLimitError("Tinysoft OPI HTTP 429: request limit exceeded.")
 
     @staticmethod
     def _extract_data_payload(payload: Any) -> Any:
@@ -381,9 +467,27 @@ class TinySoftOPIAPI:
         end_time: Any,
         fields: Optional[Iterable[Any]],
     ) -> str:
+        return cls._build_markettable_panel_tsl(
+            stocks=[stock],
+            cycle=cycle,
+            begin_time=begin_time,
+            end_time=end_time,
+            fields=fields,
+        )
+
+    @classmethod
+    def _build_markettable_panel_tsl(
+        cls,
+        *,
+        stocks: Iterable[Any],
+        cycle: str,
+        begin_time: Any,
+        end_time: Any,
+        fields: Optional[Iterable[Any]],
+    ) -> str:
         field_list = list(fields or ["date", "StockID", "open", "high", "low", "close", "vol", "amount"])
         select_fields = ",".join(cls._format_select_field(field) for field in field_list)
-        stock_selector = cls._quote_tsl_string(stock)
+        stock_selector = cls._format_stock_selector(stocks)
         begin_literal = cls._format_datetime_literal(begin_time)
         end_literal = cls._format_datetime_literal(end_time)
         cycle_expr = cls._cycle_to_tsl_expr(cycle)
@@ -399,7 +503,7 @@ class TinySoftOPIAPI:
         self._auth_headers()
 
     async def logout(self) -> None:
-        return None
+        await self.close()
 
     def _uses_session_call_uri(self) -> bool:
         return self.auth_mode in {
@@ -524,6 +628,51 @@ class TinySoftOPIAPI:
 
         tsl_code = self._build_markettable_tsl(
             stock=stock,
+            cycle=cycle,
+            begin_time=begin_time,
+            end_time=end_time,
+            fields=fields,
+        )
+        payload = await self._request_json(
+            "/Service/Run/",
+            {"body": tsl_code},
+            service=service,
+            timeout_ms=timeout_ms,
+        )
+        return self._payload_to_dataframe(payload)
+
+    async def query_panel(
+        self,
+        *,
+        stocks: Iterable[Any],
+        cycle: str,
+        begin_time: Any,
+        end_time: Any,
+        fields: Optional[Iterable[Any]] = None,
+        rate: int = 0,
+        rateday: Any = None,
+        precision: Any = None,
+        viewpoint: Any = None,
+        cyclefilter: Any = None,
+        service: Optional[str] = None,
+        timeout_ms: Optional[int] = None,
+        stop_event: Optional[asyncio.Event] = None,
+    ) -> pd.DataFrame:
+        if stop_event and stop_event.is_set():
+            raise asyncio.CancelledError("Tinysoft OPI query_panel cancelled")
+        if (
+            int(rate or 0) != 0
+            or rateday is not None
+            or precision is not None
+            or viewpoint is not None
+            or cyclefilter is not None
+        ):
+            raise TinySoftAPIError("Tinysoft OPI query_panel does not support rate/precision/filter arguments.")
+        if self.query_func_name:
+            raise TinySoftAPIError("Tinysoft OPI query_panel does not support query_func_name wrapper fallback.")
+
+        tsl_code = self._build_markettable_panel_tsl(
+            stocks=stocks,
             cycle=cycle,
             begin_time=begin_time,
             end_time=end_time,

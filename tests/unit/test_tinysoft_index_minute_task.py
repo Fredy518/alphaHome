@@ -15,6 +15,26 @@ class _DummyApi:
         return pd.DataFrame()
 
 
+class _IndexPanelApi:
+    def __init__(self):
+        self.panel_calls = []
+        self.query_calls = []
+
+    async def query_panel(self, **kwargs):
+        self.panel_calls.append(kwargs)
+        return pd.DataFrame(
+            {
+                "date": ["2026-03-02 09:31:00", "2026-03-02 09:31:00"],
+                "StockID": list(kwargs["stocks"]),
+                "close": [3900.0, 7200.0],
+            }
+        )
+
+    async def query(self, **kwargs):
+        self.query_calls.append(kwargs)
+        return pd.DataFrame()
+
+
 class _IndexDB:
     def __init__(self, rows=None):
         self._rows = rows or []
@@ -114,3 +134,31 @@ async def test_get_batch_list_accepts_mixed_runtime_formats():
     assert len(batches) == 2
     assert batches[0]["symbol_pairs"][0]["stock"] == "SH000001"
     assert batches[1]["symbol_pairs"][0]["stock"] == "CSI000300"
+
+
+@pytest.mark.asyncio
+async def test_fetch_batch_uses_panel_for_symbol_pairs():
+    api = _IndexPanelApi()
+    task = TinySoftIndexMinuteTask(
+        db_connection=_IndexDB(),
+        api=api,
+        tinysoft_config={},
+        task_config={},
+    )
+
+    df = await task.fetch_batch(
+        {
+            "symbol_pairs": [
+                {"ts_code": "000001.SH", "stock": "SH000001"},
+                {"ts_code": "000300.CSI", "stock": "CSI000300"},
+            ],
+            "cycle": "1分钟线",
+            "begin_time": "2026-03-02 09:30:00",
+            "end_time": "2026-03-02 15:00:00",
+            "fields": ["date", "StockID", "close"],
+        }
+    )
+
+    assert len(api.panel_calls) == 1
+    assert api.query_calls == []
+    assert set(df["StockID"]) == {"SH000001", "CSI000300"}

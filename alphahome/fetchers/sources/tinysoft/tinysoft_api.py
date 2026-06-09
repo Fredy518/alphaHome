@@ -30,6 +30,10 @@ class TinySoftAPIError(Exception):
     """Tinysoft API 调用错误。"""
 
 
+class TinySoftRateLimitError(TinySoftAPIError):
+    """Tinysoft API 限流错误。"""
+
+
 class TinySoftAuthError(TinySoftAPIError):
     """Tinysoft 登录或鉴权失败。"""
 
@@ -190,6 +194,94 @@ class TinySoftAPI:
         return "array(" + ",".join(cls._quote_tsl_string(stock) for stock in normalized) + ")"
 
     @staticmethod
+    def _format_datetime_literal(value: Any) -> str:
+        text = str(value or "").strip()
+        if not text:
+            raise ValueError("Tinysoft date/time value cannot be empty")
+        dt = pd.to_datetime(text, errors="raise")
+        if dt.hour == 0 and dt.minute == 0 and dt.second == 0 and not any(ch in text for ch in (":", ".")):
+            return dt.strftime("%Y%m%dT")
+        return dt.strftime("%Y%m%d.%H%M%ST")
+
+    @staticmethod
+    def _cycle_to_tsl_expr(cycle: str) -> str:
+        raw = str(cycle or "").strip()
+        lowered = raw.lower()
+        if lowered.startswith("cy_") and lowered.endswith(")"):
+            return raw
+        mapping = {
+            "1m": "cy_1m()",
+            "1min": "cy_1m()",
+            "1分钟": "cy_1m()",
+            "1分钟线": "cy_1m()",
+            "5m": "cy_5m()",
+            "5min": "cy_5m()",
+            "5分钟": "cy_5m()",
+            "5分钟线": "cy_5m()",
+            "15m": "cy_15m()",
+            "15min": "cy_15m()",
+            "15分钟": "cy_15m()",
+            "15分钟线": "cy_15m()",
+            "30m": "cy_30m()",
+            "30min": "cy_30m()",
+            "30分钟": "cy_30m()",
+            "30分钟线": "cy_30m()",
+            "60m": "cy_60m()",
+            "60min": "cy_60m()",
+            "60分钟": "cy_60m()",
+            "60分钟线": "cy_60m()",
+            "d": "cy_day()",
+            "day": "cy_day()",
+            "daily": "cy_day()",
+            "日线": "cy_day()",
+            "w": "cy_week()",
+            "week": "cy_week()",
+            "weekly": "cy_week()",
+            "周线": "cy_week()",
+            "m": "cy_month()",
+            "month": "cy_month()",
+            "monthly": "cy_month()",
+            "月线": "cy_month()",
+        }
+        if lowered in mapping:
+            return mapping[lowered]
+        raise ValueError(f"Unsupported Tinysoft cycle: {cycle}")
+
+    @staticmethod
+    def _format_market_select_field(field: Any) -> str:
+        raw = str(field or "").strip()
+        if not raw:
+            raise ValueError("Tinysoft market field cannot be empty")
+        if raw.lower() == "date":
+            return 'datetimetostr(["date"]) as "date"'
+        if raw.startswith("[") or " as " in raw.lower() or "(" in raw:
+            return raw
+        return f'["{raw}"]'
+
+    @classmethod
+    def _build_markettable_panel_tsl(
+        cls,
+        *,
+        stocks: Iterable[Any],
+        cycle: str,
+        begin_time: Any,
+        end_time: Any,
+        fields: Optional[Iterable[Any]],
+    ) -> str:
+        field_list = list(fields or ["date", "StockID", "open", "high", "low", "close", "vol", "amount"])
+        select_fields = ",".join(cls._format_market_select_field(field) for field in field_list)
+        begin_literal = cls._format_datetime_literal(begin_time)
+        end_literal = cls._format_datetime_literal(end_time)
+        cycle_expr = cls._cycle_to_tsl_expr(cycle)
+        stock_selector = cls._format_stock_selector(stocks)
+        return (
+            f"setsysparam(pn_cycle(),{cycle_expr});"
+            f"return select {select_fields} "
+            f"from markettable datekey {begin_literal} to {end_literal} "
+            f"of {stock_selector} end;"
+        )
+
+    @staticmethod
     def _is_login_error(error_code: int, message: str) -> bool:
         msg = (message or "").lower()
         return error_code in {-1, -13} or "login" in msg or "invalid user" in msg
@@ -329,6 +421,47 @@ class TinySoftAPI:
             )
 
         raise TinySoftAPIError("Tinysoft query 未返回有效结果")
+
+    async def query_panel(
+        self,
+        *,
+        stocks: Iterable[Any],
+        cycle: str,
+        begin_time: Any,
+        end_time: Any,
+        fields: Optional[Iterable[Any]] = None,
+        rate: int = 0,
+        rateday: Any = None,
+        precision: Any = None,
+        viewpoint: Any = None,
+        cyclefilter: Any = None,
+        service: Optional[str] = None,
+        timeout_ms: Optional[int] = None,
+        stop_event: Optional[asyncio.Event] = None,
+    ) -> pd.DataFrame:
+        """通过 ``markettable ... of array(...)`` 拉取多个标的行情。"""
+        if stop_event and stop_event.is_set():
+            raise asyncio.CancelledError("Tinysoft query_panel 被取消")
+        if (
+            int(rate or 0) != 0
+            or rateday is not None
+            or precision is not None
+            or viewpoint is not None
+            or cyclefilter is not None
+        ):
+            raise TinySoftAPIError("Tinysoft query_panel 暂不支持复权/精度/过滤参数，请使用单标的 query。")
+
+        tsl_code = self._build_markettable_panel_tsl(
+            stocks=stocks,
+            cycle=cycle,
+            begin_time=begin_time,
+            end_time=end_time,
+            fields=fields,
+        )
+        exec_kwargs = {"as_dataframe": True, "stop_event": stop_event}
+        if timeout_ms is not None:
+            exec_kwargs["timeout_ms"] = timeout_ms
+        return await self.exec(tsl_code, **exec_kwargs)
 
     # ------------------------------------------------------------------
     # exec / call / call_dataframe — 通用 TSL 接口

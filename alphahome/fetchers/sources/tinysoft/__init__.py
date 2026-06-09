@@ -15,6 +15,7 @@ from .tinysoft_api import (
     TinySoftAPIError,
     TinySoftAuthError,
     TinySoftDependencyError,
+    TinySoftRateLimitError,
 )
 from .tinysoft_opi_api import TinySoftOPIAPI
 from .tinysoft_task import TinySoftTask
@@ -24,6 +25,7 @@ __all__ = [
     "TinySoftAPIError",
     "TinySoftAuthError",
     "TinySoftDependencyError",
+    "TinySoftRateLimitError",
     "TinySoftOPIAPI",
     "TinySoftTask",
 ]

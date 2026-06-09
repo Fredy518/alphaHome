@@ -53,6 +53,37 @@ async def test_call_dataframe_for_stocks_builds_infotable_query():
 
 
 @pytest.mark.asyncio
+async def test_query_panel_builds_markettable_array_query():
+    api = TinySoftAPI(user="u", password="p")
+    captured = {}
+
+    async def fake_exec(tsl_code, *, as_dataframe=True, timeout_ms=None, stop_event=None):
+        captured["tsl_code"] = tsl_code
+        captured["timeout_ms"] = timeout_ms
+        captured["as_dataframe"] = as_dataframe
+        return pd.DataFrame({"StockID": ["SZ000001", "SH600000"]})
+
+    api.exec = fake_exec
+    df = await api.query_panel(
+        stocks=["SZ000001", "SH600000"],
+        cycle="1分钟线",
+        begin_time="2026-05-21 09:30:00",
+        end_time="2026-05-21 15:00:00",
+        fields=["date", "StockID", "close"],
+        timeout_ms=12345,
+    )
+
+    assert captured["as_dataframe"] is True
+    assert captured["timeout_ms"] == 12345
+    assert captured["tsl_code"] == (
+        'setsysparam(pn_cycle(),cy_1m());return select datetimetostr(["date"]) as "date",'
+        '["StockID"],["close"] from markettable datekey 20260521.093000T to 20260521.150000T '
+        "of array('SZ000001','SH600000') end;"
+    )
+    assert len(df) == 2
+
+
+@pytest.mark.asyncio
 async def test_call_dataframe_for_stocks_builds_projected_infotable_query():
     api = TinySoftAPI(user="u", password="p")
     captured = {}
