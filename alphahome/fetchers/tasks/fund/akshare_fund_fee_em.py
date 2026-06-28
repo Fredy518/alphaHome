@@ -1,0 +1,228 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+"""
+AkShare 公募基金费率任务（fund_fee_em）
+
+覆盖天天基金费率页面的当前费率表：
+- 申购费率（前端）
+- 赎回费率
+- 运作费用
+
+该接口是当前快照，不提供严格历史费率变更链路；因此以 snapshot_date 入库。
+"""
+
+from __future__ import annotations
+
+from typing import Any, Dict, List, Optional
+
+import pandas as pd
+
+from ...sources.akshare.akshare_task import AkShareTask
+from ....common.task_system.task_decorator import task_register
+from .akshare_fund_fee_utils import (
+    AkShareFundCodeBatchMixin,
+    current_snapshot_date,
+    normalize_fund_code,
+    parse_amount_condition_wan,
+    parse_flat_fee_yuan,
+    parse_holding_days_condition,
+    parse_operation_period,
+    parse_percent,
+    row_to_json,
+    split_original_discount_fee,
+)
+
+
+@task_register()
+class AkShareFundFeeEmTask(AkShareFundCodeBatchMixin, AkShareTask):
+    """获取单基金当前费率表（AkShare fund_fee_em）。"""
+
+    domain = "fund"
+    name = "akshare_fund_fee_em"
+    description = "天天基金-公募基金费率表（AkShare fund_fee_em）"
+    table_name = "fund_fee_em"
+    data_source = "akshare"
+
+    primary_keys = ["fund_code", "indicator", "row_no", "snapshot_date"]
+    date_column = "snapshot_date"
+    default_start_date = "20000101"
+
+    api_name = "fund_fee_em"
+    default_indicators = ("申购费率（前端）", "赎回费率", "运作费用")
+
+    schema_def = {
+        "fund_code": {"type": "VARCHAR(20)", "constraints": "NOT NULL"},
+        "indicator": {"type": "VARCHAR(50)", "constraints": "NOT NULL"},
+        "row_no": {"type": "INTEGER", "constraints": "NOT NULL"},
+        "rule_type": {"type": "VARCHAR(40)", "constraints": "NOT NULL"},
+        "item_name": {"type": "VARCHAR(80)"},
+        "condition_text": {"type": "TEXT"},
+        "condition_min_amount_wan": {"type": "NUMERIC(18,4)"},
+        "condition_max_amount_wan": {"type": "NUMERIC(18,4)"},
+        "condition_min_holding_days": {"type": "NUMERIC(12,4)"},
+        "condition_max_holding_days": {"type": "NUMERIC(12,4)"},
+        "fee_text": {"type": "VARCHAR(200)"},
+        "original_rate_pct": {"type": "NUMERIC(12,6)"},
+        "discount_rate_pct": {"type": "NUMERIC(12,6)"},
+        "flat_fee_amount_yuan": {"type": "NUMERIC(18,4)"},
+        "fee_rate_pct": {"type": "NUMERIC(12,6)"},
+        "fee_unit": {"type": "VARCHAR(40)"},
+        "operation_period": {"type": "VARCHAR(40)"},
+        "snapshot_date": {"type": "DATE", "constraints": "NOT NULL"},
+        "raw_json": {"type": "TEXT"},
+    }
+
+    indexes = [
+        {"name": "idx_fund_fee_em_fund_code", "columns": "fund_code"},
+        {"name": "idx_fund_fee_em_indicator", "columns": "indicator"},
+        {"name": "idx_fund_fee_em_snapshot", "columns": "snapshot_date"},
+        {"name": "idx_fund_fee_em_update_time", "columns": "update_time"},
+    ]
+
+    validations = [
+        (lambda df: df["fund_code"].notna(), "基金代码不能为空"),
+        (lambda df: df["indicator"].notna(), "费率指标不能为空"),
+        (lambda df: df["snapshot_date"].notna(), "快照日期不能为空"),
+    ]
+    validation_mode = "report"
+
+    def _resolve_indicators(self, **kwargs: Any) -> List[str]:
+        configured = kwargs.get("indicators") or getattr(self, "task_specific_config", {}).get("indicators")
+        indicators: List[str] = []
+        if isinstance(configured, str):
+            indicators = [item.strip() for item in configured.replace(";", ",").split(",") if item.strip()]
+        elif isinstance(configured, (list, tuple, set)):
+            indicators = [str(item).strip() for item in configured if str(item).strip()]
+        if not indicators:
+            indicators = list(self.default_indicators)
+        return list(dict.fromkeys(indicators))
+
+    async def get_batch_list(self, **kwargs: Any) -> List[Dict[str, Any]]:
+        codes = await self._resolve_fund_codes(**kwargs)
+        indicators = self._resolve_indicators(**kwargs)
+        return [
+            {"fund_code": code, "symbol": code, "indicator": indicator}
+            for code in codes
+            for indicator in indicators
+        ]
+
+    async def fetch_batch(self, params: Dict[str, Any], stop_event=None) -> Optional[pd.DataFrame]:
+        data = await self.api.call(
+            func_name=self.api_name,
+            stop_event=stop_event,
+            symbol=params["symbol"],
+            indicator=params["indicator"],
+        )
+        if data is None or data.empty:
+            return None
+        transformed = self.data_transformer.process_data(data)
+        return self.process_data(transformed, **params)
+
+    def process_data(self, data: pd.DataFrame, **kwargs: Any) -> pd.DataFrame:
+        data = super().process_data(data, **kwargs)
+        if data is None or data.empty:
+            return data
+
+        if {"fund_code", "indicator", "row_no", "rule_type", "snapshot_date"}.issubset(data.columns):
+            schema_columns = [col for col in self.schema_def if col in data.columns]
+            return data[schema_columns].copy()
+
+        fund_code = normalize_fund_code(kwargs.get("fund_code") or kwargs.get("symbol"))
+        indicator = kwargs.get("indicator")
+        if "fund_code" in data.columns and not fund_code:
+            fund_code = normalize_fund_code(data["fund_code"].iloc[0])
+        if "indicator" in data.columns and not indicator:
+            indicator = str(data["indicator"].iloc[0])
+        if not fund_code or not indicator:
+            return pd.DataFrame()
+
+        if indicator == "运作费用":
+            normalized = self._normalize_operation_fee(data, fund_code, indicator)
+        else:
+            normalized = self._normalize_schedule_fee(data, fund_code, indicator)
+
+        schema_columns = [col for col in self.schema_def if col in normalized.columns]
+        return normalized[schema_columns].copy()
+
+    def _normalize_schedule_fee(self, data: pd.DataFrame, fund_code: str, indicator: str) -> pd.DataFrame:
+        rows: List[Dict[str, Any]] = []
+        snapshot_date = current_snapshot_date()
+
+        for idx, row in data.reset_index(drop=True).iterrows():
+            columns = list(data.columns)
+            condition_col = columns[0]
+            fee_col = columns[1] if len(columns) > 1 else columns[0]
+            condition_text = row.get(condition_col)
+            fee_text = row.get(fee_col)
+            original_rate, discount_rate, flat_fee, fee_unit = split_original_discount_fee(fee_text)
+
+            min_amount = max_amount = None
+            min_days = max_days = None
+            rule_type = "fee_schedule"
+            if "金额" in str(condition_col) or "申购" in indicator or "认购" in indicator:
+                rule_type = "amount_fee"
+                min_amount, max_amount = parse_amount_condition_wan(condition_text)
+            elif "期限" in str(condition_col) or "赎回" in indicator:
+                rule_type = "holding_period_fee"
+                min_days, max_days = parse_holding_days_condition(condition_text)
+
+            rows.append(
+                {
+                    "fund_code": fund_code,
+                    "indicator": indicator,
+                    "row_no": idx + 1,
+                    "rule_type": rule_type,
+                    "condition_text": None if pd.isna(condition_text) else str(condition_text),
+                    "condition_min_amount_wan": min_amount,
+                    "condition_max_amount_wan": max_amount,
+                    "condition_min_holding_days": min_days,
+                    "condition_max_holding_days": max_days,
+                    "fee_text": None if pd.isna(fee_text) else str(fee_text),
+                    "original_rate_pct": original_rate,
+                    "discount_rate_pct": discount_rate,
+                    "flat_fee_amount_yuan": flat_fee,
+                    "fee_rate_pct": discount_rate if discount_rate is not None else original_rate,
+                    "fee_unit": fee_unit,
+                    "snapshot_date": snapshot_date,
+                    "raw_json": row_to_json(row),
+                }
+            )
+
+        return pd.DataFrame(rows)
+
+    def _normalize_operation_fee(self, data: pd.DataFrame, fund_code: str, indicator: str) -> pd.DataFrame:
+        rows: List[Dict[str, Any]] = []
+        snapshot_date = current_snapshot_date()
+        row_no = 1
+
+        for _, row in data.reset_index(drop=True).iterrows():
+            values = [row.get(col) for col in data.columns]
+            for i in range(0, len(values), 2):
+                item_name = values[i] if i < len(values) else None
+                fee_text = values[i + 1] if i + 1 < len(values) else None
+                if item_name is None or pd.isna(item_name) or str(item_name).strip() == "":
+                    continue
+                rate = parse_percent(fee_text)
+                rows.append(
+                    {
+                        "fund_code": fund_code,
+                        "indicator": indicator,
+                        "row_no": row_no,
+                        "rule_type": "operation_fee",
+                        "item_name": str(item_name).strip(),
+                        "fee_text": None if fee_text is None or pd.isna(fee_text) else str(fee_text).strip(),
+                        "flat_fee_amount_yuan": parse_flat_fee_yuan(fee_text),
+                        "fee_rate_pct": rate,
+                        "fee_unit": "pct_per_period" if rate is not None else "",
+                        "operation_period": parse_operation_period(fee_text),
+                        "snapshot_date": snapshot_date,
+                        "raw_json": row_to_json(row),
+                    }
+                )
+                row_no += 1
+
+        return pd.DataFrame(rows)
+
+
+__all__ = ["AkShareFundFeeEmTask"]
