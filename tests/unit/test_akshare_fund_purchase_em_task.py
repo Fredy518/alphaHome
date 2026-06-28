@@ -104,13 +104,19 @@ class TestColumnMapping:
     def test_column_mapping_has_expected_keys(self):
         """Verify column_mapping has all expected Chinese keys"""
         expected_keys = {
+            "序号",
             "基金代码",
             "基金简称",
+            "基金类型",
             "申购状态",
             "日累计限定金额",
             "赎回状态",
             "最新净值",
             "最新净值/万份收益",
+            "最新净值/万份收益-报告时间",
+            "下一开放日",
+            "购买起点",
+            "手续费",
         }
         actual_keys = set(AkShareFundPurchaseEmTask.column_mapping.keys())
         assert actual_keys == expected_keys
@@ -118,12 +124,18 @@ class TestColumnMapping:
     def test_column_mapping_values_are_english(self):
         """Verify all mapped values are English column names"""
         expected_values = {
+            "row_no",
             "fund_code",
             "fund_name",
+            "fund_type",
             "purchase_status",
             "daily_limit_amount",
             "redemption_status",
             "latest_nav",
+            "nav_report_time_text",
+            "next_open_date",
+            "min_purchase_amount",
+            "fee_rate_pct",
         }
         actual_values = set(AkShareFundPurchaseEmTask.column_mapping.values())
         assert actual_values == expected_values
@@ -280,6 +292,9 @@ class TestCurrentAkshareColumns:
                 "日累计限定金额": [1e11],
                 "赎回状态": ["开放赎回"],
                 "最新净值/万份收益": [1.139],
+                "基金类型": ["混合型-灵活"],
+                "购买起点": [10.0],
+                "手续费": [0.15],
             }
         )
 
@@ -288,6 +303,9 @@ class TestCurrentAkshareColumns:
         assert "latest_nav" in processed.columns
         assert processed["latest_nav"].iloc[0] == 1.139
         assert pd.isna(processed["daily_limit_amount"].iloc[0])
+        assert processed["fund_type"].iloc[0] == "混合型-灵活"
+        assert processed["min_purchase_amount"].iloc[0] == 10.0
+        assert processed["fee_rate_pct"].iloc[0] == 0.15
 
 
 class TestPurchaseStatus:
@@ -461,6 +479,9 @@ class TestSchemaDef:
             'daily_limit_amount',
             'redemption_status',
             'latest_nav',
+            'fund_type',
+            'min_purchase_amount',
+            'fee_rate_pct',
             'snapshot_date',
         }
         schema_fields = set(task.schema_def.keys())

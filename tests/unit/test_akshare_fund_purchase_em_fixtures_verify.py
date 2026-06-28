@@ -17,14 +17,28 @@ from tests.unit.test_akshare_fund_purchase_em_fixtures import (
 )
 
 
+REQUIRED_COLUMNS = {
+    "序号",
+    "基金代码",
+    "基金简称",
+    "基金类型",
+    "最新净值/万份收益-报告时间",
+    "申购状态",
+    "日累计限定金额",
+    "赎回状态",
+    "下一开放日",
+    "购买起点",
+    "手续费",
+    "最新净值",
+}
+
+
 def test_fixture_normal_limits_returns_dataframe():
     """Test fixture_normal_limits returns proper DataFrame."""
     df = fixture_normal_limits()
     assert df is not None
     assert len(df) == 5
-    assert set(df.columns) == {
-        "基金代码", "基金简称", "申购状态", "日累计限定金额", "赎回状态", "最新净值"
-    }
+    assert set(df.columns) == REQUIRED_COLUMNS
     assert all(df["申购状态"] == "开放申购")
 
 
@@ -89,8 +103,7 @@ def test_all_fixtures_have_required_columns(fixture_func, expected_rows):
     assert len(df) == expected_rows, f"{fixture_func.__name__} has {len(df)} rows, expected {expected_rows}"
     
     # Verify required columns
-    required_columns = {"基金代码", "基金简称", "申购状态", "日累计限定金额", "赎回状态", "最新净值"}
-    assert set(df.columns) == required_columns, f"Missing columns in {fixture_func.__name__}"
+    assert set(df.columns) == REQUIRED_COLUMNS, f"Missing columns in {fixture_func.__name__}"
 
 
 def test_fixtures_import_without_network():

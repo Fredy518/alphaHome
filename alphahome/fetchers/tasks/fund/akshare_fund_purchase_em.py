@@ -55,29 +55,44 @@ class AkShareFundPurchaseEmTask(AkShareTask):
 
     # 3) 列名映射（AkShare 返回中文表头）
     column_mapping = {
+        "序号": "row_no",
         "基金代码": "fund_code",
         "基金简称": "fund_name",
+        "基金类型": "fund_type",
         "申购状态": "purchase_status",
         "日累计限定金额": "daily_limit_amount",
         "赎回状态": "redemption_status",
         "最新净值": "latest_nav",
         "最新净值/万份收益": "latest_nav",
+        "最新净值/万份收益-报告时间": "nav_report_time_text",
+        "下一开放日": "next_open_date",
+        "购买起点": "min_purchase_amount",
+        "手续费": "fee_rate_pct",
     }
 
     # 4) 数据类型转换
     transformations = {
+        "row_no": float,
         "daily_limit_amount": float,
         "latest_nav": float,
+        "min_purchase_amount": float,
+        "fee_rate_pct": float,
     }
 
     # 5) 数据库表结构
     schema_def = {
+        "row_no": {"type": "INTEGER"},
         "fund_code": {"type": "VARCHAR(20)", "constraints": "NOT NULL"},
         "fund_name": {"type": "VARCHAR(100)"},
+        "fund_type": {"type": "VARCHAR(80)"},
         "purchase_status": {"type": "VARCHAR(20)"},
         "daily_limit_amount": {"type": "NUMERIC(18,2)"},
         "redemption_status": {"type": "VARCHAR(20)"},
         "latest_nav": {"type": "NUMERIC(10,4)"},
+        "nav_report_time_text": {"type": "VARCHAR(30)"},
+        "next_open_date": {"type": "DATE"},
+        "min_purchase_amount": {"type": "NUMERIC(18,2)"},
+        "fee_rate_pct": {"type": "NUMERIC(12,6)"},
         "snapshot_date": {"type": "DATE", "constraints": "NOT NULL"},
         # update_time 会自动添加
     }
@@ -127,11 +142,17 @@ class AkShareFundPurchaseEmTask(AkShareTask):
         if data is None or data.empty:
             return data
 
+        if "row_no" in data.columns:
+            data["row_no"] = pd.to_numeric(data["row_no"], errors="coerce").astype("Int64")
+
         # 规范化 daily_limit_amount：将无限额情况转为 NULL
         if "daily_limit_amount" in data.columns:
             # 已经是数值类型（父类 transformations 已转换）
             # 将 ≥1e9 的大数视为无限额
             data.loc[data["daily_limit_amount"] >= 1e9, "daily_limit_amount"] = np.nan
+
+        if "next_open_date" in data.columns:
+            data["next_open_date"] = pd.to_datetime(data["next_open_date"], errors="coerce").dt.date
 
         # 过滤列：只保留 schema_def 中定义的字段
         schema_columns = set(self.schema_def.keys())
