@@ -14,11 +14,15 @@ AkShare 公募基金费率任务（fund_fee_em）
 
 from __future__ import annotations
 
+import asyncio
+from datetime import date
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
+from ...sources.akshare.akshare_api import AkShareAPIError, ak
 from ...sources.akshare.akshare_task import AkShareTask
+from ....common.constants import UpdateTypes
 from ....common.task_system.task_decorator import task_register
 from .akshare_fund_fee_utils import (
     AkShareFundCodeBatchMixin,
@@ -50,6 +54,7 @@ class AkShareFundFeeEmTask(AkShareFundCodeBatchMixin, AkShareTask):
 
     api_name = "fund_fee_em"
     default_indicators = ("申购费率（前端）", "赎回费率", "运作费用")
+    known_optional_indicators = {"申购费率（前端）"}
 
     schema_def = {
         "fund_code": {"type": "VARCHAR(20)", "constraints": "NOT NULL"},
@@ -101,23 +106,150 @@ class AkShareFundFeeEmTask(AkShareFundCodeBatchMixin, AkShareTask):
     async def get_batch_list(self, **kwargs: Any) -> List[Dict[str, Any]]:
         codes = await self._resolve_fund_codes(**kwargs)
         indicators = self._resolve_indicators(**kwargs)
-        return [
+        batches = [
             {"fund_code": code, "symbol": code, "indicator": indicator}
             for code in codes
             for indicator in indicators
         ]
+        return await self._exclude_existing_snapshot_batches(batches, **kwargs)
+
+    async def _exclude_existing_snapshot_batches(
+        self,
+        batches: List[Dict[str, Any]],
+        **kwargs: Any,
+    ) -> List[Dict[str, Any]]:
+        """In SMART mode, resume the current month's snapshot by missing pairs."""
+        update_type = str(kwargs.get("update_type") or self.update_type or "").lower()
+        if update_type != UpdateTypes.SMART:
+            return batches
+
+        current_date, month_start, next_month = self._current_snapshot_month_window()
+        if self._parse_bool(
+            kwargs.get("force_refresh", getattr(self, "task_specific_config", {}).get("force_refresh")),
+            False,
+        ):
+            return self._attach_snapshot_date(batches, current_date)
+
+        try:
+            if not await self.db.table_exists(self):
+                return self._attach_snapshot_date(batches, current_date)
+            rows = await self.db.fetch(
+                f"""
+                SELECT fund_code, indicator, MIN(snapshot_date) AS first_snapshot_date
+                FROM {self.get_full_table_name()}
+                WHERE snapshot_date >= $1
+                  AND snapshot_date < $2
+                GROUP BY fund_code, indicator
+                """,
+                month_start,
+                next_month,
+            )
+            first_snapshot_dates = [
+                pd.to_datetime(row["first_snapshot_date"]).date()
+                for row in rows
+                if row["first_snapshot_date"] is not None
+            ]
+            existing = {
+                (normalize_fund_code(row["fund_code"]), str(row["indicator"]))
+                for row in rows
+            }
+        except Exception as exc:
+            self.logger.warning("%s: 查询本月已入库批次失败，将执行完整批次: %s", self.name, exc)
+            return self._attach_snapshot_date(batches, current_date)
+
+        if not existing:
+            self.logger.info(
+                "%s: SMART 本月尚无快照，本次执行完整批次并写入快照日 %s。",
+                self.name,
+                current_date,
+            )
+            return self._attach_snapshot_date(batches, current_date)
+
+        snapshot_anchor = min(first_snapshot_dates) if first_snapshot_dates else current_date
+        filtered = [
+            batch
+            for batch in batches
+            if (batch["fund_code"], batch["indicator"]) not in existing
+        ]
+        self.logger.info(
+            "%s: SMART 本月快照已存在 %s 个 fund_code/indicator 组合，本次仅补 %s/%s 个缺失组合，快照日沿用 %s。",
+            self.name,
+            len(existing),
+            len(filtered),
+            len(batches),
+            snapshot_anchor,
+        )
+        return self._attach_snapshot_date(filtered, snapshot_anchor)
+
+    @staticmethod
+    def _current_snapshot_month_window() -> tuple[date, date, date]:
+        current_date = pd.to_datetime(current_snapshot_date()).date()
+        month_start = current_date.replace(day=1)
+        if month_start.month == 12:
+            next_month = month_start.replace(year=month_start.year + 1, month=1)
+        else:
+            next_month = month_start.replace(month=month_start.month + 1)
+        return current_date, month_start, next_month
+
+    @staticmethod
+    def _attach_snapshot_date(
+        batches: List[Dict[str, Any]],
+        snapshot_date: date,
+    ) -> List[Dict[str, Any]]:
+        snapshot_text = pd.to_datetime(snapshot_date).strftime("%Y-%m-%d")
+        return [{**batch, "snapshot_date": snapshot_text} for batch in batches]
 
     async def fetch_batch(self, params: Dict[str, Any], stop_event=None) -> Optional[pd.DataFrame]:
-        data = await self.api.call(
-            func_name=self.api_name,
-            stop_event=stop_event,
-            symbol=params["symbol"],
-            indicator=params["indicator"],
-        )
+        if params.get("indicator") in self.known_optional_indicators:
+            data = await self._call_optional_indicator_once(params, stop_event=stop_event)
+        else:
+            data = await self.api.call(
+                func_name=self.api_name,
+                stop_event=stop_event,
+                symbol=params["symbol"],
+                indicator=params["indicator"],
+            )
         if data is None or data.empty:
             return None
         transformed = self.data_transformer.process_data(data)
         return self.process_data(transformed, **params)
+
+    async def _call_optional_indicator_once(
+        self,
+        params: Dict[str, Any],
+        stop_event=None,
+    ) -> Optional[pd.DataFrame]:
+        """Fetch optional indicator once; known missing pages are normal no-data cases."""
+        if ak is None:
+            raise AkShareAPIError("akshare 库未安装，请使用 'pip install akshare' 安装")
+        if stop_event and stop_event.is_set():
+            raise asyncio.CancelledError("操作被用户取消")
+
+        await self.api._wait_for_rate_limit()
+        try:
+            result = await asyncio.to_thread(
+                ak.fund_fee_em,
+                symbol=params["symbol"],
+                indicator=params["indicator"],
+            )
+        except KeyError as exc:
+            missing_key = str(exc.args[0]) if exc.args else str(exc).strip("'\"")
+            if missing_key == params["indicator"]:
+                self.logger.info(
+                    "%s: fund_code=%s 缺少可选费率指标 %s，按无数据跳过。",
+                    self.name,
+                    params.get("fund_code") or params.get("symbol"),
+                    params["indicator"],
+                )
+                return None
+            raise
+
+        if result is None:
+            self.logger.warning("akshare.%s 返回 None，参数: %s", self.api_name, params)
+            return None
+        if isinstance(result, pd.DataFrame):
+            self.logger.info("akshare.%s 成功返回 %s 行数据", self.api_name, len(result))
+        return result
 
     def process_data(self, data: pd.DataFrame, **kwargs: Any) -> pd.DataFrame:
         data = super().process_data(data, **kwargs)
@@ -137,17 +269,31 @@ class AkShareFundFeeEmTask(AkShareFundCodeBatchMixin, AkShareTask):
         if not fund_code or not indicator:
             return pd.DataFrame()
 
+        snapshot_date = self._resolve_snapshot_date(**kwargs)
         if indicator == "运作费用":
-            normalized = self._normalize_operation_fee(data, fund_code, indicator)
+            normalized = self._normalize_operation_fee(data, fund_code, indicator, snapshot_date)
         else:
-            normalized = self._normalize_schedule_fee(data, fund_code, indicator)
+            normalized = self._normalize_schedule_fee(data, fund_code, indicator, snapshot_date)
 
         schema_columns = [col for col in self.schema_def if col in normalized.columns]
         return normalized[schema_columns].copy()
 
-    def _normalize_schedule_fee(self, data: pd.DataFrame, fund_code: str, indicator: str) -> pd.DataFrame:
+    @staticmethod
+    def _resolve_snapshot_date(**kwargs: Any) -> str:
+        snapshot_date = kwargs.get("snapshot_date") or current_snapshot_date()
+        parsed = pd.to_datetime(snapshot_date, errors="coerce")
+        if pd.isna(parsed):
+            return current_snapshot_date()
+        return parsed.strftime("%Y-%m-%d")
+
+    def _normalize_schedule_fee(
+        self,
+        data: pd.DataFrame,
+        fund_code: str,
+        indicator: str,
+        snapshot_date: str,
+    ) -> pd.DataFrame:
         rows: List[Dict[str, Any]] = []
-        snapshot_date = current_snapshot_date()
 
         for idx, row in data.reset_index(drop=True).iterrows():
             columns = list(data.columns)
@@ -191,9 +337,14 @@ class AkShareFundFeeEmTask(AkShareFundCodeBatchMixin, AkShareTask):
 
         return pd.DataFrame(rows)
 
-    def _normalize_operation_fee(self, data: pd.DataFrame, fund_code: str, indicator: str) -> pd.DataFrame:
+    def _normalize_operation_fee(
+        self,
+        data: pd.DataFrame,
+        fund_code: str,
+        indicator: str,
+        snapshot_date: str,
+    ) -> pd.DataFrame:
         rows: List[Dict[str, Any]] = []
-        snapshot_date = current_snapshot_date()
         row_no = 1
 
         for _, row in data.reset_index(drop=True).iterrows():

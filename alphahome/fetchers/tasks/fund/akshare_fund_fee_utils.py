@@ -12,6 +12,8 @@ from typing import Any, Iterable, List, Optional
 
 import pandas as pd
 
+from ....common.constants import UpdateTypes
+
 
 def current_snapshot_date() -> str:
     """Return the local collection date used by snapshot-style fund fee tasks."""
@@ -55,6 +57,8 @@ class AkShareFundCodeBatchMixin:
 
     default_code_batch_size = 5000
     default_concurrent_limit = 2
+    default_continue_on_stream_batch_failure = True
+    default_stream_update_types = (UpdateTypes.FULL, UpdateTypes.SMART)
     smart_refresh_interval_days = 1
 
     async def _resolve_fund_codes(self, **kwargs: Any) -> List[str]:

@@ -6,6 +6,7 @@ import pytest
 
 from alphahome.common.constants import UpdateTypes
 from alphahome.fetchers.tasks.fund.akshare_fund_fee_em import AkShareFundFeeEmTask
+from alphahome.fetchers.tasks.fund.akshare_fund_fee_utils import current_snapshot_date
 from alphahome.fetchers.tasks.fund.akshare_fund_overview_em import AkShareFundOverviewEmTask
 from alphahome.fetchers.tasks.fund.akshare_fund_individual_detail_info_xq import (
     AkShareFundIndividualDetailInfoXqTask,
@@ -27,6 +28,27 @@ class _MockDB:
 
     async def get_latest_update_time(self, target):
         return None
+
+
+class _ResumeMockDB(_MockDB):
+    def __init__(self, existing_fee_rows=None):
+        self.month_args = None
+        self.existing_fee_rows = existing_fee_rows or []
+
+    async def table_exists(self, target):
+        return True
+
+    async def fetch(self, query, *args, **kwargs):
+        if "FROM tushare.fund_basic" in query:
+            return [{"ts_code": "000001.OF"}, {"ts_code": "000003.OF"}]
+        if "FROM" in query and "fund_fee_em" in query:
+            self.month_args = args
+            return self.existing_fee_rows
+        return []
+
+
+def _current_month_anchor():
+    return pd.to_datetime(current_snapshot_date()).date().replace(day=1)
 
 
 def _run_pipeline(task, raw_df: pd.DataFrame, **kwargs) -> pd.DataFrame:
@@ -96,6 +118,103 @@ async def test_fund_fee_explicit_code_batches_cross_join_default_indicators():
 
     assert len(batches) == 6
     assert batches[0] == {"fund_code": "000001", "symbol": "000001", "indicator": "申购费率（前端）"}
+
+
+def test_fund_code_tasks_stream_smart_by_default():
+    task = AkShareFundFeeEmTask(db_connection=_MockDB(), update_type=UpdateTypes.SMART)
+
+    assert task.stream_batches is True
+    assert UpdateTypes.SMART in task.stream_update_types
+    assert task.continue_on_stream_batch_failure is True
+
+
+@pytest.mark.asyncio
+async def test_fund_fee_smart_first_month_run_keeps_all_batches():
+    db = _ResumeMockDB(existing_fee_rows=[])
+    task = AkShareFundFeeEmTask(db_connection=db, update_type=UpdateTypes.SMART)
+
+    batches = await task.get_batch_list()
+
+    assert len(batches) == 6
+    assert all(batch["snapshot_date"] == current_snapshot_date() for batch in batches)
+    assert hasattr(db.month_args[0], "toordinal")
+    assert hasattr(db.month_args[1], "toordinal")
+    assert db.month_args[0].day == 1
+    assert db.month_args[0] < db.month_args[1]
+
+
+@pytest.mark.asyncio
+async def test_fund_fee_smart_batches_skip_existing_month_pairs_and_anchor_snapshot():
+    anchor = _current_month_anchor()
+    db = _ResumeMockDB(
+        existing_fee_rows=[
+            {"fund_code": "000001", "indicator": "申购费率（前端）", "first_snapshot_date": anchor},
+            {"fund_code": "000001", "indicator": "赎回费率", "first_snapshot_date": anchor},
+        ]
+    )
+    task = AkShareFundFeeEmTask(db_connection=db, update_type=UpdateTypes.SMART)
+
+    batches = await task.get_batch_list()
+
+    assert {
+        "fund_code": "000001",
+        "symbol": "000001",
+        "indicator": "申购费率（前端）",
+        "snapshot_date": str(anchor),
+    } not in batches
+    assert {
+        "fund_code": "000001",
+        "symbol": "000001",
+        "indicator": "赎回费率",
+        "snapshot_date": str(anchor),
+    } not in batches
+    assert {
+        "fund_code": "000001",
+        "symbol": "000001",
+        "indicator": "运作费用",
+        "snapshot_date": str(anchor),
+    } in batches
+    assert len(batches) == 4
+    assert {batch["snapshot_date"] for batch in batches} == {str(anchor)}
+    assert hasattr(db.month_args[0], "toordinal")
+
+
+def test_fund_fee_process_data_uses_snapshot_date_override():
+    task = AkShareFundFeeEmTask(db_connection=_MockDB(), update_type=UpdateTypes.SMART)
+    raw = pd.DataFrame({"适用期限": ["小于7天"], "赎回费率": ["1.50%"]})
+
+    processed = _run_pipeline(
+        task,
+        raw,
+        fund_code="000001",
+        indicator="赎回费率",
+        snapshot_date="2026-06-01",
+    )
+
+    assert processed["snapshot_date"].tolist() == ["2026-06-01"]
+
+
+@pytest.mark.asyncio
+async def test_fund_fee_optional_purchase_indicator_keyerror_is_no_data(monkeypatch):
+    from alphahome.fetchers.tasks.fund import akshare_fund_fee_em as module
+
+    class _FakeAk:
+        @staticmethod
+        def fund_fee_em(symbol, indicator):
+            raise KeyError(indicator)
+
+    monkeypatch.setattr(module, "ak", _FakeAk())
+    task = AkShareFundFeeEmTask(
+        db_connection=_MockDB(),
+        update_type=UpdateTypes.SMART,
+        task_config={"request_interval": 0},
+    )
+
+    data = await task.fetch_batch(
+        {"fund_code": "004340", "symbol": "004340", "indicator": "申购费率（前端）"}
+    )
+
+    assert data is None
 
 
 def test_fund_overview_parses_fee_rates():
