@@ -31,9 +31,12 @@ class _MockDB:
 
 
 class _ResumeMockDB(_MockDB):
-    def __init__(self, existing_fee_rows=None):
+    def __init__(self, existing_fee_rows=None, existing_rows_by_table=None):
         self.month_args = None
-        self.existing_fee_rows = existing_fee_rows or []
+        self.month_args_by_table = {}
+        self.existing_rows_by_table = existing_rows_by_table or {}
+        if existing_fee_rows is not None:
+            self.existing_rows_by_table["fund_fee_em"] = existing_fee_rows
 
     async def table_exists(self, target):
         return True
@@ -41,9 +44,11 @@ class _ResumeMockDB(_MockDB):
     async def fetch(self, query, *args, **kwargs):
         if "FROM tushare.fund_basic" in query:
             return [{"ts_code": "000001.OF"}, {"ts_code": "000003.OF"}]
-        if "FROM" in query and "fund_fee_em" in query:
-            self.month_args = args
-            return self.existing_fee_rows
+        for table_name, rows in self.existing_rows_by_table.items():
+            if "FROM" in query and table_name in query:
+                self.month_args = args
+                self.month_args_by_table[table_name] = args
+                return rows
         return []
 
 
@@ -126,6 +131,28 @@ def test_fund_code_tasks_stream_smart_by_default():
     assert task.stream_batches is True
     assert UpdateTypes.SMART in task.stream_update_types
     assert task.continue_on_stream_batch_failure is True
+
+
+def test_fund_code_tasks_use_fast_defaults():
+    fee = AkShareFundFeeEmTask(db_connection=_MockDB(), update_type=UpdateTypes.SMART)
+    overview = AkShareFundOverviewEmTask(db_connection=_MockDB(), update_type=UpdateTypes.SMART)
+    detail = AkShareFundIndividualDetailInfoXqTask(db_connection=_MockDB(), update_type=UpdateTypes.SMART)
+
+    assert fee.request_interval == 0.10
+    assert fee.concurrent_limit == 6
+    assert fee.max_retries == 1
+    assert fee.retry_delay == 1
+    assert fee.stream_save_batch_size == 3000
+
+    assert overview.request_interval == 0.10
+    assert overview.concurrent_limit == 6
+    assert overview.max_retries == 1
+    assert overview.stream_save_batch_size == 2000
+
+    assert detail.request_interval == 0.15
+    assert detail.concurrent_limit == 4
+    assert detail.max_retries == 1
+    assert detail.stream_save_batch_size == 2000
 
 
 @pytest.mark.asyncio
@@ -217,6 +244,40 @@ async def test_fund_fee_optional_purchase_indicator_keyerror_is_no_data(monkeypa
     assert data is None
 
 
+@pytest.mark.asyncio
+async def test_fund_overview_smart_batches_skip_existing_month_codes_and_anchor_snapshot():
+    anchor = _current_month_anchor()
+    db = _ResumeMockDB(
+        existing_rows_by_table={
+            "fund_overview_em": [
+                {"fund_code": "000001", "first_snapshot_date": anchor},
+            ],
+        }
+    )
+    task = AkShareFundOverviewEmTask(db_connection=db, update_type=UpdateTypes.SMART)
+
+    batches = await task.get_batch_list()
+
+    assert batches == [{"fund_code": "000003", "symbol": "000003", "snapshot_date": str(anchor)}]
+    assert hasattr(db.month_args_by_table["fund_overview_em"][0], "toordinal")
+
+
+def test_fund_overview_process_data_uses_snapshot_date_override():
+    task = AkShareFundOverviewEmTask(db_connection=_MockDB(), update_type=UpdateTypes.SMART)
+    raw = pd.DataFrame(
+        [
+            {
+                "基金简称": "华夏成长混合",
+                "管理费率": "1.20%（每年）",
+            }
+        ]
+    )
+
+    processed = _run_pipeline(task, raw, fund_code="000001", snapshot_date="2026-06-01")
+
+    assert processed["snapshot_date"].tolist() == ["2026-06-01"]
+
+
 def test_fund_overview_parses_fee_rates():
     task = AkShareFundOverviewEmTask(db_connection=_MockDB(), update_type=UpdateTypes.FULL)
     raw = pd.DataFrame(
@@ -244,6 +305,52 @@ def test_fund_overview_parses_fee_rates():
     assert row["custodian_fee_rate_pct"] == 0.2
     assert pd.isna(row["sales_service_fee_rate_pct"])
     assert row["max_subscription_fee_rate_pct"] == 1.0
+
+
+@pytest.mark.asyncio
+async def test_fund_detail_xq_smart_batches_skip_existing_month_codes_and_anchor_snapshot():
+    anchor = _current_month_anchor()
+    db = _ResumeMockDB(
+        existing_rows_by_table={
+            "fund_individual_detail_info_xq": [
+                {"fund_code": "000003", "first_snapshot_date": anchor},
+            ],
+        }
+    )
+    task = AkShareFundIndividualDetailInfoXqTask(db_connection=db, update_type=UpdateTypes.SMART)
+
+    batches = await task.get_batch_list()
+
+    assert batches == [
+        {"fund_code": "000001", "symbol": "000001", "timeout": 10.0, "snapshot_date": str(anchor)}
+    ]
+    assert hasattr(db.month_args_by_table["fund_individual_detail_info_xq"][0], "toordinal")
+
+
+def test_fund_detail_xq_process_data_uses_snapshot_date_override():
+    task = AkShareFundIndividualDetailInfoXqTask(db_connection=_MockDB(), update_type=UpdateTypes.SMART)
+    raw = pd.DataFrame([{"费用类型": "其他费用", "条件或名称": "管理费率", "费用": 1.2}])
+
+    processed = _run_pipeline(task, raw, fund_code="000001", snapshot_date="2026-06-01")
+
+    assert processed["snapshot_date"].tolist() == ["2026-06-01"]
+
+
+@pytest.mark.asyncio
+async def test_fund_detail_xq_missing_data_error_is_no_data():
+    task = AkShareFundIndividualDetailInfoXqTask(db_connection=_MockDB(), update_type=UpdateTypes.SMART)
+
+    class _FakeApi:
+        async def call(self, **kwargs):
+            from alphahome.fetchers.sources.akshare.akshare_api import AkShareAPIError
+
+            raise AkShareAPIError("akshare.fund_individual_detail_info_xq 调用失败: 'data'")
+
+    task.api = _FakeApi()
+
+    data = await task.fetch_batch({"fund_code": "000014", "symbol": "000014", "timeout": 10.0})
+
+    assert data is None
 
 
 def test_fund_detail_xq_parses_buy_sell_rules_and_fee_unit_hint():

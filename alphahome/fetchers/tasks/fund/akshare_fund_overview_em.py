@@ -13,7 +13,6 @@ from ...sources.akshare.akshare_task import AkShareTask
 from ....common.task_system.task_decorator import task_register
 from .akshare_fund_fee_utils import (
     AkShareFundCodeBatchMixin,
-    current_snapshot_date,
     normalize_fund_code,
     parse_percent,
     row_to_json,
@@ -99,7 +98,12 @@ class AkShareFundOverviewEmTask(AkShareFundCodeBatchMixin, AkShareTask):
 
     async def get_batch_list(self, **kwargs: Any) -> List[Dict[str, Any]]:
         codes = await self._resolve_fund_codes(**kwargs)
-        return [{"fund_code": code, "symbol": code} for code in codes]
+        batches = [{"fund_code": code, "symbol": code} for code in codes]
+        return await self._exclude_existing_month_batches(
+            batches,
+            key_fields=("fund_code",),
+            **kwargs,
+        )
 
     async def fetch_batch(self, params: Dict[str, Any], stop_event=None) -> Optional[pd.DataFrame]:
         data = await self.api.call(
@@ -133,7 +137,7 @@ class AkShareFundOverviewEmTask(AkShareFundCodeBatchMixin, AkShareTask):
         data["custodian_fee_rate_pct"] = data.get("custodian_fee_text", pd.Series(index=data.index)).apply(parse_percent)
         data["sales_service_fee_rate_pct"] = data.get("sales_service_fee_text", pd.Series(index=data.index)).apply(parse_percent)
         data["max_subscription_fee_rate_pct"] = data.get("max_subscription_fee_text", pd.Series(index=data.index)).apply(parse_percent)
-        data["snapshot_date"] = current_snapshot_date()
+        data["snapshot_date"] = self._resolve_snapshot_date(**kwargs)
         data["raw_json"] = data.apply(row_to_json, axis=1)
 
         if len(data) > 1:

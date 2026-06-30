@@ -9,11 +9,11 @@ from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
+from ...sources.akshare.akshare_api import AkShareAPIError
 from ...sources.akshare.akshare_task import AkShareTask
 from ....common.task_system.task_decorator import task_register
 from .akshare_fund_fee_utils import (
     AkShareFundCodeBatchMixin,
-    current_snapshot_date,
     normalize_fund_code,
     parse_amount_condition_wan,
     parse_holding_days_condition,
@@ -37,6 +37,8 @@ class AkShareFundIndividualDetailInfoXqTask(AkShareFundCodeBatchMixin, AkShareTa
 
     api_name = "fund_individual_detail_info_xq"
     default_timeout = 10
+    default_concurrent_limit = 4
+    default_request_interval = 0.15
 
     column_mapping = {
         "费用类型": "fee_type",
@@ -80,15 +82,30 @@ class AkShareFundIndividualDetailInfoXqTask(AkShareFundCodeBatchMixin, AkShareTa
             or getattr(self, "task_specific_config", {}).get("timeout")
             or self.default_timeout
         )
-        return [{"fund_code": code, "symbol": code, "timeout": float(timeout)} for code in codes]
+        batches = [{"fund_code": code, "symbol": code, "timeout": float(timeout)} for code in codes]
+        return await self._exclude_existing_month_batches(
+            batches,
+            key_fields=("fund_code",),
+            **kwargs,
+        )
 
     async def fetch_batch(self, params: Dict[str, Any], stop_event=None) -> Optional[pd.DataFrame]:
-        data = await self.api.call(
-            func_name=self.api_name,
-            stop_event=stop_event,
-            symbol=params["symbol"],
-            timeout=params.get("timeout"),
-        )
+        try:
+            data = await self.api.call(
+                func_name=self.api_name,
+                stop_event=stop_event,
+                symbol=params["symbol"],
+                timeout=params.get("timeout"),
+            )
+        except AkShareAPIError as exc:
+            if "'data'" in str(exc):
+                self.logger.info(
+                    "%s: fund_code=%s 雪球蛋卷详情缺少 data 字段，按无数据跳过。",
+                    self.name,
+                    params.get("fund_code") or params.get("symbol"),
+                )
+                return None
+            raise
         if data is None or data.empty:
             return None
         transformed = self.data_transformer.process_data(data)
@@ -110,7 +127,7 @@ class AkShareFundIndividualDetailInfoXqTask(AkShareFundCodeBatchMixin, AkShareTa
             return pd.DataFrame()
 
         rows: List[Dict[str, Any]] = []
-        snapshot_date = current_snapshot_date()
+        snapshot_date = self._resolve_snapshot_date(**kwargs)
         for idx, row in data.reset_index(drop=True).iterrows():
             fee_type = row.get("fee_type")
             condition = row.get("condition_or_name")
