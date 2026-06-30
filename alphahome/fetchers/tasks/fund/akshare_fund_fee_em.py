@@ -74,7 +74,7 @@ class AkShareFundFeeEmTask(AkShareFundCodeBatchMixin, AkShareTask):
         "flat_fee_amount_yuan": {"type": "NUMERIC(18,4)"},
         "fee_rate_pct": {"type": "NUMERIC(12,6)"},
         "fee_unit": {"type": "VARCHAR(40)"},
-        "operation_period": {"type": "VARCHAR(40)"},
+        "operation_period": {"type": "TEXT"},
         "snapshot_date": {"type": "DATE", "constraints": "NOT NULL"},
         "raw_json": {"type": "TEXT"},
     }
@@ -95,25 +95,30 @@ class AkShareFundFeeEmTask(AkShareFundCodeBatchMixin, AkShareTask):
 
     async def _pre_execute(self, stop_event=None, **kwargs: Any) -> None:
         await super()._pre_execute(stop_event=stop_event, **kwargs)
-        await self._ensure_fee_text_is_text()
+        await self._ensure_variable_text_columns()
 
-    async def _ensure_fee_text_is_text(self) -> None:
+    async def _ensure_variable_text_columns(self) -> None:
+        columns = ("fee_text", "operation_period")
         try:
             if await self.db.table_exists(self):
                 rows = await self.db.fetch(
                     """
-                    SELECT data_type, character_maximum_length
+                    SELECT column_name, data_type, character_maximum_length
                     FROM information_schema.columns
                     WHERE table_schema = $1
                       AND table_name = $2
-                      AND column_name = 'fee_text'
+                      AND column_name = ANY($3::text[])
                     """,
                     self.data_source,
                     self.table_name,
+                    list(columns),
                 )
-                if not rows:
-                    return
-                if rows[0]["data_type"] == "text":
+                columns_to_alter = [
+                    row["column_name"]
+                    for row in rows
+                    if row["data_type"] != "text"
+                ]
+                if not columns_to_alter:
                     return
 
                 rawdata_view_sql = self._rawdata_view_sql()
@@ -122,16 +127,21 @@ class AkShareFundFeeEmTask(AkShareFundCodeBatchMixin, AkShareTask):
                 async with self.db.pool.acquire() as conn:
                     async with conn.transaction():
                         await conn.execute('DROP VIEW IF EXISTS "rawdata"."fund_fee_em"')
-                        await conn.execute(
-                            f"""
-                            ALTER TABLE {self.get_full_table_name()}
-                            ALTER COLUMN fee_text TYPE TEXT
-                            """
-                        )
+                        for column in columns_to_alter:
+                            await conn.execute(
+                                f"""
+                                ALTER TABLE {self.get_full_table_name()}
+                                ALTER COLUMN {column} TYPE TEXT
+                                """
+                            )
                         await conn.execute(rawdata_view_sql)
-                self.logger.info("%s: 已将 fee_text 字段扩展为 TEXT。", self.name)
+                self.logger.info(
+                    "%s: 已将字段扩展为 TEXT: %s。",
+                    self.name,
+                    ", ".join(columns_to_alter),
+                )
         except Exception as exc:
-            self.logger.warning("%s: 扩展 fee_text 字段为 TEXT 失败，将继续执行: %s", self.name, exc)
+            self.logger.warning("%s: 扩展文本字段为 TEXT 失败，将继续执行: %s", self.name, exc)
 
     @staticmethod
     def _rawdata_view_sql() -> str:

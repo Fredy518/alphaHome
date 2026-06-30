@@ -159,6 +159,20 @@ def test_fund_fee_text_schema_allows_long_raw_fee_text():
     assert AkShareFundFeeEmTask.schema_def["fee_text"]["type"] == "TEXT"
 
 
+def test_fund_fee_operation_period_schema_allows_long_text():
+    assert AkShareFundFeeEmTask.schema_def["operation_period"]["type"] == "TEXT"
+
+
+def test_fund_fee_operation_period_preserves_long_parenthetical_text():
+    task = AkShareFundFeeEmTask(db_connection=_MockDB(), update_type=UpdateTypes.FULL)
+    long_period = "基金资产净值扣除所持有目标ETF公允价值后的余额每日计提"
+    raw = pd.DataFrame([[ "管理费率", f"0.50%（{long_period}）" ]])
+
+    processed = _run_pipeline(task, raw, fund_code="000001", indicator="运作费用")
+
+    assert processed.iloc[0]["operation_period"] == long_period
+
+
 @pytest.mark.asyncio
 async def test_fund_fee_smart_first_month_run_keeps_all_batches():
     db = _ResumeMockDB(existing_fee_rows=[])
