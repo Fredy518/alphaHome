@@ -15,9 +15,12 @@ AkShare 公募基金费率任务（fund_fee_em）
 from __future__ import annotations
 
 import asyncio
+from io import StringIO
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
+import requests
+from bs4 import BeautifulSoup
 
 from ...sources.akshare.akshare_api import AkShareAPIError, ak
 from ...sources.akshare.akshare_task import AkShareTask
@@ -65,7 +68,7 @@ class AkShareFundFeeEmTask(AkShareFundCodeBatchMixin, AkShareTask):
         "condition_max_amount_wan": {"type": "NUMERIC(18,4)"},
         "condition_min_holding_days": {"type": "NUMERIC(12,4)"},
         "condition_max_holding_days": {"type": "NUMERIC(12,4)"},
-        "fee_text": {"type": "VARCHAR(200)"},
+        "fee_text": {"type": "TEXT"},
         "original_rate_pct": {"type": "NUMERIC(12,6)"},
         "discount_rate_pct": {"type": "NUMERIC(12,6)"},
         "flat_fee_amount_yuan": {"type": "NUMERIC(18,4)"},
@@ -89,6 +92,73 @@ class AkShareFundFeeEmTask(AkShareFundCodeBatchMixin, AkShareTask):
         (lambda df: df["snapshot_date"].notna(), "快照日期不能为空"),
     ]
     validation_mode = "report"
+
+    async def _pre_execute(self, stop_event=None, **kwargs: Any) -> None:
+        await super()._pre_execute(stop_event=stop_event, **kwargs)
+        await self._ensure_fee_text_is_text()
+
+    async def _ensure_fee_text_is_text(self) -> None:
+        try:
+            if await self.db.table_exists(self):
+                rows = await self.db.fetch(
+                    """
+                    SELECT data_type, character_maximum_length
+                    FROM information_schema.columns
+                    WHERE table_schema = $1
+                      AND table_name = $2
+                      AND column_name = 'fee_text'
+                    """,
+                    self.data_source,
+                    self.table_name,
+                )
+                if not rows:
+                    return
+                if rows[0]["data_type"] == "text":
+                    return
+
+                rawdata_view_sql = self._rawdata_view_sql()
+                if self.db.pool is None:
+                    await self.db.connect()
+                async with self.db.pool.acquire() as conn:
+                    async with conn.transaction():
+                        await conn.execute('DROP VIEW IF EXISTS "rawdata"."fund_fee_em"')
+                        await conn.execute(
+                            f"""
+                            ALTER TABLE {self.get_full_table_name()}
+                            ALTER COLUMN fee_text TYPE TEXT
+                            """
+                        )
+                        await conn.execute(rawdata_view_sql)
+                self.logger.info("%s: 已将 fee_text 字段扩展为 TEXT。", self.name)
+        except Exception as exc:
+            self.logger.warning("%s: 扩展 fee_text 字段为 TEXT 失败，将继续执行: %s", self.name, exc)
+
+    @staticmethod
+    def _rawdata_view_sql() -> str:
+        return """
+            CREATE OR REPLACE VIEW "rawdata"."fund_fee_em" AS
+            SELECT fund_code,
+                   indicator,
+                   row_no,
+                   rule_type,
+                   item_name,
+                   condition_text,
+                   condition_min_amount_wan,
+                   condition_max_amount_wan,
+                   condition_min_holding_days,
+                   condition_max_holding_days,
+                   fee_text,
+                   original_rate_pct,
+                   discount_rate_pct,
+                   flat_fee_amount_yuan,
+                   fee_rate_pct,
+                   fee_unit,
+                   operation_period,
+                   snapshot_date,
+                   raw_json,
+                   update_time
+            FROM "akshare"."fund_fee_em"
+        """
 
     def _resolve_indicators(self, **kwargs: Any) -> List[str]:
         configured = kwargs.get("indicators") or getattr(self, "task_specific_config", {}).get("indicators")
@@ -159,6 +229,9 @@ class AkShareFundFeeEmTask(AkShareFundCodeBatchMixin, AkShareTask):
         except KeyError as exc:
             missing_key = str(exc.args[0]) if exc.args else str(exc).strip("'\"")
             if missing_key == params["indicator"]:
+                fallback = await self._call_purchase_fee_title_fallback(params, stop_event=stop_event)
+                if fallback is not None and not fallback.empty:
+                    return fallback
                 self.logger.info(
                     "%s: fund_code=%s 缺少可选费率指标 %s，按无数据跳过。",
                     self.name,
@@ -174,6 +247,44 @@ class AkShareFundFeeEmTask(AkShareFundCodeBatchMixin, AkShareTask):
         if isinstance(result, pd.DataFrame):
             self.logger.info("akshare.%s 成功返回 %s 行数据", self.api_name, len(result))
         return result
+
+    async def _call_purchase_fee_title_fallback(
+        self,
+        params: Dict[str, Any],
+        stop_event=None,
+    ) -> Optional[pd.DataFrame]:
+        if params.get("indicator") != "申购费率（前端）":
+            return None
+        if stop_event and stop_event.is_set():
+            raise asyncio.CancelledError("操作被用户取消")
+
+        await self.api._wait_for_rate_limit()
+        data = await asyncio.to_thread(self._read_fund_fee_table_by_title, params["symbol"], "申购费率")
+        if data is None or data.empty:
+            return None
+        self.logger.info(
+            "%s: fund_code=%s 使用页面标题“申购费率”回退解析成功，返回 %s 行数据。",
+            self.name,
+            params.get("fund_code") or params.get("symbol"),
+            len(data),
+        )
+        return data
+
+    @staticmethod
+    def _read_fund_fee_table_by_title(symbol: str, title: str) -> Optional[pd.DataFrame]:
+        url = f"https://fundf10.eastmoney.com/jjfl_{symbol}.html"
+        response = requests.get(url, timeout=15)
+        response.raise_for_status()
+        soup = BeautifulSoup(response.text, features="html.parser")
+        for title_elem in soup.find_all(name="h4", class_="t"):
+            title_text = title_elem.get_text(strip=True)
+            if title_text != title:
+                continue
+            next_table = title_elem.find_next("table")
+            if next_table is None:
+                return None
+            return pd.read_html(StringIO(str(next_table)))[0]
+        return None
 
     def process_data(self, data: pd.DataFrame, **kwargs: Any) -> pd.DataFrame:
         data = super().process_data(data, **kwargs)

@@ -155,6 +155,10 @@ def test_fund_code_tasks_use_fast_defaults():
     assert detail.stream_save_batch_size == 2000
 
 
+def test_fund_fee_text_schema_allows_long_raw_fee_text():
+    assert AkShareFundFeeEmTask.schema_def["fee_text"]["type"] == "TEXT"
+
+
 @pytest.mark.asyncio
 async def test_fund_fee_smart_first_month_run_keeps_all_batches():
     db = _ResumeMockDB(existing_fee_rows=[])
@@ -231,6 +235,7 @@ async def test_fund_fee_optional_purchase_indicator_keyerror_is_no_data(monkeypa
             raise KeyError(indicator)
 
     monkeypatch.setattr(module, "ak", _FakeAk())
+    monkeypatch.setattr(AkShareFundFeeEmTask, "_read_fund_fee_table_by_title", staticmethod(lambda *args: None))
     task = AkShareFundFeeEmTask(
         db_connection=_MockDB(),
         update_type=UpdateTypes.SMART,
@@ -242,6 +247,45 @@ async def test_fund_fee_optional_purchase_indicator_keyerror_is_no_data(monkeypa
     )
 
     assert data is None
+
+
+@pytest.mark.asyncio
+async def test_fund_fee_optional_purchase_indicator_falls_back_to_purchase_title(monkeypatch):
+    from alphahome.fetchers.tasks.fund import akshare_fund_fee_em as module
+
+    class _FakeAk:
+        @staticmethod
+        def fund_fee_em(symbol, indicator):
+            raise KeyError(indicator)
+
+    fallback_raw = pd.DataFrame(
+        {
+            "适用金额": ["小于100万元"],
+            "原费率|天天基金优惠费率": ["1.20% | 0.12%"],
+        }
+    )
+    monkeypatch.setattr(module, "ak", _FakeAk())
+    monkeypatch.setattr(
+        AkShareFundFeeEmTask,
+        "_read_fund_fee_table_by_title",
+        staticmethod(lambda symbol, title: fallback_raw),
+    )
+    task = AkShareFundFeeEmTask(
+        db_connection=_MockDB(),
+        update_type=UpdateTypes.SMART,
+        task_config={"request_interval": 0},
+    )
+
+    data = await task.fetch_batch(
+        {"fund_code": "000190", "symbol": "000190", "indicator": "申购费率（前端）"}
+    )
+
+    assert len(data) == 1
+    row = data.iloc[0]
+    assert row["fund_code"] == "000190"
+    assert row["indicator"] == "申购费率（前端）"
+    assert row["original_rate_pct"] == 1.2
+    assert row["discount_rate_pct"] == 0.12
 
 
 @pytest.mark.asyncio
