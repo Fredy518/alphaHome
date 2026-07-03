@@ -8,10 +8,15 @@ import sys
 import os
 from datetime import datetime
 
+import pytest
+
+pytest.skip("obsolete PITManager integration script; kept for historical reference", allow_module_level=True)
+
 # 添加项目路径
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from research.tools.context import ResearchContext
+from alphahome.pit.base.pit_config import PITConfig
 from alphahome.pit import (
     PITBalanceQuarterlyManager,
     PITFinancialIndicatorsManager,
@@ -52,9 +57,9 @@ def main():
                 print(f"\n✅ 测试成功!")
                 
                 # 检查是否有数据写入
-                count_result = ctx.query_dataframe("""
+                count_result = ctx.query_dataframe(f"""
                     SELECT COUNT(*) as count 
-                    FROM pgs_factors.pit_financial_indicators_mvp
+                    FROM {PITConfig.PIT_SCHEMA}.pit_financial_indicators
                 """)
                 
                 if count_result is not None and not count_result.empty:

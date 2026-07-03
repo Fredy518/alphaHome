@@ -55,7 +55,7 @@ BEGIN
             pic.gpa_calculation_method,
             pic.special_handling_reason,
             ROW_NUMBER() OVER (PARTITION BY pic.ts_code ORDER BY pic.obs_date DESC) as rn
-        FROM pgs_factors.pit_industry_classification pic
+        FROM pit.pit_industry_classification pic
         WHERE pic.ts_code = ANY(p_ts_codes)
         AND pic.obs_date <= p_as_of_date
         AND pic.data_source = p_data_source
@@ -73,6 +73,33 @@ BEGIN
     FROM latest_industry li
     WHERE li.rn = 1
     ORDER BY li.ts_code;
+END;
+$$ LANGUAGE plpgsql;
+
+-- 兼容旧调用签名：历史库里曾存在 varchar[] 版本。
+CREATE OR REPLACE FUNCTION get_industry_classification_batch_pit_optimized(
+    p_ts_codes VARCHAR[],
+    p_as_of_date DATE,
+    p_data_source VARCHAR(10) DEFAULT 'sw'
+) RETURNS TABLE (
+    ts_code VARCHAR(20),
+    obs_date DATE,
+    data_source VARCHAR(10),
+    industry_level1 VARCHAR(50),
+    industry_level2 VARCHAR(100),
+    industry_level3 VARCHAR(150),
+    requires_special_gpa_handling BOOLEAN,
+    gpa_calculation_method VARCHAR(50),
+    special_handling_reason TEXT
+) AS $$
+BEGIN
+    RETURN QUERY
+    SELECT *
+    FROM get_industry_classification_batch_pit_optimized(
+        p_ts_codes::TEXT[],
+        p_as_of_date,
+        p_data_source
+    );
 END;
 $$ LANGUAGE plpgsql;
 

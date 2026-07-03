@@ -33,6 +33,16 @@ from typing import Dict, Any
 class PITIncomeQuarterlyManager(PITTableManager):
     """PIT利润表管理器"""
 
+    FORECAST_NEAR_TERM_MAX_DAYS = 190
+    FORECAST_MAX_HORIZON_DAYS = 370
+    FORECAST_HORIZON_COLUMNS = {
+        'forecast_horizon_days': 'integer',
+        'forecast_horizon_bucket': 'varchar(32)',
+        'forecast_horizon_status': 'varchar(32)',
+        'is_future_target': 'boolean',
+        'is_usable_forecast': 'boolean',
+    }
+
     def __init__(self):
         super().__init__('pit_income_quarterly')
 
@@ -178,7 +188,7 @@ class PITIncomeQuarterlyManager(PITTableManager):
             return {
                 'updated_records': result['inserted'] + result['updated'],
                 'inserted_records': result['inserted'],
-                'updated_records': result['updated'],
+                'updated_existing_records': result['updated'],
                 'error_records': result['errors'],
                 'message': f'成功更新 {result["inserted"] + result["updated"]} 条记录'
             }
@@ -640,6 +650,8 @@ class PITIncomeQuarterlyManager(PITTableManager):
         if 'ann_date' in processed_data.columns:
             processed_data['ann_date'] = pd.to_datetime(processed_data['ann_date']).dt.date
 
+        processed_data = self._apply_forecast_horizon_metadata(processed_data)
+
         # 2.5. 计算year和quarter字段（从end_date提取）
         if 'end_date' in processed_data.columns:
             # 转换为datetime以便提取年份和月份
@@ -662,7 +674,7 @@ class PITIncomeQuarterlyManager(PITTableManager):
         processed_data = self._enrich_express_parent_profit(processed_data)
 
         # 4.2 数值字段处理（在增强后统一转数值，防御型处理）
-        for field in list(self.data_fields) + ['total_profit','n_income','net_profit_mid','year','quarter','conversion_status']:
+        for field in list(self.data_fields) + ['total_profit','n_income','net_profit_mid','year','quarter','forecast_horizon_days','conversion_status']:
             if field in processed_data.columns:
                 # 转换为数值类型（非数值字段如 conversion_status 跳过）
                 if field in ['conversion_status']:
@@ -740,12 +752,66 @@ class PITIncomeQuarterlyManager(PITTableManager):
         return processed_data
 
 
+    def _apply_forecast_horizon_metadata(self, data: pd.DataFrame) -> pd.DataFrame:
+        """为 forecast 行打上预告跨度与可用性标签。"""
+        if data is None or data.empty:
+            return data
+        work = data.copy()
+
+        for column in self.FORECAST_HORIZON_COLUMNS:
+            if column not in work.columns:
+                work[column] = None
+
+        if not {'data_source', 'end_date', 'ann_date'}.issubset(work.columns):
+            return work
+
+        source = work['data_source'].astype(str)
+        mask = source.eq('forecast')
+        if not mask.any():
+            return work
+
+        end_dt = pd.to_datetime(work.loc[mask, 'end_date'], errors='coerce')
+        ann_dt = pd.to_datetime(work.loc[mask, 'ann_date'], errors='coerce')
+        horizon = (end_dt - ann_dt).dt.days
+
+        work.loc[mask, 'forecast_horizon_days'] = horizon
+        work.loc[mask, 'is_future_target'] = horizon > 0
+        work.loc[mask, 'is_usable_forecast'] = horizon.notna() & (horizon <= self.FORECAST_MAX_HORIZON_DAYS)
+
+        invalid_mask = mask.copy()
+        invalid_mask.loc[mask] = horizon.isna().to_numpy()
+        post_period_mask = mask.copy()
+        post_period_mask.loc[mask] = (horizon.notna() & (horizon <= 0)).to_numpy()
+        near_term_mask = mask.copy()
+        near_term_mask.loc[mask] = (
+            horizon.notna()
+            & (horizon > 0)
+            & (horizon <= self.FORECAST_NEAR_TERM_MAX_DAYS)
+        ).to_numpy()
+        long_horizon_mask = mask.copy()
+        long_horizon_mask.loc[mask] = (
+            horizon.notna()
+            & (horizon > self.FORECAST_NEAR_TERM_MAX_DAYS)
+            & (horizon <= self.FORECAST_MAX_HORIZON_DAYS)
+        ).to_numpy()
+        outlier_mask = mask.copy()
+        outlier_mask.loc[mask] = (horizon.notna() & (horizon > self.FORECAST_MAX_HORIZON_DAYS)).to_numpy()
+
+        work.loc[invalid_mask, ['forecast_horizon_bucket', 'forecast_horizon_status']] = ['invalid', 'invalid_date']
+        work.loc[post_period_mask, ['forecast_horizon_bucket', 'forecast_horizon_status']] = ['post_period', 'post_period_disclosure']
+        work.loc[near_term_mask, ['forecast_horizon_bucket', 'forecast_horizon_status']] = ['near_term', 'near_term_forecast']
+        work.loc[long_horizon_mask, ['forecast_horizon_bucket', 'forecast_horizon_status']] = ['long_horizon', 'long_horizon_forecast']
+        work.loc[outlier_mask, ['forecast_horizon_bucket', 'forecast_horizon_status']] = ['outlier', 'horizon_outlier']
+        work.loc[invalid_mask | outlier_mask, 'is_usable_forecast'] = False
+
+        return work
+
 
     def _ensure_income_unique_keys(self) -> None:
-        """将 pit_income_quarterly 唯一键升级为 (ts_code, end_date, ann_date, data_source)。幂等执行。
-        注意：仅调整索引/约束，不改表结构列。
+        """确保利润表 PIT 运行所需 schema 与唯一键完整。幂等执行。
         """
         try:
+            self._ensure_income_forecast_horizon_columns()
             sqls = [
                 # 删除旧唯一约束（如果存在）
                 f"""
@@ -784,6 +850,56 @@ class PITIncomeQuarterlyManager(PITTableManager):
                 self.context.db_manager.execute_sync(s)
         except Exception as e:
             self.logger.warning(f"唯一键迁移失败或无需迁移: {e}")
+
+    def _ensure_income_forecast_horizon_columns(self) -> None:
+        """确保 forecast horizon 治理列存在。幂等执行。"""
+        try:
+            alter_parts = [
+                f"ADD COLUMN IF NOT EXISTS {column} {column_type}"
+                for column, column_type in self.FORECAST_HORIZON_COLUMNS.items()
+            ]
+            ddl = f"""
+            ALTER TABLE {PITConfig.PIT_SCHEMA}.{self.table_name}
+            {', '.join(alter_parts)}
+            """
+            self.context.db_manager.execute_sync(ddl)
+        except Exception as e:
+            self.logger.warning(f"forecast horizon 列迁移失败或无需迁移: {e}")
+
+    def backfill_forecast_horizon_metadata(self) -> Dict[str, Any]:
+        """回填既有 forecast 行的 horizon 元数据。"""
+        self._ensure_table_exists()
+        self._ensure_income_forecast_horizon_columns()
+        sql = f"""
+        UPDATE {PITConfig.PIT_SCHEMA}.{self.table_name}
+        SET
+            forecast_horizon_days = (end_date - ann_date),
+            is_future_target = (end_date > ann_date),
+            forecast_horizon_bucket = CASE
+                WHEN end_date IS NULL OR ann_date IS NULL THEN 'invalid'
+                WHEN (end_date - ann_date) <= 0 THEN 'post_period'
+                WHEN (end_date - ann_date) <= {self.FORECAST_NEAR_TERM_MAX_DAYS} THEN 'near_term'
+                WHEN (end_date - ann_date) <= {self.FORECAST_MAX_HORIZON_DAYS} THEN 'long_horizon'
+                ELSE 'outlier'
+            END,
+            forecast_horizon_status = CASE
+                WHEN end_date IS NULL OR ann_date IS NULL THEN 'invalid_date'
+                WHEN (end_date - ann_date) <= 0 THEN 'post_period_disclosure'
+                WHEN (end_date - ann_date) <= {self.FORECAST_NEAR_TERM_MAX_DAYS} THEN 'near_term_forecast'
+                WHEN (end_date - ann_date) <= {self.FORECAST_MAX_HORIZON_DAYS} THEN 'long_horizon_forecast'
+                ELSE 'horizon_outlier'
+            END,
+            is_usable_forecast = CASE
+                WHEN end_date IS NULL OR ann_date IS NULL THEN FALSE
+                WHEN (end_date - ann_date) <= {self.FORECAST_MAX_HORIZON_DAYS} THEN TRUE
+                ELSE FALSE
+            END,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE data_source = 'forecast'
+        """
+        rowcount = self.context.db_manager.execute_sync(sql)
+        self.logger.info(f"forecast horizon 元数据回填完成: {rowcount} 条")
+        return {'updated_records': int(rowcount or 0)}
 
 
         # 性能优化：预编译SQL模板方法
@@ -1904,8 +2020,20 @@ class PITIncomeQuarterlyManager(PITTableManager):
         pit_cols = self._get_table_columns(PITConfig.PIT_SCHEMA, self.table_name)
         # conversion_status 为可选持久化字段：若目标表缺列则记录告警但不中断
         if 'conversion_status' in data.columns and 'conversion_status' not in pit_cols:
-            self.logger.warning("目标表缺少 conversion_status 列，转换标记将不会被持久化。建议为 pgs_factors.%s 添加该列以便追踪数据转换状态。", self.table_name)
-        extra_candidates = ['year','quarter','net_profit_mid','total_profit','n_income','conversion_status']
+            self.logger.warning("目标表缺少 conversion_status 列，转换标记将不会被持久化。建议为 %s.%s 添加该列以便追踪数据转换状态。", PITConfig.PIT_SCHEMA, self.table_name)
+        extra_candidates = [
+            'year',
+            'quarter',
+            'net_profit_mid',
+            'total_profit',
+            'n_income',
+            'forecast_horizon_days',
+            'forecast_horizon_bucket',
+            'forecast_horizon_status',
+            'is_future_target',
+            'is_usable_forecast',
+            'conversion_status',
+        ]
         extras = [c for c in extra_candidates if c in pit_cols and c in data.columns]
         all_fields = self.key_fields + self.data_fields + extras + ['data_source']
         field_list = ', '.join(all_fields)

@@ -15,6 +15,7 @@ scripts/production/
 │   └── pit/
 │       ├── pit_data_update_production.py
 │       ├── pit_balance_quarterly_manager.py
+│       ├── pit_cashflow_quarterly_manager.py
 │       ├── pit_income_quarterly_manager.py
 │       ├── pit_financial_indicators_manager.py
 │       ├── pit_industry_classification_manager.py
@@ -57,6 +58,7 @@ PIT 业务实现位于 `alphahome.pit`；本目录文件保留为兼容入口。
 ```bash
 python scripts/production/data_updaters/pit/pit_data_update_production.py --target all --mode incremental
 python scripts/production/data_updaters/pit/pit_data_update_production.py --target balance income --mode incremental
+python scripts/production/data_updaters/pit/pit_data_update_production.py --target income balance cashflow --mode incremental
 python scripts/production/data_updaters/pit/pit_data_update_production.py --target financial_indicators --mode full
 python scripts/production/data_updaters/pit/pit_data_update_production.py --target all --log-level DEBUG
 ```
@@ -65,7 +67,7 @@ python scripts/production/data_updaters/pit/pit_data_update_production.py --targ
 
 | 参数 | 说明 |
 | --- | --- |
-| `--target` | `balance`、`income`、`financial_indicators`、`industry_classification`、`all` |
+| `--target` | `income`、`balance`、`cashflow`、`financial_indicators`、`industry_classification`、`all` |
 | `--mode` | `incremental` 或 `full` |
 | `--parallel` | 允许无依赖冲突任务并行 |
 | `--workers` | 最大并发进程数 |
@@ -76,6 +78,7 @@ python scripts/production/data_updaters/pit/pit_data_update_production.py --targ
 ```bash
 python scripts/production/data_updaters/pit/pit_income_quarterly_manager.py --mode incremental --days 30
 python scripts/production/data_updaters/pit/pit_balance_quarterly_manager.py --mode incremental --days 30
+python scripts/production/data_updaters/pit/pit_cashflow_quarterly_manager.py --mode incremental --days 30
 python scripts/production/data_updaters/pit/pit_financial_indicators_manager.py --mode incremental --days 30
 python scripts/production/data_updaters/pit/pit_industry_classification_manager.py --mode incremental --months 3
 ```

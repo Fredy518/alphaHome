@@ -1,5 +1,7 @@
 -- PIT 行业分类表 DDL（标准命名，含 updated_at 默认）
-CREATE TABLE IF NOT EXISTS pgs_factors.pit_industry_classification (
+CREATE SCHEMA IF NOT EXISTS pit;
+
+CREATE TABLE IF NOT EXISTS pit.pit_industry_classification (
     ts_code VARCHAR(20) NOT NULL,
     obs_date DATE NOT NULL,
     data_source VARCHAR(20) NOT NULL,
@@ -24,8 +26,7 @@ CREATE TABLE IF NOT EXISTS pgs_factors.pit_industry_classification (
 );
 
 CREATE INDEX IF NOT EXISTS idx_pit_industry_classification_ts_obs
-ON pgs_factors.pit_industry_classification (ts_code, obs_date);
+ON pit.pit_industry_classification (ts_code, obs_date);
 
 CREATE INDEX IF NOT EXISTS idx_pit_industry_classification_quality
-ON pgs_factors.pit_industry_classification (data_quality, obs_date);
-
+ON pit.pit_industry_classification (data_quality, obs_date);

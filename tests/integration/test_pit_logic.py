@@ -8,10 +8,15 @@ import sys
 import os
 from datetime import datetime
 
+import pytest
+
+pytest.skip("obsolete PITManager integration script; kept for historical reference", allow_module_level=True)
+
 # 添加项目路径
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from research.tools.context import ResearchContext
+from alphahome.pit.base.pit_config import PITConfig
 from alphahome.pit import (
     PITBalanceQuarterlyManager,
     PITFinancialIndicatorsManager,
@@ -26,9 +31,8 @@ def main():
         with ResearchContext() as ctx:
             print("✅ 数据库连接成功")
             
-            # 清空财务指标表
-            print("\n🗑️  清空财务指标表...")
-            ctx.db_manager.execute_sync("TRUNCATE TABLE pgs_factors.pit_financial_indicators_mvp")
+            # 旧脚本曾清空废弃的 _mvp 表；当前生产 PIT 表不做破坏性清理。
+            print("\n跳过清空生产 PIT 财务指标表")
             
             # 创建PIT管理器
             manager = PITManager(ctx, batch_size=20)
@@ -64,7 +68,7 @@ def main():
                 print(f"\n🔍 验证ann_date逻辑...")
                 
                 # 检查ann_date分布
-                ann_date_stats = ctx.query_dataframe("""
+                ann_date_stats = ctx.query_dataframe(f"""
                     SELECT 
                         ann_date,
                         COUNT(*) as record_count,
@@ -72,7 +76,7 @@ def main():
                         COUNT(DISTINCT end_date) as period_count,
                         MIN(end_date) as earliest_period,
                         MAX(end_date) as latest_period
-                    FROM pgs_factors.pit_financial_indicators_mvp
+                    FROM {PITConfig.PIT_SCHEMA}.pit_financial_indicators
                     GROUP BY ann_date
                     ORDER BY ann_date DESC
                     LIMIT 10
@@ -85,9 +89,9 @@ def main():
                         print(f"      财报期范围: {row['earliest_period']} ~ {row['latest_period']}")
                 
                 # 检查是否有异常的ann_date
-                recent_ann_dates = ctx.query_dataframe("""
+                recent_ann_dates = ctx.query_dataframe(f"""
                     SELECT DISTINCT ann_date
-                    FROM pgs_factors.pit_financial_indicators_mvp
+                    FROM {PITConfig.PIT_SCHEMA}.pit_financial_indicators
                     WHERE ann_date >= '2025-01-01'
                     ORDER BY ann_date
                 """)
@@ -100,10 +104,10 @@ def main():
                     print(f"\n✅ 没有发现2025年的异常公告日期")
                 
                 # 检查24Q2财报的ann_date
-                q2_2024_data = ctx.query_dataframe("""
+                q2_2024_data = ctx.query_dataframe(f"""
                     SELECT 
                         ts_code, end_date, ann_date, data_source
-                    FROM pgs_factors.pit_financial_indicators_mvp
+                    FROM {PITConfig.PIT_SCHEMA}.pit_financial_indicators
                     WHERE end_date = '2024-06-30'
                     ORDER BY ann_date
                     LIMIT 5

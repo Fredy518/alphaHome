@@ -168,6 +168,7 @@ class PITTableManager(ABC):
             return
         self.logger.warning(f"检测到目标表不存在，准备创建：{schema}.{table}")
         try:
+            self.context.db_manager.execute_sync(f"CREATE SCHEMA IF NOT EXISTS {schema}")
             import os
             base_dir = os.path.dirname(os.path.dirname(__file__))  # scripts/production/data_updaters/pit
             ddl_path = os.path.join(base_dir, 'database', f'create_{table}_table.sql')
@@ -183,6 +184,7 @@ class PITTableManager(ABC):
                 self.logger.info(f"使用动态DDL创建表：\n{ddl}")
                 self.context.db_manager.execute_sync(ddl)
             self.logger.info(f"创建表成功：{schema}.{table}")
+            self._ensure_updated_at_triggers()
         except Exception as e:
             self.logger.error(f"创建表失败：{schema}.{table}，错误：{e}")
             raise
@@ -232,6 +234,7 @@ class PITTableManager(ABC):
         # 索引列
         date_field = 'obs_date' if table == 'pit_industry_classification' else 'ann_date'
         ddl = f"""
+        CREATE SCHEMA IF NOT EXISTS {schema};
         CREATE TABLE IF NOT EXISTS {schema}.{table} (
             {col_list},
             CONSTRAINT {table}_pk PRIMARY KEY ({pk_list})

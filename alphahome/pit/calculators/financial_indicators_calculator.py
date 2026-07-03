@@ -16,9 +16,13 @@ from functools import lru_cache
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from decimal import Decimal
 
+from alphahome.pit.base.pit_config import PITConfig
+
 
 class FinancialIndicatorsCalculator:
     """标准财务指标计算器（pit_data 版）"""
+
+    STANDARD_ACCOUNTING_SOURCES = ('report', 'express')
 
     def __init__(self, context: Any):
         self.context = context
@@ -120,10 +124,20 @@ class FinancialIndicatorsCalculator:
         self._yoy_cache.clear()
         self.logger.info("缓存已清空")
 
-    def _get_cache_key(self, as_of_date: str, stock_codes: List[str]) -> str:
+    def _normalize_target_data_sources(self, target_data_sources: Optional[List[str]] = None) -> Tuple[str, ...]:
+        """标准财务指标默认只使用正式财报和快报。"""
+        return tuple(target_data_sources or self.STANDARD_ACCOUNTING_SOURCES)
+
+    def _get_cache_key(
+        self,
+        as_of_date: str,
+        stock_codes: List[str],
+        target_data_sources: Optional[List[str]] = None,
+    ) -> str:
         """生成缓存键"""
         codes_str = ','.join(sorted(stock_codes))
-        return f"{as_of_date}:{codes_str}"
+        sources_str = ','.join(self._normalize_target_data_sources(target_data_sources))
+        return f"{as_of_date}:{sources_str}:{codes_str}"
 
     def _vectorized_calculate_growth_indicators(self, financial_data: pd.DataFrame) -> pd.DataFrame:
         """
@@ -244,7 +258,7 @@ class FinancialIndicatorsCalculator:
                            target_data_sources: Optional[List[str]] = None) -> Dict[str, Any]:
         """并行计算模式"""
         # 预加载数据到缓存
-        self._preload_data_cache(as_of_date, stock_codes)
+        self._preload_data_cache(as_of_date, stock_codes, target_data_sources)
 
         # 分批创建任务
         futures = []
@@ -276,15 +290,24 @@ class FinancialIndicatorsCalculator:
 
         return self._finalize_calculation(total_success, total_failed)
 
-    def _preload_data_cache(self, as_of_date: str, stock_codes: List[str]):
+    def _preload_data_cache(
+        self,
+        as_of_date: str,
+        stock_codes: List[str],
+        target_data_sources: Optional[List[str]] = None,
+    ):
         """预加载数据到缓存"""
         if not self.enable_cache:
             return
 
-        cache_key = self._get_cache_key(as_of_date, stock_codes[:1000])  # 只缓存前1000只股票的数据
+        cache_key = self._get_cache_key(as_of_date, stock_codes[:1000], target_data_sources)  # 只缓存前1000只股票的数据
         if cache_key not in self._data_cache:
             self.logger.info("预加载数据到缓存...")
-            self._data_cache[cache_key] = self._get_pit_data_for_calculation(as_of_date, stock_codes[:1000])
+            self._data_cache[cache_key] = self._get_pit_data_for_calculation(
+                as_of_date,
+                stock_codes[:1000],
+                target_data_sources,
+            )
             self.stats['cache_misses'] += 1
         else:
             self.stats['cache_hits'] += 1
@@ -307,12 +330,13 @@ class FinancialIndicatorsCalculator:
 
     def _calculate_batch_indicators(self, as_of_date: str, stock_codes: List[str], target_data_sources: List[str] = None) -> int:
         # 尝试从缓存获取数据
-        cache_key = self._get_cache_key(as_of_date, stock_codes)
+        target_sources = self._normalize_target_data_sources(target_data_sources)
+        cache_key = self._get_cache_key(as_of_date, stock_codes, list(target_sources))
         if self.enable_cache and cache_key in self._data_cache:
             pit_data = self._data_cache[cache_key]
             self.stats['cache_hits'] += 1
         else:
-            pit_data = self._get_pit_data_for_calculation(as_of_date, stock_codes)
+            pit_data = self._get_pit_data_for_calculation(as_of_date, stock_codes, list(target_sources))
             if self.enable_cache:
                 self._data_cache[cache_key] = pit_data
                 self.stats['cache_misses'] += 1
@@ -328,10 +352,9 @@ class FinancialIndicatorsCalculator:
         for ts_code, stock_data in pit_data.groupby('ts_code'):
             try:
                 # 筛选目标数据源
-                if target_data_sources:
-                    stock_data = stock_data[stock_data['data_source'].isin(target_data_sources)]
-                    if stock_data.empty:
-                        continue
+                stock_data = stock_data[stock_data['data_source'].isin(target_sources)]
+                if stock_data.empty:
+                    continue
 
                 # 仅计算“当日公告”的记录；同时保留完整 stock_data 作为同比/TTM上下文
                 try:
@@ -668,9 +691,9 @@ class FinancialIndicatorsCalculator:
                 if str(revenue_growth).lower() != 'nan':
                     return indicators
         try:
-            fill_query = """
+            fill_query = f"""
             SELECT data_source, end_date, ann_date, revenue_yoy_growth
-            FROM pgs_factors.pit_financial_indicators
+            FROM {PITConfig.PIT_SCHEMA}.pit_financial_indicators
             WHERE ts_code = %s AND ann_date <= %s
               AND data_source IN ('express','report')
               AND revenue_yoy_growth IS NOT NULL
@@ -824,10 +847,11 @@ class FinancialIndicatorsCalculator:
         return quality_indicators
 
     def _get_active_stocks(self) -> List[str]:
-        query = """
+        query = f"""
         SELECT DISTINCT ts_code
-        FROM pgs_factors.pit_income_quarterly
+        FROM {PITConfig.PIT_SCHEMA}.pit_income_quarterly
         WHERE end_date >= '2020-01-01'
+          AND data_source IN ('report', 'express')
         GROUP BY ts_code
         HAVING COUNT(*) >= 4
         ORDER BY ts_code
@@ -835,7 +859,12 @@ class FinancialIndicatorsCalculator:
         results = self.db_manager.fetch_sync(query)
         return [row['ts_code'] if isinstance(row, dict) else row[0] for row in results]
 
-    def _get_pit_data_for_calculation(self, as_of_date: str, stock_codes: List[str]) -> pd.DataFrame:
+    def _get_pit_data_for_calculation(
+        self,
+        as_of_date: str,
+        stock_codes: List[str],
+        target_data_sources: Optional[List[str]] = None,
+    ) -> pd.DataFrame:
         """
         获取用于财务指标计算的PIT数据 - [优化版本]
         优化策略：
@@ -844,15 +873,17 @@ class FinancialIndicatorsCalculator:
         3. 添加索引提示（如果数据库支持）
         4. 使用CTE缓存中间结果
         """
+        target_sources = self._normalize_target_data_sources(target_data_sources)
         # 统计RPT_ORIG数据数量（用于同比计算）
         try:
-            count_query = """
+            count_query = f"""
             SELECT COUNT(*) as total_rpt_orig_count
-            FROM pgs_factors.pit_income_quarterly
+            FROM {PITConfig.PIT_SCHEMA}.pit_income_quarterly
             WHERE ann_date <= %s AND end_date >= DATE(%s) - INTERVAL '2 years' AND ts_code = ANY(%s)
+              AND data_source = ANY(%s)
               AND conversion_status = 'RPT_ORIG'
             """
-            result = self.db_manager.fetch_sync(count_query, (as_of_date, as_of_date, stock_codes))
+            result = self.db_manager.fetch_sync(count_query, (as_of_date, as_of_date, stock_codes, list(target_sources)))
             rpt_orig_count = result[0]['total_rpt_orig_count'] if result else 0
             if rpt_orig_count > 0:
                 self.logger.info(f"包含 {rpt_orig_count} 条原始报告期数据（可用于同比基期计算）")
@@ -864,23 +895,30 @@ class FinancialIndicatorsCalculator:
         batch_size = min(2000, len(stock_codes))  # 减少批次大小，提高查询效率
 
         if len(stock_codes) <= batch_size:
-            return self._fetch_pit_data_batch(as_of_date, stock_codes, skip_rpt_orig_count=True)
+            return self._fetch_pit_data_batch(as_of_date, stock_codes, skip_rpt_orig_count=True, target_data_sources=list(target_sources))
 
         # 分批获取数据
         all_results = []
         for i in range(0, len(stock_codes), batch_size):
             batch_codes = stock_codes[i:i + batch_size]
-            batch_df = self._fetch_pit_data_batch(as_of_date, batch_codes, skip_rpt_orig_count=True)
+            batch_df = self._fetch_pit_data_batch(as_of_date, batch_codes, skip_rpt_orig_count=True, target_data_sources=list(target_sources))
             if not batch_df.empty:
                 all_results.append(batch_df)
 
         return pd.concat(all_results, ignore_index=True) if all_results else pd.DataFrame()
 
-    def _fetch_pit_data_batch(self, as_of_date: str, stock_codes: List[str], skip_rpt_orig_count: bool = False) -> pd.DataFrame:
+    def _fetch_pit_data_batch(
+        self,
+        as_of_date: str,
+        stock_codes: List[str],
+        skip_rpt_orig_count: bool = False,
+        target_data_sources: Optional[List[str]] = None,
+    ) -> pd.DataFrame:
         """优化的单批次数据获取"""
         # RPT_ORIG统计已在上级方法中完成，这里不再重复统计
+        target_sources = self._normalize_target_data_sources(target_data_sources)
 
-        query = """
+        query = f"""
         WITH latest_income AS (
             SELECT ts_code, end_date, ann_date, data_source,
                    revenue, n_income_attr_p, oper_cost, operate_profit,
@@ -890,8 +928,9 @@ class FinancialIndicatorsCalculator:
                        ORDER BY ann_date DESC,
                                 CASE data_source WHEN 'report' THEN 1 WHEN 'express' THEN 2 WHEN 'forecast' THEN 3 ELSE 5 END
                    ) as rn
-            FROM pgs_factors.pit_income_quarterly
+            FROM {PITConfig.PIT_SCHEMA}.pit_income_quarterly
             WHERE ann_date <= %s AND end_date >= DATE(%s) - INTERVAL '2 years' AND ts_code = ANY(%s)
+              AND data_source = ANY(%s)
         ),
         latest_balance AS (
             SELECT ts_code, end_date, ann_date, tot_assets, tot_equity,
@@ -899,7 +938,7 @@ class FinancialIndicatorsCalculator:
                        PARTITION BY ts_code, end_date
                        ORDER BY ann_date DESC
                    ) as rn
-            FROM pgs_factors.pit_balance_quarterly
+            FROM {PITConfig.PIT_SCHEMA}.pit_balance_quarterly
             WHERE ann_date <= %s AND data_source IN ('report','express') AND ts_code = ANY(%s)
         )
         SELECT i.ts_code, i.end_date, i.ann_date, i.data_source,
@@ -913,10 +952,10 @@ class FinancialIndicatorsCalculator:
         FROM (SELECT * FROM latest_income WHERE rn=1) i
         LEFT JOIN (SELECT * FROM latest_balance WHERE rn=1) b
             ON b.ts_code = i.ts_code AND b.end_date = i.end_date
-        WHERE (b.tot_assets IS NOT NULL OR i.data_source IN ('forecast','forecast_direct','forecast_calculated'))
+        WHERE b.tot_assets IS NOT NULL
         ORDER BY i.ts_code, i.end_date DESC
         """
-        params = (as_of_date, as_of_date, stock_codes, as_of_date, stock_codes)
+        params = (as_of_date, as_of_date, stock_codes, list(target_sources), as_of_date, stock_codes)
         results = self.db_manager.fetch_sync(query, params)
         return pd.DataFrame(results)
 
@@ -1060,7 +1099,7 @@ class FinancialIndicatorsCalculator:
         placeholder_list = ', '.join([f'%({field})s' for field in fields])
 
         insert_sql = f"""
-        INSERT INTO pgs_factors.pit_financial_indicators (
+        INSERT INTO {PITConfig.PIT_SCHEMA}.pit_financial_indicators (
             {field_list}
         ) VALUES (
             {placeholder_list}
@@ -1190,7 +1229,7 @@ class FinancialIndicatorsCalculator:
 
             # 3. 使用UPSERT将临时表数据合并到目标表
             upsert_sql = f"""
-            INSERT INTO pgs_factors.pit_financial_indicators (
+            INSERT INTO {PITConfig.PIT_SCHEMA}.pit_financial_indicators (
                 ts_code, end_date, ann_date, data_source,
                 gpa_ttm, roe_excl_ttm, roa_excl_ttm,
                 net_margin_ttm, operating_margin_ttm, roi_ttm,

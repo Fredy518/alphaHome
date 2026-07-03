@@ -6,7 +6,7 @@
 
 **⚠️ 重要提醒**: 本文档包含关键的数据处理逻辑，任何修改都可能影响因子计算的准确性，请谨慎操作。
 
-**当前代码入口**: PIT 生产实现位于 `scripts/production/data_updaters/pit/`，统一入口为 `pit_data_update_production.py`；Features 侧可复用的 PIT 物化视图配方位于 `alphahome/features/recipes/mv/stock/`。本文描述的是这些实现应遵守的数据口径和处理约定。
+**当前代码入口**: PIT 生产实现位于 `alphahome.pit`，统一任务注册入口为 `alphahome.pit.tasks`，兼容生产脚本位于 `scripts/production/data_updaters/pit/`；GUI 可通过 `PIT 管理` 页签运行任务、只审计和查看缺口。Features 侧可复用的 PIT 物化视图配方位于 `alphahome/features/recipes/mv/stock/`。本文描述的是这些实现应遵守的数据口径和处理约定。
 
 ---
 
@@ -43,6 +43,7 @@
 | 业绩快报 | `tushare.fina_express` | **元** | ❌ 无需转换 |
 | 业绩预告 | `tushare.fina_forecast` | **万元** | ✅ 需要 `× 10000` |
 | 资产负债表 | `tushare.fina_balancesheet` | **元** | ❌ 无需转换 |
+| 现金流量表 | `tushare.fina_cashflow` | **元** | ❌ 无需转换，当前 PIT v1 仅正式财报 `report` |
 
 ### 📝 单位转换代码示例
 
@@ -432,7 +433,7 @@ def process_forecast_data(self):
 
 #### pit_income_quarterly
 ```sql
-CREATE TABLE pgs_factors.pit_income_quarterly (
+CREATE TABLE pit.pit_income_quarterly (
     ts_code VARCHAR(10) NOT NULL,
     end_date DATE NOT NULL,
     ann_date DATE NOT NULL,
@@ -466,7 +467,7 @@ CREATE TABLE pgs_factors.pit_income_quarterly (
 
 #### pit_balance_quarterly
 ```sql
-CREATE TABLE pgs_factors.pit_balance_quarterly (
+CREATE TABLE pit.pit_balance_quarterly (
     ts_code VARCHAR(10) NOT NULL,
     end_date DATE NOT NULL,
     ann_date DATE NOT NULL,
@@ -489,7 +490,7 @@ CREATE TABLE pgs_factors.pit_balance_quarterly (
 ### 视图设计
 
 ```sql
-CREATE VIEW pgs_factors.v_pit_financial_quarterly AS 
+CREATE VIEW pit.v_pit_financial_quarterly AS
 SELECT 
     i.ts_code,
     i.end_date,
@@ -510,8 +511,8 @@ SELECT
     b.tot_liab,
     b.tot_equity
     
-FROM pgs_factors.pit_income_quarterly i
-LEFT JOIN pgs_factors.pit_balance_quarterly b 
+FROM pit.pit_income_quarterly i
+LEFT JOIN pit.pit_balance_quarterly b
     ON i.ts_code = b.ts_code 
     AND i.end_date = b.end_date 
     AND i.ann_date = b.ann_date
@@ -546,7 +547,7 @@ def calculate_smart_ttm_profit(self, ts_code: str, as_of_date: str) -> float:
                 WHEN 'forecast' THEN 3
                 ELSE 5
             END as priority
-        FROM pgs_factors.pit_income_quarterly
+        FROM pit.pit_income_quarterly
         WHERE ts_code = %s 
           AND ann_date <= %s
           AND n_income_attr_p IS NOT NULL

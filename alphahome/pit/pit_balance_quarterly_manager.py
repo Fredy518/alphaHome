@@ -167,7 +167,7 @@ class PITBalanceQuarterlyManager(PITTableManager):
             out = {
                 'updated_records': result['inserted'] + result['updated'],
                 'inserted_records': result['inserted'],
-                'updated_records': result['updated'],
+                'updated_existing_records': result['updated'],
                 'error_records': result['errors'],
                 'message': f'成功更新 {result["inserted"] + result["updated"]} 条记录'
             }
@@ -916,7 +916,7 @@ class PITBalanceQuarterlyManager(PITTableManager):
                 "WITH latest AS ("
                 "  SELECT ts_code, industry_level1 AS sw_l1, obs_date,"
                 "         ROW_NUMBER() OVER (PARTITION BY ts_code ORDER BY obs_date DESC) rn "
-                "  FROM pgs_factors.pit_industry_classification"
+                f"  FROM {PITConfig.PIT_SCHEMA}.pit_industry_classification"
                 ") SELECT ts_code FROM latest WHERE rn=1 AND sw_l1='银行'"
             )
             df = self.context.query_dataframe(q)

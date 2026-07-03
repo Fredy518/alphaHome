@@ -1,264 +1,187 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""
-PIT数据统一更新生产脚本
-统一管理所有PIT（Point-in-Time）数据更新任务
+"""Compatibility coordinator for production PIT updates."""
 
-配置说明：
-- 使用项目的统一配置文件系统 (config.json)
-- 数据库连接配置位于 config.json -> database.url
-- 无需额外的配置文件
-
-使用方法：
-python scripts/production/data_updaters/pit/pit_data_update_production.py --target all --mode incremental
-
-功能特性：
-- 统一管理多个PIT数据更新任务
-- 支持并行执行，提升更新效率
-- 智能任务调度和资源管理
-- 详细的执行日志和状态监控
-- 支持重试机制和错误恢复
-- 生产级别的可靠性保证
-- 使用项目的统一配置和数据库管理系统
-"""
+from __future__ import annotations
 
 import argparse
 import asyncio
 import logging
 import sys
-import time
-from datetime import datetime
-from typing import List, Dict, Any, Optional
-from concurrent.futures import ThreadPoolExecutor
+from typing import Any, Dict, List, Optional
 
-import pandas as pd
-
-from alphahome.common.db_manager import create_async_manager
 from alphahome.common.config_manager import get_database_url
+from alphahome.common.constants import UpdateTypes
 from alphahome.common.logging_utils import get_logger
-
-# 导入PIT管理器
-from .pit_balance_quarterly_manager import PITBalanceQuarterlyManager
-from .pit_income_quarterly_manager import PITIncomeQuarterlyManager
-from .pit_financial_indicators_manager import PITFinancialIndicatorsManager
-from .pit_industry_classification_manager import PITIndustryClassificationManager
+from alphahome.common.task_system import UnifiedTaskFactory
 
 logger = get_logger(__name__)
 
 
+TARGET_TO_TASK = {
+    "income": "pit_income_quarterly",
+    "balance": "pit_balance_quarterly",
+    "cashflow": "pit_cashflow_quarterly",
+    "financial_indicators": "pit_financial_indicators",
+    "industry_classification": "pit_industry_classification",
+}
+
+DEFAULT_TARGET_ORDER = [
+    "income",
+    "balance",
+    "cashflow",
+    "financial_indicators",
+    "industry_classification",
+]
+
+
 class PITDataUpdateCoordinator:
-    """PIT数据更新协调器"""
+    """Run registered PIT tasks through UnifiedTaskFactory."""
 
     def __init__(self, max_workers: int = 2, max_retries: int = 3, retry_delay: int = 5):
         self.max_workers = max_workers
         self.max_retries = max_retries
         self.retry_delay = retry_delay
-        self.db_manager = None
-        self.db_url = None
-
-        # 初始化各个管理器并进入上下文
-        self.managers = {}
-        self.manager_contexts = {}
-
-        manager_classes = {
-            'balance': PITBalanceQuarterlyManager,
-            'income': PITIncomeQuarterlyManager,
-            'financial_indicators': PITFinancialIndicatorsManager,
-            'industry_classification': PITIndustryClassificationManager
-        }
-
-        for name, manager_class in manager_classes.items():
-            manager = manager_class()
-            context = manager.__enter__()
-            self.managers[name] = manager
-            self.manager_contexts[name] = context
+        self.db_url: Optional[str] = None
 
     async def initialize(self):
-        """初始化数据库连接"""
-        # 使用项目的统一配置系统获取数据库连接
+        from alphahome.pit.tasks import discover_tasks
+
+        discover_tasks()
         self.db_url = get_database_url()
         if not self.db_url:
             raise ValueError("数据库连接配置未找到，请检查config.json文件")
-
-        self.db_manager = create_async_manager(self.db_url)
+        await UnifiedTaskFactory.initialize(self.db_url)
         logger.info("PIT数据更新协调器初始化完成")
 
     async def cleanup(self):
-        """清理资源"""
-        logger.info("开始清理PIT管理器资源...")
-        for name, manager in self.managers.items():
-            try:
-                manager.__exit__(None, None, None)
-                logger.info(f"成功清理 {name} 管理器")
-            except Exception as e:
-                logger.error(f"清理 {name} 管理器时出错: {e}")
-        logger.info("PIT管理器资源清理完成")
-
-    async def update_balance_data(self, mode: str = 'incremental', **kwargs):
-        """更新资产负债表数据"""
-        logger.info(f"开始更新资产负债表数据，模式: {mode}")
         try:
-            if mode == 'incremental':
-                result = await asyncio.get_event_loop().run_in_executor(
-                    None, self.managers['balance'].incremental_update
-                )
-            elif mode == 'full':
-                result = await asyncio.get_event_loop().run_in_executor(
-                    None, self.managers['balance'].full_backfill
-                )
-            logger.info(f"资产负债表数据更新完成: {result}")
-        except Exception as e:
-            logger.error(f"资产负债表数据更新失败: {e}")
-            raise
+            await UnifiedTaskFactory.shutdown()
+        except Exception as exc:
+            logger.warning("关闭PIT任务工厂连接失败: %s", exc)
 
-    async def update_income_data(self, mode: str = 'incremental', **kwargs):
-        """更新利润表数据"""
-        logger.info(f"开始更新利润表数据，模式: {mode}")
-        try:
-            if mode == 'incremental':
-                result = await asyncio.get_event_loop().run_in_executor(
-                    None, self.managers['income'].incremental_update
-                )
-            elif mode == 'full':
-                result = await asyncio.get_event_loop().run_in_executor(
-                    None, self.managers['income'].full_backfill
-                )
-            logger.info(f"利润表数据更新完成: {result}")
-        except Exception as e:
-            logger.error(f"利润表数据更新失败: {e}")
-            raise
+    async def run_updates(self, targets: List[str], mode: str = "incremental", parallel: bool = False):
+        normalized_targets = self._normalize_targets(targets)
+        update_type = self._update_type_from_mode(mode)
+        logger.info("开始执行PIT任务: targets=%s, mode=%s, parallel=%s", normalized_targets, mode, parallel)
 
-    async def update_financial_indicators(self, mode: str = 'incremental', **kwargs):
-        """更新财务指标数据"""
-        logger.info(f"开始更新财务指标数据，模式: {mode}")
-        try:
-            if mode == 'incremental':
-                result = await asyncio.get_event_loop().run_in_executor(
-                    None, self.managers['financial_indicators'].incremental_update
-                )
-            elif mode == 'full':
-                result = await asyncio.get_event_loop().run_in_executor(
-                    None, self.managers['financial_indicators'].full_backfill
-                )
-            logger.info(f"财务指标数据更新完成: {result}")
-        except Exception as e:
-            logger.error(f"财务指标数据更新失败: {e}")
-            raise
-
-    async def update_industry_classification(self, mode: str = 'incremental', **kwargs):
-        """更新行业分类数据"""
-        logger.info(f"开始更新行业分类数据，模式: {mode}")
-        try:
-            if mode == 'incremental':
-                result = await asyncio.get_event_loop().run_in_executor(
-                    None, self.managers['industry_classification'].incremental_update
-                )
-            elif mode == 'full':
-                result = await asyncio.get_event_loop().run_in_executor(
-                    None, self.managers['industry_classification'].full_backfill
-                )
-            logger.info(f"行业分类数据更新完成: {result}")
-        except Exception as e:
-            logger.error(f"行业分类数据更新失败: {e}")
-            raise
-
-    async def run_updates(self, targets: List[str], mode: str = 'incremental', parallel: bool = False):
-        """运行指定的更新任务"""
-        logger.info(f"开始执行PIT数据更新，目标: {targets}, 模式: {mode}, 并行: {parallel}")
-
-        # financial_indicators 依赖 income/balance 的最新 PIT 数据。
-        # 当同一轮任务包含依赖方和被依赖方时，不能并行，否则会读到旧数据或半更新数据。
-        dependency_targets = {'balance', 'income'}
-        if parallel and 'financial_indicators' in targets and dependency_targets.intersection(targets):
-            logger.warning(
-                "检测到 financial_indicators 与其依赖任务同批执行，已禁用并行以保证 PIT 依赖顺序"
-            )
+        if parallel and "financial_indicators" in normalized_targets and {"income", "balance"}.intersection(normalized_targets):
+            logger.warning("financial_indicators 与 income/balance 存在依赖，同批执行时禁用并行")
             parallel = False
 
-        update_tasks = []
-        for target in targets:
-            if target == 'balance':
-                update_tasks.append(('balance', self.update_balance_data(mode)))
-            elif target == 'income':
-                update_tasks.append(('income', self.update_income_data(mode)))
-            elif target == 'financial_indicators':
-                update_tasks.append(('financial_indicators', self.update_financial_indicators(mode)))
-            elif target == 'industry_classification':
-                update_tasks.append(('industry_classification', self.update_industry_classification(mode)))
-
         if parallel:
-            # 并行执行
-            task_names = [name for name, _ in update_tasks]
-            tasks = [task for _, task in update_tasks]
-            results = await asyncio.gather(*tasks, return_exceptions=True)
+            semaphore = asyncio.Semaphore(max(int(self.max_workers or 1), 1))
+
+            async def _guarded(target: str):
+                async with semaphore:
+                    return await self._run_target(target, update_type)
+
+            results = await asyncio.gather(*(_guarded(target) for target in normalized_targets), return_exceptions=True)
             failures = [
-                (task_name, result)
-                for task_name, result in zip(task_names, results)
-                if isinstance(result, Exception)
+                (target, result)
+                for target, result in zip(normalized_targets, results)
+                if isinstance(result, Exception) or (isinstance(result, dict) and result.get("status") == "error")
             ]
             if failures:
-                for task_name, error in failures:
-                    logger.error(
-                        f"并行PIT任务失败: {task_name}: {error}",
-                        exc_info=(type(error), error, error.__traceback__),
-                    )
-                failed_names = ", ".join(task_name for task_name, _ in failures)
-                raise RuntimeError(f"并行PIT更新失败: {failed_names}")
-        else:
-            # 顺序执行
-            for task_name, task in update_tasks:
-                logger.info(f"开始执行任务: {task_name}")
-                try:
-                    await task
-                    logger.info(f"任务 {task_name} 执行成功")
-                except Exception as e:
-                    logger.error(f"任务 {task_name} 执行失败: {e}")
-                    if not parallel:  # 顺序执行时遇到错误继续下一个任务
-                        continue
+                for target, result in failures:
+                    logger.error("PIT任务失败: %s: %s", target, result)
+                raise RuntimeError("PIT并行更新失败: " + ", ".join(target for target, _ in failures))
+            return results
 
-        logger.info("所有PIT数据更新任务执行完成")
+        results = []
+        for target in normalized_targets:
+            try:
+                results.append(await self._run_target(target, update_type))
+            except Exception as exc:
+                logger.error("PIT任务失败: %s: %s", target, exc, exc_info=True)
+                results.append({"target": target, "status": "error", "error": str(exc)})
+        return results
+
+    async def update_income_data(self, mode: str = "incremental", **kwargs):
+        return await self._run_target("income", self._update_type_from_mode(mode), kwargs)
+
+    async def update_balance_data(self, mode: str = "incremental", **kwargs):
+        return await self._run_target("balance", self._update_type_from_mode(mode), kwargs)
+
+    async def update_cashflow_data(self, mode: str = "incremental", **kwargs):
+        return await self._run_target("cashflow", self._update_type_from_mode(mode), kwargs)
+
+    async def update_financial_indicators(self, mode: str = "incremental", **kwargs):
+        return await self._run_target("financial_indicators", self._update_type_from_mode(mode), kwargs)
+
+    async def update_industry_classification(self, mode: str = "incremental", **kwargs):
+        return await self._run_target("industry_classification", self._update_type_from_mode(mode), kwargs)
+
+    async def _run_target(
+        self,
+        target: str,
+        update_type: str,
+        task_config: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        task_name = TARGET_TO_TASK[target]
+        task = await UnifiedTaskFactory.create_task_instance(
+            task_name,
+            update_type=update_type,
+            task_config=task_config or {},
+        )
+        result = await task.execute()
+        logger.info("PIT任务完成: target=%s, task=%s, result=%s", target, task_name, result)
+        return result
+
+    @staticmethod
+    def _normalize_targets(targets: List[str]) -> List[str]:
+        if not targets or "all" in targets:
+            return list(DEFAULT_TARGET_ORDER)
+        unknown = [target for target in targets if target not in TARGET_TO_TASK]
+        if unknown:
+            raise ValueError(f"未知PIT target: {unknown}")
+        requested = list(dict.fromkeys(targets))
+        return [target for target in DEFAULT_TARGET_ORDER if target in requested]
+
+    @staticmethod
+    def _update_type_from_mode(mode: str) -> str:
+        if mode in ("incremental", "smart", UpdateTypes.SMART):
+            return UpdateTypes.SMART
+        if mode in ("full", "full_backfill", UpdateTypes.FULL):
+            return UpdateTypes.FULL
+        if mode in ("manual", UpdateTypes.MANUAL):
+            return UpdateTypes.MANUAL
+        raise ValueError(f"未知PIT更新模式: {mode}")
 
 
 async def main():
-    parser = argparse.ArgumentParser(description='PIT数据统一更新生产脚本')
-    parser.add_argument('--target', nargs='+', choices=['balance', 'income', 'financial_indicators', 'industry_classification', 'all'],
-                       default=['all'], help='要更新的目标数据类型')
-    parser.add_argument('--mode', choices=['incremental', 'full'], default='incremental',
-                       help='更新模式：incremental(增量) 或 full(全量)')
-    parser.add_argument('--parallel', action='store_true', help='是否并行执行')
-    parser.add_argument('--workers', type=int, default=2, help='最大并发进程数')
-    parser.add_argument('--log-level', choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'], default='INFO',
-                       help='日志级别')
-
+    parser = argparse.ArgumentParser(description="PIT数据统一更新生产脚本")
+    parser.add_argument(
+        "--target",
+        nargs="+",
+        choices=list(TARGET_TO_TASK.keys()) + ["all"],
+        default=["all"],
+        help="要更新的目标数据类型",
+    )
+    parser.add_argument("--mode", choices=["incremental", "full"], default="incremental", help="更新模式")
+    parser.add_argument("--parallel", action="store_true", help="是否并行执行")
+    parser.add_argument("--workers", type=int, default=2, help="最大并发任务数")
+    parser.add_argument("--log-level", choices=["DEBUG", "INFO", "WARNING", "ERROR"], default="INFO", help="日志级别")
     args = parser.parse_args()
 
-    # 设置日志级别
     logging.getLogger().setLevel(getattr(logging, args.log_level))
-
-    # 解析目标
-    if 'all' in args.target:
-        targets = ['balance', 'income', 'financial_indicators', 'industry_classification']
-    else:
-        targets = args.target
-
-    logger.info(f"PIT数据更新启动 - 目标: {targets}, 模式: {args.mode}, 并行: {args.parallel}")
-
     coordinator = PITDataUpdateCoordinator(max_workers=args.workers)
 
     try:
         await coordinator.initialize()
-        await coordinator.run_updates(targets, args.mode, args.parallel)
+        results = await coordinator.run_updates(args.target, args.mode, args.parallel)
+        failures = [result for result in results if isinstance(result, dict) and result.get("status") == "error"]
+        if failures:
+            logger.error("PIT数据更新存在失败任务: %s", failures)
+            sys.exit(1)
         logger.info("PIT数据更新执行完成")
-    except Exception as e:
-        logger.error(f"PIT数据更新执行失败: {e}")
+    except Exception as exc:
+        logger.error("PIT数据更新执行失败: %s", exc, exc_info=True)
         sys.exit(1)
     finally:
-        # 确保清理资源
-        try:
-            await coordinator.cleanup()
-        except Exception as e:
-            logger.error(f"清理资源时出错: {e}")
+        await coordinator.cleanup()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     asyncio.run(main())
+

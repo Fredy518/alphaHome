@@ -13,6 +13,9 @@ Date: 2025-08-11
 from typing import Dict, List, Any
 from datetime import datetime, timedelta
 
+from alphahome.common.schema_names import PIT_SCHEMA as DEFAULT_PIT_SCHEMA
+from alphahome.common.schema_names import TUSHARE_SCHEMA as DEFAULT_TUSHARE_SCHEMA
+
 class PITConfig:
     """PIT数据表统一配置"""
     
@@ -32,6 +35,11 @@ class PITConfig:
                 'n_income': 'numeric(20,4)',
                 'total_profit': 'numeric(20,4)',
                 'net_profit_mid': 'numeric(20,4)',
+                'forecast_horizon_days': 'integer',
+                'forecast_horizon_bucket': 'varchar(32)',
+                'forecast_horizon_status': 'varchar(32)',
+                'is_future_target': 'boolean',
+                'is_usable_forecast': 'boolean',
                 'conversion_status': 'varchar(20)',
                 'year': 'integer',
                 'quarter': 'integer'
@@ -62,6 +70,30 @@ class PITConfig:
                 'total_cur_liab': 'numeric(20,4)',
                 'inventories': 'numeric(20,4)'
             }
+        },
+        'pit_cashflow_quarterly': {
+            'description': 'PIT现金流量表数据',
+            'tushare_table': 'fina_cashflow',
+            'key_fields': ['ts_code', 'end_date', 'ann_date'],
+            'data_fields': [
+                'net_profit',
+                'c_fr_sale_sg',
+                'n_cashflow_act',
+                'c_pay_acq_const_fiolta',
+                'c_paid_invest',
+                'n_cashflow_inv_act',
+                'c_recp_borrow',
+                'n_cash_flows_fnc_act',
+                'n_incr_cash_cash_equ',
+                'free_cashflow',
+                'im_net_cashflow_oper_act',
+            ],
+            'extended_fields': {
+                'year': 'integer',
+                'quarter': 'integer',
+            },
+            'has_historical_data': True,
+            'supports_incremental': True,
         },
         'pit_industry_classification': {
             'description': 'PIT行业分类数据',
@@ -98,6 +130,7 @@ class PITConfig:
     DEFAULT_BATCH_SIZES = {
         'pit_income_quarterly': 1000,
         'pit_balance_quarterly': 1000,
+        'pit_cashflow_quarterly': 1000,
         'pit_industry_classification': 1000,
         'pit_financial_indicators': 500
     }
@@ -147,8 +180,8 @@ class PITConfig:
     # ===========================================
     
     # 数据库schema
-    PIT_SCHEMA = 'pgs_factors'
-    TUSHARE_SCHEMA = 'tushare'
+    PIT_SCHEMA = DEFAULT_PIT_SCHEMA
+    TUSHARE_SCHEMA = DEFAULT_TUSHARE_SCHEMA
     
     # 连接池配置
     DB_POOL_CONFIG = {

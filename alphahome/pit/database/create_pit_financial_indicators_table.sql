@@ -1,7 +1,9 @@
 -- 财务指标表（标准命名）
 -- 从 create_mvp_financial_indicators_table.sql 重命名来的等价DDL
 
-CREATE TABLE IF NOT EXISTS pgs_factors.pit_financial_indicators (
+CREATE SCHEMA IF NOT EXISTS pit;
+
+CREATE TABLE IF NOT EXISTS pit.pit_financial_indicators (
     ts_code VARCHAR(20) NOT NULL,
     end_date DATE NOT NULL,
     ann_date DATE NOT NULL,
@@ -49,56 +51,58 @@ BEGIN
       JOIN pg_namespace n ON n.oid = t.relnamespace
       JOIN UNNEST(c.conkey) WITH ORDINALITY AS u(attnum, ord) ON TRUE
       JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = u.attnum
-     WHERE n.nspname = 'pgs_factors'
+     WHERE n.nspname = 'pit'
        AND t.relname = 'pit_financial_indicators'
        AND c.contype = 'p'
      GROUP BY c.conname;
 
     IF pk_name IS NULL THEN
-        ALTER TABLE pgs_factors.pit_financial_indicators
+        ALTER TABLE pit.pit_financial_indicators
         ADD CONSTRAINT pit_financial_indicators_pkey
         PRIMARY KEY (ts_code, ann_date, end_date, data_source);
     ELSIF NOT (pk_cols @> ARRAY['ts_code','ann_date','end_date','data_source']
                AND ARRAY['ts_code','ann_date','end_date','data_source'] @> pk_cols) THEN
         EXECUTE FORMAT(
-            'ALTER TABLE pgs_factors.pit_financial_indicators DROP CONSTRAINT %I',
+            'ALTER TABLE pit.pit_financial_indicators DROP CONSTRAINT %I',
             pk_name
         );
-        ALTER TABLE pgs_factors.pit_financial_indicators
+        ALTER TABLE pit.pit_financial_indicators
         ADD CONSTRAINT pit_financial_indicators_pkey
         PRIMARY KEY (ts_code, ann_date, end_date, data_source);
     END IF;
 END $$;
 
 CREATE INDEX IF NOT EXISTS idx_pit_financial_indicators_ts_ann
-ON pgs_factors.pit_financial_indicators (ts_code, ann_date);
+ON pit.pit_financial_indicators (ts_code, ann_date);
 
 CREATE INDEX IF NOT EXISTS idx_pit_financial_indicators_ann_date
-ON pgs_factors.pit_financial_indicators (ann_date);
+ON pit.pit_financial_indicators (ann_date);
 
 CREATE INDEX IF NOT EXISTS idx_pit_financial_indicators_quality
-ON pgs_factors.pit_financial_indicators (data_quality, ann_date);
+ON pit.pit_financial_indicators (data_quality, ann_date);
 
 CREATE INDEX IF NOT EXISTS idx_pit_financial_indicators_composite
-ON pgs_factors.pit_financial_indicators (ts_code, ann_date, data_quality);
+ON pit.pit_financial_indicators (ts_code, ann_date, data_quality);
 
 DO $$
 BEGIN
     IF NOT EXISTS (
         SELECT 1 FROM information_schema.table_constraints
-        WHERE table_name = 'pit_financial_indicators'
+        WHERE table_schema = 'pit'
+        AND table_name = 'pit_financial_indicators'
         AND constraint_name = 'chk_data_quality'
     ) THEN
-        ALTER TABLE pgs_factors.pit_financial_indicators
+        ALTER TABLE pit.pit_financial_indicators
         ADD CONSTRAINT chk_data_quality CHECK (data_quality IN ('high', 'normal', 'low', 'outlier_high', 'outlier_low', 'invalid'));
     END IF;
 
     IF NOT EXISTS (
         SELECT 1 FROM information_schema.table_constraints
-        WHERE table_name = 'pit_financial_indicators'
+        WHERE table_schema = 'pit'
+        AND table_name = 'pit_financial_indicators'
         AND constraint_name = 'chk_calc_status'
     ) THEN
-        ALTER TABLE pgs_factors.pit_financial_indicators
+        ALTER TABLE pit.pit_financial_indicators
         ADD CONSTRAINT chk_calc_status CHECK (calculation_status IN ('success', 'failed', 'partial'));
     END IF;
 END $$;

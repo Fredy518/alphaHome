@@ -193,9 +193,9 @@ class PITIndustryClassificationManager(PITTableManager):
         end_dt = datetime.strptime(end_date, '%Y-%m-%d').date().replace(day=1)
         
         # 获取现有的月份
-        existing_months_query = """
+        existing_months_query = f"""
         SELECT DISTINCT DATE_TRUNC('month', obs_date)::date as month_date
-        FROM pgs_factors.pit_industry_classification
+        FROM {PITConfig.PIT_SCHEMA}.pit_industry_classification
         WHERE obs_date >= %s AND obs_date <= %s
         ORDER BY month_date
         """
@@ -359,8 +359,8 @@ class PITIndustryClassificationManager(PITTableManager):
             return
 
         # 构建UPSERT SQL
-        insert_sql = """
-        INSERT INTO pgs_factors.pit_industry_classification (
+        insert_sql = f"""
+        INSERT INTO {PITConfig.PIT_SCHEMA}.pit_industry_classification (
             ts_code, obs_date, data_source,
             industry_level1, industry_level2, industry_level3,
             industry_code1, industry_code2, industry_code3,
@@ -430,10 +430,16 @@ class PITIndustryClassificationManager(PITTableManager):
         since_dt = datetime.strptime(since_date, '%Y-%m-%d').date()
         current_date = datetime.now().date()
 
-        # 从变更开始日期到当前日期的所有月份
+        # 从变更开始日期到最近一个已完成月末的所有月份。
+        # 月度快照以月末 obs_date 表示，不能在月中提前生成未来月末快照。
         affected_months = []
         current_month = since_dt.replace(day=1)
-        end_month = current_date.replace(day=1)
+        current_month_start = current_date.replace(day=1)
+        current_month_end = self._get_month_end_date(current_month_start)
+        if current_month_end <= current_date:
+            end_month = current_month_start
+        else:
+            end_month = current_month_start - relativedelta(months=1)
 
         while current_month <= end_month:
             affected_months.append(current_month)
@@ -446,8 +452,8 @@ class PITIndustryClassificationManager(PITTableManager):
 
         month_end = self._get_month_end_date(month_date)
 
-        delete_sql = """
-        DELETE FROM pgs_factors.pit_industry_classification
+        delete_sql = f"""
+        DELETE FROM {PITConfig.PIT_SCHEMA}.pit_industry_classification
         WHERE obs_date = %s
         """
 

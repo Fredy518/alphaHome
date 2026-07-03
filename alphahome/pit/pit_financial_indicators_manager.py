@@ -31,6 +31,9 @@ from .calculators.financial_indicators_calculator import FinancialIndicatorsCalc
 class PITFinancialIndicatorsManager(PITTableManager):
     """财务指标 Manager：负责建表、依赖校验与调度计算"""
 
+    STANDARD_ACCOUNTING_SOURCES = ('report', 'express')
+    FORECAST_INDICATOR_SOURCES = ('forecast', 'forecast_direct', 'forecast_calculated')
+
     def __init__(self):
         super().__init__('pit_financial_indicators')
         self.source_tables = self.table_config['source_tables']
@@ -66,6 +69,23 @@ class PITFinancialIndicatorsManager(PITTableManager):
         if self.calculator is None:
             self.calculator = FinancialIndicatorsCalculator(self.context)
 
+    def _remove_forecast_indicator_rows(self) -> int:
+        """标准财务指标表不承载 forecast，清理历史遗留行。"""
+        source_list = "', '".join(self.FORECAST_INDICATOR_SOURCES)
+        sql = f"""
+        DELETE FROM {PITConfig.PIT_SCHEMA}.{self.table_name}
+        WHERE data_source IN ('{source_list}')
+        """
+        try:
+            removed = self.context.db_manager.execute_sync(sql)
+            removed_count = int(removed or 0)
+            if removed_count:
+                self.logger.info(f"已清理标准财务指标中的 forecast 遗留记录: {removed_count} 条")
+            return removed_count
+        except Exception as e:
+            self.logger.warning(f"清理 forecast 财务指标遗留记录失败: {e}")
+            return 0
+
     def incremental_update(self, days: int = 7, batch_size: int | None = None) -> Dict[str, Any]:
         """
         增量更新财务指标 - 正确处理每个公告日期
@@ -95,20 +115,22 @@ class PITFinancialIndicatorsManager(PITTableManager):
         start_date = (date.today() - timedelta(days=days)).isoformat()
         self.ensure_table_exists()  # 再次确认表存在
         self._initialize_calculator()
+        removed_forecast_records = self._remove_forecast_indicator_rows()
 
         try:
             # 1. 获取最近days天内所有利润表记录，按公告日期分组
-            q = """
+            q = f"""
             SELECT DISTINCT ts_code, end_date, ann_date, data_source
-            FROM pgs_factors.pit_income_quarterly
+            FROM {PITConfig.PIT_SCHEMA}.pit_income_quarterly
             WHERE ann_date BETWEEN %s AND %s
+              AND data_source IN ('report', 'express')
             ORDER BY ann_date ASC, ts_code, end_date ASC, data_source
             """
             df = self.context.query_dataframe(q, (start_date, end_date))
 
             if df is None or df.empty:
                 self.logger.info("近期无新披露的利润表数据")
-                return {'updated_records': 0, 'calculated_dates': 0, 'processed_stocks': 0, 'message': '无需要更新的数据'}
+                return {'updated_records': 0, 'removed_forecast_records': removed_forecast_records, 'calculated_dates': 0, 'processed_stocks': 0, 'message': '无需要更新的数据'}
 
             # 获取基本统计信息
             unique_stocks = df['ts_code'].nunique()
@@ -152,7 +174,7 @@ class PITFinancialIndicatorsManager(PITTableManager):
                                 as_of_date=as_of,
                                 stock_codes=period_stocks,
                                 batch_size=batch_size,
-                                target_data_sources=None  # 让计算器内部处理数据源优先级
+                                target_data_sources=list(self.STANDARD_ACCOUNTING_SOURCES)
                             )
 
                             success_count = int(res.get('success_count', 0))
@@ -180,6 +202,7 @@ class PITFinancialIndicatorsManager(PITTableManager):
 
             return {
                 'updated_records': total_processed,
+                'removed_forecast_records': removed_forecast_records,
                 'processed_stocks': len(processed_stocks),
                 'total_stocks': unique_stocks,
                 'message': f'成功增量更新 {total_processed} 条财务指标记录，共处理 {len(processed_stocks)} 只股票'
@@ -189,6 +212,7 @@ class PITFinancialIndicatorsManager(PITTableManager):
             self.logger.error(f"增量更新失败: {e}")
         return {
                 'updated_records': 0,
+                'removed_forecast_records': removed_forecast_records if 'removed_forecast_records' in locals() else 0,
                 'calculated_dates': 0,
                 'processed_stocks': 0,
                 'error': str(e),
@@ -224,19 +248,21 @@ class PITFinancialIndicatorsManager(PITTableManager):
             # 0. 确保目标表存在
             self._ensure_table_exists()
             self._initialize_calculator()
+            removed_forecast_records = self._remove_forecast_indicator_rows()
 
             # 1. 获取所有股票的所有历史利润表记录
-            q = """
+            q = f"""
             SELECT ts_code, end_date, ann_date, data_source
-            FROM pgs_factors.pit_income_quarterly
+            FROM {PITConfig.PIT_SCHEMA}.pit_income_quarterly
             WHERE ann_date BETWEEN %s AND %s
+              AND data_source IN ('report', 'express')
             ORDER BY ann_date ASC, ts_code, end_date ASC, data_source
             """
             df = self.context.query_dataframe(q, (start_date, end_date))
 
             if df is None or df.empty:
                 self.logger.warning("未找到需要回填的历史利润表数据")
-                return {'backfilled_records': 0, 'message': '无回填数据'}
+                return {'backfilled_records': 0, 'removed_forecast_records': removed_forecast_records, 'message': '无回填数据'}
 
             # 获取基本统计信息
             unique_stocks = df['ts_code'].nunique()
@@ -283,7 +309,7 @@ class PITFinancialIndicatorsManager(PITTableManager):
                                 as_of_date=as_of,
                                 stock_codes=period_stocks,
                                 batch_size=batch_size,
-                                target_data_sources=None  # 让计算器内部处理数据源优先级
+                                target_data_sources=list(self.STANDARD_ACCOUNTING_SOURCES)
                             )
 
                             success_count = int(res.get('success_count', 0))
@@ -318,6 +344,7 @@ class PITFinancialIndicatorsManager(PITTableManager):
 
             return {
                 'backfilled_records': total_processed,
+                'removed_forecast_records': removed_forecast_records,
                 'processed_stocks': len(processed_stocks),
                 'total_stocks': unique_stocks,
                 'message': f'成功全量回填 {total_processed} 条财务指标记录，共处理 {len(processed_stocks)} 只股票'
@@ -327,6 +354,7 @@ class PITFinancialIndicatorsManager(PITTableManager):
             self.logger.error(f"历史全量回填失败: {e}")
             return {
                 'backfilled_records': 0,
+                'removed_forecast_records': removed_forecast_records if 'removed_forecast_records' in locals() else 0,
                 'error': str(e),
                 'message': '历史全量回填失败'
             }
@@ -368,19 +396,21 @@ class PITFinancialIndicatorsManager(PITTableManager):
             # 0. 确保目标表存在
             self._ensure_table_exists()
             self._initialize_calculator()
+            removed_forecast_records = self._remove_forecast_indicator_rows()
 
             # 1. 获取该股票的所有历史利润表记录
-            q = """
+            q = f"""
             SELECT DISTINCT ts_code, end_date, ann_date, data_source
-            FROM pgs_factors.pit_income_quarterly
+            FROM {PITConfig.PIT_SCHEMA}.pit_income_quarterly
             WHERE ts_code = %s AND ann_date BETWEEN %s AND %s
+              AND data_source IN ('report', 'express')
             ORDER BY ann_date ASC, end_date ASC, data_source
             """
             df = self.context.query_dataframe(q, (ts_code, start_date, end_date))
 
             if df is None or df.empty:
                 self.logger.warning("该股票在指定日期范围内无利润表数据")
-                return {'backfilled_records': 0, 'message': '无利润表数据可供计算', 'ts_code': ts_code}
+                return {'backfilled_records': 0, 'removed_forecast_records': removed_forecast_records, 'message': '无利润表数据可供计算', 'ts_code': ts_code}
 
             self.logger.info(f"该股票在指定日期范围内有 {len(df)} 个唯一的(end_date, ann_date)组合")
 
@@ -423,7 +453,7 @@ class PITFinancialIndicatorsManager(PITTableManager):
                                 as_of_date=as_of,
                                 stock_codes=[ts_code],
                                 batch_size=batch_size,
-                                target_data_sources=None  # 让计算器内部处理数据源优先级
+                                target_data_sources=list(self.STANDARD_ACCOUNTING_SOURCES)
                             )
 
                             success_count = int(res.get('success_count', 0))
@@ -446,6 +476,7 @@ class PITFinancialIndicatorsManager(PITTableManager):
             out = {
                 'ts_code': ts_code,
                 'backfilled_records': total_processed,
+                'removed_forecast_records': removed_forecast_records,
                 'processed_dates': len(processed_dates),
                 'message': f"单股财务指标历史回填完成，共处理 {len(processed_dates)} 个公告日期，生成 {total_processed} 条记录"
             }
@@ -463,6 +494,7 @@ class PITFinancialIndicatorsManager(PITTableManager):
             return {
                 'ts_code': ts_code,
                 'backfilled_records': 0,
+                'removed_forecast_records': removed_forecast_records if 'removed_forecast_records' in locals() else 0,
                 'error': str(e),
                 'message': '个股财务指标历史回填失败'
             }
