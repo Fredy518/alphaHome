@@ -14,7 +14,7 @@ AlphaHome 的 `macro` 域抓取任务继承 `TushareTask`，通过统一的批�
 
 # 分析 (由 RESEARCH 模式填充)
 `sf_month` 接口返回字段 `month`, `inc_month`, `inc_cumval`, `stk_endval`，可按 `m`, `start_m`, `end_m` 过滤，但 API 总体数据量仅数百条，远低于 2000 条限额，因此完全可以在每次任务执行时传空参数一次性抓取全量数据。[tushare.pro/document/2?doc_id=310](https://tushare.pro/document/2?doc_id=310)  
-现有宏观任务如 `tushare_macro_cpi.py`、`tushare_macro_yieldcurve.py` 均继承 `TushareTask` 并定义 `api_name/fields/schema/validations`。月度任务通常会生成 `month_end_date` 便于日期索引。`TushareTask` 基类支持 `single_batch=True` 与 `update_type="full"`，可用于全量模式。为减少资源占用，可设定 `default_concurrent_limit=1`、`default_page_size=2000`。
+现有宏观任务如 `tushare_macro_cpi.py`、`tushare_macro_shibor.py` 均继承 `TushareTask` 并定义 `api_name/fields/schema/validations`。月度任务通常会生成 `month_end_date` 便于日期索引。`TushareTask` 基类支持 `single_batch=True` 与 `update_type="full"`，可用于全量模式。为减少资源占用，可设定 `default_concurrent_limit=1`、`default_page_size=2000`。
 
 # 提议的解决方案 (由 INNOVATE 模式填充)
 实现 `TushareMacroSFTTask`（或命名 `TushareMacroSFTTask`）：  

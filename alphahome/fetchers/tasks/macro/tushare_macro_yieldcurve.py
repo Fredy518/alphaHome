@@ -2,10 +2,13 @@
 # -*- coding: utf-8 -*-
 
 """
-中债收益率曲线 (yc_cb) 更新任务
+中债收益率曲线 (yc_cb) 归档任务
 获取中债收益率曲线，目前可获取中债国债收益率曲线即期和到期收益率曲线数据。
 继承自 TushareTask。
 全部使用交易日分批策略。
+
+该 Tushare 接口在当前账号无访问权限，任务保留为历史实现参考，但不再注册到
+统一任务列表，避免 GUI 展示或调度执行。
 """
 
 from datetime import datetime
@@ -15,17 +18,22 @@ import pandas as pd
 
 # 确认导入路径正确 (相对于当前文件)
 from ...sources.tushare.tushare_task import TushareTask
-from ....common.task_system.task_decorator import task_register
 
 # 导入批次生成工具函数
 from ...sources.tushare.batch_utils import generate_trade_day_batches
 
 
-@task_register()
 class TushareMacroYieldCurveTask(TushareTask):
-    """获取中债收益率曲线数据"""
+    """Archived Tushare yield curve implementation for historical reference.
+
+    This task is intentionally not registered because the yc_cb endpoint needs
+    additional Tushare permission that is not available in the current account.
+    """
 
     # 1. 核心属性
+    archived = True
+    archived_reason = "Tushare yc_cb requires additional permission; do not show or schedule."
+    hide_from_gui = True
     domain = "macro"  # 业务域标识
     name = "tushare_macro_yieldcurve"
     description = "获取中债收益率曲线，包括即期和到期收益率曲线数据"
