@@ -53,6 +53,11 @@ class TinySoftStockFinaPitExtTask(TinySoftTask):
     default_symbol_source_tables = ["tushare.stock_basic", "rawdata.stock_basic"]
     default_include_empty_metrics = False
 
+    # 表42：股票.主要财务指标（少数关键指标，含预定义 field_id）
+    # 表44：股票.合并资产负债表（完整报表，按中文列名匹配，field_id=None）
+    # 表48：股票.合并现金流量表（完整报表，按中文列名匹配，field_id=None）
+    #   - 表44/48 的 metric_name 与 PIT pit_balance/pit_cashflow 字段名对齐，
+    #     便于多源补缺脚本（scripts/analysis/pit_*_tinysoft_fill.py）直接复用。
     default_metric_profiles: List[Dict[str, Any]] = [
         {
             "finance_source": "report_42_main",
@@ -63,7 +68,35 @@ class TinySoftStockFinaPitExtTask(TinySoftTask):
                 {"metric_name": "roe_diluted", "field_id": 42012, "field_name": "净资产收益率(摊薄)(%)"},
                 {"metric_name": "netprofit_excl_nr", "field_id": 42017, "field_name": "扣除非经常性损益后的净利润"},
             ],
-        }
+        },
+        {
+            "finance_source": "report_44_balancesheet",
+            "table_id": 44,
+            "metric_defs": [
+                {"metric_name": "tot_assets", "field_id": None, "field_name": "资产总计"},
+                {"metric_name": "tot_liab", "field_id": None, "field_name": "负债合计"},
+                {"metric_name": "tot_equity", "field_id": None, "field_name": "股东权益合计"},
+                {"metric_name": "total_cur_assets", "field_id": None, "field_name": "流动资产合计"},
+                {"metric_name": "total_cur_liab", "field_id": None, "field_name": "流动负债合计"},
+                {"metric_name": "inventories", "field_id": None, "field_name": "存货"},
+            ],
+        },
+        {
+            "finance_source": "report_48_cashflow",
+            "table_id": 48,
+            "metric_defs": [
+                {"metric_name": "net_profit", "field_id": None, "field_name": "净利润"},
+                {"metric_name": "c_fr_sale_sg", "field_id": None, "field_name": "销售商品、提供劳务收到的现金"},
+                {"metric_name": "n_cashflow_act", "field_id": None, "field_name": "经营活动产生的现金流量净额"},
+                {"metric_name": "c_pay_acq_const_fiolta", "field_id": None, "field_name": "购建固定资产、无形资产和其他长期资产所支付的现金"},
+                {"metric_name": "c_paid_invest", "field_id": None, "field_name": "投资所支付的现金"},
+                {"metric_name": "n_cashflow_inv_act", "field_id": None, "field_name": "投资活动产生的现金流量净额"},
+                {"metric_name": "c_recp_borrow", "field_id": None, "field_name": "借款所收到的现金"},
+                {"metric_name": "n_cash_flows_fnc_act", "field_id": None, "field_name": "筹资活动产生的现金流量净额"},
+                {"metric_name": "n_incr_cash_cash_equ", "field_id": None, "field_name": "现金及现金等价物净增加额"},
+                {"metric_name": "im_net_cashflow_oper_act", "field_id": None, "field_name": "经营活动产生的现金流量净额2"},
+            ],
+        },
     ]
 
     schema_def = {
