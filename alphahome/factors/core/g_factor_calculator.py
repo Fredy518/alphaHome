@@ -43,6 +43,7 @@ from datetime import datetime, timedelta
 from typing import List, Optional, Dict, Any
 import time
 
+from alphahome.common.schema_names import FACTOR_SCHEMA
 from alphahome.factors.core.context import ensure_factor_context
 
 
@@ -184,7 +185,7 @@ class GFactorCalculator:
             
             # 查询P因子历史数据 (PIT原则: calc_date <= as_of_date)
             # 重要：包含营收和利润增长字段用于G因子计算
-            query = """
+            query = f"""
             SELECT
                 ts_code,
                 calc_date,
@@ -196,7 +197,7 @@ class GFactorCalculator:
                 roa_excl,
                 revenue_yoy_growth,
                 n_income_yoy_growth
-            FROM pgs_factors.p_factor
+            FROM {FACTOR_SCHEMA}.p_factor
             WHERE ts_code = ANY(%s)
               AND calc_date BETWEEN %s AND %s  -- 已包含上界as_of_date
               AND p_score IS NOT NULL
@@ -650,8 +651,8 @@ class GFactorCalculator:
             self.logger.info(f"开始保存G因子结果: {len(g_factor_results)} 条记录")
 
             # 删除该计算日期的旧数据
-            delete_query = """
-            DELETE FROM pgs_factors.g_factor
+            delete_query = f"""
+            DELETE FROM {FACTOR_SCHEMA}.g_factor
             WHERE calc_date = %s
             """
 
@@ -676,8 +677,8 @@ class GFactorCalculator:
                     row['ann_date']
                 ))
 
-            insert_query = """
-            INSERT INTO pgs_factors.g_factor (
+            insert_query = f"""
+            INSERT INTO {FACTOR_SCHEMA}.g_factor (
                 ts_code, calc_date, ann_date, data_source,
                 g_efficiency_surprise, g_efficiency_momentum, g_revenue_momentum, g_profit_momentum,
                 rank_es, rank_em, rank_rm, rank_pm,
@@ -876,9 +877,9 @@ class GFactorCalculator:
         """
         try:
             # 检查是否有现有的G因子数据
-            query = """
+            query = f"""
             SELECT COUNT(*) as count
-            FROM pgs_factors.g_factor
+            FROM {FACTOR_SCHEMA}.g_factor
             WHERE calc_date BETWEEN %s AND %s
             """
 
@@ -964,9 +965,9 @@ class GFactorCalculator:
 
         try:
             # 查询已有数据的日期
-            query = """
+            query = f"""
             SELECT DISTINCT calc_date
-            FROM pgs_factors.g_factor
+            FROM {FACTOR_SCHEMA}.g_factor
             WHERE calc_date = ANY(%s::date[])
             """
 
@@ -1000,9 +1001,9 @@ class GFactorCalculator:
             # G 因子直接依赖同日 P 因子；同日 P 因子集合是最终股票池。
             # 不能用优化函数的活跃股票集合做并集，否则会把当日没有 P 因子的
             # 股票用历史 P 记录算出过期 as-of 的 G 因子。
-            query_p_factor = """
+            query_p_factor = f"""
             SELECT DISTINCT ts_code
-            FROM pgs_factors.p_factor
+            FROM {FACTOR_SCHEMA}.p_factor
             WHERE calc_date = %s
             ORDER BY ts_code
             """
@@ -1038,7 +1039,7 @@ class GFactorCalculator:
         for calc_date in calc_dates:
             try:
                 # 查询该日期的G因子数据
-                query = """
+                query = f"""
                 SELECT
                     COUNT(*) as total_count,
                     COUNT(CASE WHEN g_score IS NOT NULL THEN 1 END) as valid_score_count,
@@ -1048,7 +1049,7 @@ class GFactorCalculator:
                     AVG(data_timeliness_weight) as avg_timeliness_weight,
                     COUNT(CASE WHEN data_source = 'express' THEN 1 END) as express_count,
                     COUNT(CASE WHEN data_source = 'forecast' THEN 1 END) as forecast_count
-                FROM pgs_factors.g_factor
+                FROM {FACTOR_SCHEMA}.g_factor
                 WHERE calc_date = %s
                 """
 

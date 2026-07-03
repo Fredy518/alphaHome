@@ -106,7 +106,7 @@ python scripts/production/data_updaters/pit/pit_data_update_production.py --targ
 
 ### 为什么 G 因子没有结果？
 
-G 因子脚本会先查询同日期 `pgs_factors.p_factor` 中已有 P 因子的股票。如果该日期没有 P 因子，G 因子会跳过。
+G 因子脚本会先查询同日期 `factors.p_factor` 中已有 P 因子的股票。如果该日期没有 P 因子，G 因子会跳过。
 
 ### 单日补 P/G 因子怎么做？
 

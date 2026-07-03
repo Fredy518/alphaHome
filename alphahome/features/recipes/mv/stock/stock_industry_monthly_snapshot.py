@@ -5,7 +5,7 @@
 用纯 SQL 展开为“月度月末快照”，输出到 features.mv_stock_industry_monthly_snapshot。
 
 功能对标：
-    完全对标 pgs_factors.pit_industry_classification 逻辑
+    完全对标 pit.pit_industry_classification 逻辑
     - 月度快照格式（每月月末每只股票每个数据源一条记录）
     - 双数据源：sw（申万）+ ci（中信）
     - 唯一键：(ts_code, obs_date, data_source)

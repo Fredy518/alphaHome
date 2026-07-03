@@ -722,7 +722,7 @@ approval:
   - 输出必须可作为下游 join key（至少包含 `ts_code` + PIT 窗口字段），并通过唯一性/空值率/窗口一致性校验。
 
 - **D-2：与既有 PIT 产出对比（可量化）**
-  - 对 `income/balance`：抽样对比 `pgs_factors.pit_income_quarterly` / `pgs_factors.pit_balance_quarterly` 在最近 N 年的数据覆盖与关键字段一致性。
+  - 对 `income/balance`：抽样对比 `pit.pit_income_quarterly` / `pit.pit_balance_quarterly` 在最近 N 年的数据覆盖与关键字段一致性。
   - 对 `industry/fina_indicator`：抽样对比现有下游消费查询的结果（行数、分布、关键字段），明确可接受差异阈值并固化成脚本。
 
 - **D-3：可运维性与幂等性**

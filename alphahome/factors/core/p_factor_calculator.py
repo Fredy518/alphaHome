@@ -52,6 +52,7 @@ from datetime import datetime
 from typing import List, Optional, Dict, Any
 import time
 
+from alphahome.common.schema_names import FACTOR_SCHEMA, PIT_SCHEMA
 from alphahome.factors.core.context import ensure_factor_context
 
 
@@ -319,9 +320,9 @@ class PFactorCalculator:
         """
         try:
             # 检查是否有现有的P因子数据
-            query = """
+            query = f"""
             SELECT COUNT(*) as count
-            FROM pgs_factors.p_factor
+            FROM {FACTOR_SCHEMA}.p_factor
             WHERE calc_date BETWEEN %s AND %s
             """
 
@@ -407,9 +408,9 @@ class PFactorCalculator:
 
         try:
             # 查询已有数据的日期
-            query = """
+            query = f"""
             SELECT DISTINCT calc_date
-            FROM pgs_factors.p_factor
+            FROM {FACTOR_SCHEMA}.p_factor
             WHERE calc_date = ANY(%s::date[])
             """
 
@@ -495,14 +496,14 @@ class PFactorCalculator:
         for calc_date in calc_dates:
             try:
                 # 查询该日期的P因子数据
-                query = """
+                query = f"""
                 SELECT
                     COUNT(*) as total_count,
                     COUNT(CASE WHEN p_score IS NOT NULL THEN 1 END) as valid_score_count,
                     AVG(p_score) as avg_score,
                     MIN(p_score) as min_score,
                     MAX(p_score) as max_score
-                FROM pgs_factors.p_factor
+                FROM {FACTOR_SCHEMA}.p_factor
                 WHERE calc_date = %s
                 """
 
@@ -538,7 +539,7 @@ class PFactorCalculator:
             # 1. 使用 ann_date <= as_of_date 确保只看到已公告的数据 (PIT原则)
             # 2. 添加 end_date 时效性筛选，排除距离calc_date超过10个月的数据
             # 3. 添加退市股票筛选，确保只包含在计算时点仍在交易的股票
-            query = """
+            query = f"""
             WITH latest_indicators AS (
                 SELECT
                     pit.ts_code,
@@ -571,7 +572,7 @@ class PFactorCalculator:
                                      ELSE 9
                                  END
                     ) as rn
-                FROM pgs_factors.pit_financial_indicators pit
+                FROM {PIT_SCHEMA}.pit_financial_indicators pit
                 INNER JOIN tushare.stock_basic sb ON pit.ts_code = sb.ts_code
                 WHERE pit.ann_date <= %s  -- PIT原则: 只看已公告的数据
                 AND pit.ts_code = ANY(%s)
@@ -1034,13 +1035,13 @@ class PFactorCalculator:
         calc_date = p_factors['calc_date'].iloc[0]
 
         # 先删除该计算日期的所有旧数据（确保排除的股票被完全移除）
-        delete_sql = """
-        DELETE FROM pgs_factors.p_factor
+        delete_sql = f"""
+        DELETE FROM {FACTOR_SCHEMA}.p_factor
         WHERE calc_date = %s
         """
 
-        insert_query = """
-        INSERT INTO pgs_factors.p_factor (
+        insert_query = f"""
+        INSERT INTO {FACTOR_SCHEMA}.p_factor (
             ts_code, calc_date, ann_date, end_date, data_source,
             p_score, p_rank,
             gpa, roe_excl, roa_excl,
@@ -1119,14 +1120,14 @@ class PFactorCalculator:
         Returns:
             数据可用性统计
         """
-        query = """
+        query = f"""
         SELECT 
             COUNT(*) as total_count,
             COUNT(CASE WHEN data_quality = 'high' THEN 1 END) as high_quality_count,
             COUNT(CASE WHEN data_quality = 'normal' THEN 1 END) as normal_quality_count,
             COUNT(CASE WHEN data_quality = 'low' THEN 1 END) as low_quality_count,
             COUNT(CASE WHEN calculation_status = 'success' THEN 1 END) as success_count
-        FROM pgs_factors.pit_financial_indicators
+        FROM {PIT_SCHEMA}.pit_financial_indicators
         WHERE ann_date <= %s  -- 修正为PIT原则
         AND ts_code = ANY(%s)
         """
@@ -1168,7 +1169,7 @@ class PFactorCalculator:
         Returns:
             数据可用性统计
         """
-        query = """
+        query = f"""
         SELECT
             COUNT(*) as total_count,
             COUNT(CASE WHEN data_quality = 'high' THEN 1 END) as high_quality_count,
@@ -1177,7 +1178,7 @@ class PFactorCalculator:
             COUNT(CASE WHEN data_quality = 'outlier_low' THEN 1 END) as outlier_low_count,
             COUNT(CASE WHEN calculation_status = 'success' THEN 1 END) as success_count,
             COUNT(DISTINCT ts_code) as unique_stocks
-        FROM pgs_factors.pit_financial_indicators
+        FROM {PIT_SCHEMA}.pit_financial_indicators
         WHERE ann_date <= %s  -- PIT原则: 只看已公告的数据
         AND ts_code = ANY(%s)
         AND calculation_status = 'success'

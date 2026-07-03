@@ -9,7 +9,7 @@
 说明：
 - PIT 是时间语义/安全原则，应贯穿所有特征；这里的"PIT 展开"是实现细节。
 - 该特征归类到 stock 域，提供可 PIT 消费的利润表季度快照。
-- 完全对标 pgs_factors.pit_income_quarterly 的数据逻辑。
+- 完全对标 pit.pit_income_quarterly 的数据逻辑。
 
 数据流:
     rawdata.fina_income + fina_express + fina_forecast → features.mv_stock_income_quarterly
@@ -22,7 +22,7 @@
 
 验收标准（见 D-1/D-2/D-3）：
 - D-1: query_start_date=ann_date, query_end_date由LEAD推导, report_period=end_date
-- D-2: 可与 pgs_factors.pit_income_quarterly 做抽样对比（行数覆盖率 80%-120%）
+- D-2: 可与 pit.pit_income_quarterly 做抽样对比（行数覆盖率 80%-120%）
 - D-3: 幂等刷新, 血缘字段完备
 """
 

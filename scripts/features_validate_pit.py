@@ -11,7 +11,7 @@ D-1: PIT 窗口正确性 + 数据契约
     - 同一 ts_code 下 PIT 窗口不允许"未来信息泄漏"
 
 D-2: 与既有 PIT 产出对比（可量化）
-    - 抽样对比 pgs_factors.pit_income_quarterly / pit_balance_quarterly
+    - 抽样对比 pit.pit_income_quarterly / pit_balance_quarterly
     - 关键字段一致性检查
 
 D-3: 可运维性与幂等性
@@ -39,6 +39,7 @@ sys.path.insert(0, str(project_root))
 
 from alphahome.common.db_manager import DBManager
 from alphahome.common.config_manager import get_database_url
+from alphahome.common.schema_names import PIT_SCHEMA
 
 # 配置日志
 logging.basicConfig(
@@ -56,7 +57,7 @@ PIT_MVS = [
     {
         "name": "mv_stock_income_quarterly",
         "schema": "features",
-        "pit_comparison_table": "pgs_factors.pit_income_quarterly",
+        "pit_comparison_table": f"{PIT_SCHEMA}.pit_income_quarterly",
         "key_fields": ["ts_code", "end_date", "ann_date", "data_source"],
         "compare_fields": ["n_income", "revenue", "total_profit"],
         "coverage_range": (0.8, 1.2),  # 对标后应接近 100%
@@ -64,7 +65,7 @@ PIT_MVS = [
     {
         "name": "mv_stock_balance_quarterly",
         "schema": "features",
-        "pit_comparison_table": "pgs_factors.pit_balance_quarterly",
+        "pit_comparison_table": f"{PIT_SCHEMA}.pit_balance_quarterly",
         "key_fields": ["ts_code", "end_date", "ann_date", "data_source"],
         "compare_fields": ["tot_assets", "tot_liab"],
         "coverage_range": (0.8, 1.2),  # 对标后应接近 100%
@@ -79,7 +80,7 @@ PIT_MVS = [
     {
         "name": "mv_stock_industry_monthly_snapshot",
         "schema": "features",
-        "pit_comparison_table": "pgs_factors.pit_industry_classification",
+        "pit_comparison_table": f"{PIT_SCHEMA}.pit_industry_classification",
         "key_fields": ["ts_code", "obs_date", "data_source"],
         "compare_fields": ["industry_level1", "industry_level2"],
         "coverage_range": (0.95, 1.25),  # MV 可能因更新数据而略多
@@ -276,7 +277,7 @@ async def check_d2(db_manager: DBManager, sample_limit: int = 1000) -> Dict[str,
     """
     D-2 验证：与既有 PIT 产出对比
 
-    对 income/balance 抽样对比 pgs_factors.pit_* 表
+    对 income/balance 抽样对比 pit.pit_* 表
     """
     results = {"passed": [], "failed": [], "skipped": []}
 

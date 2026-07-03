@@ -2,6 +2,7 @@ from datetime import date
 
 import pandas as pd
 
+from alphahome.common.schema_names import FACTOR_SCHEMA
 from alphahome.factors.core.g_factor_calculator import GFactorCalculator
 from alphahome.factors.core.p_factor_calculator import PFactorCalculator
 
@@ -41,7 +42,7 @@ def test_g_factor_stock_universe_includes_same_day_p_factor_codes():
     context = FakeFactorContext(
         [
             ("get_trading_stocks_optimized", pd.DataFrame({"ts_code": ["000001.SZ", "600000.SH", "688347.SH"]})),
-            ("pgs_factors.p_factor", pd.DataFrame({"ts_code": ["000001.SZ", "600000.SH", "920000.BJ"]})),
+            (f"{FACTOR_SCHEMA}.p_factor", pd.DataFrame({"ts_code": ["000001.SZ", "600000.SH", "920000.BJ"]})),
         ]
     )
     calculator = GFactorCalculator(context=context)
@@ -56,7 +57,7 @@ def test_g_factor_stock_universe_includes_same_day_p_factor_codes():
 def test_p_factor_filter_missing_dates_accepts_python_date_values(caplog):
     context = FakeFactorContext(
         [
-            ("pgs_factors.p_factor", pd.DataFrame({"calc_date": [date(2026, 6, 5)]})),
+            (f"{FACTOR_SCHEMA}.p_factor", pd.DataFrame({"calc_date": [date(2026, 6, 5)]})),
         ]
     )
     calculator = PFactorCalculator(context=context)
@@ -70,7 +71,7 @@ def test_p_factor_filter_missing_dates_accepts_python_date_values(caplog):
 def test_g_factor_filter_missing_dates_accepts_python_date_values(caplog):
     context = FakeFactorContext(
         [
-            ("pgs_factors.g_factor", pd.DataFrame({"calc_date": [date(2026, 6, 5)]})),
+            (f"{FACTOR_SCHEMA}.g_factor", pd.DataFrame({"calc_date": [date(2026, 6, 5)]})),
         ]
     )
     calculator = GFactorCalculator(context=context)

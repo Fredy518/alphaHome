@@ -11,6 +11,7 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tupl
 
 import pandas as pd
 
+from alphahome.common.schema_names import FACTOR_SCHEMA
 from alphahome.factors.core import GFactorCalculator, PFactorCalculator
 
 
@@ -452,15 +453,15 @@ class FactorEngine:
         if self.context is None:
             raise ValueError("context is required for missing date detection")
 
-        query = """
+        query = f"""
         WITH date_range AS (
             SELECT generate_series(%s::date, %s::date, interval '1 day')::date AS calc_date
         ),
         p_factor_dates AS (
-            SELECT DISTINCT calc_date FROM pgs_factors.p_factor
+            SELECT DISTINCT calc_date FROM {FACTOR_SCHEMA}.p_factor
         ),
         g_factor_dates AS (
-            SELECT DISTINCT calc_date FROM pgs_factors.g_factor
+            SELECT DISTINCT calc_date FROM {FACTOR_SCHEMA}.g_factor
         )
         SELECT dr.calc_date
         FROM date_range dr
