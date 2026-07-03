@@ -478,6 +478,24 @@ class DatabaseOperationsMixin:
         
         return date_columns, timestamp_columns
 
+    def _get_bulk_copy_setting(self, key: str, default: int) -> int:
+        """读取批量写入设置，优先使用实例属性，其次使用配置文件。"""
+        raw_value = getattr(self, key, None)
+        if raw_value is None:
+            try:
+                from ..config_manager import load_config
+
+                config = load_config() or {}
+                raw_value = config.get("database", {}).get(key, default)
+            except Exception:
+                raw_value = default
+
+        try:
+            value = int(raw_value)
+        except (TypeError, ValueError):
+            return default
+        return value if value > 0 else default
+
     async def copy_from_dataframe(
         self,
         df: pd.DataFrame,
@@ -550,6 +568,13 @@ class DatabaseOperationsMixin:
         # 从解析后的名称中获取不带schema的表名用于临时表
         simple_table_name = table_name.strip('"')
         temp_table = f"temp_{simple_table_name}_{timestamp_ms}_{id(df)}"
+        copy_chunk_size = self._get_bulk_copy_setting("copy_records_chunk_size", 200000)
+        copy_timeout_seconds = self._get_bulk_copy_setting("copy_records_timeout_seconds", 600)
+        bulk_execute_default_timeout = 3600 if batch_size > copy_chunk_size else 600
+        bulk_execute_timeout_seconds = self._get_bulk_copy_setting(
+            "bulk_execute_timeout_seconds",
+            bulk_execute_default_timeout,
+        )
 
         create_temp_table_sql = f'''
         CREATE TEMPORARY TABLE "{temp_table}" (LIKE {resolved_table_name} INCLUDING DEFAULTS) ON COMMIT DROP;
@@ -595,7 +620,10 @@ class DatabaseOperationsMixin:
                 record = tuple(processed_values)
                 yield record
 
-        records_iterable = _df_to_records_generator(df)
+        def _parse_copy_count(copy_result: Any, fallback_count: int) -> int:
+            if isinstance(copy_result, str) and copy_result.startswith('COPY '):
+                return int(copy_result.split()[1])
+            return copy_result if isinstance(copy_result, int) else fallback_count
 
         async with self.pool.acquire() as conn: # type: ignore
             async with conn.transaction():
@@ -605,17 +633,38 @@ class DatabaseOperationsMixin:
                     self.logger.debug(f"已创建临时表 {temp_table}") # type: ignore
 
                     # 2. 使用 COPY 高效加载数据到临时表
-                    copy_result = await conn.copy_records_to_table(
-                        temp_table,
-                        records=records_iterable,
-                        columns=df_columns,
-                        timeout=600, # 将超时时间增加到 600 秒 (10 分钟)
-                    )
-                    # 解析 COPY 命令的返回值 (格式: "COPY 123")
-                    if isinstance(copy_result, str) and copy_result.startswith('COPY '):
-                        copy_count = int(copy_result.split()[1])
-                    else:
-                        copy_count = copy_result if isinstance(copy_result, int) else len(df)
+                    copy_count = 0
+                    total_chunks = (batch_size + copy_chunk_size - 1) // copy_chunk_size
+                    if total_chunks > 1:
+                        self.logger.info(  # type: ignore
+                            f"COPY_FROM_DATAFRAME (表: {resolved_table_name}): "
+                            f"总行数 {batch_size}，将分 {total_chunks} 个COPY块写入临时表，"
+                            f"每块最多 {copy_chunk_size} 行。"
+                        )
+
+                    for chunk_index, start_idx in enumerate(
+                        range(0, batch_size, copy_chunk_size),
+                        start=1,
+                    ):
+                        end_idx = min(start_idx + copy_chunk_size, batch_size)
+                        chunk_df = df.iloc[start_idx:end_idx]
+                        records_iterable = _df_to_records_generator(chunk_df)
+                        copy_result = await conn.copy_records_to_table(
+                            temp_table,
+                            records=records_iterable,
+                            columns=df_columns,
+                            timeout=copy_timeout_seconds,
+                        )
+                        chunk_count = _parse_copy_count(copy_result, len(chunk_df))
+                        copy_count += chunk_count
+                        if total_chunks > 1:
+                            self.logger.debug(  # type: ignore
+                                f"COPY_FROM_DATAFRAME (表: {resolved_table_name}): "
+                                f"已复制块 {chunk_index}/{total_chunks}，"
+                                f"行范围 {start_idx}-{end_idx - 1}，"
+                                f"本块 {chunk_count} 行。"
+                            )
+
                     self.logger.debug(f"已复制 {copy_count} 条记录到 {temp_table}") # type: ignore
 
                     # 3. 从临时表插入/更新到目标表
@@ -671,7 +720,7 @@ class DatabaseOperationsMixin:
                             '''
 
                         self.logger.debug(f"执行UPSERT: {upsert_sql[:200]}...") # type: ignore
-                        await conn.execute(upsert_sql)
+                        await conn.execute(upsert_sql, timeout=bulk_execute_timeout_seconds)
                     else:
                         # --- 简单插入 ---
                         insert_sql = f'''
@@ -679,7 +728,7 @@ class DatabaseOperationsMixin:
                         SELECT {target_col_str} FROM "{temp_table}";
                         '''
                         self.logger.debug(f"执行INSERT: {insert_sql[:200]}...") # type: ignore
-                        await conn.execute(insert_sql)
+                        await conn.execute(insert_sql, timeout=bulk_execute_timeout_seconds)
 
                     # 性能监控：记录成功操作的性能数据
                     processing_time = time.time() - start_time
@@ -822,4 +871,4 @@ class DatabaseOperationsMixin:
             return [record['tablename'] for record in records] if records else []
         except Exception as e:
             self.logger.error(f"获取 schema '{schema_name}' 的所有表时出错: {e}", exc_info=True)
-            return [] 
+            return []
