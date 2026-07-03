@@ -49,6 +49,23 @@ from .feature_update_handler import (
     handle_select_all_features,
     update_feature_list_ui,
 )
+from .pit_management_handler import (
+    handle_audit_selected_pit,
+    handle_deselect_all_pit,
+    handle_full_backfill_selected_pit,
+    handle_incremental_selected_pit,
+    handle_pit_audit_complete,
+    handle_pit_refresh_complete,
+    handle_pit_task_tree_click,
+    handle_pit_tree_select,
+    handle_refresh_pit_tasks,
+    handle_select_all_pit,
+    handle_stock_diagnosis,
+    handle_view_pit_gaps,
+    update_pit_coverage_matrix_ui,
+    update_pit_stock_diagnosis_ui,
+    update_pit_task_list_ui,
+)
 
 __all__ = [
     # data_collection_handler
@@ -83,4 +100,20 @@ __all__ = [
     "handle_refresh_selected_features",
     "handle_create_missing_features",
     "handle_feature_operation_complete",
+    # pit_management_handler
+    "update_pit_task_list_ui",
+    "handle_refresh_pit_tasks",
+    "handle_select_all_pit",
+    "handle_deselect_all_pit",
+    "handle_pit_task_tree_click",
+    "handle_pit_tree_select",
+    "handle_incremental_selected_pit",
+    "handle_full_backfill_selected_pit",
+    "handle_audit_selected_pit",
+    "handle_view_pit_gaps",
+    "handle_stock_diagnosis",
+    "handle_pit_refresh_complete",
+    "handle_pit_audit_complete",
+    "update_pit_coverage_matrix_ui",
+    "update_pit_stock_diagnosis_ui",
 ]

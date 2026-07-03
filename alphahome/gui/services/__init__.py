@@ -8,6 +8,7 @@ GUI服务模块
 - task_registry_service: 任务注册、发现、元数据管理
 - task_execution_service: 任务执行引擎、流程控制、状态跟踪
 - configuration_service: 配置管理、数据库连接测试
+- pit_service: PIT任务、审计、覆盖率和单股诊断
 """
 
 # 导入重组后的服务模块
@@ -15,10 +16,12 @@ from . import task_registry_service
 from . import task_execution_service
 from . import configuration_service
 from . import feature_service
+from . import pit_service
 
 __all__ = [
     "task_registry_service",
     "task_execution_service", 
     "configuration_service",
     "feature_service",
+    "pit_service",
 ] 

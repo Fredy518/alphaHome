@@ -160,7 +160,8 @@ def handle_insert_mode_change(widgets: Dict[str, tk.Widget]):
     Args:
         widgets (Dict[str, tk.Widget]): UI组件字典
     """
-    use_insert_mode = widgets.get("use_insert_mode", tk.BooleanVar()).get()
+    use_insert_var = widgets.get("use_insert_mode")
+    use_insert_mode = use_insert_var.get() if use_insert_var is not None else False
     warning_label = widgets.get("warning_label")
 
     if warning_label:
@@ -258,10 +259,10 @@ def get_execution_params(widgets: Dict[str, tk.Widget]) -> Optional[Dict[str, An
             - exec_mode: 执行模式
         如果参数验证失败返回None
     """
-    # 1. 收集选中的数据采集任务
+    # 1. 收集选中的数据采集任务。PIT 页有独立运行入口，避免跨页选择状态静默混入。
     selected_collection_tasks = data_collection.get_selected_collection_tasks()
     
-    # 2. 合并所有选中的任务
+    # 2. 当前任务运行页只执行数据采集页选择的任务
     all_selected_tasks = selected_collection_tasks
     
     # 获取执行模式和参数
@@ -283,7 +284,8 @@ def get_execution_params(widgets: Dict[str, tk.Widget]) -> Optional[Dict[str, An
         add_log_entry(widgets, "未选择任何任务，请先选择要执行的任务", "warning")
     
     # 获取数据保存策略选项
-    use_insert_mode = widgets.get("use_insert_mode", tk.BooleanVar()).get()
+    use_insert_var = widgets.get("use_insert_mode")
+    use_insert_mode = use_insert_var.get() if use_insert_var is not None else False
 
     return {
         "tasks_to_run": all_selected_tasks,

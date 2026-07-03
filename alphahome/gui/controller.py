@@ -68,6 +68,7 @@ from .services import (
     configuration_service,
     task_execution_service,
     feature_service,
+    pit_service,
 )
 
 logger = get_logger(__name__)
@@ -95,6 +96,10 @@ async def initialize_controller(response_callback):
     from alphahome.fetchers import tasks as fetcher_tasks
 
     fetcher_tasks.discover_tasks()
+    logger.info("正在导入PIT任务模块...")
+    from alphahome.pit import tasks as pit_tasks
+
+    pit_tasks.discover_tasks()
 
     logger.info("正在初始化所有后端控制器逻辑模块...")
     
@@ -103,6 +108,7 @@ async def initialize_controller(response_callback):
     configuration_service.initialize_storage_settings(response_callback)
     task_execution_service.set_response_callback(response_callback)
     feature_service.initialize_feature_service(response_callback)
+    pit_service.initialize_pit_service(response_callback)
     
     # 初始化任务执行会话
     task_execution_service.initialize_session()
@@ -203,6 +209,26 @@ async def handle_get_features():
     await feature_service.handle_get_features()
 
 
+async def handle_get_pit_tasks():
+    """处理获取PIT任务列表的请求。"""
+    await pit_service.handle_get_pit_tasks()
+
+
+async def handle_audit_pit_tasks(task_names: Optional[List[str]] = None):
+    """处理PIT审计请求。"""
+    await pit_service.handle_audit_pit_tasks(task_names)
+
+
+async def handle_get_pit_coverage_matrix():
+    """处理PIT覆盖率矩阵请求。"""
+    await pit_service.handle_get_coverage_matrix()
+
+
+async def handle_diagnose_pit_stock(ts_code: str):
+    """处理PIT单股诊断请求。"""
+    await pit_service.handle_diagnose_stock(ts_code)
+
+
 async def handle_refresh_features(feature_names: List[str], strategy: str = "default"):
     """
     处理刷新指定特征视图的请求
@@ -268,6 +294,18 @@ async def handle_request(command: str, data: Optional[Dict[str, Any]] = None):
 
         elif command == "GET_COLLECTION_TASKS":
             await handle_get_collection_tasks()
+
+        elif command == "GET_PIT_TASKS":
+            await handle_get_pit_tasks()
+
+        elif command == "AUDIT_PIT_TASKS":
+            await handle_audit_pit_tasks(data.get("task_names"))
+
+        elif command == "GET_PIT_COVERAGE_MATRIX":
+            await handle_get_pit_coverage_matrix()
+
+        elif command == "DIAGNOSE_PIT_STOCK":
+            await handle_diagnose_pit_stock(data.get("ts_code", ""))
 
         elif command == "TOGGLE_COLLECTION_SELECT":
             row_index = data.get("row_index", -1)
@@ -344,6 +382,26 @@ def request_feature_list():
     创建异步任务来获取特征配方列表，避免阻塞当前线程。
     """
     asyncio.create_task(handle_request("GET_FEATURES"))
+
+
+def request_pit_tasks():
+    """请求获取PIT任务列表。"""
+    asyncio.create_task(handle_request("GET_PIT_TASKS"))
+
+
+def request_audit_pit_tasks(task_names: Optional[List[str]] = None):
+    """请求审计PIT任务。"""
+    asyncio.create_task(handle_request("AUDIT_PIT_TASKS", {"task_names": task_names or []}))
+
+
+def request_pit_coverage_matrix():
+    """请求PIT覆盖率矩阵。"""
+    asyncio.create_task(handle_request("GET_PIT_COVERAGE_MATRIX"))
+
+
+def request_pit_stock_diagnosis(ts_code: str):
+    """请求PIT单股诊断。"""
+    asyncio.create_task(handle_request("DIAGNOSE_PIT_STOCK", {"ts_code": ts_code}))
 
 
 def request_refresh_features(feature_names: List[str], strategy: str = "default"):

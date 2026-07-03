@@ -320,7 +320,10 @@ async def run_tasks(
                         if result_status == "skipped":
                             result_details = result.get("message", "已跳过")
 
-                    log_msg = f"任务 {task_name} 执行完成，状态: {result_status}"
+                    if result_details:
+                        log_msg = f"任务 {task_name} 执行完成，状态: {result_status}，{result_details}"
+                    else:
+                        log_msg = f"任务 {task_name} 执行完成，状态: {result_status}"
                     logger.info(log_msg)
                     if _send_response_callback:
                         _send_response_callback("LOG", {"level": "info", "message": log_msg})

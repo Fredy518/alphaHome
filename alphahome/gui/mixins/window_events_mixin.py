@@ -14,6 +14,7 @@ from .. import controller
 from ..handlers import (
     data_collection_handler,
     feature_update_handler,
+    pit_management_handler,
     storage_settings_handler,
     task_execution_handler,
 )
@@ -88,6 +89,60 @@ class WindowEventsMixin:
                     self.ui_elements, c
                 ),
             )
+
+        # PIT Management Binds
+        self.ui_elements["pit_refresh_button"].config(
+            command=lambda: pit_management_handler.handle_refresh_pit_tasks(
+                self.ui_elements
+            )
+        )
+        self.ui_elements["pit_select_all_button"].config(
+            command=lambda: pit_management_handler.handle_select_all_pit(
+                self.ui_elements
+            )
+        )
+        self.ui_elements["pit_deselect_all_button"].config(
+            command=lambda: pit_management_handler.handle_deselect_all_pit(
+                self.ui_elements
+            )
+        )
+        self.ui_elements["pit_incremental_button"].config(
+            command=lambda: pit_management_handler.handle_incremental_selected_pit(
+                self.ui_elements
+            )
+        )
+        self.ui_elements["pit_full_backfill_button"].config(
+            command=lambda: pit_management_handler.handle_full_backfill_selected_pit(
+                self.ui_elements
+            )
+        )
+        self.ui_elements["pit_audit_button"].config(
+            command=lambda: pit_management_handler.handle_audit_selected_pit(
+                self.ui_elements
+            )
+        )
+        self.ui_elements["pit_view_gaps_button"].config(
+            command=lambda: pit_management_handler.handle_view_pit_gaps(
+                self.ui_elements
+            )
+        )
+        self.ui_elements["pit_stock_diagnosis_button"].config(
+            command=lambda: pit_management_handler.handle_stock_diagnosis(
+                self.ui_elements
+            )
+        )
+        self.ui_elements["pit_task_tree"].bind(
+            "<ButtonRelease-1>",
+            lambda event: pit_management_handler.handle_pit_task_tree_click(
+                event, self.ui_elements
+            ),
+        )
+        self.ui_elements["pit_task_tree"].bind(
+            "<<TreeviewSelect>>",
+            lambda event: pit_management_handler.handle_pit_tree_select(
+                event, self.ui_elements
+            ),
+        )
 
         # Feature Update Binds
         self.ui_elements["feature_refresh_button"].config(

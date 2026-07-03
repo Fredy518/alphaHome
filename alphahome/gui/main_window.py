@@ -64,6 +64,7 @@ from . import controller
 from .handlers import (
     data_collection_handler,
     feature_update_handler,
+    pit_management_handler,
     storage_settings_handler,
     task_execution_handler,
     task_log_handler,
@@ -71,6 +72,7 @@ from .handlers import (
 from .ui import (
     data_collection_tab,
     feature_update_tab,
+    pit_management_tab,
     storage_settings_tab,
     task_execution_tab,
     task_log_tab,
@@ -215,6 +217,7 @@ class MainWindow(WindowEventsMixin, WindowDpiMixin, WindowLayoutMixin, tk.Tk):
         
         # 然后加载初始数据
         await controller.handle_request("GET_COLLECTION_TASKS")
+        await controller.handle_request("GET_PIT_TASKS")
         await controller.handle_request("GET_FEATURES")
         await controller.handle_request("GET_STORAGE_SETTINGS")
 
@@ -255,6 +258,26 @@ class MainWindow(WindowEventsMixin, WindowDpiMixin, WindowLayoutMixin, tk.Tk):
             "COLLECTION_REFRESH_COMPLETE": (
                 self._handle_collection_refresh_complete,
                 [self.ui_elements],
+            ),
+            "PIT_TASK_LIST_UPDATE": (
+                pit_management_handler.update_pit_task_list_ui,
+                [self.ui_elements, data],
+            ),
+            "PIT_REFRESH_COMPLETE": (
+                pit_management_handler.handle_pit_refresh_complete,
+                [self.ui_elements, data],
+            ),
+            "PIT_AUDIT_COMPLETE": (
+                pit_management_handler.handle_pit_audit_complete,
+                [self.ui_elements, data],
+            ),
+            "PIT_COVERAGE_MATRIX_UPDATE": (
+                pit_management_handler.update_pit_coverage_matrix_ui,
+                [self.ui_elements, data],
+            ),
+            "PIT_STOCK_DIAGNOSIS_UPDATE": (
+                pit_management_handler.update_pit_stock_diagnosis_ui,
+                [self.ui_elements, data],
             ),
             # Feature Update Responses
             "FEATURE_LIST_UPDATE": (
