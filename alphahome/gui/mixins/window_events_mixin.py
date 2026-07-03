@@ -22,7 +22,7 @@ from ..handlers import (
 
 class WindowEventsMixin:
     """窗口事件绑定Mixin类"""
-    
+
     def bind_events(self):
         """绑定所有UI组件的事件处理器"""
         # Storage Settings
@@ -193,7 +193,7 @@ class WindowEventsMixin:
                 event, self.ui_elements
             ),
         )
-        
+
         # 绑定特征表格列头排序
         feature_tree = self.ui_elements["feature_tree"]
         for col in ("name", "description", "category", "storage_type", "status", "row_count", "last_refresh"):
@@ -254,16 +254,16 @@ class WindowEventsMixin:
 
         # Window close
         self.protocol("WM_DELETE_WINDOW", self.on_closing)
-        
+
         # 绑定窗口大小变化事件，支持表格列宽动态调整
         self.bind('<Configure>', self._on_window_configure)
-        
+
         # 绑定显示设置按钮
         self.ui_elements["apply_display_button"].config(
             command=self.apply_display_settings
         )
-        
+
         # 绑定重启应用按钮
         self.ui_elements["restart_app_button"].config(
             command=self.restart_application
-        ) 
+        )

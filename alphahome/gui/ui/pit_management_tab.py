@@ -135,4 +135,3 @@ def create_pit_management_tab(parent: ttk.Frame) -> Dict[str, tk.Widget]:
     widgets["pit_status_label"] = status_label
 
     return widgets
-

@@ -1,7 +1,7 @@
 # AlphaDB 宏观数据字典
-文件名：macro_data_dictionary.md  
-创建于：2026-06-21  
-创建者：ZCode  
+文件名：macro_data_dictionary.md
+创建于：2026-06-21
+创建者：ZCode
 用途：供 CrossLens SPEC-015 及下游消费方参考的宏观数据表字段、口径、代理标注、新鲜度与推荐用法说明
 
 ## 概述

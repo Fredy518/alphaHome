@@ -26,4 +26,3 @@ class PITIndustryClassificationTask(PITTask):
 
 
 __all__ = ["PITIndustryClassificationTask"]
-

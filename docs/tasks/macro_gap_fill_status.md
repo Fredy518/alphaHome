@@ -1,7 +1,7 @@
 # AlphaDB 宏观数据补齐状态汇总
-文件名：macro_gap_fill_status.md  
-创建于：2026-06-21  
-创建者：ZCode  
+文件名：macro_gap_fill_status.md
+创建于：2026-06-21
+创建者：ZCode
 关联：CrossLens SPEC-015（Macro/Meso 域实现规格）
 
 ## 概述

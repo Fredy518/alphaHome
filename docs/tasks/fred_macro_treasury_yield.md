@@ -1,7 +1,7 @@
 # 上下文
-文件名：fred_macro_treasury_yield.md  
-创建于：2026-06-21  
-创建者：ZCode  
+文件名：fred_macro_treasury_yield.md
+创建于：2026-06-21
+创建者：ZCode
 关联协议：RIPER-5 + Multidimensional + Agent Protocol
 
 # 任务描述
@@ -25,13 +25,13 @@ AlphaDB 现有 `macro_bond_rate` 含中美国债 2y/5y/10y/30y，但无 1M/3M �
 - `schema_def`：`date DATE NOT NULL`, `yield_1m/yield_3m NUMERIC(10,4)`，`yield_3m` 注释标注"算 SOFR-国债利差替代 TED"。
 
 # 实施计划 (由 PLAN 模式生成)
-1. 新增 `alphahome/fetchers/tasks/macro/fred_macro_treasury_yield.py`。  
-2. 在 `tests/unit/test_fred_macro_tasks.py` 增加属性与 fetch_batch 测试。  
+1. 新增 `alphahome/fetchers/tasks/macro/fred_macro_treasury_yield.py`。
+2. 在 `tests/unit/test_fred_macro_tasks.py` 增加属性与 fetch_batch 测试。
 3. 创建 `docs/tasks/fred_macro_treasury_yield.md`。
 
 实施检查清单：
-1. 任务代码实现并注册成功。  
-2. 单元测试通过。  
+1. 任务代码实现并注册成功。
+2. 单元测试通过。
 3. 文档创建，注明 SOFR-国债利差替代 TED 用途。
 
 # 当前执行步骤 (由 EXECUTE 模式维护)

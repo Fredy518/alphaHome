@@ -1,7 +1,7 @@
 # 上下文
-文件名：akshare_macro_usa_unemployment.md  
-创建于：2026-06-21  
-创建者：ZCode  
+文件名：akshare_macro_usa_unemployment.md
+创建于：2026-06-21
+创建者：ZCode
 关联协议：RIPER-5 + Multidimensional + Agent Protocol
 
 # 任务描述

@@ -1,7 +1,7 @@
 # 上下文
-文件名：fred_macro_ted.md  
-创建于：2026-06-21  
-创建者：ZCode  
+文件名：fred_macro_ted.md
+创建于：2026-06-21
+创建者：ZCode
 关联协议：RIPER-5 + Multidimensional + Agent Protocol
 
 # 任务描述
@@ -22,13 +22,13 @@ FRED `fredgraph.csv?id=TEDRATE` 端点实测 keyless 可用（HTTP 200），日�
 - `schema_def`：`date DATE NOT NULL`, `ted_spread NUMERIC(10,4)`（注释标注序列已于 2022-01-21 停用）。
 
 # 实施计划 (由 PLAN 模式生成)
-1. 新增 `alphahome/fetchers/tasks/macro/fred_macro_ted.py`。  
-2. 在 `tests/unit/test_fred_macro_tasks.py` 增加属性测试（含 discontinued 标注断言）。  
+1. 新增 `alphahome/fetchers/tasks/macro/fred_macro_ted.py`。
+2. 在 `tests/unit/test_fred_macro_tasks.py` 增加属性测试（含 discontinued 标注断言）。
 3. 创建 `docs/tasks/fred_macro_ted.md`。
 
 实施检查清单：
-1. 任务代码实现并注册成功。  
-2. 单元测试通过。  
+1. 任务代码实现并注册成功。
+2. 单元测试通过。
 3. 文档创建，注明序列已停用。
 
 # 当前执行步骤 (由 EXECUTE 模式维护)

@@ -1,7 +1,7 @@
 # 上下文
-文件名：fred_macro_us_short_rate.md  
-创建于：2026-06-21  
-创建者：ZCode  
+文件名：fred_macro_us_short_rate.md
+创建于：2026-06-21
+创建者：ZCode
 关联协议：RIPER-5 + Multidimensional + Agent Protocol
 
 # 任务描述
@@ -26,13 +26,13 @@
 - `schema_def`：`date DATE NOT NULL`, `iorb/obfr/on_rrp NUMERIC(10,4)`，`iorb` 注释标注"算 SOFR-IORB 利差替代 TED"。
 
 # 实施计划 (由 PLAN 模式生成)
-1. 新增 `alphahome/fetchers/tasks/macro/fred_macro_us_short_rate.py`。  
-2. 在 `tests/unit/test_fred_macro_tasks.py` 增加属性与 fetch_batch 测试（含起点不一的 NaN 处理）。  
+1. 新增 `alphahome/fetchers/tasks/macro/fred_macro_us_short_rate.py`。
+2. 在 `tests/unit/test_fred_macro_tasks.py` 增加属性与 fetch_batch 测试（含起点不一的 NaN 处理）。
 3. 创建 `docs/tasks/fred_macro_us_short_rate.md`。
 
 实施检查清单：
-1. 任务代码实现并注册成功。  
-2. 单元测试通过。  
+1. 任务代码实现并注册成功。
+2. 单元测试通过。
 3. 文档创建，注明 IORB 算 SOFR-IORB 利差替代 TED。
 
 # 当前执行步骤 (由 EXECUTE 模式维护)

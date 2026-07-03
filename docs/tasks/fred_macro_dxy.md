@@ -1,7 +1,7 @@
 # 上下文
-文件名：fred_macro_dxy.md  
-创建于：2026-06-21  
-创建者：ZCode  
+文件名：fred_macro_dxy.md
+创建于：2026-06-21
+创建者：ZCode
 关联协议：RIPER-5 + Multidimensional + Agent Protocol
 
 # 任务描述
@@ -23,13 +23,13 @@ FRED `fredgraph.csv?id=DTWEXBGS` 端点实测 keyless 可用（HTTP 200，无需
 - 基类 `fetch_batch` 单序列拉取+重命名；`process_data` 做类型转换、日期规整、生效窗口过滤、去重。
 
 # 实施计划 (由 PLAN 模式生成)
-1. 新增 `alphahome/fetchers/tasks/macro/fred_macro_dxy.py`。  
-2. 在 `tests/unit/test_fred_macro_tasks.py` 增加属性、process_data、MANUAL 窗口过滤测试。  
+1. 新增 `alphahome/fetchers/tasks/macro/fred_macro_dxy.py`。
+2. 在 `tests/unit/test_fred_macro_tasks.py` 增加属性、process_data、MANUAL 窗口过滤测试。
 3. 创建 `docs/tasks/fred_macro_dxy.md`。
 
 实施检查清单：
-1. 任务代码实现并注册成功。  
-2. 单元测试通过。  
+1. 任务代码实现并注册成功。
+2. 单元测试通过。
 3. 文档创建，注明 DTWEXBGS 代理口径。
 
 # 当前执行步骤 (由 EXECUTE 模式维护)

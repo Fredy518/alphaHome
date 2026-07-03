@@ -1,7 +1,7 @@
 # 上下文
-文件名：fred_macro_fed_rate.md  
-创建于：2026-06-21  
-创建者：ZCode  
+文件名：fred_macro_fed_rate.md
+创建于：2026-06-21
+创建者：ZCode
 关联协议：RIPER-5 + Multidimensional + Agent Protocol
 
 # 任务描述
@@ -23,13 +23,13 @@
 - `fetch_batch` 三序列合并；`process_data` 类型转换+日期规整+窗口过滤+去重。
 
 # 实施计划 (由 PLAN 模式生成)
-1. 新增 `alphahome/fetchers/tasks/macro/fred_macro_fed_rate.py`。  
-2. 在 `tests/unit/test_fred_macro_tasks.py` 增加 fetch_batch 多序列合并测试（含 DFF 缺失日 NaN、空数据返回 None）。  
+1. 新增 `alphahome/fetchers/tasks/macro/fred_macro_fed_rate.py`。
+2. 在 `tests/unit/test_fred_macro_tasks.py` 增加 fetch_batch 多序列合并测试（含 DFF 缺失日 NaN、空数据返回 None）。
 3. 创建 `docs/tasks/fred_macro_fed_rate.md`。
 
 实施检查清单：
-1. 任务代码实现并注册成功。  
-2. 多序列合并单元测试通过。  
+1. 任务代码实现并注册成功。
+2. 多序列合并单元测试通过。
 3. 文档创建。
 
 # 当前执行步骤 (由 EXECUTE 模式维护)

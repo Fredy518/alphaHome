@@ -20,8 +20,8 @@ from . import pit_service
 
 __all__ = [
     "task_registry_service",
-    "task_execution_service", 
+    "task_execution_service",
     "configuration_service",
     "feature_service",
     "pit_service",
-] 
+]

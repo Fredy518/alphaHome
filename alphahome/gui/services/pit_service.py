@@ -95,4 +95,3 @@ __all__ = [
     "handle_get_coverage_matrix",
     "handle_diagnose_stock",
 ]
-

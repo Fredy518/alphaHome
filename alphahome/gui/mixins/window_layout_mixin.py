@@ -22,7 +22,7 @@ from ..handlers import task_log_handler
 
 class WindowLayoutMixin:
     """窗口布局和组件创建Mixin类"""
-    
+
     def create_widgets(self):
         """创建所有UI组件和标签页"""
         notebook = ttk.Notebook(self)
@@ -71,4 +71,4 @@ class WindowLayoutMixin:
         }
         self.ui_elements.update(
             task_log_tab.create_task_log_tab(task_log_frame, log_handlers)
-        ) 
+        )

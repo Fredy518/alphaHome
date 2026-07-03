@@ -85,4 +85,3 @@ async def test_pit_task_dispatches_manual_range_to_full_backfill():
             {"start_date": "2025-01-01", "end_date": "2025-12-31", "batch_size": 4},
         )
     ]
-

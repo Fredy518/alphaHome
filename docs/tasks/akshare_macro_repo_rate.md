@@ -1,7 +1,7 @@
 # 上下文
-文件名：akshare_macro_repo_rate.md  
-创建于：2026-06-21  
-创建者：ZCode  
+文件名：akshare_macro_repo_rate.md
+创建于：2026-06-21
+创建者：ZCode
 关联协议：RIPER-5 + Multidimensional + Agent Protocol
 
 # 任务描述
@@ -25,13 +25,13 @@
 - `get_batch_list` 返回 `[{}]`（symbol 由 `prepare_params` 合并）。
 
 # 实施计划 (由 PLAN 模式生成)
-1. 新增 `alphahome/fetchers/tasks/macro/akshare_macro_repo_rate.py`。  
-2. 在 `tests/unit/test_akshare_macro_tasks.py` 增加属性与 process_data 测试。  
+1. 新增 `alphahome/fetchers/tasks/macro/akshare_macro_repo_rate.py`。
+2. 在 `tests/unit/test_akshare_macro_tasks.py` 增加属性与 process_data 测试。
 3. 创建 `docs/tasks/akshare_macro_repo_rate.md`。
 
 实施检查清单：
-1. 任务代码实现并注册成功。  
-2. 单元测试通过。  
+1. 任务代码实现并注册成功。
+2. 单元测试通过。
 3. 文档创建，注明 FR007 作 DR007 代理的口径差异。
 
 # 当前执行步骤 (由 EXECUTE 模式维护)

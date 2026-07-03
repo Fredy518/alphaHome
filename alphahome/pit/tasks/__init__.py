@@ -23,4 +23,3 @@ def discover_tasks(*, force_reload: bool = False) -> None:
 
 
 __all__ = ["discover_tasks"]
-
