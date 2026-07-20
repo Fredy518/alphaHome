@@ -12,6 +12,7 @@
 
 import abc
 import asyncio
+import inspect
 from datetime import date
 from typing import Any, Dict, Iterable, List, Optional
 
@@ -190,6 +191,26 @@ class TinySoftTask(FetcherTask, abc.ABC):
     async def _pre_execute(self, stop_event: Optional[asyncio.Event] = None, **kwargs):
         await super()._pre_execute(stop_event=stop_event, **kwargs)
         self._failed_symbols = []
+
+    async def _close_api_resource(self) -> None:
+        cleanup = getattr(self.api, "close", None)
+        if not callable(cleanup):
+            cleanup = getattr(self.api, "logout", None)
+        if not callable(cleanup):
+            return
+
+        try:
+            result = cleanup()
+            if inspect.isawaitable(result):
+                await result
+        except Exception as exc:
+            self.logger.warning("关闭 Tinysoft API 资源失败: %s", exc)
+
+    async def execute(self, stop_event: Optional[asyncio.Event] = None, **kwargs):
+        try:
+            return await super().execute(stop_event=stop_event, **kwargs)
+        finally:
+            await self._close_api_resource()
 
     def _record_skipped_symbol(self, ts_code: str, error: Exception) -> None:
         self._failed_symbols.append(
