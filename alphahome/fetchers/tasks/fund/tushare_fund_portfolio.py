@@ -26,6 +26,10 @@ from ...sources.tushare.batch_utils import generate_single_date_batches
 class TushareFundPortfolioTask(TushareTask):
     """获取公募基金持仓数据"""
 
+    ratio_columns = ("stk_mkv_ratio", "stk_float_ratio")
+    ratio_min = 0.0
+    ratio_max = 100.0
+
     # 1. 核心属性
     name = "tushare_fund_portfolio"
     description = "获取公募基金持仓明细"
@@ -95,6 +99,64 @@ class TushareFundPortfolioTask(TushareTask):
     ]
 
     # 7. 分批配置 (按单日期批次，每个公告日期一个批次)
+
+    def process_data(self, data: pd.DataFrame, **kwargs) -> pd.DataFrame:
+        """将 Tushare 返回的非法持仓百分比置空，同时保留其余持仓字段。"""
+        processed = super().process_data(data, **kwargs)
+        if not isinstance(processed, pd.DataFrame) or processed.empty:
+            return processed
+
+        result = processed.copy()
+        invalid_masks = {}
+        invalid_counts = {}
+
+        for column in self.ratio_columns:
+            if column not in result.columns:
+                continue
+
+            numeric = pd.to_numeric(result[column], errors="coerce")
+            invalid = numeric.notna() & ~numeric.between(
+                self.ratio_min,
+                self.ratio_max,
+                inclusive="both",
+            )
+            result[column] = numeric
+
+            invalid_count = int(invalid.sum())
+            if invalid_count:
+                result.loc[invalid, column] = pd.NA
+                invalid_masks[column] = invalid
+                invalid_counts[column] = invalid_count
+
+        if invalid_counts:
+            combined_invalid = pd.concat(invalid_masks.values(), axis=1).any(axis=1)
+            sample_columns = [
+                column
+                for column in (
+                    "ts_code",
+                    "ann_date",
+                    "end_date",
+                    "symbol",
+                    *self.ratio_columns,
+                )
+                if column in processed.columns
+            ]
+            samples = (
+                processed.loc[combined_invalid, sample_columns]
+                .head(5)
+                .to_dict(orient="records")
+            )
+            counts = ", ".join(
+                f"{column}={count}" for column, count in invalid_counts.items()
+            )
+            self.logger.warning(
+                "检测到 %d 个超出 [0, 100] 的持仓比例值，已置为 NULL（%s）；样例: %s",
+                sum(invalid_counts.values()),
+                counts,
+                samples,
+            )
+
+        return result
 
     async def get_batch_list(self, **kwargs: Any) -> List[Dict]:
         """
