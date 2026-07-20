@@ -30,6 +30,7 @@ class AkShareFundIndividualDetailInfoXqTask(AkShareFundCodeBatchMixin, AkShareTa
     description = "雪球蛋卷-基金交易规则明细（AkShare fund_individual_detail_info_xq）"
     table_name = "fund_individual_detail_info_xq"
     data_source = "akshare"
+    hide_from_gui_collection = True
 
     primary_keys = ["fund_code", "row_no", "snapshot_date"]
     date_column = "snapshot_date"
@@ -39,6 +40,7 @@ class AkShareFundIndividualDetailInfoXqTask(AkShareFundCodeBatchMixin, AkShareTa
     default_timeout = 10
     default_concurrent_limit = 4
     default_request_interval = 0.15
+    missing_payload_fields = ("data", "declare_rate_table")
 
     column_mapping = {
         "费用类型": "fee_type",
@@ -98,11 +100,13 @@ class AkShareFundIndividualDetailInfoXqTask(AkShareFundCodeBatchMixin, AkShareTa
                 timeout=params.get("timeout"),
             )
         except AkShareAPIError as exc:
-            if "'data'" in str(exc):
+            missing_field = self._missing_payload_field_from_error(exc)
+            if missing_field:
                 self.logger.info(
-                    "%s: fund_code=%s 雪球蛋卷详情缺少 data 字段，按无数据跳过。",
+                    "%s: fund_code=%s 雪球蛋卷详情缺少 %s 字段，按无数据跳过。",
                     self.name,
                     params.get("fund_code") or params.get("symbol"),
+                    missing_field,
                 )
                 return None
             raise
@@ -110,6 +114,13 @@ class AkShareFundIndividualDetailInfoXqTask(AkShareFundCodeBatchMixin, AkShareTa
             return None
         transformed = self.data_transformer.process_data(data)
         return self.process_data(transformed, **params)
+
+    def _missing_payload_field_from_error(self, exc: Exception) -> Optional[str]:
+        message = str(exc)
+        for field in self.missing_payload_fields:
+            if f"'{field}'" in message or f'"{field}"' in message:
+                return field
+        return None
 
     def process_data(self, data: pd.DataFrame, **kwargs: Any) -> pd.DataFrame:
         data = super().process_data(data, **kwargs)

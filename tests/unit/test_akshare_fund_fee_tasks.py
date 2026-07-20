@@ -365,6 +365,10 @@ def test_fund_overview_parses_fee_rates():
     assert row["max_subscription_fee_rate_pct"] == 1.0
 
 
+def test_fund_detail_xq_is_hidden_from_collection_gui():
+    assert AkShareFundIndividualDetailInfoXqTask.hide_from_gui_collection is True
+
+
 @pytest.mark.asyncio
 async def test_fund_detail_xq_smart_batches_skip_existing_month_codes_and_anchor_snapshot():
     anchor = _current_month_anchor()
@@ -394,15 +398,18 @@ def test_fund_detail_xq_process_data_uses_snapshot_date_override():
     assert processed["snapshot_date"].tolist() == ["2026-06-01"]
 
 
+@pytest.mark.parametrize("missing_field", ["data", "declare_rate_table"])
 @pytest.mark.asyncio
-async def test_fund_detail_xq_missing_data_error_is_no_data():
+async def test_fund_detail_xq_missing_payload_error_is_no_data(missing_field):
     task = AkShareFundIndividualDetailInfoXqTask(db_connection=_MockDB(), update_type=UpdateTypes.SMART)
 
     class _FakeApi:
         async def call(self, **kwargs):
             from alphahome.fetchers.sources.akshare.akshare_api import AkShareAPIError
 
-            raise AkShareAPIError("akshare.fund_individual_detail_info_xq 调用失败: 'data'")
+            raise AkShareAPIError(
+                f"akshare.fund_individual_detail_info_xq 调用失败: '{missing_field}'"
+            )
 
     task.api = _FakeApi()
 
