@@ -54,7 +54,7 @@ class AkShareFundFeeEmTask(AkShareFundCodeBatchMixin, AkShareTask):
 
     api_name = "fund_fee_em"
     default_indicators = ("申购费率（前端）", "赎回费率", "运作费用")
-    known_optional_indicators = {"申购费率（前端）"}
+    known_optional_indicators = {"申购费率（前端）", "赎回费率"}
     default_stream_save_batch_size = 3000
 
     schema_def = {

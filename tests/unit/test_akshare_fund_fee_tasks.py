@@ -264,6 +264,29 @@ async def test_fund_fee_optional_purchase_indicator_keyerror_is_no_data(monkeypa
 
 
 @pytest.mark.asyncio
+async def test_fund_fee_optional_redemption_indicator_keyerror_is_no_data(monkeypatch):
+    from alphahome.fetchers.tasks.fund import akshare_fund_fee_em as module
+
+    class _FakeAk:
+        @staticmethod
+        def fund_fee_em(symbol, indicator):
+            raise KeyError(indicator)
+
+    monkeypatch.setattr(module, "ak", _FakeAk())
+    task = AkShareFundFeeEmTask(
+        db_connection=_MockDB(),
+        update_type=UpdateTypes.SMART,
+        task_config={"request_interval": 0},
+    )
+
+    data = await task.fetch_batch(
+        {"fund_code": "561700", "symbol": "561700", "indicator": "赎回费率"}
+    )
+
+    assert data is None
+
+
+@pytest.mark.asyncio
 async def test_fund_fee_optional_purchase_indicator_falls_back_to_purchase_title(monkeypatch):
     from alphahome.fetchers.tasks.fund import akshare_fund_fee_em as module
 
