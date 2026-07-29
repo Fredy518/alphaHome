@@ -26,6 +26,7 @@ class TinySoftStockSymbolInfoArrayTask(TinySoftP0InfoArrayTask):
     default_code_batch_size = 50
     default_smart_code_batch_size = 200
     default_start_date = "20180101"
+    include_inactive_symbols = False
     code_config_keys = ("ts_codes", "ts_code", "codes")
     default_symbol_source_tables = ["tushare.stock_basic", "rawdata.stock_basic"]
 
@@ -50,7 +51,7 @@ class TinySoftStockSymbolInfoArrayTask(TinySoftP0InfoArrayTask):
                 FROM "{schema}"."{table_name}"
                 WHERE ts_code ~ '^[0-9]{{6}}\\.(SH|SZ|BJ)$'
                 """
-                if "list_status" in columns:
+                if "list_status" in columns and not self.include_inactive_symbols:
                     query += " AND list_status = 'L'"
                 query += " ORDER BY ts_code"
                 rows = await self.db.fetch(query)

@@ -27,6 +27,7 @@ from .tinysoft_stock_lending_ext import (
     TinySoftStockLendingSummaryTask,
     TinySoftStockLendingTradeTask,
 )
+from .tinysoft_stock_margin import TinySoftStockMarginDetailTask, TinySoftStockMarginTask
 from .tinysoft_stock_p0_base import (
     TinySoftHsgtChannelTask,
     TinySoftMarketCodeInfoArrayTask,
@@ -51,6 +52,8 @@ __all__ = [
     "TinySoftStockLendingSummaryTask",
     "TinySoftStockLendingTradeTask",
     "TinySoftStockLendingBalanceTask",
+    "TinySoftStockMarginTask",
+    "TinySoftStockMarginDetailTask",
     "TinySoftStockPublicTradeInfoTask",
     "TinySoftStockUnlockScheduleTask",
     "TinySoftStockHolderChangeExtTask",
