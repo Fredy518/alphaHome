@@ -58,11 +58,10 @@ await handle_request("RUN_TASKS", task_data)
 import asyncio
 from typing import Any, Callable, Dict, List, Optional
 
-from ..common.config_manager import _config_manager as config_manager, redact_sensitive_config
-from ..common.db_manager import DBManager  # 添加 DBManager 导入
-from ..common.logging_utils import get_logger, setup_logging
+from ..common.config_manager import redact_sensitive_config
+from ..common.logging_utils import get_logger
 from ..common.schema_migrator import run_migration_check, run_refactoring_check
-from ..common.task_system import UnifiedTaskFactory, task_factory
+from ..common.task_system import UnifiedTaskFactory
 from .services import (
     task_registry_service,
     configuration_service,
@@ -76,6 +75,15 @@ logger = get_logger(__name__)
 # --- Module-level State ---
 db_manager = None
 _response_callback: Optional[Callable] = None
+
+
+async def _get_or_initialize_db_manager():
+    """Reuse the app's existing pool, initializing only for standalone callers."""
+    try:
+        return UnifiedTaskFactory.get_db_manager()
+    except RuntimeError:
+        await UnifiedTaskFactory.initialize()
+        return UnifiedTaskFactory.get_db_manager()
 
 
 async def initialize_controller(response_callback):
@@ -115,10 +123,10 @@ async def initialize_controller(response_callback):
     
     logger.info("所有控制器逻辑模块已初始化。")
     
-    # Perform initial DB connection and data load using the factory's reload method
+    # The desktop entry point already initializes the factory.  Reuse that pool
+    # instead of closing and recreating it during the first window load.
     try:
-        await UnifiedTaskFactory.reload_config()
-        db_manager = UnifiedTaskFactory.get_db_manager()
+        db_manager = await _get_or_initialize_db_manager()
         if db_manager:
              # 在数据库连接成功后，立即执行 schema 迁移检查
             logger.info("Controller: Preparing to run schema migration check...")

@@ -53,10 +53,10 @@ import asyncio
 import ctypes
 import platform
 import tkinter as tk
-from tkinter import messagebox, ttk
+from tkinter import messagebox
 from typing import Any, Dict
 
-from async_tkinter_loop import async_handler, async_mainloop
+from async_tkinter_loop import async_handler
 
 from ..common.logging_utils import get_logger, setup_logging
 from ..common.task_system import UnifiedTaskFactory
@@ -69,16 +69,8 @@ from .handlers import (
     task_execution_handler,
     task_log_handler,
 )
-from .ui import (
-    data_collection_tab,
-    feature_update_tab,
-    pit_management_tab,
-    storage_settings_tab,
-    task_execution_tab,
-    task_log_tab,
-)
-from .utils.screen_utils import get_window_geometry_string, center_window_on_screen, position_window_top_left
-from .utils.dpi_manager import initialize_dpi_manager, get_dpi_manager, DisplayMode
+from .utils.screen_utils import get_window_geometry_string, position_window_top_left
+from .utils.dpi_manager import initialize_dpi_manager
 from .utils.dpi_aware_ui import initialize_ui_factory
 from .mixins import WindowEventsMixin, WindowDpiMixin, WindowLayoutMixin
 
@@ -215,11 +207,14 @@ class MainWindow(WindowEventsMixin, WindowDpiMixin, WindowLayoutMixin, tk.Tk):
         # 首先初始化控制器
         await controller.initialize_controller(self.handle_controller_response)
         
-        # 然后加载初始数据
-        await controller.handle_request("GET_COLLECTION_TASKS")
-        await controller.handle_request("GET_PIT_TASKS")
-        await controller.handle_request("GET_FEATURES")
-        await controller.handle_request("GET_STORAGE_SETTINGS")
+        # 各列表互不依赖。并发启动后，快速的特征列表不再等待较慢的
+        # PIT 实时统计，任一页面完成即可立即通过回调更新界面。
+        await asyncio.gather(
+            controller.handle_request("GET_FEATURES"),
+            controller.handle_request("GET_COLLECTION_TASKS"),
+            controller.handle_request("GET_PIT_TASKS"),
+            controller.handle_request("GET_STORAGE_SETTINGS"),
+        )
 
     def handle_controller_response(self, command: str, data: Any):
         """
