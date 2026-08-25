@@ -13,7 +13,7 @@ Date: 2025-08-11
 import logging
 from abc import ABC, abstractmethod
 from datetime import datetime, date
-from typing import Dict, List, Optional, Any, Tuple
+from typing import Any, Dict
 import pandas as pd
 import os
 
@@ -221,7 +221,8 @@ class PITTableManager(ABC):
             if cname not in key_fields and cname not in data_fields:
                 cols.append(f"{cname} {ctype}")
         # 标准列
-        cols.append("data_source varchar(16) NOT NULL DEFAULT 'report'")
+        if cfg.get('standard_data_source', True):
+            cols.append("data_source varchar(16) NOT NULL DEFAULT 'report'")
         cols.append("created_at timestamp without time zone NOT NULL DEFAULT CURRENT_TIMESTAMP")
         cols.append("updated_at timestamp without time zone NOT NULL DEFAULT CURRENT_TIMESTAMP")
         # 主键/唯一键
@@ -254,7 +255,14 @@ class PITTableManager(ABC):
             table = self.table_name
             pit_cols = set(self._get_table_columns(schema, table))
             cfg = self.table_config
-            expected = set(cfg.get('key_fields', [])) | set(cfg.get('data_fields', [])) | set(cfg.get('extended_fields', {}).keys()) | {'data_source', 'created_at', 'updated_at'}
+            expected = (
+                set(cfg.get('key_fields', []))
+                | set(cfg.get('data_fields', []))
+                | set(cfg.get('extended_fields', {}).keys())
+                | {'created_at', 'updated_at'}
+            )
+            if cfg.get('standard_data_source', True):
+                expected.add('data_source')
             missing = sorted(list(expected - pit_cols))
             unexpected = sorted(list(pit_cols - expected))
             if missing:
@@ -292,13 +300,25 @@ class PITTableManager(ABC):
 
         try:
             # 根据表类型选择日期字段
-            date_field = 'obs_date' if self.table_name == 'pit_industry_classification' else 'ann_date'
+            date_field = 'obs_date' if self.table_config.get('snapshot_mode') else 'ann_date'
+            entity_field = (
+                'ts_code'
+                if 'ts_code' in self.table_config.get('key_fields', [])
+                else next(
+                    (
+                        field
+                        for field in self.table_config.get('key_fields', [])
+                        if field != date_field
+                    ),
+                    date_field,
+                )
+            )
 
             # 基本统计查询
             stats_query = f"""
             SELECT
                 COUNT(*) as total_records,
-                COUNT(DISTINCT ts_code) as unique_stocks,
+                COUNT(DISTINCT {entity_field}) as unique_entities,
                 MIN({date_field}) as earliest_date,
                 MAX({date_field}) as latest_date
             FROM {PITConfig.PIT_SCHEMA}.{self.table_name}
@@ -311,7 +331,9 @@ class PITTableManager(ABC):
                 status = {
                     'table_name': self.table_name,
                     'total_records': int(row['total_records']),
-                    'unique_stocks': int(row['unique_stocks']),
+                    'unique_entities': int(row['unique_entities']),
+                    # Backward-compatible alias for existing callers.
+                    'unique_stocks': int(row['unique_entities']),
                     'earliest_date': row['earliest_date'],
                     'latest_date': row['latest_date'],
                     'status': 'healthy' if row['total_records'] > 0 else 'empty'
@@ -427,7 +449,7 @@ class PITTableManager(ABC):
     def _check_date_ranges(self) -> Dict[str, Any]:
         """检查日期范围合理性"""
         # 根据表类型选择日期字段
-        date_field = 'obs_date' if self.table_name == 'pit_industry_classification' else 'ann_date'
+        date_field = 'obs_date' if self.table_config.get('snapshot_mode') else 'ann_date'
 
         query = f"""
         SELECT
@@ -481,7 +503,7 @@ class PITTableManager(ABC):
         cutoff_date = datetime.now().date() - pd.Timedelta(days=days_to_keep)
 
         # 根据表类型选择日期字段
-        date_field = 'obs_date' if self.table_name == 'pit_industry_classification' else 'ann_date'
+        date_field = 'obs_date' if self.table_config.get('snapshot_mode') else 'ann_date'
 
         try:
             # 先查询要删除的记录数

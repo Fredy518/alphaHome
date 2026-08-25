@@ -21,6 +21,33 @@ DO $$ BEGIN
 END $$;
 
 DO $$ BEGIN
+    IF to_regclass('pit.pit_stock_fttm_monthly') IS NOT NULL THEN
+        DROP TRIGGER IF EXISTS trg_pit_stock_fttm_monthly_updated_at ON pit.pit_stock_fttm_monthly;
+        CREATE TRIGGER trg_pit_stock_fttm_monthly_updated_at
+        BEFORE UPDATE ON pit.pit_stock_fttm_monthly
+        FOR EACH ROW EXECUTE FUNCTION pit.update_updated_at_pit();
+    END IF;
+END $$;
+
+DO $$ BEGIN
+    IF to_regclass('pit.pit_industry_fttm_monthly') IS NOT NULL THEN
+        DROP TRIGGER IF EXISTS trg_pit_industry_fttm_monthly_updated_at ON pit.pit_industry_fttm_monthly;
+        CREATE TRIGGER trg_pit_industry_fttm_monthly_updated_at
+        BEFORE UPDATE ON pit.pit_industry_fttm_monthly
+        FOR EACH ROW EXECUTE FUNCTION pit.update_updated_at_pit();
+    END IF;
+END $$;
+
+DO $$ BEGIN
+    IF to_regclass('pit.pit_index_fttm_monthly') IS NOT NULL THEN
+        DROP TRIGGER IF EXISTS trg_pit_index_fttm_monthly_updated_at ON pit.pit_index_fttm_monthly;
+        CREATE TRIGGER trg_pit_index_fttm_monthly_updated_at
+        BEFORE UPDATE ON pit.pit_index_fttm_monthly
+        FOR EACH ROW EXECUTE FUNCTION pit.update_updated_at_pit();
+    END IF;
+END $$;
+
+DO $$ BEGIN
     IF to_regclass('pit.pit_balance_quarterly') IS NOT NULL THEN
         DROP TRIGGER IF EXISTS trg_pit_balance_quarterly_updated_at ON pit.pit_balance_quarterly;
         CREATE TRIGGER trg_pit_balance_quarterly_updated_at

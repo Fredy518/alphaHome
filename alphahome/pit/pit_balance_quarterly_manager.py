@@ -190,7 +190,12 @@ class PITBalanceQuarterlyManager(PITTableManager):
         """
 
         # 构建查询字段 - 使用tushare表的字段名（快报与报表字段名不完全一致）
-        bs_fields = self.key_fields + ['total_assets', 'total_liab', 'total_hldr_eqy_exc_min_int']
+        bs_fields = self.key_fields + [
+            'total_assets',
+            'total_liab',
+            'total_hldr_eqy_exc_min_int',
+            'total_hldr_eqy_inc_min_int',
+        ]
         ex_fields = self.key_fields + ['total_assets', 'total_hldr_eqy_exc_min_int']  # fina_express 无 total_liab
         bs_field_list = ', '.join(bs_fields)
         ex_field_list = ', '.join(ex_fields)
@@ -255,7 +260,9 @@ class PITBalanceQuarterlyManager(PITTableManager):
         field_mapping = {
             'total_assets': 'tot_assets',
             'total_liab': 'tot_liab',
-            'total_hldr_eqy_exc_min_int': 'tot_equity'
+            'total_hldr_eqy_exc_min_int': 'tot_equity',
+            # 仅用于资产负债恒等式校验；标准 tot_equity 仍保留“不含少数股东权益”口径。
+            'total_hldr_eqy_inc_min_int': '_tot_equity_including_minority',
         }
 
         # 应用字段映射
@@ -283,24 +290,6 @@ class PITBalanceQuarterlyManager(PITTableManager):
         if 'ann_date' in processed_data.columns:
             processed_data['ann_date'] = pd.to_datetime(processed_data['ann_date']).dt.date
 
-        # 2.5. 计算year和quarter字段（从end_date提取）
-        if 'end_date' in processed_data.columns:
-            # 转换为datetime以便提取年份和月份
-            end_date_dt = pd.to_datetime(processed_data['end_date'])
-
-            # 提取年份
-            processed_data['year'] = end_date_dt.dt.year
-
-            # 根据月份计算季度
-            processed_data['quarter'] = end_date_dt.dt.month.map({
-                1: 1, 2: 1, 3: 1,      # Q1: 1-3月
-                4: 2, 5: 2, 6: 2,      # Q2: 4-6月
-                7: 3, 8: 3, 9: 3,      # Q3: 7-9月
-                10: 4, 11: 4, 12: 4    # Q4: 10-12月
-            })
-
-            self.logger.info(f"计算year和quarter字段: {len(processed_data)} 条记录")
-
         # 计算year和quarter字段（从end_date提取）
         if 'end_date' in processed_data.columns:
             # 转换为datetime以便提取年份和月份
@@ -324,31 +313,37 @@ class PITBalanceQuarterlyManager(PITTableManager):
             if field in processed_data.columns:
                 # 转换为数值类型，无效值设为None
                 processed_data[field] = pd.to_numeric(processed_data[field], errors='coerce')
+        if '_tot_equity_including_minority' in processed_data.columns:
+            processed_data['_tot_equity_including_minority'] = pd.to_numeric(
+                processed_data['_tot_equity_including_minority'], errors='coerce'
+            )
 
         # 3.5 针对 express 缺失字段进行基于 report 的 PIT 填充
         processed_data = self._fill_express_missing_fields(processed_data)
 
         # 4. 资产负债表特定的数据验证
-        # 检查资产负债平衡关系
-        if all(field in processed_data.columns for field in ['tot_assets', 'tot_liab', 'tot_equity']):
-            # 计算资产负债差异
-            processed_data['balance_check'] = (
-                processed_data['tot_assets'] - processed_data['tot_liab'] - processed_data['tot_equity']
+        # 检查资产负债平衡关系。恒等式必须使用“含少数股东权益”口径；
+        # express 不提供该字段，因此只校验字段完整的 report 记录。
+        validation_fields = ['tot_assets', 'tot_liab', '_tot_equity_including_minority']
+        if all(field in processed_data.columns for field in validation_fields):
+            comparable = processed_data[validation_fields].notna().all(axis=1)
+            if 'data_source' in processed_data.columns:
+                comparable &= processed_data['data_source'].eq('report')
+            balance_check = (
+                processed_data['tot_assets']
+                - processed_data['tot_liab']
+                - processed_data['_tot_equity_including_minority']
             ).abs()
-
-            # 标记不平衡的记录
-            imbalanced = processed_data['balance_check'] > processed_data['tot_assets'] * 0.01  # 1%容差
+            imbalanced = comparable & (balance_check > processed_data['tot_assets'].abs() * 0.01)
             if imbalanced.any():
                 imbalanced_count = imbalanced.sum()
                 self.logger.warning(f"发现 {imbalanced_count} 条资产负债不平衡的记录")
-
-            # 移除balance_check列
-            processed_data = processed_data.drop('balance_check', axis=1)
+        processed_data = processed_data.drop('_tot_equity_including_minority', axis=1, errors='ignore')
 
         # 5. 去重处理 (保留最新的ann_date)
         processed_data = processed_data.sort_values(['ts_code', 'end_date', 'ann_date'])
         processed_data = processed_data.drop_duplicates(
-            subset=['ts_code', 'end_date', 'ann_date'],
+            subset=['ts_code', 'end_date', 'ann_date', 'data_source'],
             keep='last'
         )
 

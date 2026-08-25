@@ -339,12 +339,14 @@ class PITIncomeQuarterlyManager(PITTableManager):
         # 通过调用方传入的 start_date 是否等于默认 backfill_start 进行启发式判断无法在此方法内可靠实现
         # 因此统一扩展，但最终在预处理过滤不在原窗口的记录（is_extended）
 
+        # 只有 report 累计值会作为目标窗口记录的上一季度依赖，因此仅扩展 report；
+        # 扩展 express/forecast 会制造新的边界依赖，并产生与本次更新无关的缺失告警。
         # 1) 正式财报（Report）
         df_report = self._fetch_income_report(start_date_ext, end_date, ts_code=ts_code)
         # 2) 业绩快报（Express）
-        df_express = self._fetch_income_express(start_date_ext, end_date, ts_code=ts_code)
+        df_express = self._fetch_income_express(start_date, end_date, ts_code=ts_code)
         # 3) 业绩预告（Forecast）
-        df_forecast = self._fetch_income_forecast(start_date_ext, end_date, ts_code=ts_code)
+        df_forecast = self._fetch_income_forecast(start_date, end_date, ts_code=ts_code)
 
         # 标记扩展行（仅用于内部季度化计算，最终会在预处理阶段过滤掉不在原始时间窗口内的数据）
         try:
@@ -695,7 +697,7 @@ class PITIncomeQuarterlyManager(PITTableManager):
             # 过滤掉为计算依赖而扩展的行（不在原始时间窗口内）
             if 'is_extended' in processed_data.columns:
                 before_len = len(processed_data)
-                processed_data = processed_data[~processed_data['is_extended'].fillna(False)].copy()
+                processed_data = processed_data[~processed_data['is_extended'].eq(True)].copy()
                 processed_data.drop(columns=['is_extended'], inplace=True, errors='ignore')
                 after_len = len(processed_data)
                 if before_len != after_len:
@@ -710,7 +712,7 @@ class PITIncomeQuarterlyManager(PITTableManager):
                 not_all_null = processed_data[core_fields].notna().any(axis=1)
             else:
                 not_all_null = pd.Series([True]*len(processed_data), index=processed_data.index)
-            keep_forecast_hint = processed_data.get('data_source').eq('forecast') & processed_data['fc_hint'].fillna(False)
+            keep_forecast_hint = processed_data.get('data_source').eq('forecast') & processed_data['fc_hint'].eq(True)
             keep_mask = not_all_null | keep_forecast_hint
             # 明确剔除 ANNUAL_ONLY 标记（上市前仅年报）
             if 'conversion_status' in processed_data.columns:
@@ -1229,6 +1231,11 @@ class PITIncomeQuarterlyManager(PITTableManager):
             work['end_date'] = pd.to_datetime(work['end_date']).dt.date
         if 'ann_date' in work.columns:
             work['ann_date'] = pd.to_datetime(work['ann_date']).dt.date
+        target_mask = (
+            ~work['is_extended'].eq(True)
+            if 'is_extended' in work.columns
+            else pd.Series(True, index=work.index)
+        )
         # 基础累计值快照（不被后续覆盖），并统一日期类型
         base = df.copy()
         if 'end_date' in base.columns:
@@ -1277,7 +1284,7 @@ class PITIncomeQuarterlyManager(PITTableManager):
         # ---------- 1) 处理 report 【优化：向量化处理】----------
         mask_r = work.get('data_source').eq('report') if 'data_source' in work.columns else pd.Series([False]*len(work), index=work.index)
         if mask_r.any():
-            quarterly_stats['report']['total_records'] = mask_r.sum()
+            quarterly_stats['report']['total_records'] = int((mask_r & target_mask).sum())
             self.logger.info(f"开始处理 report 季度化: {mask_r.sum()} 条记录")
 
             # 检测"仅Q4"的上市前年报情况：同(ts_code,year)只有Q4
@@ -1289,7 +1296,9 @@ class PITIncomeQuarterlyManager(PITTableManager):
                 if qs == {4}:
                     annual_only_idx.extend(g.index.tolist())
             if annual_only_idx:
-                quarterly_stats['report']['annual_only_records'] = len(annual_only_idx)
+                quarterly_stats['report']['annual_only_records'] = int(
+                    target_mask.reindex(annual_only_idx, fill_value=False).sum()
+                )
                 work.loc[annual_only_idx, 'conversion_status'] = 'ANNUAL_ONLY'
                 for c in q_fields:
                     work.loc[annual_only_idx, c] = None
@@ -1313,7 +1322,9 @@ class PITIncomeQuarterlyManager(PITTableManager):
                 # 处理 Q2-Q4（需要差分计算）【优化：向量化处理】
                 mask_r_q2q4 = mask_r & work['quarter'].ne(1) & ~work.index.isin(annual_only_idx)
                 if mask_r_q2q4.any():
-                    quarterly_stats['report']['q2q4_records'] = mask_r_q2q4.sum()
+                    quarterly_stats['report']['q2q4_records'] = int(
+                        (mask_r_q2q4 & target_mask).sum()
+                    )
                     r_q2q4_data = work.loc[mask_r_q2q4].copy()
 
                     # 为每个 report 记录找到对应的上一季度 report 记录
@@ -1328,7 +1339,8 @@ class PITIncomeQuarterlyManager(PITTableManager):
                         if prev_data:
                             prev_values.append(prev_data)
                         else:
-                            missing_prev_count += 1
+                            if bool(target_mask.loc[idx]):
+                                missing_prev_count += 1
                             prev_values.append({c: None for c in q_fields})
 
                     quarterly_stats['report']['missing_prev_cumulative'] = missing_prev_count
@@ -1349,8 +1361,11 @@ class PITIncomeQuarterlyManager(PITTableManager):
                                 work.loc[mask_r_q2q4 & valid_diff, 'conversion_status'] = 'QTR_DIFF_RPT'
                             else:
                                 work.loc[mask_r_q2q4, c] = None
-                                affected_calculation += mask_r_q2q4.sum()
-                                quarterly_stats['report']['field_affected_breakdown'][c] = mask_r_q2q4.sum()
+                            affected_for_target = int(
+                                ((~valid_diff) & target_mask.reindex(valid_diff.index, fill_value=False)).sum()
+                            )
+                            affected_calculation += affected_for_target
+                            quarterly_stats['report']['field_affected_breakdown'][c] = affected_for_target
 
                     if affected_calculation > 0:
                         quarterly_stats['report']['affected_single_calculation'] = affected_calculation
@@ -1398,7 +1413,7 @@ class PITIncomeQuarterlyManager(PITTableManager):
         # ---------- 2) 处理 express（依赖 report 上一季累计；缺失回填同季 report 单季）【优化：向量化处理】----------
         mask_e = work.get('data_source').eq('express') if 'data_source' in work.columns else pd.Series([False]*len(work), index=work.index)
         if mask_e.any():
-            quarterly_stats['express']['total_records'] = mask_e.sum()
+            quarterly_stats['express']['total_records'] = int((mask_e & target_mask).sum())
             self.logger.info(f"开始处理 express 季度化: {mask_e.sum()} 条记录")
 
             # 处理 Q1（直接等于累计）
@@ -1412,7 +1427,9 @@ class PITIncomeQuarterlyManager(PITTableManager):
             # 处理 Q2-Q4（需要差分计算）【优化：向量化处理】
             mask_e_q2q4 = mask_e & work['quarter'].ne(1)
             if mask_e_q2q4.any() and mask_r.any():
-                quarterly_stats['express']['q2q4_records'] = mask_e_q2q4.sum()
+                quarterly_stats['express']['q2q4_records'] = int(
+                    (mask_e_q2q4 & target_mask).sum()
+                )
                 e_data = work.loc[mask_e_q2q4].copy()
 
                 # 【关键修复】为每个 express 记录找到对应的 report 累计值，而不是单季值
@@ -1423,11 +1440,11 @@ class PITIncomeQuarterlyManager(PITTableManager):
                 for idx, row in e_data.iterrows():
                     ts = row['ts_code']
                     prev_end = row['prev_end_date']
-                    needed_report_keys.append((ts, prev_end))
+                    needed_report_keys.append((idx, ts, prev_end))
 
                 # 【关键修复】使用预构建的累计值映射
                 missing_cumulative_warnings = []
-                for ts, prev_end in needed_report_keys:
+                for idx, ts, prev_end in needed_report_keys:
                     # 首先尝试从累计值映射中获取
                     prev_cum_data = r_cumulative_lookup.get((ts, prev_end))
                     if prev_cum_data:
@@ -1441,7 +1458,8 @@ class PITIncomeQuarterlyManager(PITTableManager):
                             prev_cum_values.append(base_lookup.iloc[0][q_fields].to_dict())
                         else:
                             # 记录缺失的累计数据，但继续处理
-                            missing_cumulative_warnings.append((ts, prev_end))
+                            if bool(target_mask.loc[idx]):
+                                missing_cumulative_warnings.append((ts, prev_end))
                             prev_cum_values.append({c: None for c in q_fields})
 
                 # 更新统计信息
@@ -1473,7 +1491,9 @@ class PITIncomeQuarterlyManager(PITTableManager):
                             work.loc[mask_e_q2q4 & valid_single, 'conversion_status'] = 'QTR_DIFF_EXP'
                         else:
                             work.loc[mask_e_q2q4, c] = None
-                            affected_calculation += mask_e_q2q4.sum()
+                        affected_calculation += int(
+                            ((~valid_single) & target_mask.reindex(valid_single.index, fill_value=False)).sum()
+                        )
 
                 quarterly_stats['express']['affected_single_calculation'] = affected_calculation
 
@@ -1481,7 +1501,7 @@ class PITIncomeQuarterlyManager(PITTableManager):
         # ---------- 3) 处理 forecast（同 express 策略）【优化：向量化处理】----------
         mask_f = work.get('data_source').eq('forecast') if 'data_source' in work.columns else pd.Series([False]*len(work), index=work.index)
         if mask_f.any():
-            quarterly_stats['forecast']['total_records'] = mask_f.sum()
+            quarterly_stats['forecast']['total_records'] = int((mask_f & target_mask).sum())
             self.logger.info(f"开始处理 forecast 季度化: {mask_f.sum()} 条记录")
 
             # 处理 Q1（直接等于累计）
@@ -1495,7 +1515,9 @@ class PITIncomeQuarterlyManager(PITTableManager):
             # 处理 Q2-Q4（需要差分计算）【修复：使用累计值进行季度化】
             mask_f_q2q4 = mask_f & work['quarter'].ne(1)
             if mask_f_q2q4.any() and mask_r.any():
-                quarterly_stats['forecast']['q2q4_records'] = mask_f_q2q4.sum()
+                quarterly_stats['forecast']['q2q4_records'] = int(
+                    (mask_f_q2q4 & target_mask).sum()
+                )
                 f_data = work.loc[mask_f_q2q4].copy()
 
                 # 【关键修复】为每个 forecast 记录找到对应的 report 累计值，而不是单季值
@@ -1506,11 +1528,11 @@ class PITIncomeQuarterlyManager(PITTableManager):
                 for idx, row in f_data.iterrows():
                     ts = row['ts_code']
                     prev_end = row['prev_end_date']
-                    needed_report_keys.append((ts, prev_end))
+                    needed_report_keys.append((idx, ts, prev_end))
 
                 # 【关键修复】使用预构建的累计值映射
                 missing_cumulative_warnings = []
-                for ts, prev_end in needed_report_keys:
+                for idx, ts, prev_end in needed_report_keys:
                     # 首先尝试从累计值映射中获取
                     prev_cum_data = r_cumulative_lookup.get((ts, prev_end))
                     if prev_cum_data:
@@ -1524,7 +1546,8 @@ class PITIncomeQuarterlyManager(PITTableManager):
                             prev_cum_values.append(base_lookup.iloc[0][q_fields].to_dict())
                         else:
                             # 记录缺失的累计数据，但继续处理
-                            missing_cumulative_warnings.append((ts, prev_end))
+                            if bool(target_mask.loc[idx]):
+                                missing_cumulative_warnings.append((ts, prev_end))
                             prev_cum_values.append({c: None for c in q_fields})
 
                 # 更新统计信息
@@ -1554,14 +1577,18 @@ class PITIncomeQuarterlyManager(PITTableManager):
                         if valid_single.any():
                             work.loc[mask_f_q2q4 & valid_single, c] = single_vals[valid_single]
                             work.loc[mask_f_q2q4 & valid_single, 'conversion_status'] = 'QTR_DIFF_FC'
-                        else:
+                        invalid_for_target = int(
+                            ((~valid_single) & target_mask.reindex(valid_single.index, fill_value=False)).sum()
+                        )
+                        if not valid_single.any():
                             # 对 forecast，当无法获得上一季报告累计时，保留中值（仅限净利润归母）
                             if c == 'n_income_attr_p':
                                 work.loc[mask_f_q2q4, c] = cur_cum_vals
                                 work.loc[mask_f_q2q4, 'conversion_status'] = 'FC_MID_KEEP'
                             else:
                                 work.loc[mask_f_q2q4, c] = None
-                                affected_calculation += mask_f_q2q4.sum()
+                        if c != 'n_income_attr_p':
+                            affected_calculation += invalid_for_target
 
                 quarterly_stats['forecast']['affected_single_calculation'] = affected_calculation
 
@@ -1629,15 +1656,23 @@ class PITIncomeQuarterlyManager(PITTableManager):
             # 计算影响比例
             total_q2q4_records = sum(quarterly_stats[s]['q2q4_records'] for s in ['express', 'forecast'])
             if total_q2q4_records > 0:
-                missing_ratio = total_missing_cumulative / total_q2q4_records * 100
-                self.logger.info(".2f")
+                express_forecast_missing = sum(
+                    quarterly_stats[source]['missing_prev_cumulative']
+                    for source in ['express', 'forecast']
+                )
+                missing_ratio = express_forecast_missing / total_q2q4_records * 100
+                self.logger.info(
+                    f"  Express/Forecast累计值缺失比例: {missing_ratio:.2f}%"
+                )
             # 特别关注 report 单季计算影响
             report_q2q4 = quarterly_stats['report']['q2q4_records']
             if report_q2q4 > 0:
                 report_affected = quarterly_stats['report']['affected_single_calculation']
                 if report_affected > 0:
                     report_ratio = report_affected / (report_q2q4 * len(quarterly_stats['report']['field_affected_breakdown'])) * 100
-                    self.logger.info(".2f")
+                    self.logger.info(
+                        f"  Report单季字段受影响比例: {report_ratio:.2f}%"
+                    )
                 else:
                     self.logger.info("  ✅ Report数据无单季计算影响")
             else:

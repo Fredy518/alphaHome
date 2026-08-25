@@ -1299,16 +1299,16 @@ class FinancialIndicatorsCalculator:
                 success_rate = success_count/total_processed*100 if total_processed > 0 else 0
                 # 进一步简化输出，只在关键时候输出
                 if total_processed >= 10:  # 只在处理较多记录时才输出
-                    self.logger.info(f"✓ 完成 {total_processed} 条记录 ({success_rate:.0f}%)")
+                    self.logger.info(f"计算完成: {total_processed} 条记录 ({success_rate:.0f}%)")
                 return
 
             # 详细模式：输出完整统计
             self.logger.info("=" * 60)
-            self.logger.info("🚀 财务指标计算完成 - 性能报告")
+            self.logger.info("财务指标计算完成 - 性能报告")
             self.logger.info("=" * 60)
 
             # 基本统计
-            self.logger.info("📊 基础统计:")
+            self.logger.info("基础统计:")
             self.logger.info(f"   总耗时: {total_time:.2f} 秒")
             self.logger.info(f"   处理财务记录: {total_processed} 条")
             self.logger.info(f"   成功计算: {success_count} 条")
@@ -1316,29 +1316,31 @@ class FinancialIndicatorsCalculator:
 
             # 验证数据合理性
             if success_count > total_processed:
-                self.logger.warning(f"⚠️ 数据异常: 成功计算({success_count}) > 处理总数({total_processed})")
+                self.logger.warning(f"数据异常: 成功计算({success_count}) > 处理总数({total_processed})")
             if failed_count < 0:
-                self.logger.warning(f"⚠️ 数据异常: 失败计算({failed_count})为负数")
+                self.logger.warning(f"数据异常: 失败计算({failed_count})为负数")
 
             success_rate = success_count/total_processed*100 if total_processed > 0 else 0
             self.logger.info(f"   成功率: {success_rate:.1f}%")
 
+            throughput = success_count / total_time if total_time > 0 else 0.0
             if total_time > 0:
-                throughput = success_count / total_time
                 self.logger.info(f"   计算吞吐量: {throughput:.1f} 只/秒")
 
             # 缓存统计
+            total_cache_requests = 0
+            cache_hit_rate = None
             if self.enable_cache:
                 total_cache_requests = self.stats['cache_hits'] + self.stats['cache_misses']
                 if total_cache_requests > 0:
                     cache_hit_rate = self.stats['cache_hits'] / total_cache_requests * 100
-                    self.logger.info("\n💾 缓存统计:")
+                    self.logger.info("\n缓存统计:")
                     self.logger.info(f"   缓存命中: {self.stats['cache_hits']} 次")
                     self.logger.info(f"   缓存未命中: {self.stats['cache_misses']} 次")
                     self.logger.info(f"   缓存命中率: {cache_hit_rate:.1f}%")
 
             # 性能评估
-            self.logger.info("\n⚡ 性能评估:")
+            self.logger.info("\n性能评估:")
             if throughput > 50:
                 self.logger.info("   性能等级: 优秀 (吞吐量 > 50只/秒)")
             elif throughput > 20:
@@ -1349,9 +1351,9 @@ class FinancialIndicatorsCalculator:
                 self.logger.info("   性能等级: 需优化 (吞吐量 < 5只/秒)")
 
             # 优化建议
-            if cache_hit_rate < 50 and total_cache_requests > 10:
-                self.logger.info("💡 优化建议: 缓存命中率较低，考虑增大缓存大小或调整缓存策略")
-            if failed_count / total_processed > 0.1:
-                self.logger.info("💡 优化建议: 失败率较高，检查数据质量或计算逻辑")
+            if cache_hit_rate is not None and cache_hit_rate < 50 and total_cache_requests > 10:
+                self.logger.info("优化建议: 缓存命中率较低，考虑增大缓存大小或调整缓存策略")
+            if total_processed > 0 and failed_count / total_processed > 0.1:
+                self.logger.info("优化建议: 失败率较高，检查数据质量或计算逻辑")
 
             self.logger.info("=" * 60)

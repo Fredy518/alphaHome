@@ -10,11 +10,11 @@
 
 import asyncio
 from datetime import datetime
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
-from ...common.db_manager import DBManager, create_async_manager
+from ...common.db_manager import DBManager
 from ...common.logging_utils import get_logger
-from ...common.task_system import UnifiedTaskFactory, base_task
+from ...common.task_system import UnifiedTaskFactory
 from ..utils.common import format_status_chinese, format_datetime_for_display
 from ...common.constants import UpdateTypes
 
@@ -52,6 +52,58 @@ def toggle_history_mode():
 def get_current_display_mode():
     """获取当前显示模式。"""
     return "历史任务" if _show_history_mode else "当前会话任务"
+
+
+def _order_tasks_by_dependencies(tasks_to_run: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Return a stable dependency-first ordering for the selected tasks.
+
+    Dependencies that are not part of the current selection are intentionally
+    ignored.  This keeps single-task reruns possible while ensuring that a
+    selected PIT dependent (for example financial indicators) runs after its
+    selected inputs.
+    """
+    tasks_by_name = {
+        task_info.get("task_name"): task_info
+        for task_info in tasks_to_run
+        if task_info.get("task_name")
+    }
+    ordered: List[Dict[str, Any]] = []
+    visited: set[str] = set()
+    visiting: set[str] = set()
+
+    def visit(task_name: str) -> None:
+        if task_name in visited:
+            return
+        if task_name in visiting:
+            logger.warning("检测到任务依赖循环，保留可解析的稳定顺序: %s", task_name)
+            return
+
+        task_info = tasks_by_name[task_name]
+        visiting.add(task_name)
+        raw_dependencies = task_info.get("dependencies") or ()
+        if isinstance(raw_dependencies, str):
+            raw_dependencies = (raw_dependencies,)
+        for dependency in raw_dependencies:
+            dependency_name = str(dependency)
+            if dependency_name in tasks_by_name:
+                visit(dependency_name)
+        visiting.remove(task_name)
+        visited.add(task_name)
+        ordered.append(task_info)
+
+    for task_info in tasks_to_run:
+        task_name = task_info.get("task_name")
+        if task_name:
+            visit(task_name)
+        else:
+            ordered.append(task_info)
+
+    original_names = [item.get("task_name") for item in tasks_to_run]
+    ordered_names = [item.get("task_name") for item in ordered]
+    if ordered_names != original_names:
+        logger.info("已按任务依赖调整执行顺序: %s -> %s", original_names, ordered_names)
+    return ordered
+
 
 # --- Core Logic ---
 
@@ -161,6 +213,7 @@ async def run_tasks(
         _current_running_tasks = []
         raise
 
+    tasks_to_run = _order_tasks_by_dependencies(tasks_to_run)
     total_tasks = len(tasks_to_run)
     
     try:
@@ -171,7 +224,7 @@ async def run_tasks(
 
             # 检查是否收到停止信号
             if _global_stop_event and _global_stop_event.is_set():
-                log_msg = f"收到停止信号，跳过剩余任务"
+                log_msg = "收到停止信号，跳过剩余任务"
                 logger.info(log_msg)
                 if _send_response_callback:
                     _send_response_callback("LOG", {"level": "warning", "message": log_msg})
@@ -220,7 +273,6 @@ async def run_tasks(
 
             # 检查任务是否支持选择的执行模式
             # Excel 任务在智能增量模式下直接跳过，其他任务自动切换到全量更新
-            actual_exec_mode = exec_mode
             supports_incremental = True
             supports_incremental_method = getattr(task_instance, "supports_incremental_update", None)
             if callable(supports_incremental_method):
@@ -252,7 +304,6 @@ async def run_tasks(
                     continue
                 else:
                     # 其他不支持增量的任务自动切换到全量更新
-                    actual_exec_mode = "全量更新"
                     skip_reason = "该任务不支持智能增量更新，已自动切换到全量更新模式"
                     if hasattr(task_instance, 'get_incremental_skip_reason'):
                         try:

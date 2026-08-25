@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import tkinter as tk
+from datetime import datetime
 from tkinter import messagebox, ttk
 from typing import Any, Dict, List, Optional
 
 from ...common.constants import UpdateTypes
 from ...common.logging_utils import get_logger
 from .. import controller
+from ..utils.common import format_datetime_for_display
 
 logger = get_logger(__name__)
 
@@ -211,6 +213,7 @@ def get_selected_pit_tasks() -> List[Dict[str, Any]]:
                     "task_type": "pit",
                     "description": task.get("description", ""),
                     "data_source": "pit",
+                    "dependencies": list(task.get("dependencies") or []),
                 }
             )
     return selected
@@ -253,11 +256,15 @@ def _update_pit_task_display(widgets: Dict[str, tk.Widget]):
             task.get("row_count", 0),
             _format_rate(task.get("coverage_rate")),
             "" if task.get("gap_count") is None else task.get("gap_count"),
-            task.get("recent_status", ""),
-            _fmt(task.get("last_run_time")),
+            task.get("last_execution_status", ""),
+            _fmt(task.get("last_execution_time")),
+            _fmt(task.get("last_audit_time")),
         )
         tags = ("selected",) if task.get("selected") else ()
-        if task.get("recent_status") in ("error", "missing_table"):
+        if (
+            task.get("last_execution_status") == "error"
+            or task.get("live_status") in ("error", "missing_table")
+        ):
             tags = tags + ("error",)
         tree.insert("", tk.END, values=values, tags=tags)
     tree.tag_configure("selected", background="#e8f4fd")
@@ -270,6 +277,10 @@ def _show_task_detail(widgets: Dict[str, tk.Widget], task_name: str):
     task = _find_task(task_name)
     if not task:
         return
+    _write_detail_text(widgets, _format_task_detail(task))
+
+
+def _format_task_detail(task: Dict[str, Any]) -> str:
     lines = [
         f"任务: {task.get('name')}",
         f"域: {task.get('domain')}",
@@ -281,14 +292,27 @@ def _show_task_detail(widgets: Dict[str, tk.Widget], task_name: str):
         f"依赖: {', '.join(task.get('dependencies') or []) or '无'}",
         f"支持模式: {', '.join(task.get('supported_modes') or [])}",
         "",
+        "当前实时表状态",
         f"最新日期: {_fmt(task.get('latest_date'))}",
         f"行数: {task.get('row_count', 0)}",
         f"覆盖率: {_format_rate(task.get('coverage_rate'))}",
         f"缺口数: {task.get('gap_count')}",
-        f"最近状态: {task.get('recent_status')}",
-        f"最近审计时间: {_fmt(task.get('last_run_time'))}",
+        f"实时表状态: {task.get('live_status')}",
+        "",
+        "最近执行记录",
+        f"执行状态: {task.get('last_execution_status')}",
+        f"执行时间: {_fmt(task.get('last_execution_time'))}",
+        f"执行详情: {task.get('last_execution_details') or '无'}",
+        "",
+        "最近审计快照",
+        f"审计状态: {task.get('audit_status')}",
+        f"审计时间: {_fmt(task.get('last_audit_time'))}",
+        f"审计时最新日期: {_fmt(task.get('audited_latest_date'))}",
+        f"审计时行数: {task.get('audited_row_count')}",
+        f"审计时覆盖率: {_format_rate(task.get('audited_coverage_rate'))}",
+        f"审计时缺口数: {task.get('audited_gap_count')}",
     ]
-    _write_detail_text(widgets, "\n".join(lines))
+    return "\n".join(lines)
 
 
 def _find_task(task_name: str) -> Optional[Dict[str, Any]]:
@@ -367,4 +391,6 @@ def _format_rate(value: Any) -> str:
 def _fmt(value: Any) -> str:
     if value is None:
         return "N/A"
+    if isinstance(value, datetime):
+        return format_datetime_for_display(value)
     return str(value)[:19]

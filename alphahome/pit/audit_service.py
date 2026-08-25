@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import date, datetime
 from decimal import Decimal
@@ -48,15 +49,23 @@ class PITAuditService:
     def __init__(self, db_manager: Any):
         self.db = db_manager
         self._listed_stock_count: Optional[int] = None
+        self._listed_stock_count_lock = asyncio.Lock()
 
     async def list_pit_tasks(self) -> List[Dict[str, Any]]:
         task_classes = self._pit_task_classes()
-        tasks: List[Dict[str, Any]] = []
+        task_specs: List[Tuple[str, Any, PITTaskContract]] = []
         for task_name in sorted(task_classes):
             task_class = task_classes[task_name]
             contract = getattr(task_class, "contract", None)
             if not isinstance(contract, PITTaskContract):
                 continue
+            task_specs.append((task_name, task_class, contract))
+
+        async def load_task(
+            task_name: str,
+            task_class: Any,
+            contract: PITTaskContract,
+        ) -> Dict[str, Any]:
             info = contract.to_dict()
             info.update(
                 {
@@ -66,35 +75,72 @@ class PITAuditService:
                 }
             )
             try:
-                latest = await self._latest_snapshot_for_task(task_name)
-                if latest:
-                    info.update(latest)
-                else:
-                    stats = await self._table_stats(contract)
-                    info.update(
-                        {
-                            "latest_date": stats.get("latest_pit_time"),
-                            "row_count": stats.get("row_count", 0),
-                            "coverage_rate": stats.get("coverage_rate"),
-                            "gap_count": stats.get("gap_count"),
-                            "recent_status": stats.get("status", "unknown"),
-                            "last_run_time": None,
-                        }
-                    )
+                stats = await self._table_stats(contract)
+                info.update(
+                    {
+                        "latest_date": stats.get("latest_pit_time"),
+                        "row_count": stats.get("row_count", 0),
+                        "coverage_rate": stats.get("coverage_rate"),
+                        "gap_count": stats.get("gap_count"),
+                        "live_status": stats.get("status", "unknown"),
+                    }
+                )
             except Exception as exc:
-                logger.warning("获取PIT任务状态失败: %s: %s", task_name, exc)
+                logger.warning("获取PIT实时表状态失败: %s: %s", task_name, exc)
                 info.update(
                     {
                         "latest_date": None,
                         "row_count": 0,
                         "coverage_rate": None,
                         "gap_count": None,
-                        "recent_status": "error",
-                        "last_run_time": None,
+                        "live_status": "error",
                     }
                 )
-            tasks.append(info)
-        return tasks
+
+            audit_snapshot: Optional[Dict[str, Any]] = None
+            try:
+                audit_snapshot = await self._latest_snapshot_for_task(task_name)
+            except Exception as exc:
+                logger.warning("获取PIT最近审计快照失败: %s: %s", task_name, exc)
+            info.update(
+                audit_snapshot
+                or {
+                    "last_audit_time": None,
+                    "audited_latest_date": None,
+                    "audited_row_count": None,
+                    "audited_coverage_rate": None,
+                    "audited_gap_count": None,
+                    "audit_status": None,
+                }
+            )
+
+            execution: Optional[Dict[str, Any]] = None
+            try:
+                execution = await self._latest_task_execution_for_task(task_name)
+            except Exception as exc:
+                logger.warning("获取PIT最近执行记录失败: %s: %s", task_name, exc)
+            info.update(
+                execution
+                or {
+                    "last_execution_time": None,
+                    "last_execution_status": None,
+                    "last_execution_details": None,
+                }
+            )
+
+            # Compatibility aliases for callers that still consume the old keys.
+            info["recent_status"] = info.get("last_execution_status") or info.get("live_status")
+            info["last_run_time"] = info.get("last_execution_time")
+            return info
+
+        return list(
+            await asyncio.gather(
+                *(
+                    load_task(task_name, task_class, contract)
+                    for task_name, task_class, contract in task_specs
+                )
+            )
+        )
 
     async def audit_all(self, persist: bool = True) -> List[Dict[str, Any]]:
         task_names = sorted(self._pit_task_classes().keys())
@@ -115,14 +161,30 @@ class PITAuditService:
 
         stats = await self._table_stats(contract)
         raw_gap = await self._raw_gap_summary(contract, stats.get("coverage_period"))
+        domain_details = await self._domain_audit_details(
+            contract, stats.get("coverage_period")
+        )
         details = {
             "contract": contract.to_dict(),
             "coverage_period": stats.get("coverage_period"),
             "coverage_count": stats.get("coverage_count"),
             "listed_stock_count": stats.get("listed_stock_count"),
+            "denominator_name": stats.get("denominator_name"),
+            "denominator_count": stats.get("denominator_count"),
             "raw_vs_pit": raw_gap,
+            "domain_metrics": domain_details,
         }
         status = stats.get("status", "unknown")
+        if status == "healthy" and contract.domain == "industry_fttm":
+            valued_count = sum(
+                int(row.get("valued_industries") or 0)
+                for row in domain_details.get("levels", [])
+            )
+            if valued_count == 0:
+                status = "structure_only"
+        if status == "healthy" and contract.domain == "index_fttm":
+            if int(domain_details.get("valued_universes") or 0) == 0:
+                status = "structure_only"
         result = {
             "task_name": task_name,
             "output_table": contract.output_table,
@@ -267,16 +329,18 @@ class PITAuditService:
 
     async def _table_stats(self, contract: PITTaskContract) -> Dict[str, Any]:
         if not await self._relation_exists(contract.output_table):
-            listed_count = await self._current_listed_count()
+            denominator_count = await self._denominator_count(contract, None)
             return {
                 "status": "missing_table",
                 "row_count": 0,
                 "latest_pit_time": None,
                 "coverage_period": None,
                 "coverage_count": 0,
-                "listed_stock_count": listed_count,
-                "coverage_rate": 0.0 if listed_count else None,
-                "gap_count": listed_count if listed_count else None,
+                "listed_stock_count": denominator_count,
+                "denominator_name": contract.audit_denominator,
+                "denominator_count": denominator_count,
+                "coverage_rate": 0.0 if denominator_count else None,
+                "gap_count": denominator_count if denominator_count else None,
             }
 
         relation = _qualified(contract.output_table)
@@ -294,72 +358,386 @@ class PITAuditService:
         latest_pit_time = row["latest_pit_time"] if row else None
 
         coverage_key = "end_date" if contract.domain == "financials" and "end_date" in columns else contract.pit_time_key
-        listed_count = await self._current_listed_count()
+        preliminary_denominator = (
+            await self._current_listed_count()
+            if contract.audit_denominator == "current_listed_stocks"
+            else 0
+        )
         coverage = await self._coverage_for_latest(
-            contract.output_table,
+            contract,
             coverage_key,
-            min_coverage_count=max(1, int(listed_count * 0.05)) if contract.domain == "financials" and listed_count else 1,
+            min_coverage_count=(
+                max(1, int(preliminary_denominator * 0.05))
+                if contract.domain == "financials" and preliminary_denominator
+                else 1
+            ),
         )
         coverage_count = int(coverage.get("coverage_count") or 0)
-        coverage_rate = round(coverage_count / listed_count, 6) if listed_count else None
-        gap_count = max(listed_count - coverage_count, 0) if listed_count else None
+        coverage_period = coverage.get("coverage_period")
+        denominator_count = await self._denominator_count(contract, coverage_period)
+        coverage_rate = (
+            round(coverage_count / denominator_count, 6) if denominator_count else None
+        )
+        gap_count = (
+            max(denominator_count - coverage_count, 0) if denominator_count else None
+        )
         status = "empty" if row_count == 0 else "healthy"
         return {
             "status": status,
             "row_count": row_count,
             "latest_pit_time": latest_pit_time,
-            "coverage_period": coverage.get("coverage_period"),
+            "coverage_period": coverage_period,
             "coverage_count": coverage_count,
-            "listed_stock_count": listed_count,
+            # Compatibility key used by the existing GUI.  New consumers should
+            # use denominator_name/count because an industry entity is not a stock.
+            "listed_stock_count": denominator_count,
+            "denominator_name": contract.audit_denominator,
+            "denominator_count": denominator_count,
             "coverage_rate": coverage_rate,
             "gap_count": gap_count,
         }
 
     async def _coverage_for_latest(
         self,
-        output_table: str,
+        contract: PITTaskContract,
         coverage_key: str,
         min_coverage_count: int = 1,
     ) -> Dict[str, Any]:
+        output_table = contract.output_table
         columns = await self._get_columns(output_table)
         if coverage_key not in columns:
             return {"coverage_period": None, "coverage_count": 0}
         relation = _qualified(output_table)
         key = _quote_identifier(coverage_key)
-        listed_join = await self._listed_join_sql("t")
-        row = await self.db.fetch_one(
-            f"""
-            WITH period_counts AS (
-                SELECT t.{key}::date AS coverage_period,
-                       COUNT(DISTINCT t.ts_code)::bigint AS coverage_count
+        entity_keys = tuple(contract.audit_entity_keys or ("ts_code",))
+        available_entity_keys = [value for value in entity_keys if value in columns]
+        if len(available_entity_keys) != len(entity_keys):
+            return {"coverage_period": None, "coverage_count": 0}
+        if len(available_entity_keys) == 1:
+            distinct_expression = f"t.{_quote_identifier(available_entity_keys[0])}"
+        else:
+            distinct_expression = "(" + ", ".join(
+                f"t.{_quote_identifier(value)}" for value in available_entity_keys
+            ) + ")"
+        entity_not_null = " AND ".join(
+            f"t.{_quote_identifier(value)} IS NOT NULL" for value in available_entity_keys
+        )
+        listed_join = ""
+        extra_filter = ""
+        if contract.audit_denominator == "current_listed_stocks" and "ts_code" in available_entity_keys:
+            listed_join = await self._listed_join_sql("t")
+        elif contract.audit_denominator == "pit_time_active_stocks" and "ts_code" in available_entity_keys:
+            extra_filter = f"""
+                AND EXISTS (
+                    SELECT 1
+                    FROM rawdata.stock_basic active
+                    WHERE active.ts_code = t.ts_code
+                      AND active.list_date <= t.{key}
+                      AND (active.delist_date IS NULL OR active.delist_date > t.{key})
+                      AND active.exchange IN ('SSE', 'SZSE', 'BSE')
+                      AND active.curr_type = 'CNY'
+                )
+            """
+        threshold = max(1, int(min_coverage_count or 1))
+        before_period: Any = None
+        fallback: Optional[Dict[str, Any]] = None
+
+        # Count only one indexed candidate period at a time.  The previous SQL
+        # grouped every historical row on each GUI refresh, which made list
+        # loading scale with the full PIT history instead of the latest cross-section.
+        while True:
+            period_filter = "" if before_period is None else f"AND t.{key} < $1"
+            period_args: tuple[Any, ...] = () if before_period is None else (before_period,)
+            period_row = await self.db.fetch_one(
+                f"""
+                SELECT /* pit_coverage_candidate_period */
+                       MAX(t.{key})::date AS coverage_period
+                FROM {relation} t
+                WHERE t.{key} IS NOT NULL
+                  {period_filter}
+                """,
+                *period_args,
+            )
+            coverage_period = period_row["coverage_period"] if period_row else None
+            if coverage_period is None:
+                break
+
+            count_row = await self.db.fetch_one(
+                f"""
+                SELECT /* pit_coverage_count */
+                       COUNT(DISTINCT {distinct_expression})::bigint AS coverage_count
                 FROM {relation} t
                 {listed_join}
-                WHERE t.{key} IS NOT NULL
-                GROUP BY t.{key}
-            ),
-            preferred AS (
-                SELECT coverage_period, coverage_count
-                FROM period_counts
-                WHERE coverage_count >= $1
-                ORDER BY coverage_period DESC
-                LIMIT 1
-            ),
-            fallback AS (
-                SELECT coverage_period, coverage_count
-                FROM period_counts
-                ORDER BY coverage_period DESC
-                LIMIT 1
+                WHERE t.{key} = $1
+                  AND {entity_not_null}
+                  {extra_filter}
+                """,
+                coverage_period,
             )
-            SELECT * FROM preferred
-            UNION ALL
-            SELECT * FROM fallback WHERE NOT EXISTS (SELECT 1 FROM preferred)
-            LIMIT 1
+            coverage_count = int(count_row["coverage_count"] or 0) if count_row else 0
+            candidate = {
+                "coverage_period": coverage_period,
+                "coverage_count": coverage_count,
+            }
+            if coverage_count > 0 and fallback is None:
+                fallback = candidate
+            if coverage_count >= threshold:
+                return candidate
+            before_period = coverage_period
+
+        return fallback or {"coverage_period": None, "coverage_count": 0}
+
+    async def _denominator_count(
+        self, contract: PITTaskContract, coverage_period: Any
+    ) -> int:
+        denominator = contract.audit_denominator or "current_listed_stocks"
+        if denominator == "current_listed_stocks":
+            return await self._current_listed_count()
+        if denominator == "pit_time_active_stocks":
+            if not coverage_period or not await self._relation_exists("rawdata.stock_basic"):
+                return 0
+            row = await self.db.fetch_one(
+                """
+                SELECT COUNT(DISTINCT ts_code)::bigint AS cnt
+                FROM rawdata.stock_basic
+                WHERE list_date <= $1
+                  AND (delist_date IS NULL OR delist_date > $1)
+                  AND exchange IN ('SSE', 'SZSE', 'BSE')
+                  AND curr_type = 'CNY'
+                """,
+                coverage_period,
+            )
+            return int(row["cnt"] or 0) if row else 0
+        if denominator == "pit_time_structural_industries":
+            if not coverage_period or not await self._relation_exists(
+                "pit.pit_industry_classification"
+            ):
+                return 0
+            row = await self.db.fetch_one(
+                """
+                WITH structural AS (
+                    SELECT data_source AS classification_source,
+                           'L1'::text AS industry_level,
+                           industry_code1 AS industry_code,
+                           'total_mv'::text AS weight_basis
+                    FROM pit.pit_industry_classification
+                    WHERE obs_date = $1
+                      AND data_source = 'sw'
+                      AND industry_code1 IS NOT NULL
+                    UNION
+                    SELECT data_source AS classification_source,
+                           'L2'::text AS industry_level,
+                           industry_code2 AS industry_code,
+                           'total_mv'::text AS weight_basis
+                    FROM pit.pit_industry_classification
+                    WHERE obs_date = $1
+                      AND data_source = 'sw'
+                      AND industry_code2 IS NOT NULL
+                )
+                SELECT COUNT(*)::bigint AS cnt FROM structural
+                """,
+                coverage_period,
+            )
+            return int(row["cnt"] or 0) if row else 0
+        if denominator == "configured_index_fttm_universes":
+            if not coverage_period:
+                return 0
+            from alphahome.pit.pit_index_fttm_manager import configured_universe_count
+
+            return configured_universe_count(coverage_period)
+        logger.warning("未知PIT审计分母: %s", denominator)
+        return 0
+
+    async def _domain_audit_details(
+        self, contract: PITTaskContract, coverage_period: Any
+    ) -> Dict[str, Any]:
+        if not coverage_period or not await self._relation_exists(contract.output_table):
+            return {}
+        if contract.domain == "stock_fttm":
+            return await self._stock_fttm_audit_details(contract, coverage_period)
+        if contract.domain == "industry_fttm":
+            return await self._industry_fttm_audit_details(contract, coverage_period)
+        if contract.domain == "index_fttm":
+            return await self._index_fttm_audit_details(contract, coverage_period)
+        return {}
+
+    async def _stock_fttm_audit_details(
+        self, contract: PITTaskContract, coverage_period: Any
+    ) -> Dict[str, Any]:
+        row = await self.db.fetch_one(
+            f"""
+            SELECT
+                COUNT(*)::bigint AS row_count,
+                COUNT(DISTINCT ts_code)::bigint AS stock_count,
+                COUNT(DISTINCT org_name)::bigint AS org_count,
+                COUNT(*) FILTER (WHERE estimate_pair_status = 'both')::bigint AS both_count,
+                COUNT(*) FILTER (WHERE is_single_year_fallback)::bigint AS fallback_count,
+                COUNT(*) FILTER (
+                    WHERE fy1_value_source = 'eps_share' OR fy2_value_source = 'eps_share'
+                )::bigint AS eps_fallback_count,
+                COUNT(*) FILTER (
+                    WHERE fy1_value_source = 'np' OR fy2_value_source = 'np'
+                )::bigint AS np_path_count,
+                COUNT(*) FILTER (WHERE source_max_report_date > obs_date)::bigint AS late_source_count,
+                COUNT(*) FILTER (WHERE fttm_np < 0)::bigint AS negative_count,
+                COUNT(*) FILTER (WHERE fttm_np = 0)::bigint AS zero_count,
+                COUNT(*) FILTER (WHERE fttm_np IS NULL)::bigint AS null_count,
+                (
+                    SELECT COUNT(*) FROM (
+                        SELECT ts_code, org_name, obs_date
+                        FROM {_qualified(contract.output_table)}
+                        WHERE obs_date = $1
+                        GROUP BY ts_code, org_name, obs_date
+                        HAVING COUNT(*) > 1
+                    ) duplicate_keys
+                )::bigint AS duplicate_key_count
+            FROM {_qualified(contract.output_table)}
+            WHERE obs_date = $1
             """,
-            int(min_coverage_count or 1),
+            coverage_period,
         )
         if not row:
-            return {"coverage_period": None, "coverage_count": 0}
-        return {"coverage_period": row["coverage_period"], "coverage_count": int(row["coverage_count"] or 0)}
+            return {}
+        result = {key: int(value or 0) for key, value in dict(row).items()}
+        total = result.get("row_count", 0)
+        result["both_pair_rate"] = (
+            round(result["both_count"] / total, 6) if total else None
+        )
+        result["single_year_fallback_rate"] = (
+            round(result["fallback_count"] / total, 6) if total else None
+        )
+        return result
+
+    async def _industry_fttm_audit_details(
+        self, contract: PITTaskContract, coverage_period: Any
+    ) -> Dict[str, Any]:
+        relation = _qualified(contract.output_table)
+        rows = await self.db.fetch(
+            f"""
+            SELECT
+                industry_level,
+                COUNT(*)::bigint AS structural_industries,
+                COUNT(*) FILTER (WHERE industry_fttm_np IS NOT NULL)::bigint AS valued_industries,
+                COUNT(*) FILTER (WHERE is_eligible)::bigint AS eligible_industries,
+                COUNT(*) FILTER (WHERE source_max_report_date > obs_date)::bigint AS late_source_count,
+                COUNT(*) FILTER (
+                    WHERE diffusion_up < 0 OR diffusion_up > 1
+                )::bigint AS diffusion_out_of_range_count,
+                COUNT(*) FILTER (
+                    WHERE matched_org_count <> up_org_count + down_or_flat_org_count
+                )::bigint AS diffusion_denominator_mismatch_count,
+                percentile_cont(0.25) WITHIN GROUP (ORDER BY covered_mv_rate)
+                    AS p25_covered_mv_rate,
+                percentile_cont(0.50) WITHIN GROUP (ORDER BY covered_mv_rate)
+                    AS median_covered_mv_rate,
+                percentile_cont(0.50) WITHIN GROUP (ORDER BY org_count)
+                    AS median_org_count,
+                percentile_cont(0.50) WITHIN GROUP (ORDER BY matched_org_count)
+                    AS median_matched_org_count,
+                percentile_cont(0.50) WITHIN GROUP (ORDER BY median_org_mv_coverage)
+                    AS median_of_org_mv_coverage,
+                percentile_cont(0.25) WITHIN GROUP (ORDER BY p25_org_mv_coverage)
+                    AS p25_of_org_mv_coverage
+            FROM {relation}
+            WHERE obs_date = $1
+            GROUP BY industry_level
+            ORDER BY industry_level
+            """,
+            coverage_period,
+        )
+        levels = [_jsonable(dict(row)) for row in rows or []]
+        reason_rows = await self.db.fetch(
+            f"""
+            SELECT q.reason, COUNT(*)::bigint AS count
+            FROM {relation} t
+            CROSS JOIN LATERAL jsonb_array_elements_text(t.quality_reasons) AS q(reason)
+            WHERE t.obs_date = $1
+            GROUP BY q.reason
+            ORDER BY q.reason
+            """,
+            coverage_period,
+        )
+        consistency = await self.db.fetch_one(
+            f"""
+            SELECT COUNT(*)::bigint AS inconsistent_code_name_groups
+            FROM (
+                SELECT classification_source, industry_level, industry_code
+                FROM {relation}
+                WHERE obs_date = $1
+                GROUP BY classification_source, industry_level, industry_code
+                HAVING COUNT(DISTINCT industry_name) > 1
+            ) conflicts
+            """,
+            coverage_period,
+        )
+        return {
+            "levels": levels,
+            "quality_reason_counts": {
+                row["reason"]: int(row["count"] or 0) for row in reason_rows or []
+            },
+            "inconsistent_code_name_groups": int(
+                consistency["inconsistent_code_name_groups"] or 0
+            )
+            if consistency
+            else 0,
+        }
+
+    async def _index_fttm_audit_details(
+        self, contract: PITTaskContract, coverage_period: Any
+    ) -> Dict[str, Any]:
+        relation = _qualified(contract.output_table)
+        row = await self.db.fetch_one(
+            f"""
+            SELECT
+                COUNT(*)::bigint AS configured_universes,
+                COUNT(*) FILTER (WHERE index_fttm_np IS NOT NULL)::bigint
+                    AS valued_universes,
+                COUNT(*) FILTER (WHERE is_eligible)::bigint AS eligible_universes,
+                COUNT(*) FILTER (WHERE source_max_report_date > obs_date)::bigint
+                    AS late_source_count,
+                COUNT(*) FILTER (WHERE weight_trade_date > obs_date)::bigint
+                    AS future_weight_count,
+                COUNT(*) FILTER (
+                    WHERE (weight_basis = 'official_weight' AND weight_staleness_days > 65)
+                       OR (weight_basis = 'total_mv' AND weight_staleness_days > 31)
+                )::bigint AS stale_weight_count,
+                COUNT(*) FILTER (
+                    WHERE diffusion_up < 0 OR diffusion_up > 1
+                )::bigint AS diffusion_out_of_range_count,
+                COUNT(*) FILTER (
+                    WHERE matched_org_count <> up_org_count + down_or_flat_org_count
+                )::bigint AS diffusion_denominator_mismatch_count,
+                percentile_cont(0.25) WITHIN GROUP (ORDER BY covered_weight_rate)
+                    AS p25_covered_weight_rate,
+                percentile_cont(0.50) WITHIN GROUP (ORDER BY covered_weight_rate)
+                    AS median_covered_weight_rate,
+                percentile_cont(0.50) WITHIN GROUP (ORDER BY org_count)
+                    AS median_org_count,
+                percentile_cont(0.50) WITHIN GROUP (ORDER BY matched_org_count)
+                    AS median_matched_org_count
+            FROM {relation}
+            WHERE obs_date = $1
+            """,
+            coverage_period,
+        )
+        if not row:
+            return {}
+        result = _jsonable(dict(row))
+        reason_rows = await self.db.fetch(
+            f"""
+            SELECT q.reason, COUNT(*)::bigint AS count
+            FROM {relation} t
+            CROSS JOIN LATERAL jsonb_array_elements_text(t.quality_reasons) AS q(reason)
+            WHERE t.obs_date = $1
+            GROUP BY q.reason
+            ORDER BY q.reason
+            """,
+            coverage_period,
+        )
+        result["quality_reason_counts"] = {
+            item["reason"]: int(item["count"] or 0) for item in reason_rows or []
+        }
+        return result
 
     async def _raw_gap_summary(self, contract: PITTaskContract, coverage_period: Any) -> Dict[str, Any]:
         if not coverage_period or contract.domain != "financials":
@@ -484,12 +862,37 @@ class PITAuditService:
         if not row:
             return None
         return {
-            "last_run_time": row["snapshot_time"],
-            "latest_date": row["latest_pit_time"],
-            "row_count": int(row["row_count"] or 0),
-            "coverage_rate": float(row["coverage_rate"]) if row["coverage_rate"] is not None else None,
-            "gap_count": int(row["gap_count"]) if row["gap_count"] is not None else None,
-            "recent_status": row["status"],
+            "last_audit_time": row["snapshot_time"],
+            "audited_latest_date": row["latest_pit_time"],
+            "audited_row_count": int(row["row_count"] or 0),
+            "audited_coverage_rate": (
+                float(row["coverage_rate"]) if row["coverage_rate"] is not None else None
+            ),
+            "audited_gap_count": int(row["gap_count"]) if row["gap_count"] is not None else None,
+            "audit_status": row["status"],
+        }
+
+    async def _latest_task_execution_for_task(self, task_name: str) -> Optional[Dict[str, Any]]:
+        if not await self._relation_exists("public.task_status"):
+            return None
+        row = await self.db.fetch_one(
+            """
+            SELECT status,
+                   update_time,
+                   details
+            FROM public.task_status
+            WHERE task_name = $1
+            ORDER BY update_time DESC
+            LIMIT 1
+            """,
+            task_name,
+        )
+        if not row:
+            return None
+        return {
+            "last_execution_time": row["update_time"],
+            "last_execution_status": row["status"],
+            "last_execution_details": row["details"],
         }
 
     async def _latest_financial_periods(self, contracts: Sequence[PITTaskContract], limit: int) -> List[Any]:
@@ -733,6 +1136,8 @@ class PITAuditService:
 
     async def _latest_rows_for_stock(self, contract: PITTaskContract, ts_code: str, limit: int = 10) -> List[Dict[str, Any]]:
         columns = await self._get_columns(contract.output_table)
+        if "ts_code" not in columns:
+            return []
         preferred = ["ts_code", "end_date", "ann_date", "obs_date", "data_source"]
         select_cols = [col for col in preferred if col in columns]
         if not select_cols:
@@ -754,23 +1159,28 @@ class PITAuditService:
     async def _current_listed_count(self) -> int:
         if self._listed_stock_count is not None:
             return self._listed_stock_count
-        try:
-            if not await self._relation_exists("rawdata.stock_basic"):
+        async with self._listed_stock_count_lock:
+            if self._listed_stock_count is not None:
+                return self._listed_stock_count
+            try:
+                if not await self._relation_exists("rawdata.stock_basic"):
+                    self._listed_stock_count = 0
+                    return 0
+                columns = await self._get_columns("rawdata.stock_basic")
+                if "list_status" in columns:
+                    row = await self.db.fetch_one(
+                        "SELECT COUNT(DISTINCT ts_code)::bigint AS cnt FROM rawdata.stock_basic WHERE list_status = 'L'"
+                    )
+                else:
+                    row = await self.db.fetch_one(
+                        "SELECT COUNT(DISTINCT ts_code)::bigint AS cnt FROM rawdata.stock_basic"
+                    )
+                self._listed_stock_count = int(row["cnt"] or 0) if row else 0
+                return self._listed_stock_count
+            except Exception as exc:
+                logger.warning("查询当前上市股票数失败: %s", exc)
                 self._listed_stock_count = 0
                 return 0
-            columns = await self._get_columns("rawdata.stock_basic")
-            if "list_status" in columns:
-                row = await self.db.fetch_one(
-                    "SELECT COUNT(DISTINCT ts_code)::bigint AS cnt FROM rawdata.stock_basic WHERE list_status = 'L'"
-                )
-            else:
-                row = await self.db.fetch_one("SELECT COUNT(DISTINCT ts_code)::bigint AS cnt FROM rawdata.stock_basic")
-            self._listed_stock_count = int(row["cnt"] or 0) if row else 0
-            return self._listed_stock_count
-        except Exception as exc:
-            logger.warning("查询当前上市股票数失败: %s", exc)
-            self._listed_stock_count = 0
-            return 0
 
     async def _listed_join_sql(self, target_alias: str) -> str:
         """Return a SQL join clause limiting target rows to currently listed A shares."""

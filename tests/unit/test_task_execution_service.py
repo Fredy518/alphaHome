@@ -40,6 +40,29 @@ class _BlockingTask:
         return {"status": "success", "rows": 1}
 
 
+def test_order_tasks_by_dependencies_moves_selected_inputs_before_dependent():
+    tasks = [
+        {"task_name": "pit_balance_quarterly", "dependencies": []},
+        {"task_name": "pit_cashflow_quarterly", "dependencies": []},
+        {
+            "task_name": "pit_financial_indicators",
+            "dependencies": ["pit_income_quarterly", "pit_balance_quarterly"],
+        },
+        {"task_name": "pit_income_quarterly", "dependencies": []},
+        {"task_name": "pit_industry_classification", "dependencies": []},
+    ]
+
+    ordered = task_execution_service._order_tasks_by_dependencies(tasks)
+
+    assert [item["task_name"] for item in ordered] == [
+        "pit_balance_quarterly",
+        "pit_cashflow_quarterly",
+        "pit_income_quarterly",
+        "pit_financial_indicators",
+        "pit_industry_classification",
+    ]
+
+
 @pytest.mark.asyncio
 async def test_run_tasks_handles_task_without_incremental_capability_method(monkeypatch):
     task = _TaskWithoutIncrementalCapabilityMethod()

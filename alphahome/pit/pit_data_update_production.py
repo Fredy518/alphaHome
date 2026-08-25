@@ -8,12 +8,14 @@ import argparse
 import asyncio
 import logging
 import sys
-from typing import Any, Dict, List, Optional
+from datetime import datetime
+from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from alphahome.common.config_manager import get_database_url
 from alphahome.common.constants import UpdateTypes
 from alphahome.common.logging_utils import get_logger
 from alphahome.common.task_system import UnifiedTaskFactory
+from alphahome.pit.base.pit_task import PITTaskContract
 
 logger = get_logger(__name__)
 
@@ -24,14 +26,20 @@ TARGET_TO_TASK = {
     "cashflow": "pit_cashflow_quarterly",
     "financial_indicators": "pit_financial_indicators",
     "industry_classification": "pit_industry_classification",
+    "stock_fttm": "pit_stock_fttm_monthly",
+    "industry_fttm": "pit_industry_fttm_monthly",
+    "index_fttm": "pit_index_fttm_monthly",
 }
 
 DEFAULT_TARGET_ORDER = [
     "income",
     "balance",
     "cashflow",
-    "financial_indicators",
     "industry_classification",
+    "stock_fttm",
+    "financial_indicators",
+    "industry_fttm",
+    "index_fttm",
 ]
 
 
@@ -64,38 +72,74 @@ class PITDataUpdateCoordinator:
         normalized_targets = self._normalize_targets(targets)
         update_type = self._update_type_from_mode(mode)
         logger.info("开始执行PIT任务: targets=%s, mode=%s, parallel=%s", normalized_targets, mode, parallel)
+        contracts = self._registered_contracts()
+        requested_tasks = [TARGET_TO_TASK[target] for target in normalized_targets]
+        execution_tasks = self._expand_dependency_closure(requested_tasks, contracts)
+        layers = self._topological_layers(execution_tasks, contracts)
+        target_for_task = {task_name: target for target, task_name in TARGET_TO_TASK.items()}
+        results_by_task: Dict[str, Dict[str, Any]] = {}
 
-        if parallel and "financial_indicators" in normalized_targets and {"income", "balance"}.intersection(normalized_targets):
-            logger.warning("financial_indicators 与 income/balance 存在依赖，同批执行时禁用并行")
-            parallel = False
+        semaphore = asyncio.Semaphore(max(int(self.max_workers or 1), 1))
 
-        if parallel:
-            semaphore = asyncio.Semaphore(max(int(self.max_workers or 1), 1))
-
-            async def _guarded(target: str):
-                async with semaphore:
-                    return await self._run_target(target, update_type)
-
-            results = await asyncio.gather(*(_guarded(target) for target in normalized_targets), return_exceptions=True)
-            failures = [
-                (target, result)
-                for target, result in zip(normalized_targets, results)
-                if isinstance(result, Exception) or (isinstance(result, dict) and result.get("status") == "error")
+        async def _execute_task(task_name: str) -> Dict[str, Any]:
+            run_started_at = datetime.now().astimezone().isoformat()
+            dependency_statuses = {
+                dependency: (results_by_task.get(dependency) or {}).get("status", "missing")
+                for dependency in contracts[task_name].dependencies
+            }
+            dependency_failures = [
+                dependency
+                for dependency in contracts[task_name].dependencies
+                if self._is_failed_result(results_by_task.get(dependency))
             ]
-            if failures:
-                for target, result in failures:
-                    logger.error("PIT任务失败: %s: %s", target, result)
-                raise RuntimeError("PIT并行更新失败: " + ", ".join(target for target, _ in failures))
-            return results
-
-        results = []
-        for target in normalized_targets:
+            target = target_for_task.get(task_name, task_name)
+            if dependency_failures:
+                return {
+                    "target": target,
+                    "task": task_name,
+                    "status": "skipped_dependency_failed",
+                    "failed_dependencies": dependency_failures,
+                    "dependency_statuses": dependency_statuses,
+                    "run_started_at": run_started_at,
+                    "run_completed_at": datetime.now().astimezone().isoformat(),
+                }
             try:
-                results.append(await self._run_target(target, update_type))
+                if parallel:
+                    async with semaphore:
+                        result = await self._run_task(task_name, target, update_type)
+                else:
+                    result = await self._run_task(task_name, target, update_type)
+                result.setdefault("dependency_statuses", dependency_statuses)
+                result.setdefault("run_started_at", run_started_at)
+                result.setdefault(
+                    "run_completed_at", datetime.now().astimezone().isoformat()
+                )
+                return result
             except Exception as exc:
                 logger.error("PIT任务失败: %s: %s", target, exc, exc_info=True)
-                results.append({"target": target, "status": "error", "error": str(exc)})
-        return results
+                return {
+                    "target": target,
+                    "task": task_name,
+                    "status": "error",
+                    "error": str(exc),
+                    "dependency_statuses": dependency_statuses,
+                    "run_started_at": run_started_at,
+                    "run_completed_at": datetime.now().astimezone().isoformat(),
+                }
+
+        for layer in layers:
+            if parallel:
+                layer_results = await asyncio.gather(
+                    *(_execute_task(task_name) for task_name in layer)
+                )
+            else:
+                layer_results = []
+                for task_name in layer:
+                    layer_results.append(await _execute_task(task_name))
+            for task_name, result in zip(layer, layer_results):
+                results_by_task[task_name] = result
+
+        return [results_by_task[task_name] for layer in layers for task_name in layer]
 
     async def update_income_data(self, mode: str = "incremental", **kwargs):
         return await self._run_target("income", self._update_type_from_mode(mode), kwargs)
@@ -112,6 +156,15 @@ class PITDataUpdateCoordinator:
     async def update_industry_classification(self, mode: str = "incremental", **kwargs):
         return await self._run_target("industry_classification", self._update_type_from_mode(mode), kwargs)
 
+    async def update_stock_fttm(self, mode: str = "incremental", **kwargs):
+        return await self._run_target("stock_fttm", self._update_type_from_mode(mode), kwargs)
+
+    async def update_industry_fttm(self, mode: str = "incremental", **kwargs):
+        return await self._run_target("industry_fttm", self._update_type_from_mode(mode), kwargs)
+
+    async def update_index_fttm(self, mode: str = "incremental", **kwargs):
+        return await self._run_target("index_fttm", self._update_type_from_mode(mode), kwargs)
+
     async def _run_target(
         self,
         target: str,
@@ -119,12 +172,25 @@ class PITDataUpdateCoordinator:
         task_config: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         task_name = TARGET_TO_TASK[target]
+        return await self._run_task(task_name, target, update_type, task_config)
+
+    async def _run_task(
+        self,
+        task_name: str,
+        target: str,
+        update_type: str,
+        task_config: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
         task = await UnifiedTaskFactory.create_task_instance(
             task_name,
             update_type=update_type,
             task_config=task_config or {},
         )
         result = await task.execute()
+        if not isinstance(result, dict):
+            result = {"status": "success", "result": result}
+        result.setdefault("target", target)
+        result.setdefault("task", task_name)
         logger.info("PIT任务完成: target=%s, task=%s, result=%s", target, task_name, result)
         return result
 
@@ -137,6 +203,78 @@ class PITDataUpdateCoordinator:
             raise ValueError(f"未知PIT target: {unknown}")
         requested = list(dict.fromkeys(targets))
         return [target for target in DEFAULT_TARGET_ORDER if target in requested]
+
+    @staticmethod
+    def _registered_contracts() -> Dict[str, PITTaskContract]:
+        from alphahome.pit.tasks import discover_tasks
+
+        discover_tasks()
+        task_classes = UnifiedTaskFactory.get_tasks_by_type("pit")
+        contracts = {
+            task_name: task_class.contract
+            for task_name, task_class in task_classes.items()
+            if isinstance(getattr(task_class, "contract", None), PITTaskContract)
+        }
+        return contracts
+
+    @staticmethod
+    def _expand_dependency_closure(
+        requested_tasks: Sequence[str],
+        contracts: Mapping[str, PITTaskContract],
+    ) -> set[str]:
+        selected: set[str] = set()
+
+        def visit(task_name: str) -> None:
+            if task_name in selected:
+                return
+            if task_name not in contracts:
+                raise ValueError(f"PIT任务未注册或缺少contract: {task_name}")
+            selected.add(task_name)
+            for dependency in contracts[task_name].dependencies:
+                visit(str(dependency))
+
+        for task_name in requested_tasks:
+            visit(task_name)
+        return selected
+
+    @staticmethod
+    def _topological_layers(
+        selected_tasks: set[str],
+        contracts: Mapping[str, PITTaskContract],
+    ) -> List[List[str]]:
+        order_hint = {
+            TARGET_TO_TASK[target]: index
+            for index, target in enumerate(DEFAULT_TARGET_ORDER)
+        }
+        remaining = set(selected_tasks)
+        completed: set[str] = set()
+        layers: List[List[str]] = []
+        while remaining:
+            ready = [
+                task_name
+                for task_name in remaining
+                if set(contracts[task_name].dependencies).intersection(selected_tasks)
+                <= completed
+            ]
+            if not ready:
+                cycle_nodes = sorted(remaining)
+                raise ValueError(f"检测到PIT任务循环依赖: {cycle_nodes}")
+            ready.sort(key=lambda name: (order_hint.get(name, len(order_hint)), name))
+            layers.append(ready)
+            completed.update(ready)
+            remaining.difference_update(ready)
+        return layers
+
+    @staticmethod
+    def _is_failed_result(result: Optional[Dict[str, Any]]) -> bool:
+        if result is None:
+            return True
+        return result.get("status") in {
+            "error",
+            "failed",
+            "cancelled",
+            "skipped_dependency_failed",
+        }
 
     @staticmethod
     def _update_type_from_mode(mode: str) -> str:
@@ -170,7 +308,13 @@ async def main():
     try:
         await coordinator.initialize()
         results = await coordinator.run_updates(args.target, args.mode, args.parallel)
-        failures = [result for result in results if isinstance(result, dict) and result.get("status") == "error"]
+        failures = [
+            result
+            for result in results
+            if isinstance(result, dict)
+            and result.get("status")
+            in {"error", "failed", "cancelled", "skipped_dependency_failed"}
+        ]
         if failures:
             logger.error("PIT数据更新存在失败任务: %s", failures)
             sys.exit(1)

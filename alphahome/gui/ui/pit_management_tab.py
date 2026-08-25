@@ -72,8 +72,9 @@ def create_pit_management_tab(parent: ttk.Frame) -> Dict[str, tk.Widget]:
         "row_count",
         "coverage_rate",
         "gap_count",
-        "recent_status",
-        "last_run_time",
+        "last_execution_status",
+        "last_execution_time",
+        "last_audit_time",
     )
     tree = ui_factory.create_treeview(table_frame, columns=columns, show="headings")
     headings = {
@@ -87,8 +88,9 @@ def create_pit_management_tab(parent: ttk.Frame) -> Dict[str, tk.Widget]:
         "row_count": "行数",
         "coverage_rate": "覆盖率",
         "gap_count": "缺口数",
-        "recent_status": "最近状态",
-        "last_run_time": "最近运行时间",
+        "last_execution_status": "最近执行状态",
+        "last_execution_time": "最近执行时间",
+        "last_audit_time": "最近审计时间",
     }
     for column, text in headings.items():
         tree.heading(column, text=text)
@@ -103,8 +105,9 @@ def create_pit_management_tab(parent: ttk.Frame) -> Dict[str, tk.Widget]:
     tree.column("row_count", width=110, minwidth=90, anchor=tk.E, stretch=False)
     tree.column("coverage_rate", width=100, minwidth=80, anchor=tk.CENTER, stretch=False)
     tree.column("gap_count", width=90, minwidth=80, anchor=tk.E, stretch=False)
-    tree.column("recent_status", width=110, minwidth=90, anchor=tk.CENTER, stretch=False)
-    tree.column("last_run_time", width=170, minwidth=150, anchor=tk.CENTER, stretch=False)
+    tree.column("last_execution_status", width=110, minwidth=90, anchor=tk.CENTER, stretch=False)
+    tree.column("last_execution_time", width=170, minwidth=150, anchor=tk.CENTER, stretch=False)
+    tree.column("last_audit_time", width=170, minwidth=150, anchor=tk.CENTER, stretch=False)
 
     vsb = ttk.Scrollbar(table_frame, orient="vertical", command=tree.yview)
     hsb = ttk.Scrollbar(table_frame, orient="horizontal", command=tree.xview)
@@ -115,7 +118,11 @@ def create_pit_management_tab(parent: ttk.Frame) -> Dict[str, tk.Widget]:
     table_frame.grid_rowconfigure(0, weight=1)
     table_frame.grid_columnconfigure(0, weight=1)
     widgets["pit_task_tree"] = tree
-    tree.insert("", tk.END, values=("", "", "正在加载, 请稍候...", "", "", "", "", "", "", "", "", ""))
+    tree.insert(
+        "",
+        tk.END,
+        values=("", "", "正在加载, 请稍候...", "", "", "", "", "", "", "", "", "", ""),
+    )
 
     detail_frame = ttk.LabelFrame(paned, text="任务详情 / 审计 / 诊断", padding=8)
     paned.add(detail_frame, weight=2)

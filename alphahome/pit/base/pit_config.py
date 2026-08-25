@@ -119,6 +119,59 @@ class PITConfig:
             'has_historical_data': True,
             'supports_incremental': True,
             'depends_on': ['pit_income_quarterly', 'pit_balance_quarterly']
+        },
+        'pit_stock_fttm_monthly': {
+            'description': '个股机构FTTM月末PIT快照',
+            'source_tables': ['rawdata.stock_report_rc', 'rawdata.stock_dailybasic'],
+            'key_fields': ['ts_code', 'org_name', 'obs_date'],
+            'data_fields': ['fttm_np'],
+            'has_historical_data': True,
+            'supports_incremental': True,
+            'snapshot_mode': True,
+            'standard_data_source': False,
+        },
+        'pit_industry_fttm_monthly': {
+            'description': '申万一级、二级行业FTTM月末PIT快照',
+            'source_tables': [
+                'pit.pit_stock_fttm_monthly',
+                'pit.pit_industry_classification',
+                'rawdata.stock_dailybasic',
+                'rawdata.stock_basic',
+            ],
+            'key_fields': [
+                'obs_date',
+                'classification_source',
+                'industry_level',
+                'industry_code',
+                'weight_basis',
+            ],
+            'data_fields': ['industry_fttm_np'],
+            'has_historical_data': True,
+            'supports_incremental': True,
+            'snapshot_mode': True,
+            'standard_data_source': False,
+            'depends_on': ['pit_stock_fttm_monthly', 'pit_industry_classification'],
+        },
+        'pit_index_fttm_monthly': {
+            'description': '重要指数与全A的FTTM月末PIT快照',
+            'source_tables': [
+                'pit.pit_stock_fttm_monthly',
+                'rawdata.index_weight',
+                'rawdata.stock_dailybasic',
+                'rawdata.stock_basic',
+            ],
+            'key_fields': [
+                'obs_date',
+                'universe_type',
+                'universe_code',
+                'weight_basis',
+            ],
+            'data_fields': ['index_fttm_np'],
+            'has_historical_data': True,
+            'supports_incremental': True,
+            'snapshot_mode': True,
+            'standard_data_source': False,
+            'depends_on': ['pit_stock_fttm_monthly'],
         }
     }
     
@@ -132,7 +185,10 @@ class PITConfig:
         'pit_balance_quarterly': 1000,
         'pit_cashflow_quarterly': 1000,
         'pit_industry_classification': 1000,
-        'pit_financial_indicators': 500
+        'pit_financial_indicators': 500,
+        'pit_stock_fttm_monthly': 5000,
+        'pit_industry_fttm_monthly': 1000,
+        'pit_index_fttm_monthly': 1000,
     }
     
     # 默认日期范围

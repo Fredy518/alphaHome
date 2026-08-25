@@ -41,6 +41,12 @@ class PITTaskContract:
     dependencies: Sequence[str]
     supported_modes: Sequence[str]
     manager_class: Type[Any] | str
+    # Existing PIT tasks are stock-shaped and historically audited against the
+    # current listed universe.  Keep those defaults so older registrations and
+    # serialized payloads remain valid, while allowing aggregate outputs to
+    # declare their real audit entity and PIT-time denominator.
+    audit_entity_keys: Sequence[str] = ()
+    audit_denominator: str = "current_listed_stocks"
 
     def to_dict(self) -> Dict[str, Any]:
         payload = asdict(self)
@@ -48,6 +54,7 @@ class PITTaskContract:
         payload["primary_keys"] = list(self.primary_keys)
         payload["dependencies"] = list(self.dependencies)
         payload["supported_modes"] = list(self.supported_modes)
+        payload["audit_entity_keys"] = list(self.audit_entity_keys)
         payload["manager_class"] = _class_path(self.manager_class)
         return payload
 
@@ -58,6 +65,8 @@ class PITTaskContract:
         data["primary_keys"] = tuple(data.get("primary_keys") or ())
         data["dependencies"] = tuple(data.get("dependencies") or ())
         data["supported_modes"] = tuple(data.get("supported_modes") or ())
+        data["audit_entity_keys"] = tuple(data.get("audit_entity_keys") or ())
+        data.setdefault("audit_denominator", "current_listed_stocks")
         return cls(**data)
 
     def resolve_manager_class(self) -> Type[Any]:
@@ -140,6 +149,7 @@ class PITTask(BaseTask):
                     return {"status": "cancelled", "task": self.name, "error": "任务被用户取消"}
                 method = getattr(manager, call_name)
                 result = await asyncio.to_thread(self._call_manager_method, method, call_kwargs)
+                self._sync_manager_stats_from_result(manager, result)
         except Exception as exc:
             self.logger.error("PIT任务执行失败: %s", exc, exc_info=True)
             return {"status": "error", "task": self.name, "table": self.table_name, "error": str(exc)}
@@ -228,6 +238,45 @@ class PITTask(BaseTask):
             "rows": rows,
             "result": result,
         }
+
+    @classmethod
+    def _sync_manager_stats_from_result(cls, manager: Any, result: Any) -> None:
+        """Populate base-manager counters when a legacy manager did not do so itself."""
+        stats = getattr(manager, "stats", None)
+        if not isinstance(stats, dict) or not isinstance(result, dict):
+            return
+
+        counter_keys = (
+            "processed_records",
+            "success_records",
+            "error_records",
+            "skipped_records",
+        )
+        if any(cls._coerce_count(stats.get(key)) for key in counter_keys):
+            return
+
+        success_records = cls._coerce_count(cls._extract_row_count(result))
+        error_records = cls._coerce_count(result.get("error_records"))
+        if error_records == 0:
+            error_records = cls._coerce_count(result.get("errors"))
+        if error_records == 0 and (result.get("error") or result.get("status") == "error"):
+            error_records = 1
+
+        processed_records = cls._coerce_count(result.get("processed_records"))
+        if processed_records == 0:
+            processed_records = success_records + error_records
+
+        stats["processed_records"] = processed_records
+        stats["success_records"] = success_records
+        stats["error_records"] = error_records
+        stats["skipped_records"] = cls._coerce_count(result.get("skipped_records"))
+
+    @staticmethod
+    def _coerce_count(value: Any) -> int:
+        try:
+            return max(int(value or 0), 0)
+        except (TypeError, ValueError):
+            return 0
 
     @staticmethod
     def _extract_row_count(result: Dict[str, Any]) -> int:
