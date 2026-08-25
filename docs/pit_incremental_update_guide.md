@@ -188,7 +188,30 @@ pit.pit_audit_snapshot
 
 - 财务类按 `end_date` 报告期统计当前上市股票覆盖。
 - 行业类按 `obs_date` 月末快照统计当前上市股票覆盖。
+- `pit_stock_fttm_monthly` 按被审计 `obs_date` 当时已上市且尚未退市的支持范围 A 股统计，不使用当前股票清单回看历史。
+- `pit_industry_fttm_monthly` 按同月申万 L1/L2 结构行业统计；结构覆盖和 eligible 覆盖在审计详情中分开报告，不给行业表伪造 `ts_code`。
 - raw-vs-pit 缺口保存在 `details_json.raw_vs_pit`，不混入业务 PIT 表。
+
+## FTTM 月末任务
+
+新增两个注册任务：
+
+- `pit_stock_fttm_monthly`：同一研报事件内配对 FY1/FY2，使用左开右闭六个月可见窗口，生成股票—机构月末快照。
+- `pit_industry_fttm_monthly`：使用同月申万动态 L1/L2 成分和不晚于月末的 `total_mv`，先机构内重加权，再对机构做算术平均。
+- `pit_index_fttm_monthly`：对首批重要指数使用不晚于月末的最近有效官方权重；全 A 单列为 PIT 存续股票的 `total_mv` 权重。两者均先在机构内重加权，再对机构做算术平均。
+
+增量更新固定至少重算最近 8 个完整自然月；行业计算额外读取前一月作为环比和扩散度锚点。若该锚点尚未存在于个股 PIT 表，任务会从原始研报只读补算并仅用于本批计算，不把区间外锚点写入正式表。每个批次通过 staging 校验后，在同一事务中删除并重写目标月份，源行消失时不会遗留旧 upsert 行。没有经过验证的源行变更日志时，8 个月以前的补录或删除仍需 `manual_range` / full 回放或定期哈希审计，不能视为自动捕获。
+
+统一更新器按任务 `dependencies` 自动展开 DAG。例如只指定行业 FTTM，也会先运行个股 FTTM 和行业分类；同一拓扑层可并行，上游失败时下游状态为 `skipped_dependency_failed`。
+
+```powershell
+python -m alphahome.pit.pit_data_update_production --target stock_fttm --mode incremental
+python -m alphahome.pit.pit_data_update_production --target industry_fttm --mode incremental
+python -m alphahome.pit.pit_data_update_production --target index_fttm --mode incremental
+python -m alphahome.pit.pit_data_update_production --target stock_fttm industry_fttm --mode incremental --parallel --workers 2
+```
+
+这些快照只声明月末收盘后可用；最早供研究或交易消费者在 `obs_date` 后首个交易日使用。日级 `report_date` 不能证明月末当日开盘或盘中的可见性。
 
 ## 注意事项
 
@@ -196,3 +219,5 @@ pit.pit_audit_snapshot
 - 全量回填前建议备份 `pit` 相关表；`pgs_factors` 仅保留兼容视图，不作为新数据落库位置。
 - 同时运行多个 PIT 脚本可能造成锁等待或重复写入，日常调度优先使用统一协调器。
 - 财务指标表依赖利润表和资产负债表，修复依赖表后需要重算指标。
+- 行业 FTTM 依赖同月个股 FTTM 与申万行业分类；`total_mv` 是研究代理权重，不是申万官方指数权重。
+- 指数 FTTM 依赖同月个股 FTTM。官方指数权重最多向前沿用 65 天；全 A 总市值最多沿用 31 天。中证全指等断档来源不能替代全 A 口径。

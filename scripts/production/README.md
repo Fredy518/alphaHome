@@ -60,6 +60,9 @@ python scripts/production/data_updaters/pit/pit_data_update_production.py --targ
 python scripts/production/data_updaters/pit/pit_data_update_production.py --target balance income --mode incremental
 python scripts/production/data_updaters/pit/pit_data_update_production.py --target income balance cashflow --mode incremental
 python scripts/production/data_updaters/pit/pit_data_update_production.py --target financial_indicators --mode full
+python scripts/production/data_updaters/pit/pit_data_update_production.py --target stock_fttm --mode incremental
+python scripts/production/data_updaters/pit/pit_data_update_production.py --target industry_fttm --mode incremental
+python scripts/production/data_updaters/pit/pit_data_update_production.py --target stock_fttm industry_fttm --mode incremental --parallel --workers 2
 python scripts/production/data_updaters/pit/pit_data_update_production.py --target all --log-level DEBUG
 ```
 
@@ -67,11 +70,13 @@ python scripts/production/data_updaters/pit/pit_data_update_production.py --targ
 
 | 参数 | 说明 |
 | --- | --- |
-| `--target` | `income`、`balance`、`cashflow`、`financial_indicators`、`industry_classification`、`all` |
+| `--target` | `income`、`balance`、`cashflow`、`financial_indicators`、`industry_classification`、`stock_fttm`、`industry_fttm`、`all` |
 | `--mode` | `incremental` 或 `full` |
 | `--parallel` | 允许无依赖冲突任务并行 |
 | `--workers` | 最大并发进程数 |
 | `--log-level` | 日志级别 |
+
+`industry_fttm` 会从任务合同自动展开 `stock_fttm` 和 `industry_classification` 依赖；`--parallel` 只并行同一拓扑层。两个 FTTM 任务的 incremental 至少重放最近 8 个完整月，月级写入采用 staging 后删除并重写，不是只做 upsert。
 
 直接运行单表管理器：
 
