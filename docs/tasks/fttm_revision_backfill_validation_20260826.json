@@ -1,0 +1,114 @@
+{
+  "as_of": "2026-08-26T23:32:39+08:00",
+  "validation_mode": "Validate",
+  "revision_version": "common_stock_org_decomp_v1",
+  "data_contract": {
+    "same_stock": true,
+    "same_organization": true,
+    "adjacent_natural_months": true,
+    "same_fy1_fy2_target_years": true,
+    "complete_fy1_fy2_pairs": true,
+    "current_month_members_and_weights": true,
+    "excluded_effects": [
+      "target_year_roll",
+      "stock_coverage_composition_change",
+      "organization_coverage_composition_change"
+    ]
+  },
+  "schema_migration": {
+    "tables": [
+      "pit.pit_industry_fttm_monthly",
+      "pit.pit_index_fttm_monthly"
+    ],
+    "new_columns_per_table": 12,
+    "new_rate_constraints_per_table": 4
+  },
+  "backfill": {
+    "start_date": "2014-01-31",
+    "end_date": "2026-07-31",
+    "month_count": 151,
+    "pit.pit_industry_fttm_monthly": {
+      "row_count": 23977,
+      "duration_seconds": 308.59,
+      "error_count": 0,
+      "revision_value_rows": 23569,
+      "revision_eligible_rows": 17598
+    },
+    "pit.pit_index_fttm_monthly": {
+      "row_count": 1674,
+      "duration_seconds": 235.09,
+      "error_count": 0,
+      "revision_value_rows": 1674,
+      "revision_eligible_rows": 1509
+    }
+  },
+  "integrity": {
+    "null_primary_key_rows": 0,
+    "duplicate_primary_key_groups": 0,
+    "missing_months": 0,
+    "negative_revision_count_rows": 0,
+    "rate_range_violations": 0,
+    "revision_eligibility_contract_violations": 0,
+    "pit_date_violations": 0,
+    "diffusion_contract_violations": 0,
+    "legacy_core_hashes": {
+      "pit.pit_industry_fttm_monthly": {
+        "before": "12dad1743146321309b00cebc6f1b26a",
+        "after": "12dad1743146321309b00cebc6f1b26a"
+      },
+      "pit.pit_index_fttm_monthly": {
+        "before": "348cebddb2f21f0e6a3b8e788590f3ca",
+        "after": "348cebddb2f21f0e6a3b8e788590f3ca"
+      }
+    }
+  },
+  "formal_audit": {
+    "pit_industry_fttm_monthly": {
+      "status": "healthy",
+      "coverage_rate": 1.0,
+      "gap_count": 0
+    },
+    "pit_index_fttm_monthly": {
+      "status": "healthy",
+      "coverage_rate": 1.0,
+      "gap_count": 0
+    }
+  },
+  "independent_recalculation": {
+    "sample_months": [
+      "2014-01-31",
+      "2020-06-30",
+      "2026-07-31"
+    ],
+    "industry_compared_rows": 475,
+    "index_compared_rows": 31,
+    "mismatch_count": 0
+  },
+  "latest_all_a_sample": {
+    "obs_date": "2026-07-31",
+    "revision_rate": 0.001981848,
+    "horizon_roll_rate": 0.0029269374,
+    "revision_comparable_weight_rate": 0.8511803974,
+    "revision_activity_rate": 0.1407994238,
+    "revision_up_stock_rate": 0.5754475703,
+    "is_revision_eligible": true
+  },
+  "tests": {
+    "result": "60 passed",
+    "scope": [
+      "revision schema migration",
+      "matched revision calculator",
+      "industry and index FTTM calculators",
+      "PIT manager regressions",
+      "task contracts and coordinator",
+      "PIT audit service",
+      "live AlphaDB FTTM pipeline"
+    ]
+  },
+  "authority_boundary": {
+    "pit_data_productionized": true,
+    "factor_validated": false,
+    "strategy_validated": false,
+    "investment_authorized": false
+  }
+}
