@@ -9,6 +9,12 @@ from typing import Any, Mapping, Sequence
 import numpy as np
 import pandas as pd
 
+from .matched_fttm_revision_calculator import (
+    REVISION_OUTPUT_COLUMNS,
+    REVISION_SOURCE_COLUMNS,
+    REVISION_VERSION,
+    build_matched_revision_metrics,
+)
 from .stock_fttm_calculator import StockFTTMCalculator
 
 
@@ -65,6 +71,9 @@ class IndustryFTTMCalculator:
         "fttm_np_mom_abs",
         "fttm_np_mom_rate",
         "diffusion_up",
+        *REVISION_OUTPUT_COLUMNS,
+        "is_revision_eligible",
+        "revision_quality_reasons",
         "is_eligible",
         "is_diffusion_eligible",
         "quality_reasons",
@@ -163,11 +172,23 @@ class IndustryFTTMCalculator:
             "industry_code",
         ]
         result = result.merge(diffusion, on=diffusion_keys, how="left", sort=False)
+        revision_members = members.loc[
+            members["is_active"] & members["has_valid_weight"]
+        ][group_keys + ["ts_code", "valid_total_mv"]]
+        revision = build_matched_revision_metrics(
+            revision_members,
+            fttm,
+            group_keys=group_keys,
+            weight_column="valid_total_mv",
+        )
+        result = result.merge(revision, on=group_keys, how="left", sort=False)
         for column in (
             "org_count",
             "matched_org_count",
             "up_org_count",
             "down_or_flat_org_count",
+            "revision_comparable_stock_count",
+            "revision_comparable_org_count",
         ):
             result[column] = result[column].astype("Int64").fillna(0).astype(int)
 
@@ -177,16 +198,22 @@ class IndustryFTTMCalculator:
             np.nan,
         )
         result = self._apply_quality(result)
+        result = self._apply_revision_quality(result)
         result["weight_basis"] = self.WEIGHT_BASIS
         result["stock_formula_version"] = result["stock_formula_version"].fillna(
             StockFTTMCalculator.FORMULA_VERSION
         )
         result["aggregation_version"] = self.AGGREGATION_VERSION
         result["quality_rule_version"] = self.QUALITY_RULE_VERSION
+        result["revision_version"] = result["revision_version"].fillna(REVISION_VERSION)
 
-        result = result[self.OUTPUT_COLUMNS].sort_values(
-            ["obs_date", "industry_level", "industry_code"], kind="mergesort"
-        ).reset_index(drop=True)
+        result = (
+            result[self.OUTPUT_COLUMNS]
+            .sort_values(
+                ["obs_date", "industry_level", "industry_code"], kind="mergesort"
+            )
+            .reset_index(drop=True)
+        )
         self.last_audit.update(
             {
                 "output_row_count": int(len(result)),
@@ -213,8 +240,12 @@ class IndustryFTTMCalculator:
             raise ValueError(f"pit_industry_classification 缺少字段: {missing}")
 
         source = frame.copy()
-        source["obs_date"] = pd.to_datetime(source["obs_date"], errors="coerce").dt.normalize()
-        source["data_source"] = source["data_source"].astype("string").str.strip().str.lower()
+        source["obs_date"] = pd.to_datetime(
+            source["obs_date"], errors="coerce"
+        ).dt.normalize()
+        source["data_source"] = (
+            source["data_source"].astype("string").str.strip().str.lower()
+        )
         source["ts_code"] = source["ts_code"].astype("string").str.strip()
         source = source.loc[
             source["obs_date"].notna()
@@ -229,7 +260,9 @@ class IndustryFTTMCalculator:
             ("L1", "industry_code1", "industry_level1"),
             ("L2", "industry_code2", "industry_level2"),
         ):
-            piece = source[["ts_code", "obs_date", "data_source", code_column, name_column]].copy()
+            piece = source[
+                ["ts_code", "obs_date", "data_source", code_column, name_column]
+            ].copy()
             piece = piece.rename(
                 columns={
                     "data_source": "classification_source",
@@ -238,8 +271,12 @@ class IndustryFTTMCalculator:
                 }
             )
             piece["industry_level"] = level
-            piece["industry_code"] = piece["industry_code"].astype("string").fillna("").str.strip()
-            piece["industry_name"] = piece["industry_name"].astype("string").fillna("").str.strip()
+            piece["industry_code"] = (
+                piece["industry_code"].astype("string").fillna("").str.strip()
+            )
+            piece["industry_name"] = (
+                piece["industry_name"].astype("string").fillna("").str.strip()
+            )
             missing_code_count += int(piece["industry_code"].eq("").sum())
             missing_name_count += int(piece["industry_name"].eq("").sum())
             piece = piece.loc[
@@ -254,12 +291,15 @@ class IndustryFTTMCalculator:
             "industry_level",
             "industry_code",
         ]
-        name_counts = members.groupby(identity_keys, dropna=False)["industry_name"].nunique()
+        name_counts = members.groupby(identity_keys, dropna=False)[
+            "industry_name"
+        ].nunique()
         name_conflicts = int((name_counts > 1).sum())
-        canonical_names = (
-            members.sort_values(identity_keys + ["industry_name"], kind="mergesort")
-            .drop_duplicates(identity_keys, keep="first")[identity_keys + ["industry_name"]]
-        )
+        canonical_names = members.sort_values(
+            identity_keys + ["industry_name"], kind="mergesort"
+        ).drop_duplicates(identity_keys, keep="first")[
+            identity_keys + ["industry_name"]
+        ]
         members = members.drop(columns="industry_name").merge(
             canonical_names, on=identity_keys, how="left", sort=False
         )
@@ -282,13 +322,19 @@ class IndustryFTTMCalculator:
             raise ValueError(f"stock_basic 缺少字段: {missing}")
         basics = frame[list(required)].copy()
         basics["ts_code"] = basics["ts_code"].astype("string").str.strip()
-        basics["list_date"] = pd.to_datetime(basics["list_date"], errors="coerce").dt.normalize()
-        basics["delist_date"] = pd.to_datetime(basics["delist_date"], errors="coerce").dt.normalize()
+        basics["list_date"] = pd.to_datetime(
+            basics["list_date"], errors="coerce"
+        ).dt.normalize()
+        basics["delist_date"] = pd.to_datetime(
+            basics["delist_date"], errors="coerce"
+        ).dt.normalize()
         basics["exchange"] = basics["exchange"].astype("string").str.strip().str.upper()
-        basics["curr_type"] = basics["curr_type"].astype("string").str.strip().str.upper()
-        basics["is_supported_a_share"] = basics["exchange"].isin({"SSE", "SZSE", "BSE"}) & basics[
-            "curr_type"
-        ].eq("CNY")
+        basics["curr_type"] = (
+            basics["curr_type"].astype("string").str.strip().str.upper()
+        )
+        basics["is_supported_a_share"] = basics["exchange"].isin(
+            {"SSE", "SZSE", "BSE"}
+        ) & basics["curr_type"].eq("CNY")
         basics = basics.sort_values(
             ["ts_code", "list_date", "delist_date", "exchange", "curr_type"],
             kind="mergesort",
@@ -302,7 +348,9 @@ class IndustryFTTMCalculator:
         if missing:
             raise ValueError(f"stock_dailybasic 权重数据缺少字段: {missing}")
         weights = frame[list(required)].copy()
-        weights["obs_date"] = pd.to_datetime(weights["obs_date"], errors="coerce").dt.normalize()
+        weights["obs_date"] = pd.to_datetime(
+            weights["obs_date"], errors="coerce"
+        ).dt.normalize()
         weights["weight_trade_date"] = pd.to_datetime(
             weights["weight_trade_date"], errors="coerce"
         ).dt.normalize()
@@ -335,11 +383,18 @@ class IndustryFTTMCalculator:
             raise ValueError(f"pit_stock_fttm_monthly 缺少字段: {missing}")
         columns = list(required) + [
             column
-            for column in ("formula_version", "selected_report_date")
+            for column in (
+                "formula_version",
+                "selected_report_date",
+                *REVISION_SOURCE_COLUMNS,
+            )
             if column in frame.columns
         ]
+        columns = list(dict.fromkeys(columns))
         fttm = frame[columns].copy()
-        fttm["obs_date"] = pd.to_datetime(fttm["obs_date"], errors="coerce").dt.normalize()
+        fttm["obs_date"] = pd.to_datetime(
+            fttm["obs_date"], errors="coerce"
+        ).dt.normalize()
         if "selected_report_date" in fttm:
             fttm["selected_report_date"] = pd.to_datetime(
                 fttm["selected_report_date"], errors="coerce"
@@ -382,8 +437,12 @@ class IndustryFTTMCalculator:
             staleness = active["weight_staleness_days"].dropna()
             return pd.Series(
                 {
-                    "weight_trade_date": weight_dates.max() if not weight_dates.empty else pd.NaT,
-                    "weight_staleness_days": int(staleness.max()) if not staleness.empty else np.nan,
+                    "weight_trade_date": (
+                        weight_dates.max() if not weight_dates.empty else pd.NaT
+                    ),
+                    "weight_staleness_days": (
+                        int(staleness.max()) if not staleness.empty else np.nan
+                    ),
                     "structural_member_count": int(group["ts_code"].nunique()),
                     "active_member_count": int(active["ts_code"].nunique()),
                     "weight_available_count": int(valid_weight["ts_code"].nunique()),
@@ -393,9 +452,11 @@ class IndustryFTTMCalculator:
                 }
             )
 
-        structural = members.groupby(group_keys, sort=False, dropna=False).apply(
-            aggregate, include_groups=False
-        ).reset_index()
+        structural = (
+            members.groupby(group_keys, sort=False, dropna=False)
+            .apply(aggregate, include_groups=False)
+            .reset_index()
+        )
         structural["covered_stock_rate"] = np.where(
             structural["active_member_count"] > 0,
             structural["covered_stock_count"] / structural["active_member_count"],
@@ -443,13 +504,17 @@ class IndustryFTTMCalculator:
             )
         joined["weighted_fttm"] = joined["valid_total_mv"] * joined["fttm_np"]
         org_keys = group_keys + ["org_name"]
-        org_rows = joined.groupby(org_keys, sort=False, dropna=False).agg(
-            org_weighted_sum=("weighted_fttm", "sum"),
-            org_covered_mv=("valid_total_mv", "sum"),
-            org_stock_count=("ts_code", "nunique"),
-            formula_version=("formula_version", "min"),
-            selected_report_date=("selected_report_date", "max"),
-        ).reset_index()
+        org_rows = (
+            joined.groupby(org_keys, sort=False, dropna=False)
+            .agg(
+                org_weighted_sum=("weighted_fttm", "sum"),
+                org_covered_mv=("valid_total_mv", "sum"),
+                org_stock_count=("ts_code", "nunique"),
+                formula_version=("formula_version", "min"),
+                selected_report_date=("selected_report_date", "max"),
+            )
+            .reset_index()
+        )
         org_rows["org_industry_fttm"] = (
             org_rows["org_weighted_sum"] / org_rows["org_covered_mv"]
         )
@@ -482,28 +547,35 @@ class IndustryFTTMCalculator:
                     "source_max_report_date",
                 ]
             )
-        return org_rows.groupby(group_keys, sort=False, dropna=False).agg(
-            industry_fttm_np=("org_industry_fttm", "mean"),
-            industry_fttm_np_median=("org_industry_fttm", "median"),
-            org_count=("org_name", "nunique"),
-            median_org_stock_count=("org_stock_count", "median"),
-            median_org_mv_coverage=("org_mv_coverage", "median"),
-            p25_org_mv_coverage=("org_mv_coverage", lambda values: values.quantile(0.25)),
-            stock_formula_version=("formula_version", "min"),
-            source_max_report_date=("selected_report_date", "max"),
-        ).reset_index()
+        return (
+            org_rows.groupby(group_keys, sort=False, dropna=False)
+            .agg(
+                industry_fttm_np=("org_industry_fttm", "mean"),
+                industry_fttm_np_median=("org_industry_fttm", "median"),
+                org_count=("org_name", "nunique"),
+                median_org_stock_count=("org_stock_count", "median"),
+                median_org_mv_coverage=("org_mv_coverage", "median"),
+                p25_org_mv_coverage=(
+                    "org_mv_coverage",
+                    lambda values: values.quantile(0.25),
+                ),
+                stock_formula_version=("formula_version", "min"),
+                source_max_report_date=("selected_report_date", "max"),
+            )
+            .reset_index()
+        )
 
     @staticmethod
     def _attach_previous_consensus(frame: pd.DataFrame) -> pd.DataFrame:
         identity_keys = ["classification_source", "industry_level", "industry_code"]
-        previous = frame[
-            identity_keys + ["obs_date", "industry_fttm_np"]
-        ].copy()
+        previous = frame[identity_keys + ["obs_date", "industry_fttm_np"]].copy()
         previous["obs_date"] = previous["obs_date"] + pd.offsets.MonthEnd(1)
         previous = previous.rename(
             columns={"industry_fttm_np": "previous_industry_fttm_np"}
         )
-        result = frame.merge(previous, on=identity_keys + ["obs_date"], how="left", sort=False)
+        result = frame.merge(
+            previous, on=identity_keys + ["obs_date"], how="left", sort=False
+        )
         result["fttm_np_mom_abs"] = (
             result["industry_fttm_np"] - result["previous_industry_fttm_np"]
         )
@@ -539,10 +611,14 @@ class IndustryFTTMCalculator:
         if matched.empty:
             return pd.DataFrame(columns=output_columns)
         matched["is_up"] = matched["org_industry_fttm"] > matched["previous_org_fttm"]
-        result = matched.groupby(["obs_date", *keys], sort=False, dropna=False).agg(
-            matched_org_count=("org_name", "nunique"),
-            up_org_count=("is_up", "sum"),
-        ).reset_index()
+        result = (
+            matched.groupby(["obs_date", *keys], sort=False, dropna=False)
+            .agg(
+                matched_org_count=("org_name", "nunique"),
+                up_org_count=("is_up", "sum"),
+            )
+            .reset_index()
+        )
         result["down_or_flat_org_count"] = (
             result["matched_org_count"] - result["up_org_count"]
         )
@@ -558,11 +634,16 @@ class IndustryFTTMCalculator:
                 reasons.append("no_fttm_coverage")
             if int(row["covered_stock_count"]) < threshold.min_covered_stocks:
                 reasons.append("ineligible_low_stock_coverage")
-            if pd.isna(row["covered_mv_rate"]) or float(row["covered_mv_rate"]) < threshold.min_covered_mv_rate:
+            if (
+                pd.isna(row["covered_mv_rate"])
+                or float(row["covered_mv_rate"]) < threshold.min_covered_mv_rate
+            ):
                 reasons.append("ineligible_low_mv_coverage")
-            if pd.isna(row["weight_data_coverage_rate"]) or float(
-                row["weight_data_coverage_rate"]
-            ) < threshold.min_weight_coverage_rate:
+            if (
+                pd.isna(row["weight_data_coverage_rate"])
+                or float(row["weight_data_coverage_rate"])
+                < threshold.min_weight_coverage_rate
+            ):
                 reasons.append("ineligible_low_weight_coverage")
             if int(row["org_count"]) < threshold.min_org_count:
                 reasons.append("ineligible_low_org_count")
@@ -582,6 +663,39 @@ class IndustryFTTMCalculator:
                     "is_eligible": not bool(main_failures.intersection(reasons)),
                     "is_diffusion_eligible": int(row["matched_org_count"])
                     >= threshold.min_matched_org_count,
+                }
+            )
+
+        quality = result.apply(assess, axis=1)
+        for column in quality.columns:
+            result[column] = quality[column]
+        return result
+
+    def _apply_revision_quality(self, frame: pd.DataFrame) -> pd.DataFrame:
+        result = frame.copy()
+
+        def assess(row: pd.Series) -> pd.Series:
+            threshold = self.thresholds[str(row["industry_level"])]
+            reasons: list[str] = []
+            if pd.isna(row["revision_rate"]):
+                reasons.append("no_comparable_revision")
+            if (
+                int(row["revision_comparable_stock_count"])
+                < threshold.min_covered_stocks
+            ):
+                reasons.append("revision_ineligible_low_stock_coverage")
+            if (
+                pd.isna(row["revision_comparable_weight_rate"])
+                or float(row["revision_comparable_weight_rate"])
+                < threshold.min_covered_mv_rate
+            ):
+                reasons.append("revision_ineligible_low_weight_coverage")
+            if int(row["revision_comparable_org_count"]) < threshold.min_org_count:
+                reasons.append("revision_ineligible_low_org_count")
+            return pd.Series(
+                {
+                    "revision_quality_reasons": sorted(reasons),
+                    "is_revision_eligible": not bool(reasons),
                 }
             )
 

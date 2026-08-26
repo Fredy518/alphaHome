@@ -160,7 +160,9 @@ def test_live_alphadb_sample_obeys_index_and_all_a_pit_contracts():
         previous = manager.previous_month_end(latest)
         months = [previous, latest]
         sources = manager._load_sources(months)
-        manager._validate_dependencies(sources["members"], sources["stock_fttm"], months)
+        manager._validate_dependencies(
+            sources["members"], sources["stock_fttm"], months
+        )
 
         result = IndexFTTMCalculator().calculate(
             sources["members"],
@@ -177,7 +179,19 @@ def test_live_alphadb_sample_obeys_index_and_all_a_pit_contracts():
             ["obs_date", "universe_type", "universe_code", "weight_basis"]
         ).any()
         assert latest_rows["weight_trade_date"].dropna().le(pd.Timestamp(latest)).all()
-        assert latest_rows["source_max_report_date"].dropna().le(pd.Timestamp(latest)).all()
+        assert (
+            latest_rows["source_max_report_date"]
+            .dropna()
+            .le(pd.Timestamp(latest))
+            .all()
+        )
+        assert latest_rows["revision_version"].eq("common_stock_org_decomp_v1").all()
+        assert (
+            latest_rows["revision_comparable_weight_rate"].dropna().between(0, 1).all()
+        )
+        assert latest_rows["revision_activity_rate"].dropna().between(0, 1).all()
+        assert latest_rows["revision_up_stock_rate"].dropna().between(0, 1).all()
+        assert latest_rows["revision_up_weight_rate"].dropna().between(0, 1).all()
         assert latest_rows["diffusion_up"].dropna().between(0, 1).all()
         assert (
             latest_rows["matched_org_count"]

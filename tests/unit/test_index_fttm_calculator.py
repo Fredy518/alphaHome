@@ -13,7 +13,13 @@ def _members(dates=("2024-01-31", "2024-02-29")):
     rows = []
     for obs_date in dates:
         for universe_type, universe_code, universe_name, weight_basis, source in (
-            ("index", "000300.SH", "沪深300", "official_weight", "rawdata.index_weight"),
+            (
+                "index",
+                "000300.SH",
+                "沪深300",
+                "official_weight",
+                "rawdata.index_weight",
+            ),
             ("all_a", "ALL_A", "全A", "total_mv", "rawdata.stock_dailybasic"),
         ):
             rows.extend(
@@ -67,7 +73,7 @@ def _stock_basic(delist_second=None):
 
 
 def _fttm():
-    return pd.DataFrame(
+    frame = pd.DataFrame(
         [
             {
                 "obs_date": "2024-01-31",
@@ -119,6 +125,13 @@ def _fttm():
             },
         ]
     )
+    frame["fy1_year"] = 2024
+    frame["fy2_year"] = 2025
+    frame["fy1_np_raw"] = frame["fttm_np"]
+    frame["fy2_np_raw"] = frame["fttm_np"]
+    frame["fy1_weight"] = 1.0
+    frame["fy2_weight"] = 0.0
+    return frame
 
 
 def _calculator(min_match=2):
@@ -162,6 +175,11 @@ def test_diffusion_uses_same_org_immediate_previous_month():
     assert february.up_org_count.tolist() == [1, 1]
     assert february.down_or_flat_org_count.tolist() == [1, 1]
     assert february.diffusion_up.tolist() == pytest.approx([0.5, 0.5])
+    assert february.revision_rate.tolist() == pytest.approx([0.03125, 0.03125])
+    assert february.horizon_roll_rate.tolist() == pytest.approx([0.0, 0.0])
+    assert february.revision_activity_rate.tolist() == pytest.approx([0.5, 0.5])
+    assert february.revision_up_stock_rate.tolist() == pytest.approx([1.0, 1.0])
+    assert february.is_revision_eligible.all()
 
 
 def test_first_month_diffusion_is_null_not_neutral():

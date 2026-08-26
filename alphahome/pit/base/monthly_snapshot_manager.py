@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 import uuid
 from datetime import date, datetime, timedelta
+from pathlib import Path
 from typing import Any, Sequence
 
 import numpy as np
@@ -23,6 +24,23 @@ class PITMonthlySnapshotManager(PITTableManager):
     """Date planning and transactional replacement for monthly PIT tables."""
 
     DEFAULT_FULL_START = date(2014, 1, 31)
+
+    def _apply_idempotent_table_ddl(self) -> None:
+        """Apply the table's checked-in DDL even when the table already exists.
+
+        ``PITTableManager._ensure_table_exists`` only creates missing tables. Monthly
+        snapshot schemas also evolve through idempotent ``ALTER TABLE`` statements,
+        so managers that add columns must call this helper before writing rows.
+        """
+
+        ddl_path = (
+            Path(__file__).resolve().parents[1]
+            / "database"
+            / f"create_{self.table_name}_table.sql"
+        )
+        if not ddl_path.exists():
+            raise FileNotFoundError(f"未找到月度PIT表DDL: {ddl_path}")
+        self.context.db_manager.execute_sync(ddl_path.read_text(encoding="utf-8"))
 
     @staticmethod
     def latest_complete_month(today: date | None = None) -> date:
@@ -86,7 +104,9 @@ class PITMonthlySnapshotManager(PITTableManager):
         data = frame.reindex(columns=columns).copy()
         if not data.empty:
             data["obs_date"] = pd.to_datetime(data["obs_date"], errors="coerce").dt.date
-            unexpected_dates = sorted(set(data["obs_date"].dropna()) - set(normalized_dates))
+            unexpected_dates = sorted(
+                set(data["obs_date"].dropna()) - set(normalized_dates)
+            )
             if unexpected_dates:
                 raise ValueError(f"staging 含目标范围外月份: {unexpected_dates}")
             if data[list(primary_keys)].isna().any(axis=None):

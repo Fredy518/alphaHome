@@ -9,6 +9,10 @@ import pandas as pd
 
 from .base.monthly_snapshot_manager import PITMonthlySnapshotManager
 from .calculators.industry_fttm_calculator import IndustryFTTMCalculator
+from .calculators.matched_fttm_revision_calculator import (
+    REVISION_SOURCE_COLUMNS,
+    REVISION_VERSION,
+)
 from .calculators.stock_fttm_calculator import StockFTTMCalculator
 from .pit_stock_fttm_manager import load_stock_fttm_forecast_sources
 
@@ -23,6 +27,7 @@ class PITIndustryFTTMManager(PITMonthlySnapshotManager):
 
     def _ensure_table_exists(self) -> None:
         super()._ensure_table_exists()
+        self._apply_idempotent_table_ddl()
         # Early handoff drafts used varchar(32), while the fixed V1 aggregation
         # identifier itself is 34 characters. Upgrade only affected deployments.
         column = self.context.query_dataframe(
@@ -52,9 +57,14 @@ class PITIndustryFTTMManager(PITMonthlySnapshotManager):
         latest = self._latest_available_month()
         if latest is None:
             raise RuntimeError("pit_industry_classification 没有可用的申万月末快照")
-        requested = max(int(months or self.DEFAULT_INCREMENTAL_MONTHS), self.DEFAULT_INCREMENTAL_MONTHS)
+        requested = max(
+            int(months or self.DEFAULT_INCREMENTAL_MONTHS),
+            self.DEFAULT_INCREMENTAL_MONTHS,
+        )
         target_months = self.incremental_months(requested, end_date=latest)
-        return self._run_months(target_months, batch_size=batch_size, result_key="updated_records")
+        return self._run_months(
+            target_months, batch_size=batch_size, result_key="updated_records"
+        )
 
     def full_backfill(
         self,
@@ -89,7 +99,11 @@ class PITIndustryFTTMManager(PITMonthlySnapshotManager):
         result_key: str,
     ) -> Dict[str, Any]:
         if not target_months:
-            return {result_key: 0, "processed_months": [], "message": "无可处理的完整月份"}
+            return {
+                result_key: 0,
+                "processed_months": [],
+                "message": "无可处理的完整月份",
+            }
         self._ensure_table_exists()
         batch_months = max(int(batch_size or self.DEFAULT_BACKFILL_BATCH_MONTHS), 1)
         total_rows = 0
@@ -106,7 +120,9 @@ class PITIndustryFTTMManager(PITMonthlySnapshotManager):
             sources["stock_fttm"], anchor_stock_source = self._ensure_stock_anchor(
                 sources["stock_fttm"], anchor
             )
-            self._validate_dependencies(sources["classifications"], sources["stock_fttm"], months)
+            self._validate_dependencies(
+                sources["classifications"], sources["stock_fttm"], months
+            )
             calculated = self.calculator.calculate(
                 sources["classifications"],
                 sources["stock_basic"],
@@ -168,6 +184,7 @@ class PITIndustryFTTMManager(PITMonthlySnapshotManager):
             "processed_months": processed_months,
             "aggregation_version": IndustryFTTMCalculator.AGGREGATION_VERSION,
             "quality_rule_version": IndustryFTTMCalculator.QUALITY_RULE_VERSION,
+            "revision_version": REVISION_VERSION,
             "source_max_report_date": selected_source_max,
             "weight_trade_date_max": selected_weight_date_max,
             "dependency_freshness": self._dependency_freshness(),
@@ -176,6 +193,10 @@ class PITIndustryFTTMManager(PITMonthlySnapshotManager):
             "revision_limit": (
                 "rolling incremental covers at least eight complete months and t+1 within the planned closure; "
                 "older source corrections require manual_range/full audit because no verified row change log is used"
+            ),
+            "revision_semantics": (
+                "revision_rate uses adjacent-month common stock-broker rows, unchanged FY1/FY2 target years, "
+                "complete annual estimate pairs, and current-month members/weights"
             ),
         }
 
@@ -201,9 +222,14 @@ class PITIndustryFTTMManager(PITMonthlySnapshotManager):
             "fttm_np",
             "formula_version",
             "selected_report_date",
+            *REVISION_SOURCE_COLUMNS,
         ]
+        required_columns = list(dict.fromkeys(required_columns))
         combined = pd.concat(
-            [stock_fttm.reindex(columns=required_columns), transient[required_columns]],
+            [
+                stock_fttm.reindex(columns=required_columns),
+                transient.reindex(columns=required_columns),
+            ],
             ignore_index=True,
         )
         combined["obs_date"] = pd.to_datetime(
@@ -216,9 +242,7 @@ class PITIndustryFTTMManager(PITMonthlySnapshotManager):
 
     def _calculate_transient_stock_month(self, anchor: date) -> pd.DataFrame:
         source_start = (pd.Timestamp(anchor) - pd.DateOffset(months=6)).date()
-        forecasts = load_stock_fttm_forecast_sources(
-            self.context, source_start, anchor
-        )
+        forecasts = load_stock_fttm_forecast_sources(self.context, source_start, anchor)
         return StockFTTMCalculator().calculate(forecasts, [anchor])
 
     def _dependency_freshness(self) -> Dict[str, Any]:
@@ -275,7 +299,10 @@ class PITIndustryFTTMManager(PITMonthlySnapshotManager):
             f"""
             WITH requested(obs_date) AS (VALUES {placeholders})
             SELECT s.obs_date, s.ts_code, s.org_name, s.fttm_np,
-                   s.formula_version, s.selected_report_date
+                   s.formula_version, s.selected_report_date,
+                   s.fy1_year, s.fy2_year,
+                   s.fy1_np_raw, s.fy2_np_raw,
+                   s.fy1_weight, s.fy2_weight
             FROM pit.pit_stock_fttm_monthly s
             JOIN requested r USING (obs_date)
             """,

@@ -10,6 +10,10 @@ import pandas as pd
 
 from .base.monthly_snapshot_manager import PITMonthlySnapshotManager
 from .calculators.index_fttm_calculator import IndexFTTMCalculator
+from .calculators.matched_fttm_revision_calculator import (
+    REVISION_SOURCE_COLUMNS,
+    REVISION_VERSION,
+)
 from .calculators.stock_fttm_calculator import StockFTTMCalculator
 from .pit_stock_fttm_manager import load_stock_fttm_forecast_sources
 
@@ -58,6 +62,10 @@ class PITIndexFTTMManager(PITMonthlySnapshotManager):
         super().__init__("pit_index_fttm_monthly")
         self.calculator = IndexFTTMCalculator()
 
+    def _ensure_table_exists(self) -> None:
+        super()._ensure_table_exists()
+        self._apply_idempotent_table_ddl()
+
     def incremental_update(
         self, months: int = DEFAULT_INCREMENTAL_MONTHS, batch_size: int | None = None
     ) -> Dict[str, Any]:
@@ -103,11 +111,13 @@ class PITIndexFTTMManager(PITMonthlySnapshotManager):
         result_key: str,
     ) -> Dict[str, Any]:
         if not target_months:
-            return {result_key: 0, "processed_months": [], "message": "无可处理的完整月份"}
+            return {
+                result_key: 0,
+                "processed_months": [],
+                "message": "无可处理的完整月份",
+            }
         self._ensure_table_exists()
-        batch_months = max(
-            int(batch_size or self.DEFAULT_BACKFILL_BATCH_MONTHS), 1
-        )
+        batch_months = max(int(batch_size or self.DEFAULT_BACKFILL_BATCH_MONTHS), 1)
         total_rows = 0
         processed_months: list[str] = []
         batch_audits: list[dict[str, Any]] = []
@@ -187,6 +197,7 @@ class PITIndexFTTMManager(PITMonthlySnapshotManager):
             "includes_all_a": True,
             "aggregation_version": IndexFTTMCalculator.AGGREGATION_VERSION,
             "quality_rule_version": IndexFTTMCalculator.QUALITY_RULE_VERSION,
+            "revision_version": REVISION_VERSION,
             "source_max_report_date": selected_source_max,
             "weight_trade_date_max": selected_weight_date_max,
             "dependency_freshness": self._dependency_freshness(),
@@ -195,6 +206,10 @@ class PITIndexFTTMManager(PITMonthlySnapshotManager):
             "revision_limit": (
                 "rolling incremental covers at least eight complete months and t+1; "
                 "older corrections require manual_range/full audit"
+            ),
+            "revision_semantics": (
+                "revision_rate uses adjacent-month common stock-broker rows, unchanged FY1/FY2 target years, "
+                "complete annual estimate pairs, and current-month members/weights"
             ),
         }
 
@@ -205,7 +220,10 @@ class PITIndexFTTMManager(PITMonthlySnapshotManager):
             f"""
             WITH requested(obs_date) AS (VALUES {placeholders})
             SELECT s.obs_date, s.ts_code, s.org_name, s.fttm_np,
-                   s.formula_version, s.selected_report_date
+                   s.formula_version, s.selected_report_date,
+                   s.fy1_year, s.fy2_year,
+                   s.fy1_np_raw, s.fy2_np_raw,
+                   s.fy1_weight, s.fy2_weight
             FROM pit.pit_stock_fttm_monthly s
             JOIN requested r USING (obs_date)
             """,
@@ -347,25 +365,29 @@ class PITIndexFTTMManager(PITMonthlySnapshotManager):
             "fttm_np",
             "formula_version",
             "selected_report_date",
+            *REVISION_SOURCE_COLUMNS,
         ]
+        required_columns = list(dict.fromkeys(required_columns))
         combined = pd.concat(
-            [stock_fttm.reindex(columns=required_columns), transient[required_columns]],
+            [
+                stock_fttm.reindex(columns=required_columns),
+                transient.reindex(columns=required_columns),
+            ],
             ignore_index=True,
         )
         combined["obs_date"] = pd.to_datetime(
             combined["obs_date"], errors="coerce"
         ).dt.normalize()
-        return combined.sort_values(
-            ["obs_date", "ts_code", "org_name"], kind="mergesort"
-        ).drop_duplicates(["obs_date", "ts_code", "org_name"], keep="last").reset_index(
-            drop=True
-        ), "recomputed_from_raw_read_only"
+        return (
+            combined.sort_values(["obs_date", "ts_code", "org_name"], kind="mergesort")
+            .drop_duplicates(["obs_date", "ts_code", "org_name"], keep="last")
+            .reset_index(drop=True),
+            "recomputed_from_raw_read_only",
+        )
 
     def _calculate_transient_stock_month(self, anchor: date) -> pd.DataFrame:
         source_start = (pd.Timestamp(anchor) - pd.DateOffset(months=6)).date()
-        forecasts = load_stock_fttm_forecast_sources(
-            self.context, source_start, anchor
-        )
+        forecasts = load_stock_fttm_forecast_sources(self.context, source_start, anchor)
         return StockFTTMCalculator().calculate(forecasts, [anchor])
 
     def _latest_available_month(self) -> date | None:
@@ -471,11 +493,15 @@ class PITIndexFTTMManager(PITMonthlySnapshotManager):
     def _validate_output_coverage(
         output: pd.DataFrame, target_months: Iterable[date]
     ) -> None:
-        actual = set(
-            output[["obs_date", "universe_type", "universe_code"]].itertuples(
-                index=False, name=None
+        actual = (
+            set(
+                output[["obs_date", "universe_type", "universe_code"]].itertuples(
+                    index=False, name=None
+                )
             )
-        ) if not output.empty else set()
+            if not output.empty
+            else set()
+        )
         expected: set[tuple[pd.Timestamp, str, str]] = set()
         for value in target_months:
             month = pd.Timestamp(value).normalize()

@@ -81,7 +81,7 @@ def _weights(dates=("2024-01-31", "2024-02-29")):
 
 
 def _fttm():
-    return pd.DataFrame(
+    frame = pd.DataFrame(
         [
             {
                 "obs_date": "2024-01-31",
@@ -133,6 +133,13 @@ def _fttm():
             },
         ]
     )
+    frame["fy1_year"] = 2024
+    frame["fy2_year"] = 2025
+    frame["fy1_np_raw"] = frame["fttm_np"]
+    frame["fy2_np_raw"] = frame["fttm_np"]
+    frame["fy1_weight"] = 1.0
+    frame["fy2_weight"] = 0.0
+    return frame
 
 
 def _calculator(min_stocks=2, min_orgs=2, min_match=2):
@@ -183,6 +190,11 @@ def test_diffusion_uses_immediate_previous_month_and_same_org_intersection():
     assert february.down_or_flat_org_count.tolist() == [1, 1]
     assert february.diffusion_up.tolist() == pytest.approx([0.5, 0.5])
     assert february.is_diffusion_eligible.all()
+    assert february.revision_rate.tolist() == pytest.approx([0.03125, 0.03125])
+    assert february.horizon_roll_rate.tolist() == pytest.approx([0.0, 0.0])
+    assert february.revision_activity_rate.tolist() == pytest.approx([0.5, 0.5])
+    assert february.revision_up_stock_rate.tolist() == pytest.approx([1.0, 1.0])
+    assert february.is_revision_eligible.all()
 
 
 def test_no_previous_match_is_null_not_neutral_half():

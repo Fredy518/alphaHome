@@ -9,6 +9,12 @@ from typing import Any, Mapping, Sequence
 import numpy as np
 import pandas as pd
 
+from .matched_fttm_revision_calculator import (
+    REVISION_OUTPUT_COLUMNS,
+    REVISION_SOURCE_COLUMNS,
+    REVISION_VERSION,
+    build_matched_revision_metrics,
+)
 from .stock_fttm_calculator import StockFTTMCalculator
 
 
@@ -69,6 +75,9 @@ class IndexFTTMCalculator:
         "fttm_np_mom_abs",
         "fttm_np_mom_rate",
         "diffusion_up",
+        *REVISION_OUTPUT_COLUMNS,
+        "is_revision_eligible",
+        "revision_quality_reasons",
         "is_eligible",
         "is_diffusion_eligible",
         "quality_reasons",
@@ -147,9 +156,7 @@ class IndexFTTMCalculator:
             "weight_source",
         ]
         structural = self._build_structural_rows(universe_members, group_keys)
-        org_rows = self._build_org_rows(
-            universe_members, fttm, structural, group_keys
-        )
+        org_rows = self._build_org_rows(universe_members, fttm, structural, group_keys)
         self.last_org_universe = org_rows.copy()
         consensus = self._build_consensus(org_rows, group_keys)
         result = structural.merge(consensus, on=group_keys, how="left", sort=False)
@@ -163,11 +170,23 @@ class IndexFTTMCalculator:
             "weight_basis",
         ]
         result = result.merge(diffusion, on=diffusion_keys, how="left", sort=False)
+        revision_members = universe_members.loc[
+            universe_members["is_active"] & universe_members["has_valid_weight"]
+        ][group_keys + ["ts_code", "valid_weight"]]
+        revision = build_matched_revision_metrics(
+            revision_members,
+            fttm,
+            group_keys=group_keys,
+            weight_column="valid_weight",
+        )
+        result = result.merge(revision, on=group_keys, how="left", sort=False)
         for column in (
             "org_count",
             "matched_org_count",
             "up_org_count",
             "down_or_flat_org_count",
+            "revision_comparable_stock_count",
+            "revision_comparable_org_count",
         ):
             result[column] = result[column].astype("Int64").fillna(0).astype(int)
 
@@ -177,14 +196,20 @@ class IndexFTTMCalculator:
             np.nan,
         )
         result = self._apply_quality(result)
+        result = self._apply_revision_quality(result)
         result["stock_formula_version"] = result["stock_formula_version"].fillna(
             StockFTTMCalculator.FORMULA_VERSION
         )
         result["aggregation_version"] = self.AGGREGATION_VERSION
         result["quality_rule_version"] = self.QUALITY_RULE_VERSION
-        result = result[self.OUTPUT_COLUMNS].sort_values(
-            ["obs_date", "universe_type", "universe_code"], kind="mergesort"
-        ).reset_index(drop=True)
+        result["revision_version"] = result["revision_version"].fillna(REVISION_VERSION)
+        result = (
+            result[self.OUTPUT_COLUMNS]
+            .sort_values(
+                ["obs_date", "universe_type", "universe_code"], kind="mergesort"
+            )
+            .reset_index(drop=True)
+        )
         self.last_audit.update(
             {
                 "output_row_count": int(len(result)),
@@ -242,9 +267,7 @@ class IndexFTTMCalculator:
         members["weight_staleness_days"] = (
             members["obs_date"] - members["weight_trade_date"]
         ).dt.days
-        allowed_staleness = members["weight_basis"].map(
-            self.max_weight_staleness_days
-        )
+        allowed_staleness = members["weight_basis"].map(self.max_weight_staleness_days)
         valid = (
             members["raw_weight"].notna()
             & (members["raw_weight"] > 0)
@@ -261,8 +284,7 @@ class IndexFTTMCalculator:
         ]
         name_conflicts = int(
             (
-                members.groupby(identity, dropna=False)["universe_name"].nunique()
-                > 1
+                members.groupby(identity, dropna=False)["universe_name"].nunique() > 1
             ).sum()
         )
         members = members.sort_values(
@@ -294,7 +316,9 @@ class IndexFTTMCalculator:
             basics["delist_date"], errors="coerce"
         ).dt.normalize()
         basics["exchange"] = basics["exchange"].astype("string").str.strip().str.upper()
-        basics["curr_type"] = basics["curr_type"].astype("string").str.strip().str.upper()
+        basics["curr_type"] = (
+            basics["curr_type"].astype("string").str.strip().str.upper()
+        )
         basics["is_supported_a_share"] = basics["exchange"].isin(
             {"SSE", "SZSE", "BSE"}
         ) & basics["curr_type"].eq("CNY")
@@ -312,11 +336,18 @@ class IndexFTTMCalculator:
             raise ValueError(f"pit_stock_fttm_monthly 缺少字段: {missing}")
         columns = list(required) + [
             column
-            for column in ("formula_version", "selected_report_date")
+            for column in (
+                "formula_version",
+                "selected_report_date",
+                *REVISION_SOURCE_COLUMNS,
+            )
             if column in frame.columns
         ]
+        columns = list(dict.fromkeys(columns))
         fttm = frame[columns].copy()
-        fttm["obs_date"] = pd.to_datetime(fttm["obs_date"], errors="coerce").dt.normalize()
+        fttm["obs_date"] = pd.to_datetime(
+            fttm["obs_date"], errors="coerce"
+        ).dt.normalize()
         fttm["ts_code"] = fttm["ts_code"].astype("string").str.strip()
         fttm["org_name"] = fttm["org_name"].astype("string").fillna("").str.strip()
         fttm["fttm_np"] = pd.to_numeric(fttm["fttm_np"], errors="coerce")
@@ -354,12 +385,12 @@ class IndexFTTMCalculator:
             staleness = active["weight_staleness_days"].dropna()
             return pd.Series(
                 {
-                    "weight_trade_date": weight_dates.max()
-                    if not weight_dates.empty
-                    else pd.NaT,
-                    "weight_staleness_days": int(staleness.max())
-                    if not staleness.empty
-                    else np.nan,
+                    "weight_trade_date": (
+                        weight_dates.max() if not weight_dates.empty else pd.NaT
+                    ),
+                    "weight_staleness_days": (
+                        int(staleness.max()) if not staleness.empty else np.nan
+                    ),
                     "structural_member_count": int(group["ts_code"].nunique()),
                     "active_member_count": int(active["ts_code"].nunique()),
                     "weight_available_count": int(valid_weight["ts_code"].nunique()),
@@ -369,9 +400,11 @@ class IndexFTTMCalculator:
                 }
             )
 
-        structural = members.groupby(
-            group_keys, sort=False, dropna=False
-        ).apply(aggregate, include_groups=False).reset_index()
+        structural = (
+            members.groupby(group_keys, sort=False, dropna=False)
+            .apply(aggregate, include_groups=False)
+            .reset_index()
+        )
         structural["covered_stock_rate"] = np.where(
             structural["active_member_count"] > 0,
             structural["covered_stock_count"] / structural["active_member_count"],
@@ -397,10 +430,12 @@ class IndexFTTMCalculator:
         structural: pd.DataFrame,
         group_keys: list[str],
     ) -> pd.DataFrame:
-        eligible = members.loc[
-            members["is_active"] & members["has_valid_weight"]
-        ][group_keys + ["ts_code", "valid_weight"]]
-        joined = eligible.merge(fttm, on=["obs_date", "ts_code"], how="inner", sort=False)
+        eligible = members.loc[members["is_active"] & members["has_valid_weight"]][
+            group_keys + ["ts_code", "valid_weight"]
+        ]
+        joined = eligible.merge(
+            fttm, on=["obs_date", "ts_code"], how="inner", sort=False
+        )
         output_columns = group_keys + [
             "org_name",
             "org_index_fttm",
@@ -413,13 +448,17 @@ class IndexFTTMCalculator:
             return pd.DataFrame(columns=output_columns)
         joined["weighted_fttm"] = joined["valid_weight"] * joined["fttm_np"]
         org_keys = group_keys + ["org_name"]
-        org_rows = joined.groupby(org_keys, sort=False, dropna=False).agg(
-            org_weighted_sum=("weighted_fttm", "sum"),
-            org_covered_weight=("valid_weight", "sum"),
-            org_stock_count=("ts_code", "nunique"),
-            formula_version=("formula_version", "min"),
-            selected_report_date=("selected_report_date", "max"),
-        ).reset_index()
+        org_rows = (
+            joined.groupby(org_keys, sort=False, dropna=False)
+            .agg(
+                org_weighted_sum=("weighted_fttm", "sum"),
+                org_covered_weight=("valid_weight", "sum"),
+                org_stock_count=("ts_code", "nunique"),
+                formula_version=("formula_version", "min"),
+                selected_report_date=("selected_report_date", "max"),
+            )
+            .reset_index()
+        )
         org_rows["org_index_fttm"] = (
             org_rows["org_weighted_sum"] / org_rows["org_covered_weight"]
         )
@@ -451,29 +490,33 @@ class IndexFTTMCalculator:
         ]
         if org_rows.empty:
             return pd.DataFrame(columns=output_columns)
-        return org_rows.groupby(group_keys, sort=False, dropna=False).agg(
-            index_fttm_np=("org_index_fttm", "mean"),
-            index_fttm_np_median=("org_index_fttm", "median"),
-            org_count=("org_name", "nunique"),
-            median_org_stock_count=("org_stock_count", "median"),
-            median_org_weight_coverage=("org_weight_coverage", "median"),
-            p25_org_weight_coverage=(
-                "org_weight_coverage",
-                lambda values: values.quantile(0.25),
-            ),
-            stock_formula_version=("formula_version", "min"),
-            source_max_report_date=("selected_report_date", "max"),
-        ).reset_index()
+        return (
+            org_rows.groupby(group_keys, sort=False, dropna=False)
+            .agg(
+                index_fttm_np=("org_index_fttm", "mean"),
+                index_fttm_np_median=("org_index_fttm", "median"),
+                org_count=("org_name", "nunique"),
+                median_org_stock_count=("org_stock_count", "median"),
+                median_org_weight_coverage=("org_weight_coverage", "median"),
+                p25_org_weight_coverage=(
+                    "org_weight_coverage",
+                    lambda values: values.quantile(0.25),
+                ),
+                stock_formula_version=("formula_version", "min"),
+                source_max_report_date=("selected_report_date", "max"),
+            )
+            .reset_index()
+        )
 
     @staticmethod
     def _attach_previous_consensus(frame: pd.DataFrame) -> pd.DataFrame:
         identity = ["universe_type", "universe_code", "weight_basis"]
         previous = frame[identity + ["obs_date", "index_fttm_np"]].copy()
         previous["obs_date"] = previous["obs_date"] + pd.offsets.MonthEnd(1)
-        previous = previous.rename(
-            columns={"index_fttm_np": "previous_index_fttm_np"}
+        previous = previous.rename(columns={"index_fttm_np": "previous_index_fttm_np"})
+        result = frame.merge(
+            previous, on=identity + ["obs_date"], how="left", sort=False
         )
-        result = frame.merge(previous, on=identity + ["obs_date"], how="left", sort=False)
         result["fttm_np_mom_abs"] = (
             result["index_fttm_np"] - result["previous_index_fttm_np"]
         )
@@ -504,21 +547,21 @@ class IndexFTTMCalculator:
         ].copy()
         previous["obs_date"] = previous["obs_date"] + pd.offsets.MonthEnd(1)
         previous = previous.rename(columns={"org_index_fttm": "previous_org_fttm"})
-        current = org_rows[
-            identity + ["obs_date", "org_name", "org_index_fttm"]
-        ]
+        current = org_rows[identity + ["obs_date", "org_name", "org_index_fttm"]]
         matched = current.merge(
             previous, on=identity + ["obs_date", "org_name"], how="inner", sort=False
         )
         if matched.empty:
             return pd.DataFrame(columns=output_columns)
         matched["is_up"] = matched["org_index_fttm"] > matched["previous_org_fttm"]
-        result = matched.groupby(
-            ["obs_date", *identity], sort=False, dropna=False
-        ).agg(
-            matched_org_count=("org_name", "nunique"),
-            up_org_count=("is_up", "sum"),
-        ).reset_index()
+        result = (
+            matched.groupby(["obs_date", *identity], sort=False, dropna=False)
+            .agg(
+                matched_org_count=("org_name", "nunique"),
+                up_org_count=("is_up", "sum"),
+            )
+            .reset_index()
+        )
         result["down_or_flat_org_count"] = (
             result["matched_org_count"] - result["up_org_count"]
         )
@@ -534,13 +577,16 @@ class IndexFTTMCalculator:
                 reasons.append("no_fttm_coverage")
             if int(row["covered_stock_count"]) < threshold.min_covered_stocks:
                 reasons.append("ineligible_low_stock_coverage")
-            if pd.isna(row["covered_weight_rate"]) or float(
-                row["covered_weight_rate"]
-            ) < threshold.min_covered_weight_rate:
+            if (
+                pd.isna(row["covered_weight_rate"])
+                or float(row["covered_weight_rate"]) < threshold.min_covered_weight_rate
+            ):
                 reasons.append("ineligible_low_weight_coverage")
-            if pd.isna(row["weight_data_coverage_rate"]) or float(
-                row["weight_data_coverage_rate"]
-            ) < threshold.min_weight_data_coverage_rate:
+            if (
+                pd.isna(row["weight_data_coverage_rate"])
+                or float(row["weight_data_coverage_rate"])
+                < threshold.min_weight_data_coverage_rate
+            ):
                 reasons.append("ineligible_incomplete_weight_data")
             if int(row["org_count"]) < threshold.min_org_count:
                 reasons.append("ineligible_low_org_count")
@@ -560,6 +606,39 @@ class IndexFTTMCalculator:
                     "is_eligible": not bool(main_failures.intersection(reasons)),
                     "is_diffusion_eligible": int(row["matched_org_count"])
                     >= threshold.min_matched_org_count,
+                }
+            )
+
+        quality = result.apply(assess, axis=1)
+        for column in quality.columns:
+            result[column] = quality[column]
+        return result
+
+    def _apply_revision_quality(self, frame: pd.DataFrame) -> pd.DataFrame:
+        result = frame.copy()
+
+        def assess(row: pd.Series) -> pd.Series:
+            threshold = self.thresholds[str(row["universe_type"])]
+            reasons: list[str] = []
+            if pd.isna(row["revision_rate"]):
+                reasons.append("no_comparable_revision")
+            if (
+                int(row["revision_comparable_stock_count"])
+                < threshold.min_covered_stocks
+            ):
+                reasons.append("revision_ineligible_low_stock_coverage")
+            if (
+                pd.isna(row["revision_comparable_weight_rate"])
+                or float(row["revision_comparable_weight_rate"])
+                < threshold.min_covered_weight_rate
+            ):
+                reasons.append("revision_ineligible_low_weight_coverage")
+            if int(row["revision_comparable_org_count"]) < threshold.min_org_count:
+                reasons.append("revision_ineligible_low_org_count")
+            return pd.Series(
+                {
+                    "revision_quality_reasons": sorted(reasons),
+                    "is_revision_eligible": not bool(reasons),
                 }
             )
 
