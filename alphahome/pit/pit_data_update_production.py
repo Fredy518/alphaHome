@@ -27,8 +27,15 @@ TARGET_TO_TASK = {
     "financial_indicators": "pit_financial_indicators",
     "industry_classification": "pit_industry_classification",
     "stock_fttm": "pit_stock_fttm_monthly",
+    "stock_consensus_fy": "pit_stock_consensus_fy_monthly",
     "industry_fttm": "pit_industry_fttm_monthly",
+    "industry_fapi": "pit_industry_fapi_monthly",
     "index_fttm": "pit_index_fttm_monthly",
+    "etf_index_members": "pit_etf_index_members_monthly",
+    "etf_index_a_share_proxy_members": "pit_etf_index_a_share_proxy_members_monthly",
+    "etf_index_fapi": "pit_etf_index_fapi_monthly",
+    "etf_index_a_share_proxy_fapi": "pit_etf_index_a_share_proxy_fapi_monthly",
+    "earnings_surprise_annual": "pit_earnings_surprise_annual",
 }
 
 DEFAULT_TARGET_ORDER = [
@@ -37,9 +44,16 @@ DEFAULT_TARGET_ORDER = [
     "cashflow",
     "industry_classification",
     "stock_fttm",
+    "stock_consensus_fy",
     "financial_indicators",
     "industry_fttm",
+    "industry_fapi",
     "index_fttm",
+    "etf_index_members",
+    "etf_index_a_share_proxy_members",
+    "etf_index_fapi",
+    "etf_index_a_share_proxy_fapi",
+    "earnings_surprise_annual",
 ]
 
 
@@ -159,11 +173,48 @@ class PITDataUpdateCoordinator:
     async def update_stock_fttm(self, mode: str = "incremental", **kwargs):
         return await self._run_target("stock_fttm", self._update_type_from_mode(mode), kwargs)
 
+    async def update_stock_consensus_fy(self, mode: str = "incremental", **kwargs):
+        return await self._run_target("stock_consensus_fy", self._update_type_from_mode(mode), kwargs)
+
     async def update_industry_fttm(self, mode: str = "incremental", **kwargs):
         return await self._run_target("industry_fttm", self._update_type_from_mode(mode), kwargs)
 
+    async def update_industry_fapi(self, mode: str = "incremental", **kwargs):
+        return await self._run_target("industry_fapi", self._update_type_from_mode(mode), kwargs)
+
     async def update_index_fttm(self, mode: str = "incremental", **kwargs):
         return await self._run_target("index_fttm", self._update_type_from_mode(mode), kwargs)
+
+    async def update_etf_index_members(self, mode: str = "incremental", **kwargs):
+        return await self._run_target(
+            "etf_index_members", self._update_type_from_mode(mode), kwargs
+        )
+
+    async def update_etf_index_fapi(self, mode: str = "incremental", **kwargs):
+        return await self._run_target(
+            "etf_index_fapi", self._update_type_from_mode(mode), kwargs
+        )
+
+    async def update_etf_index_a_share_proxy_members(
+        self, mode: str = "incremental", **kwargs
+    ):
+        return await self._run_target(
+            "etf_index_a_share_proxy_members",
+            self._update_type_from_mode(mode),
+            kwargs,
+        )
+
+    async def update_etf_index_a_share_proxy_fapi(
+        self, mode: str = "incremental", **kwargs
+    ):
+        return await self._run_target(
+            "etf_index_a_share_proxy_fapi",
+            self._update_type_from_mode(mode),
+            kwargs,
+        )
+
+    async def update_earnings_surprise_annual(self, mode: str = "incremental", **kwargs):
+        return await self._run_target("earnings_surprise_annual", self._update_type_from_mode(mode), kwargs)
 
     async def _run_target(
         self,

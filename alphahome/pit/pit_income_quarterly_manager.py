@@ -42,6 +42,16 @@ class PITIncomeQuarterlyManager(PITTableManager):
         'is_future_target': 'boolean',
         'is_usable_forecast': 'boolean',
     }
+    ANNUAL_ACTUAL_COLUMNS = {
+        'n_income_attr_p_ytd': 'numeric(20,4)',
+        'basic_eps_ytd': 'numeric(20,6)',
+        'diluted_eps_ytd': 'numeric(20,6)',
+        'report_source_update_time': 'timestamp without time zone',
+        'report_source_row_count': 'integer',
+        'report_source_value_conflict': 'boolean',
+        'report_source_selection_basis': 'varchar(64)',
+    }
+    REPORT_SOURCE_SELECTION_BASIS = 'latest_update_fann_stable_hash_v1'
 
     def __init__(self):
         super().__init__('pit_income_quarterly')
@@ -61,6 +71,11 @@ class PITIncomeQuarterlyManager(PITTableManager):
             'historical_lookup': self._prepare_historical_query_template(),
             'bs_snapshot': self._prepare_bs_snapshot_query_template()
         }
+
+    def _ensure_table_exists(self) -> None:
+        """Create/migrate the table, including fields needed downstream."""
+        super()._ensure_table_exists()
+        self._ensure_income_annual_actual_columns()
 
     def full_backfill(self,
                      start_date: str = None,
@@ -155,8 +170,15 @@ class PITIncomeQuarterlyManager(PITTableManager):
         if batch_size is None:
             batch_size = self.batch_size
 
-        # 计算增量更新日期范围
-        start_date, end_date = PITConfig.get_incremental_date_range(days)
+        # 默认滚动窗口之外，按上游 update_time 水位捕获晚到或补录的旧公告。
+        start_date, end_date = self.resolve_incremental_date_range(
+            days,
+            (
+                (f"{PITConfig.TUSHARE_SCHEMA}.fina_income", ("ann_date",), "update_time"),
+                (f"{PITConfig.TUSHARE_SCHEMA}.fina_express", ("ann_date",), "update_time"),
+                (f"{PITConfig.TUSHARE_SCHEMA}.fina_forecast", ("ann_date",), "update_time"),
+            ),
+        )
 
         self.logger.info(f"增量更新日期范围: {start_date} ~ {end_date}")
         self.logger.info(f"每批股票数: {batch_size}")
@@ -377,18 +399,79 @@ class PITIncomeQuarterlyManager(PITTableManager):
         if 'n_income' in src_cols:
             extra_take.append('n_income')
         fields = self.key_fields + self.data_fields + extra_take
-        field_list = ', '.join(fields)
+        select_parts = [f'ranked.{field}' for field in fields]
+        select_parts.extend([
+            (
+                'ranked.n_income_attr_p AS n_income_attr_p_ytd'
+                if 'n_income_attr_p' in src_cols
+                else 'NULL::numeric AS n_income_attr_p_ytd'
+            ),
+            (
+                'ranked.basic_eps AS basic_eps_ytd'
+                if 'basic_eps' in src_cols
+                else 'NULL::numeric AS basic_eps_ytd'
+            ),
+            (
+                'ranked.diluted_eps AS diluted_eps_ytd'
+                if 'diluted_eps' in src_cols
+                else 'NULL::numeric AS diluted_eps_ytd'
+            ),
+            'ranked.update_time AS report_source_update_time',
+            'ranked.report_source_row_count',
+            'ranked.report_source_value_conflict',
+            (
+                f"'{self.REPORT_SOURCE_SELECTION_BASIS}'::varchar(64) "
+                'AS report_source_selection_basis'
+            ),
+        ])
+        field_list = ', '.join(select_parts)
         base_sql = f"""
-        SELECT {field_list}
-        FROM {PITConfig.TUSHARE_SCHEMA}.fina_income
-        WHERE ann_date >= %s AND ann_date <= %s
-          AND ts_code IS NOT NULL AND end_date IS NOT NULL
+        WITH ranked AS (
+            SELECT source.*,
+                   COUNT(*) OVER (
+                       PARTITION BY ts_code, end_date, ann_date
+                   )::integer AS report_source_row_count,
+                   (
+                       MIN(n_income_attr_p) OVER (
+                           PARTITION BY ts_code, end_date, ann_date
+                       ) IS DISTINCT FROM
+                       MAX(n_income_attr_p) OVER (
+                           PARTITION BY ts_code, end_date, ann_date
+                       )
+                       OR MIN(basic_eps) OVER (
+                           PARTITION BY ts_code, end_date, ann_date
+                       ) IS DISTINCT FROM
+                       MAX(basic_eps) OVER (
+                           PARTITION BY ts_code, end_date, ann_date
+                       )
+                       OR MIN(diluted_eps) OVER (
+                           PARTITION BY ts_code, end_date, ann_date
+                       ) IS DISTINCT FROM
+                       MAX(diluted_eps) OVER (
+                           PARTITION BY ts_code, end_date, ann_date
+                       )
+                   ) AS report_source_value_conflict,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY ts_code, end_date, ann_date
+                       ORDER BY update_time DESC NULLS LAST,
+                                f_ann_date DESC NULLS LAST,
+                                md5(row_to_json(source)::text) DESC
+                   ) AS report_source_rank
+            FROM {PITConfig.TUSHARE_SCHEMA}.fina_income source
+            WHERE ann_date >= %s AND ann_date <= %s
+              AND ts_code IS NOT NULL AND end_date IS NOT NULL
         """
         params = [start_date, end_date]
         if ts_code:
             base_sql += " AND ts_code = %s"
             params.append(ts_code)
-        base_sql += " ORDER BY ts_code, end_date, ann_date"
+        base_sql += f"""
+        )
+        SELECT {field_list}
+        FROM ranked
+        WHERE report_source_rank = 1
+        ORDER BY ts_code, end_date, ann_date
+        """
         df = self.context.query_dataframe(base_sql, tuple(params))
         if df is None or df.empty:
             return pd.DataFrame()
@@ -651,6 +734,10 @@ class PITIncomeQuarterlyManager(PITTableManager):
             processed_data['end_date'] = pd.to_datetime(processed_data['end_date']).dt.date
         if 'ann_date' in processed_data.columns:
             processed_data['ann_date'] = pd.to_datetime(processed_data['ann_date']).dt.date
+        if 'report_source_update_time' in processed_data.columns:
+            processed_data['report_source_update_time'] = pd.to_datetime(
+                processed_data['report_source_update_time'], errors='coerce'
+            )
 
         processed_data = self._apply_forecast_horizon_metadata(processed_data)
 
@@ -676,7 +763,19 @@ class PITIncomeQuarterlyManager(PITTableManager):
         processed_data = self._enrich_express_parent_profit(processed_data)
 
         # 4.2 数值字段处理（在增强后统一转数值，防御型处理）
-        for field in list(self.data_fields) + ['total_profit','n_income','net_profit_mid','year','quarter','forecast_horizon_days','conversion_status']:
+        for field in list(self.data_fields) + [
+            'total_profit',
+            'n_income',
+            'net_profit_mid',
+            'n_income_attr_p_ytd',
+            'basic_eps_ytd',
+            'diluted_eps_ytd',
+            'report_source_row_count',
+            'year',
+            'quarter',
+            'forecast_horizon_days',
+            'conversion_status',
+        ]:
             if field in processed_data.columns:
                 # 转换为数值类型（非数值字段如 conversion_status 跳过）
                 if field in ['conversion_status']:
@@ -814,6 +913,7 @@ class PITIncomeQuarterlyManager(PITTableManager):
         """
         try:
             self._ensure_income_forecast_horizon_columns()
+            self._ensure_income_annual_actual_columns()
             sqls = [
                 # 删除旧唯一约束（如果存在）
                 f"""
@@ -852,6 +952,114 @@ class PITIncomeQuarterlyManager(PITTableManager):
                 self.context.db_manager.execute_sync(s)
         except Exception as e:
             self.logger.warning(f"唯一键迁移失败或无需迁移: {e}")
+
+    def _ensure_income_annual_actual_columns(self) -> None:
+        """保留正式财报单季化前的累计归母净利与EPS。幂等执行。"""
+        try:
+            alter_parts = [
+                f"ADD COLUMN IF NOT EXISTS {column} {column_type}"
+                for column, column_type in self.ANNUAL_ACTUAL_COLUMNS.items()
+            ]
+            ddl = f"""
+            ALTER TABLE {PITConfig.PIT_SCHEMA}.{self.table_name}
+            {', '.join(alter_parts)}
+            """
+            self.context.db_manager.execute_sync(ddl)
+            self.context.db_manager.execute_sync(
+                f"""
+                COMMENT ON COLUMN {PITConfig.PIT_SCHEMA}.{self.table_name}.n_income_attr_p_ytd
+                    IS 'Formal-report cumulative parent net profit in CNY before quarterization';
+                COMMENT ON COLUMN {PITConfig.PIT_SCHEMA}.{self.table_name}.basic_eps_ytd
+                    IS 'Formal-report cumulative basic EPS before quarterization';
+                COMMENT ON COLUMN {PITConfig.PIT_SCHEMA}.{self.table_name}.diluted_eps_ytd
+                    IS 'Formal-report cumulative diluted EPS before quarterization';
+                COMMENT ON COLUMN {PITConfig.PIT_SCHEMA}.{self.table_name}.report_source_row_count
+                    IS 'Number of raw fina_income rows sharing the report business key';
+                COMMENT ON COLUMN {PITConfig.PIT_SCHEMA}.{self.table_name}.report_source_value_conflict
+                    IS 'True when duplicate raw report rows disagree on parent NP or EPS';
+                COMMENT ON COLUMN {PITConfig.PIT_SCHEMA}.{self.table_name}.report_source_selection_basis
+                    IS 'Deterministic source-row choice for duplicate report business keys';
+                """
+            )
+        except Exception as e:
+            self.logger.warning(f"年度实际值列迁移失败或无需迁移: {e}")
+
+    def backfill_annual_actual_fields(self) -> Dict[str, Any]:
+        """Backfill cumulative actuals and duplicate-source lineage in place."""
+        self._ensure_table_exists()
+        sql = f"""
+        WITH ranked AS (
+            SELECT source.ts_code,
+                   source.end_date,
+                   source.ann_date,
+                   source.n_income_attr_p,
+                   source.basic_eps,
+                   source.diluted_eps,
+                   source.update_time,
+                   COUNT(*) OVER (
+                       PARTITION BY source.ts_code, source.end_date, source.ann_date
+                   )::integer AS source_row_count,
+                   (
+                       MIN(source.n_income_attr_p) OVER (
+                           PARTITION BY source.ts_code, source.end_date, source.ann_date
+                       ) IS DISTINCT FROM
+                       MAX(source.n_income_attr_p) OVER (
+                           PARTITION BY source.ts_code, source.end_date, source.ann_date
+                       )
+                       OR MIN(source.basic_eps) OVER (
+                           PARTITION BY source.ts_code, source.end_date, source.ann_date
+                       ) IS DISTINCT FROM
+                       MAX(source.basic_eps) OVER (
+                           PARTITION BY source.ts_code, source.end_date, source.ann_date
+                       )
+                       OR MIN(source.diluted_eps) OVER (
+                           PARTITION BY source.ts_code, source.end_date, source.ann_date
+                       ) IS DISTINCT FROM
+                       MAX(source.diluted_eps) OVER (
+                           PARTITION BY source.ts_code, source.end_date, source.ann_date
+                       )
+                   ) AS source_value_conflict,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY source.ts_code, source.end_date, source.ann_date
+                       ORDER BY source.update_time DESC NULLS LAST,
+                                source.f_ann_date DESC NULLS LAST,
+                                md5(row_to_json(source)::text) DESC
+                   ) AS source_rank
+            FROM {PITConfig.TUSHARE_SCHEMA}.fina_income source
+        ), selected AS (
+            SELECT * FROM ranked WHERE source_rank = 1
+        )
+        UPDATE {PITConfig.PIT_SCHEMA}.{self.table_name} target
+        SET n_income_attr_p_ytd = source.n_income_attr_p,
+            basic_eps_ytd = source.basic_eps,
+            diluted_eps_ytd = source.diluted_eps,
+            report_source_update_time = source.update_time,
+            report_source_row_count = source.source_row_count,
+            report_source_value_conflict = source.source_value_conflict,
+            report_source_selection_basis = '{self.REPORT_SOURCE_SELECTION_BASIS}',
+            updated_at = CURRENT_TIMESTAMP
+        FROM selected source
+        WHERE target.data_source = 'report'
+          AND target.ts_code = source.ts_code
+          AND target.end_date = source.end_date
+          AND target.ann_date = source.ann_date
+          AND (
+              target.n_income_attr_p_ytd IS DISTINCT FROM source.n_income_attr_p
+              OR target.basic_eps_ytd IS DISTINCT FROM source.basic_eps
+              OR target.diluted_eps_ytd IS DISTINCT FROM source.diluted_eps
+              OR target.report_source_update_time IS DISTINCT FROM source.update_time
+              OR target.report_source_row_count IS DISTINCT FROM source.source_row_count
+              OR target.report_source_value_conflict IS DISTINCT FROM source.source_value_conflict
+              OR target.report_source_selection_basis IS DISTINCT FROM
+                 '{self.REPORT_SOURCE_SELECTION_BASIS}'
+          )
+        """
+        updated = int(self.context.db_manager.execute_sync(sql) or 0)
+        self.logger.info("年度实际值与源行谱系回填完成: %s 条", updated)
+        return {
+            'updated_records': updated,
+            'selection_basis': self.REPORT_SOURCE_SELECTION_BASIS,
+        }
 
     def _ensure_income_forecast_horizon_columns(self) -> None:
         """确保 forecast horizon 治理列存在。幂等执行。"""
@@ -2068,6 +2276,13 @@ class PITIncomeQuarterlyManager(PITTableManager):
             'is_future_target',
             'is_usable_forecast',
             'conversion_status',
+            'n_income_attr_p_ytd',
+            'basic_eps_ytd',
+            'diluted_eps_ytd',
+            'report_source_update_time',
+            'report_source_row_count',
+            'report_source_value_conflict',
+            'report_source_selection_basis',
         ]
         extras = [c for c in extra_candidates if c in pit_cols and c in data.columns]
         all_fields = self.key_fields + self.data_fields + extras + ['data_source']

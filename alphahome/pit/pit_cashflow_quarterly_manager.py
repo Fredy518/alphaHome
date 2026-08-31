@@ -71,7 +71,16 @@ class PITCashflowQuarterlyManager(PITTableManager):
         self.logger.info("开始PIT现金流量表增量更新")
         days = days or PITConfig.DEFAULT_DATE_RANGES["incremental_days"]
         batch_size = batch_size or self.batch_size
-        start_date, end_date = PITConfig.get_incremental_date_range(days)
+        start_date, end_date = self.resolve_incremental_date_range(
+            days,
+            (
+                (
+                    f"{PITConfig.TUSHARE_SCHEMA}.{self.tushare_table}",
+                    ("f_ann_date", "ann_date"),
+                    "update_time",
+                ),
+            ),
+        )
 
         try:
             self._ensure_table_exists()

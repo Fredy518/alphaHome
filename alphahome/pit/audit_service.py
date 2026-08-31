@@ -182,6 +182,13 @@ class PITAuditService:
             )
             if valued_count == 0:
                 status = "structure_only"
+        if status == "healthy" and contract.domain == "industry_fapi":
+            valued_count = sum(
+                int(row.get("valued_industries") or 0)
+                for row in domain_details.get("levels", [])
+            )
+            if valued_count == 0:
+                status = "structure_only"
         if status == "healthy" and contract.domain == "index_fttm":
             if int(domain_details.get("valued_universes") or 0) == 0:
                 status = "structure_only"
@@ -545,6 +552,31 @@ class PITAuditService:
             from alphahome.pit.pit_index_fttm_manager import configured_universe_count
 
             return configured_universe_count(coverage_period)
+        if denominator == "annual_report_events_at_ann_date":
+            if not coverage_period or not await self._relation_exists(
+                "pit.pit_income_quarterly"
+            ):
+                return 0
+            income_columns = await self._get_columns("pit.pit_income_quarterly")
+            if "n_income_attr_p_ytd" not in income_columns:
+                return 0
+            row = await self.db.fetch_one(
+                """
+                WITH first_annual_report AS (
+                    SELECT ts_code, end_date, MIN(ann_date)::date AS ann_date
+                    FROM pit.pit_income_quarterly
+                    WHERE data_source = 'report'
+                      AND EXTRACT(MONTH FROM end_date) = 12
+                      AND EXTRACT(DAY FROM end_date) = 31
+                    GROUP BY ts_code, end_date
+                )
+                SELECT COUNT(*)::bigint AS cnt
+                FROM first_annual_report
+                WHERE ann_date = $1
+                """,
+                coverage_period,
+            )
+            return int(row["cnt"] or 0) if row else 0
         logger.warning("未知PIT审计分母: %s", denominator)
         return 0
 
@@ -557,9 +589,87 @@ class PITAuditService:
             return await self._stock_fttm_audit_details(contract, coverage_period)
         if contract.domain == "industry_fttm":
             return await self._industry_fttm_audit_details(contract, coverage_period)
+        if contract.domain == "industry_fapi":
+            return await self._industry_fapi_audit_details(contract, coverage_period)
         if contract.domain == "index_fttm":
             return await self._index_fttm_audit_details(contract, coverage_period)
+        if contract.domain == "stock_consensus_fy":
+            return await self._stock_consensus_fy_audit_details(
+                contract, coverage_period
+            )
+        if contract.domain == "earnings_surprise":
+            return await self._earnings_surprise_audit_details(
+                contract, coverage_period
+            )
         return {}
+
+    async def _stock_consensus_fy_audit_details(
+        self, contract: PITTaskContract, coverage_period: Any
+    ) -> Dict[str, Any]:
+        relation = _qualified(contract.output_table)
+        row = await self.db.fetch_one(
+            f"""
+            SELECT COUNT(*)::bigint AS row_count,
+                   COUNT(DISTINCT ts_code)::bigint AS stock_count,
+                   COUNT(*) FILTER (WHERE is_eligible)::bigint AS eligible_count,
+                   COUNT(*) FILTER (WHERE source_max_report_date > obs_date)::bigint
+                       AS late_source_count,
+                   COUNT(*) FILTER (
+                       WHERE org_count < np_org_count OR org_count < eps_org_count
+                   )::bigint AS org_denominator_mismatch_count,
+                   COUNT(*) FILTER (
+                       WHERE revision_revised_org_count_1m <>
+                             revision_up_org_count_1m + revision_down_org_count_1m
+                          OR revision_revised_org_count_3m <>
+                             revision_up_org_count_3m + revision_down_org_count_3m
+                   )::bigint AS revision_denominator_mismatch_count
+            FROM {relation}
+            WHERE obs_date = $1
+            """,
+            coverage_period,
+        )
+        if not row:
+            return {}
+        result = {key: int(value or 0) for key, value in dict(row).items()}
+        total = result.get("row_count", 0)
+        result["eligible_rate"] = (
+            round(result["eligible_count"] / total, 6) if total else None
+        )
+        return result
+
+    async def _earnings_surprise_audit_details(
+        self, contract: PITTaskContract, coverage_period: Any
+    ) -> Dict[str, Any]:
+        relation = _qualified(contract.output_table)
+        row = await self.db.fetch_one(
+            f"""
+            SELECT COUNT(*)::bigint AS event_count,
+                   COUNT(*) FILTER (WHERE consensus_obs_date IS NOT NULL)::bigint
+                       AS matched_consensus_count,
+                   COUNT(*) FILTER (WHERE is_eligible)::bigint AS eligible_count,
+                   COUNT(*) FILTER (
+                       WHERE consensus_obs_date >= ann_date
+                   )::bigint AS non_prior_consensus_count,
+                   COUNT(*) FILTER (
+                       WHERE actual_np_yuan IS NOT NULL
+                         AND actual_np_10k IS DISTINCT FROM actual_np_yuan / 10000.0
+                   )::bigint AS unit_conversion_mismatch_count
+            FROM {relation}
+            WHERE ann_date = $1
+            """,
+            coverage_period,
+        )
+        if not row:
+            return {}
+        result = {key: int(value or 0) for key, value in dict(row).items()}
+        total = result.get("event_count", 0)
+        result["consensus_match_rate"] = (
+            round(result["matched_consensus_count"] / total, 6) if total else None
+        )
+        result["eligible_rate"] = (
+            round(result["eligible_count"] / total, 6) if total else None
+        )
+        return result
 
     async def _stock_fttm_audit_details(
         self, contract: PITTaskContract, coverage_period: Any
@@ -682,6 +792,89 @@ class PITAuditService:
             else 0,
         }
 
+    async def _industry_fapi_audit_details(
+        self, contract: PITTaskContract, coverage_period: Any
+    ) -> Dict[str, Any]:
+        relation = _qualified(contract.output_table)
+        rows = await self.db.fetch(
+            f"""
+            SELECT
+                industry_level,
+                COUNT(*)::bigint AS structural_industries,
+                COUNT(*) FILTER (WHERE fapi_spread_equal IS NOT NULL)::bigint
+                    AS valued_industries,
+                COUNT(*) FILTER (WHERE is_eligible)::bigint AS eligible_industries,
+                COUNT(*) FILTER (WHERE is_ratio_eligible)::bigint
+                    AS ratio_eligible_industries,
+                COUNT(*) FILTER (
+                    WHERE source_max_report_date > obs_date
+                       OR previous_source_max_report_date >= obs_date
+                )::bigint AS late_source_count,
+                COUNT(*) FILTER (
+                    WHERE fapi_spread_equal NOT BETWEEN 0 AND 1
+                       OR fapi_spread_weighted NOT BETWEEN 0 AND 1
+                       OR fapi_ratio_equal NOT BETWEEN 0 AND 1
+                       OR fapi_ratio_weighted NOT BETWEEN 0 AND 1
+                )::bigint AS fapi_out_of_range_count,
+                COUNT(*) FILTER (
+                    WHERE matched_org_count <>
+                          spread_up_org_count + spread_down_or_flat_org_count
+                )::bigint AS spread_denominator_mismatch_count,
+                COUNT(*) FILTER (
+                    WHERE ratio_matched_org_count <>
+                          ratio_up_org_count + ratio_down_or_flat_org_count
+                )::bigint AS ratio_denominator_mismatch_count,
+                percentile_cont(0.50) WITHIN GROUP (ORDER BY matched_org_count)
+                    AS median_matched_org_count,
+                percentile_cont(0.50) WITHIN GROUP (ORDER BY median_common_stock_count)
+                    AS median_common_stock_count,
+                percentile_cont(0.50) WITHIN GROUP (ORDER BY average_report_age_days)
+                    AS median_average_report_age_days
+            FROM {relation}
+            WHERE obs_date = $1
+            GROUP BY industry_level
+            ORDER BY industry_level
+            """,
+            coverage_period,
+        )
+        levels = [_jsonable(dict(row)) for row in rows or []]
+        reason_rows = await self.db.fetch(
+            f"""
+            SELECT q.reason, COUNT(*)::bigint AS count
+            FROM {relation} t
+            CROSS JOIN LATERAL jsonb_array_elements_text(t.quality_reasons)
+                AS q(reason)
+            WHERE t.obs_date = $1
+            GROUP BY q.reason
+            ORDER BY q.reason
+            """,
+            coverage_period,
+        )
+        consistency = await self.db.fetch_one(
+            f"""
+            SELECT COUNT(*)::bigint AS inconsistent_code_name_groups
+            FROM (
+                SELECT classification_source, industry_level, industry_code
+                FROM {relation}
+                WHERE obs_date = $1
+                GROUP BY classification_source, industry_level, industry_code
+                HAVING COUNT(DISTINCT industry_name) > 1
+            ) conflicts
+            """,
+            coverage_period,
+        )
+        return {
+            "levels": levels,
+            "quality_reason_counts": {
+                row["reason"]: int(row["count"] or 0) for row in reason_rows or []
+            },
+            "inconsistent_code_name_groups": int(
+                consistency["inconsistent_code_name_groups"] or 0
+            )
+            if consistency
+            else 0,
+        }
+
     async def _index_fttm_audit_details(
         self, contract: PITTaskContract, coverage_period: Any
     ) -> Dict[str, Any]:
@@ -760,6 +953,58 @@ class PITAuditService:
         pit_relation = _qualified(contract.output_table)
         raw_listed_join = await self._listed_join_sql("s")
         pit_listed_join = await self._listed_join_sql("p")
+        source_filter = ""
+        pit_filter = ""
+        if "data_source" in source_cols and "data_source" in pit_cols:
+            # Derived accounting indicators intentionally exclude forecast rows.
+            # Compare like-for-like standard accounting sources only.
+            source_filter = "AND s.data_source IN ('report', 'express')"
+            pit_filter = "AND p.data_source IN ('report', 'express')"
+
+            if contract.task_name == "pit_financial_indicators":
+                # The indicator calculator deliberately skips unconverted
+                # RPT_ORIG income rows and requires an as-of balance sheet with
+                # non-null total assets for the same report period.  Its audit
+                # source universe must use the same eligibility contract;
+                # otherwise expected non-output rows are reported as leaks.
+                if "conversion_status" in source_cols:
+                    source_filter += (
+                        "\nAND COALESCE(s.conversion_status, '') <> 'RPT_ORIG'"
+                    )
+
+                balance_source = next(
+                    (
+                        candidate
+                        for candidate in contract.source_tables
+                        if candidate != source and "balance" in candidate.lower()
+                    ),
+                    None,
+                )
+                if balance_source and await self._relation_exists(balance_source):
+                    balance_cols = await self._get_columns(balance_source)
+                    required_balance_cols = {
+                        "ts_code",
+                        "end_date",
+                        "ann_date",
+                        "data_source",
+                        "tot_assets",
+                    }
+                    if required_balance_cols.issubset(balance_cols):
+                        balance_relation = _qualified(balance_source)
+                        source_filter += f"""
+AND EXISTS (
+    SELECT 1
+    FROM {balance_relation} b
+    WHERE b.ts_code = s.ts_code
+      AND b.end_date = s.end_date
+      AND b.ann_date <= s.ann_date
+      AND b.data_source IN ('report', 'express')
+      AND b.tot_assets IS NOT NULL
+)"""
+        elif "data_source" in pit_cols:
+            # A dedicated Tushare statement table represents formal reports;
+            # do not inflate the PIT side with express/forecast entities.
+            pit_filter = "AND p.data_source = 'report'"
         row = await self.db.fetch_one(
             f"""
             WITH raw_codes AS (
@@ -768,6 +1013,7 @@ class PITAuditService:
                 {raw_listed_join}
                 WHERE s.end_date = $1
                   AND s.ts_code IS NOT NULL
+                  {source_filter}
             ),
             pit_codes AS (
                 SELECT DISTINCT p.ts_code
@@ -775,6 +1021,7 @@ class PITAuditService:
                 {pit_listed_join}
                 WHERE p.end_date = $1
                   AND p.ts_code IS NOT NULL
+                  {pit_filter}
             )
             SELECT
                 (SELECT COUNT(*) FROM raw_codes)::bigint AS raw_count,

@@ -38,6 +38,10 @@ python scripts/database/split_pgs_factors_schema.py
 | `cashflow` | `pit.pit_cashflow_quarterly` | 现金流量表 PIT 数据，v1 仅正式财报 `report` |
 | `financial_indicators` | `pit.pit_financial_indicators` | 基于 income/balance 计算的标准 PIT 财务指标，仅使用 `report` / `express` |
 | `industry_classification` | `pit.pit_industry_classification` | 行业分类 PIT 快照 |
+| `etf_index_members` | `pit.pit_etf_index_members_monthly` | ETF跟踪指数成分月末PIT快照 |
+| `etf_index_fapi` | `pit.pit_etf_index_fapi_monthly` | ETF跟踪指数FAPI与预期ROE |
+| `etf_index_a_share_proxy_members` | `pit.pit_etf_index_members_monthly` | 已登记跨市场指数的A股子样本代理，独立方法版本 |
+| `etf_index_a_share_proxy_fapi` | `pit.pit_etf_index_fapi_monthly` | A股子样本代理的FAPI与预期ROE，独立方法版本 |
 | `all` | 全部 | 按依赖关系执行 |
 
 ## Forecast 边界
@@ -70,6 +74,12 @@ python scripts/production/data_updaters/pit/pit_data_update_production.py --targ
 ```
 
 `financial_indicators` 依赖 `income` 和 `balance`。如果同批包含依赖任务，协调器会禁用并行以保证顺序。
+
+## 财务增量水位
+
+财务三表和财务指标保留默认公告日滚动窗口，同时读取 `public.task_status` 中本任务上次成功时间，并检查上游 `update_time`（派生 PIT 表使用 `updated_at`）。若发现上次成功后才进入数据库、但公告日早于默认窗口的记录，本次增量起点会自动扩展到最早受影响公告日，并保留一天安全重叠。
+
+`update_time` / `updated_at` 只决定“哪些历史公告需要重放”，不会替代业务 `ann_date`，也不会改变任何 PIT 可见时间。首次部署、任务状态缺失或超出可追踪水位的历史缺口仍需指定日期的 `manual_range` / full 回填。
 
 ## 单表管理器
 
@@ -208,8 +218,12 @@ pit.pit_audit_snapshot
 python -m alphahome.pit.pit_data_update_production --target stock_fttm --mode incremental
 python -m alphahome.pit.pit_data_update_production --target industry_fttm --mode incremental
 python -m alphahome.pit.pit_data_update_production --target index_fttm --mode incremental
+python -m alphahome.pit.pit_data_update_production --target etf_index_a_share_proxy_members --mode incremental
+python -m alphahome.pit.pit_data_update_production --target etf_index_a_share_proxy_fapi --mode incremental
 python -m alphahome.pit.pit_data_update_production --target stock_fttm industry_fttm --mode incremental --parallel --workers 2
 ```
+
+跨市场A股子样本任务只处理显式登记的指数；当前为`931238.CSI`。它先校验完整官方权重快照，再保留沪深成分并在子样本内归一化。`constituent_scope`、`is_proxy`和`scope_weight_rate`是强制解读边界，不得将该数据表述为完整跨市场指数基本面。
 
 这些快照只声明月末收盘后可用；最早供研究或交易消费者在 `obs_date` 后首个交易日使用。日级 `report_date` 不能证明月末当日开盘或盘中的可见性。
 

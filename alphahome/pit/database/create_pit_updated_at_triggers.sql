@@ -39,10 +39,55 @@ DO $$ BEGIN
 END $$;
 
 DO $$ BEGIN
+    IF to_regclass('pit.pit_industry_fapi_monthly') IS NOT NULL THEN
+        DROP TRIGGER IF EXISTS trg_pit_industry_fapi_monthly_updated_at ON pit.pit_industry_fapi_monthly;
+        CREATE TRIGGER trg_pit_industry_fapi_monthly_updated_at
+        BEFORE UPDATE ON pit.pit_industry_fapi_monthly
+        FOR EACH ROW EXECUTE FUNCTION pit.update_updated_at_pit();
+    END IF;
+END $$;
+
+DO $$ BEGIN
     IF to_regclass('pit.pit_index_fttm_monthly') IS NOT NULL THEN
         DROP TRIGGER IF EXISTS trg_pit_index_fttm_monthly_updated_at ON pit.pit_index_fttm_monthly;
         CREATE TRIGGER trg_pit_index_fttm_monthly_updated_at
         BEFORE UPDATE ON pit.pit_index_fttm_monthly
+        FOR EACH ROW EXECUTE FUNCTION pit.update_updated_at_pit();
+    END IF;
+END $$;
+
+DO $$ BEGIN
+    IF to_regclass('pit.pit_etf_index_members_monthly') IS NOT NULL THEN
+        DROP TRIGGER IF EXISTS trg_pit_etf_index_members_monthly_updated_at ON pit.pit_etf_index_members_monthly;
+        CREATE TRIGGER trg_pit_etf_index_members_monthly_updated_at
+        BEFORE UPDATE ON pit.pit_etf_index_members_monthly
+        FOR EACH ROW EXECUTE FUNCTION pit.update_updated_at_pit();
+    END IF;
+END $$;
+
+DO $$ BEGIN
+    IF to_regclass('pit.pit_etf_index_fapi_monthly') IS NOT NULL THEN
+        DROP TRIGGER IF EXISTS trg_pit_etf_index_fapi_monthly_updated_at ON pit.pit_etf_index_fapi_monthly;
+        CREATE TRIGGER trg_pit_etf_index_fapi_monthly_updated_at
+        BEFORE UPDATE ON pit.pit_etf_index_fapi_monthly
+        FOR EACH ROW EXECUTE FUNCTION pit.update_updated_at_pit();
+    END IF;
+END $$;
+
+DO $$ BEGIN
+    IF to_regclass('pit.pit_stock_consensus_fy_monthly') IS NOT NULL THEN
+        DROP TRIGGER IF EXISTS trg_pit_stock_consensus_fy_monthly_updated_at ON pit.pit_stock_consensus_fy_monthly;
+        CREATE TRIGGER trg_pit_stock_consensus_fy_monthly_updated_at
+        BEFORE UPDATE ON pit.pit_stock_consensus_fy_monthly
+        FOR EACH ROW EXECUTE FUNCTION pit.update_updated_at_pit();
+    END IF;
+END $$;
+
+DO $$ BEGIN
+    IF to_regclass('pit.pit_earnings_surprise_annual') IS NOT NULL THEN
+        DROP TRIGGER IF EXISTS trg_pit_earnings_surprise_annual_updated_at ON pit.pit_earnings_surprise_annual;
+        CREATE TRIGGER trg_pit_earnings_surprise_annual_updated_at
+        BEFORE UPDATE ON pit.pit_earnings_surprise_annual
         FOR EACH ROW EXECUTE FUNCTION pit.update_updated_at_pit();
     END IF;
 END $$;

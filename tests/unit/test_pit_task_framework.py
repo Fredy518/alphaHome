@@ -93,7 +93,38 @@ def test_pit_task_discovery_finds_all_fttm_tasks_without_manual_import():
     registry = UnifiedTaskFactory._task_registry
     assert "pit_stock_fttm_monthly" in registry
     assert "pit_industry_fttm_monthly" in registry
+    assert "pit_industry_fapi_monthly" in registry
     assert "pit_index_fttm_monthly" in registry
+    assert "pit_stock_consensus_fy_monthly" in registry
+    assert "pit_earnings_surprise_annual" in registry
+    assert "pit_etf_index_a_share_proxy_members_monthly" in registry
+    assert "pit_etf_index_a_share_proxy_fapi_monthly" in registry
+
+    surprise = registry["pit_earnings_surprise_annual"].contract
+    assert surprise.dependencies == (
+        "pit_income_quarterly",
+        "pit_stock_consensus_fy_monthly",
+    )
+    assert surprise.audit_denominator == "annual_report_events_at_ann_date"
+
+    fapi = registry["pit_industry_fapi_monthly"].contract
+    assert fapi.dependencies == (
+        "pit_stock_fttm_monthly",
+        "pit_industry_classification",
+    )
+    assert fapi.domain == "industry_fapi"
+    assert fapi.audit_entity_keys == (
+        "classification_source",
+        "industry_level",
+        "industry_code",
+    )
+
+    proxy_fapi = registry["pit_etf_index_a_share_proxy_fapi_monthly"].contract
+    assert proxy_fapi.dependencies == (
+        "pit_etf_index_a_share_proxy_members_monthly",
+        "pit_stock_fttm_monthly",
+    )
+    assert proxy_fapi.output_table == "pit.pit_etf_index_fapi_monthly"
 
 
 @pytest.mark.asyncio

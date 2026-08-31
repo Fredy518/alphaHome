@@ -1,5 +1,6 @@
 import asyncio
 from datetime import date
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -117,6 +118,50 @@ async def test_pit_audit_task_returns_coverage_and_persists_snapshot(monkeypatch
     assert result["gap_count"] == 2
     assert result["details"]["raw_vs_pit"]["raw_missing_in_pit"] == 1
     assert any("pit.pit_audit_snapshot" in query for query, _ in db.executed)
+
+
+@pytest.mark.asyncio
+async def test_raw_gap_compares_like_for_like_accounting_sources():
+    class _CaptureDB(_FakeDB):
+        async def fetch_one(self, query, *args, **kwargs):
+            self.last_fetch_query = query
+            return await super().fetch_one(query, *args, **kwargs)
+
+    contract = PITTaskContract(
+        task_name="pit_financial_indicators",
+        domain="financials",
+        source_tables=("pit.pit_income_quarterly", "pit.pit_balance_quarterly"),
+        output_table="pit.pit_financial_indicators",
+        pit_time_key="ann_date",
+        primary_keys=("ts_code", "end_date", "ann_date", "data_source"),
+        dependencies=("pit_income_quarterly", "pit_balance_quarterly"),
+        supported_modes=("audit_only",),
+        manager_class=_FakeManager,
+    )
+    db = _CaptureDB()
+    service = PITAuditService(db)
+    service._relation_exists = AsyncMock(return_value=True)
+
+    async def _get_columns(relation):
+        columns = {"ts_code", "end_date", "ann_date", "data_source"}
+        if relation == "pit.pit_income_quarterly":
+            return columns | {"conversion_status"}
+        if relation == "pit.pit_balance_quarterly":
+            return columns | {"tot_assets"}
+        return columns
+
+    service._get_columns = AsyncMock(side_effect=_get_columns)
+    service._listed_join_sql = AsyncMock(return_value="")
+
+    await service._raw_gap_summary(contract, date(2026, 6, 30))
+
+    query = db.last_fetch_query
+    assert "s.data_source IN ('report', 'express')" in query
+    assert "p.data_source IN ('report', 'express')" in query
+    assert "COALESCE(s.conversion_status, '') <> 'RPT_ORIG'" in query
+    assert 'FROM "pit"."pit_balance_quarterly" b' in query
+    assert "b.ann_date <= s.ann_date" in query
+    assert "b.tot_assets IS NOT NULL" in query
 
 
 @pytest.mark.asyncio
@@ -553,3 +598,103 @@ async def test_index_fttm_denominator_counts_configured_indices_and_all_a():
     )
 
     assert count == 14
+
+
+class _IndustryFAPIAuditDB:
+    def __init__(self, valued_count: int):
+        self.valued_count = valued_count
+
+    async def fetch(self, query, *args, **kwargs):
+        if "structural_industries" in query:
+            return [
+                {
+                    "industry_level": level,
+                    "structural_industries": 1,
+                    "valued_industries": self.valued_count,
+                    "eligible_industries": self.valued_count,
+                    "ratio_eligible_industries": self.valued_count,
+                    "late_source_count": 0,
+                    "fapi_out_of_range_count": 0,
+                    "spread_denominator_mismatch_count": 0,
+                    "ratio_denominator_mismatch_count": 0,
+                }
+                for level in ("L1", "L2")
+            ]
+        return []
+
+    async def fetch_one(self, query, *args, **kwargs):
+        if "inconsistent_code_name_groups" in query:
+            return {"inconsistent_code_name_groups": 0}
+        return None
+
+
+class _IndustryFAPIAuditTask:
+    task_type = "pit"
+    contract = PITTaskContract(
+        task_name="pit_industry_fapi_monthly",
+        domain="industry_fapi",
+        source_tables=("pit.pit_stock_fttm_monthly",),
+        output_table="pit.pit_industry_fapi_monthly",
+        pit_time_key="obs_date",
+        primary_keys=(
+            "obs_date",
+            "classification_source",
+            "industry_level",
+            "industry_code",
+            "benchmark_code",
+            "method_version",
+        ),
+        dependencies=(),
+        supported_modes=("audit_only",),
+        manager_class=_FakeManager,
+        audit_entity_keys=(
+            "classification_source",
+            "industry_level",
+            "industry_code",
+        ),
+        audit_denominator="pit_time_structural_industries",
+    )
+
+
+@pytest.mark.parametrize(
+    ("valued_count", "expected_status"),
+    [(0, "structure_only"), (1, "healthy")],
+)
+@pytest.mark.asyncio
+async def test_industry_fapi_audit_distinguishes_structure_from_valued_rows(
+    monkeypatch, valued_count, expected_status
+):
+    monkeypatch.setattr(
+        audit_service.UnifiedTaskFactory,
+        "get_tasks_by_type",
+        lambda task_type: {"pit_industry_fapi_monthly": _IndustryFAPIAuditTask},
+    )
+    service = PITAuditService(_IndustryFAPIAuditDB(valued_count))
+    monkeypatch.setattr(service, "_relation_exists", AsyncMock(return_value=True))
+    monkeypatch.setattr(
+        service,
+        "_table_stats",
+        AsyncMock(
+            return_value={
+                "coverage_period": date(2026, 7, 31),
+                "coverage_count": 2,
+                "listed_stock_count": None,
+                "denominator_name": "pit_time_structural_industries",
+                "denominator_count": 2,
+                "latest_pit_time": date(2026, 7, 31),
+                "row_count": 2,
+                "coverage_rate": 1.0,
+                "gap_count": 0,
+                "status": "healthy",
+            }
+        ),
+    )
+    monkeypatch.setattr(service, "_raw_gap_summary", AsyncMock(return_value={}))
+
+    result = await service.audit_task("pit_industry_fapi_monthly", persist=False)
+
+    assert result["status"] == expected_status
+    assert {
+        row["industry_level"]
+        for row in result["details"]["domain_metrics"]["levels"]
+    } == {"L1", "L2"}

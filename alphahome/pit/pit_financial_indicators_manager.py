@@ -86,7 +86,7 @@ class PITFinancialIndicatorsManager(PITTableManager):
             self.logger.warning(f"清理 forecast 财务指标遗留记录失败: {e}")
             return 0
 
-    def incremental_update(self, days: int = 7, batch_size: int | None = None) -> Dict[str, Any]:
+    def incremental_update(self, days: int | None = None, batch_size: int | None = None) -> Dict[str, Any]:
         """
         增量更新财务指标 - 正确处理每个公告日期
 
@@ -99,7 +99,6 @@ class PITFinancialIndicatorsManager(PITTableManager):
         - 之前只在一个固定as_of_date上计算所有股票
         - 现在为每个公告日期分别计算，正确反映历史状态
         """
-        from datetime import date, timedelta
         if batch_size is None:
             batch_size = self.batch_size
         # 容错：当调用方传入 days=None 时，回退至配置默认天数（或7天）
@@ -111,8 +110,13 @@ class PITFinancialIndicatorsManager(PITTableManager):
 
         # 确保表结构完整
         self._ensure_table_exists()
-        end_date = date.today().isoformat()
-        start_date = (date.today() - timedelta(days=days)).isoformat()
+        start_date, end_date = self.resolve_incremental_date_range(
+            days,
+            (
+                (f"{PITConfig.PIT_SCHEMA}.pit_income_quarterly", ("ann_date",), "updated_at"),
+                (f"{PITConfig.PIT_SCHEMA}.pit_balance_quarterly", ("ann_date",), "updated_at"),
+            ),
+        )
         self.ensure_table_exists()  # 再次确认表存在
         self._initialize_calculator()
         removed_forecast_records = self._remove_forecast_indicator_rows()
@@ -210,14 +214,14 @@ class PITFinancialIndicatorsManager(PITTableManager):
 
         except Exception as e:
             self.logger.error(f"增量更新失败: {e}")
-        return {
+            return {
                 'updated_records': 0,
                 'removed_forecast_records': removed_forecast_records if 'removed_forecast_records' in locals() else 0,
                 'calculated_dates': 0,
                 'processed_stocks': 0,
                 'error': str(e),
                 'message': '增量更新失败'
-        }
+            }
 
     def full_backfill(self, start_date: str | None = None, end_date: str | None = None, batch_size: int | None = None) -> Dict[str, Any]:
         """

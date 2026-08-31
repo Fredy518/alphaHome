@@ -81,6 +81,52 @@ def test_explicit_index_target_expands_stock_dependency_only():
     ]
 
 
+def test_explicit_fapi_target_expands_stock_and_classification_dependencies():
+    contracts = _fttm_contracts()
+    contracts["pit_industry_fapi_monthly"] = _contract(
+        "pit_industry_fapi_monthly",
+        ("pit_stock_fttm_monthly", "pit_industry_classification"),
+    )
+
+    selected = PITDataUpdateCoordinator._expand_dependency_closure(
+        ["pit_industry_fapi_monthly"], contracts
+    )
+    layers = PITDataUpdateCoordinator._topological_layers(selected, contracts)
+
+    assert selected == {
+        "pit_stock_fttm_monthly",
+        "pit_industry_classification",
+        "pit_industry_fapi_monthly",
+    }
+    assert layers == [
+        ["pit_industry_classification", "pit_stock_fttm_monthly"],
+        ["pit_industry_fapi_monthly"],
+    ]
+
+
+def test_earnings_surprise_expands_income_and_consensus_dependencies():
+    contracts = {
+        "pit_income_quarterly": _contract("pit_income_quarterly"),
+        "pit_stock_consensus_fy_monthly": _contract(
+            "pit_stock_consensus_fy_monthly"
+        ),
+        "pit_earnings_surprise_annual": _contract(
+            "pit_earnings_surprise_annual",
+            ("pit_income_quarterly", "pit_stock_consensus_fy_monthly"),
+        ),
+    }
+
+    selected = PITDataUpdateCoordinator._expand_dependency_closure(
+        ["pit_earnings_surprise_annual"], contracts
+    )
+    layers = PITDataUpdateCoordinator._topological_layers(selected, contracts)
+
+    assert layers == [
+        ["pit_income_quarterly", "pit_stock_consensus_fy_monthly"],
+        ["pit_earnings_surprise_annual"],
+    ]
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("parallel", [False, True])
 async def test_serial_and_parallel_execute_only_within_topological_layer(

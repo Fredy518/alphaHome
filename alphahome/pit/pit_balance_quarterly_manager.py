@@ -134,8 +134,14 @@ class PITBalanceQuarterlyManager(PITTableManager):
         if batch_size is None:
             batch_size = self.batch_size
 
-        # 计算增量更新日期范围
-        start_date, end_date = PITConfig.get_incremental_date_range(days)
+        # 默认滚动窗口之外，按上游 update_time 水位捕获晚到或补录的旧公告。
+        start_date, end_date = self.resolve_incremental_date_range(
+            days,
+            (
+                (f"{PITConfig.TUSHARE_SCHEMA}.fina_balancesheet", ("ann_date",), "update_time"),
+                (f"{PITConfig.TUSHARE_SCHEMA}.fina_express", ("ann_date",), "update_time"),
+            ),
+        )
 
         self.logger.info(f"增量更新日期范围: {start_date} ~ {end_date}")
         self.logger.info(f"批次大小: {batch_size}")

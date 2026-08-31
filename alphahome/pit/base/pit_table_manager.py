@@ -11,8 +11,9 @@ Date: 2025-08-11
 """
 
 import logging
+import re
 from abc import ABC, abstractmethod
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from typing import Any, Dict
 import pandas as pd
 import os
@@ -121,6 +122,111 @@ class PITTableManager(ABC):
                 rate = self.stats['success_records'] / duration
                 self.logger.info(f"处理速度: {rate:.2f} 记录/秒")
 
+    @staticmethod
+    def _quote_incremental_identifier(value: str) -> str:
+        """Quote a trusted SQL identifier used by incremental watermark probes."""
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", str(value or "")):
+            raise ValueError(f"无效SQL标识符: {value!r}")
+        return f'"{value}"'
+
+    def resolve_incremental_date_range(
+        self,
+        days: int | None = None,
+        source_specs: tuple[tuple[str, tuple[str, ...], str], ...] = (),
+    ) -> tuple[str, str]:
+        """Resolve a rolling announcement window plus late-arrival watermarks.
+
+        ``source_specs`` entries are ``(schema.table, date_columns, update_column)``.
+        The ordinary rolling window remains the lower-cost default.  When a source
+        row was inserted or revised after this PIT task's previous successful run,
+        the start date expands to the earliest affected announcement date.  A
+        one-day overlap avoids timestamp-boundary and task-order races.
+        """
+        if days is None:
+            days = int(PITConfig.DEFAULT_DATE_RANGES["incremental_days"])
+        base_start, end_date = PITConfig.get_incremental_date_range(int(days))
+        if self.context is None or not source_specs:
+            return base_start, end_date
+
+        try:
+            watermark_df = self.context.query_dataframe(
+                """
+                SELECT MAX(update_time AT TIME ZONE 'Asia/Shanghai') AS last_success_local
+                FROM public.task_status
+                WHERE task_name = %s
+                  AND status = 'success'
+                """,
+                (self.table_name,),
+            )
+            if watermark_df is None or watermark_df.empty:
+                return base_start, end_date
+            watermark_value = watermark_df.iloc[0].get("last_success_local")
+            watermark = pd.to_datetime(watermark_value, errors="coerce")
+            if pd.isna(watermark):
+                return base_start, end_date
+            watermark = watermark.to_pydatetime().replace(tzinfo=None) - timedelta(days=1)
+        except Exception as exc:
+            if self.logger:
+                self.logger.warning("读取PIT增量水位失败，使用默认窗口: %s", exc)
+            return base_start, end_date
+
+        earliest_changed: date | None = None
+        end_value = date.fromisoformat(end_date)
+        for relation, date_columns, update_column in source_specs:
+            try:
+                schema, table = relation.split(".", 1)
+                relation_sql = ".".join(
+                    (
+                        self._quote_incremental_identifier(schema),
+                        self._quote_incremental_identifier(table),
+                    )
+                )
+                quoted_dates = [
+                    self._quote_incremental_identifier(column) for column in date_columns
+                ]
+                if not quoted_dates:
+                    continue
+                date_expression = (
+                    quoted_dates[0]
+                    if len(quoted_dates) == 1
+                    else f"COALESCE({', '.join(quoted_dates)})"
+                )
+                update_sql = self._quote_incremental_identifier(update_column)
+                changed_df = self.context.query_dataframe(
+                    f"""
+                    SELECT MIN({date_expression})::date AS min_changed_date
+                    FROM {relation_sql}
+                    WHERE {update_sql} >= %s
+                      AND {date_expression} IS NOT NULL
+                      AND {date_expression} <= %s
+                    """,
+                    (watermark, end_value),
+                )
+                if changed_df is None or changed_df.empty:
+                    continue
+                changed_value = changed_df.iloc[0].get("min_changed_date")
+                changed_timestamp = pd.to_datetime(changed_value, errors="coerce")
+                if pd.isna(changed_timestamp):
+                    continue
+                changed_date = changed_timestamp.date()
+                if earliest_changed is None or changed_date < earliest_changed:
+                    earliest_changed = changed_date
+            except Exception as exc:
+                if self.logger:
+                    self.logger.warning("读取增量源水位失败 %s: %s", relation, exc)
+
+        base_start_value = date.fromisoformat(base_start)
+        if earliest_changed is None or earliest_changed >= base_start_value:
+            return base_start, end_date
+        if self.logger:
+            self.logger.info(
+                "检测到晚到/补录源数据，增量起点扩展: %s -> %s (上次成功水位: %s)",
+                base_start,
+                earliest_changed.isoformat(),
+                watermark.isoformat(sep=" "),
+            )
+        return earliest_changed.isoformat(), end_date
+
     def _ensure_updated_at_triggers(self) -> None:
         """幂等部署 PIT 四张表的 updated_at 触发器（不复用 pgs_factor 中的代码）。
         - 位置: alphahome/pit/database/create_pit_updated_at_triggers.sql
@@ -154,6 +260,21 @@ class PITTableManager(ABC):
         except Exception as e:
             self.logger.error(f"检查表存在性失败: {schema}.{table}, 错误: {e}")
             return False
+
+    def _get_table_columns(self, schema: str, table: str) -> set[str]:
+        """Return relation columns for managers without a legacy override."""
+        frame = self.context.query_dataframe(
+            """
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_schema = %s AND table_name = %s
+            ORDER BY ordinal_position
+            """,
+            (schema, table),
+        )
+        if frame is None or frame.empty:
+            return set()
+        return set(frame["column_name"].astype(str))
 
     def _ensure_table_exists(self) -> None:
         """确保当前 Manager 管理的 PIT 表存在；若不存在则自动创建。

@@ -1,12 +1,15 @@
-from datetime import date
+from datetime import date, datetime
 import logging
 from unittest.mock import Mock
 
 import pandas as pd
 import time_machine
 
+from alphahome.pit.base.pit_config import PITConfig
 from alphahome.pit.pit_balance_quarterly_manager import PITBalanceQuarterlyManager
+from alphahome.pit.pit_cashflow_quarterly_manager import PITCashflowQuarterlyManager
 from alphahome.pit.calculators.financial_indicators_calculator import FinancialIndicatorsCalculator
+from alphahome.pit.pit_financial_indicators_manager import PITFinancialIndicatorsManager
 from alphahome.pit.pit_income_quarterly_manager import PITIncomeQuarterlyManager
 from alphahome.pit.pit_industry_classification_manager import PITIndustryClassificationManager
 
@@ -25,12 +28,26 @@ def test_income_incremental_counts_inserted_records(monkeypatch):
     manager = PITIncomeQuarterlyManager()
     _patch_common_incremental_manager(monkeypatch, manager, {"inserted": 19, "updated": 0, "errors": 0})
     monkeypatch.setattr(manager, "_ensure_income_unique_keys", lambda: None)
+    captured = {}
+
+    def resolve(days, source_specs):
+        captured["days"] = days
+        captured["source_specs"] = source_specs
+        return "2026-07-01", "2026-08-26"
+
+    monkeypatch.setattr(manager, "resolve_incremental_date_range", resolve)
 
     result = manager.incremental_update(days=7, batch_size=100)
 
     assert result["updated_records"] == 19
     assert result["inserted_records"] == 19
     assert result["updated_existing_records"] == 0
+    assert captured["days"] == 7
+    assert {spec[0] for spec in captured["source_specs"]} == {
+        "tushare.fina_income",
+        "tushare.fina_express",
+        "tushare.fina_forecast",
+    }
 
 
 def test_income_forecast_horizon_metadata_marks_outliers():
@@ -125,6 +142,66 @@ def test_income_fetch_extends_only_report_dependencies(monkeypatch):
     ]
 
 
+def test_income_report_fetch_deterministically_resolves_duplicate_source_rows(
+    monkeypatch,
+):
+    manager = PITIncomeQuarterlyManager()
+    manager.logger = Mock()
+    captured = {}
+
+    class _Context:
+        def query_dataframe(self, query, params=None):
+            captured["query"] = query
+            captured["params"] = params
+            return pd.DataFrame(
+                {
+                    "ts_code": ["000001.SZ"],
+                    "end_date": ["2024-12-31"],
+                    "ann_date": ["2025-03-20"],
+                    "revenue": [1.0],
+                    "oper_cost": [1.0],
+                    "n_income_attr_p": [1_150_000.0],
+                    "operate_profit": [1.0],
+                    "n_income_attr_p_ytd": [1_150_000.0],
+                    "basic_eps_ytd": [1.15],
+                    "diluted_eps_ytd": [1.14],
+                    "report_source_update_time": ["2025-03-21"],
+                    "report_source_row_count": [2],
+                    "report_source_value_conflict": [True],
+                    "report_source_selection_basis": [
+                        manager.REPORT_SOURCE_SELECTION_BASIS
+                    ],
+                }
+            )
+
+    manager.context = _Context()
+    monkeypatch.setattr(
+        manager,
+        "_get_table_columns",
+        lambda schema, table: {
+            "n_income_attr_p",
+            "basic_eps",
+            "diluted_eps",
+        },
+    )
+
+    result = manager._fetch_income_report(
+        "2025-03-01", "2025-03-31", ts_code="000001.SZ"
+    )
+
+    assert "ROW_NUMBER() OVER" in captured["query"]
+    assert "md5(row_to_json(source)::text) DESC" in captured["query"]
+    assert "report_source_value_conflict" in captured["query"]
+    assert captured["params"] == (
+        "2025-03-01",
+        "2025-03-31",
+        "000001.SZ",
+    )
+    assert result.iloc[0].report_source_row_count == 2
+    assert bool(result.iloc[0].report_source_value_conflict) is True
+    assert result.iloc[0].data_source == "report"
+
+
 def test_income_quarterly_stats_exclude_extended_dependency_rows():
     manager = PITIncomeQuarterlyManager()
     manager.logger = Mock()
@@ -150,16 +227,166 @@ def test_income_quarterly_stats_exclude_extended_dependency_rows():
     assert "  🎯 Q2-Q4记录数: 1 条" in messages
 
 
+def test_income_quarterization_preserves_annual_actual_ytd_fields():
+    manager = PITIncomeQuarterlyManager()
+    manager.logger = Mock()
+    data = pd.DataFrame(
+        {
+            "ts_code": ["000001.SZ", "000001.SZ"],
+            "end_date": ["2024-09-30", "2024-12-31"],
+            "ann_date": ["2024-10-30", "2025-03-20"],
+            "data_source": ["report", "report"],
+            "conversion_status": ["RPT_ORIG", "RPT_ORIG"],
+            "n_income_attr_p": [800_000.0, 1_150_000.0],
+            "n_income_attr_p_ytd": [800_000.0, 1_150_000.0],
+            "basic_eps_ytd": [0.80, 1.15],
+            "diluted_eps_ytd": [0.79, 1.14],
+        }
+    )
+
+    result = manager._quarterize_to_single(data)
+    annual = result.loc[
+        pd.to_datetime(result["end_date"]).eq(pd.Timestamp("2024-12-31"))
+    ].iloc[0]
+
+    assert annual.n_income_attr_p == 350_000.0
+    assert annual.n_income_attr_p_ytd == 1_150_000.0
+    assert annual.basic_eps_ytd == 1.15
+    assert annual.diluted_eps_ytd == 1.14
+
+
 def test_balance_incremental_counts_inserted_records(monkeypatch):
     manager = PITBalanceQuarterlyManager()
     _patch_common_incremental_manager(monkeypatch, manager, {"inserted": 7, "updated": 0, "errors": 0})
     monkeypatch.setattr(manager, "_ensure_balance_unique_keys", lambda: None)
+    captured = {}
+
+    def resolve(days, source_specs):
+        captured["source_specs"] = source_specs
+        return "2026-07-01", "2026-08-26"
+
+    monkeypatch.setattr(manager, "resolve_incremental_date_range", resolve)
 
     result = manager.incremental_update(days=7, batch_size=100, run_fix_after=False)
 
     assert result["updated_records"] == 7
     assert result["inserted_records"] == 7
     assert result["updated_existing_records"] == 0
+    assert {spec[0] for spec in captured["source_specs"]} == {
+        "tushare.fina_balancesheet",
+        "tushare.fina_express",
+    }
+
+
+class _IncrementalWatermarkContext:
+    def __init__(self, last_success, changed_dates):
+        self.last_success = last_success
+        self.changed_dates = list(changed_dates)
+        self.calls = []
+
+    def query_dataframe(self, query, params=None):
+        self.calls.append((query, params))
+        if "public.task_status" in query:
+            return pd.DataFrame({"last_success_local": [self.last_success]})
+        value = self.changed_dates.pop(0)
+        return pd.DataFrame({"min_changed_date": [value]})
+
+
+def test_incremental_watermark_expands_to_late_arrival(monkeypatch):
+    manager = PITIncomeQuarterlyManager()
+    manager.logger = Mock()
+    manager.context = _IncrementalWatermarkContext(
+        datetime(2026, 8, 14, 14, 16),
+        [date(2026, 7, 16), date(2026, 8, 7), None],
+    )
+    monkeypatch.setattr(
+        PITConfig,
+        "get_incremental_date_range",
+        staticmethod(lambda days=None: ("2026-08-19", "2026-08-26")),
+    )
+
+    start_date, end_date = manager.resolve_incremental_date_range(
+        7,
+        (
+            ("tushare.fina_income", ("ann_date",), "update_time"),
+            ("tushare.fina_express", ("ann_date",), "update_time"),
+            ("tushare.fina_forecast", ("ann_date",), "update_time"),
+        ),
+    )
+
+    assert (start_date, end_date) == ("2026-07-16", "2026-08-26")
+    source_params = manager.context.calls[1][1]
+    assert source_params == (datetime(2026, 8, 13, 14, 16), date(2026, 8, 26))
+    manager.logger.info.assert_called_once()
+
+
+def test_incremental_watermark_never_shortens_rolling_window(monkeypatch):
+    manager = PITCashflowQuarterlyManager()
+    manager.logger = Mock()
+    manager.context = _IncrementalWatermarkContext(
+        datetime(2026, 8, 25, 15, 8),
+        [date(2026, 8, 24)],
+    )
+    monkeypatch.setattr(
+        PITConfig,
+        "get_incremental_date_range",
+        staticmethod(lambda days=None: ("2026-08-19", "2026-08-26")),
+    )
+
+    result = manager.resolve_incremental_date_range(
+        7,
+        (("tushare.fina_cashflow", ("f_ann_date", "ann_date"), "update_time"),),
+    )
+
+    assert result == ("2026-08-19", "2026-08-26")
+    assert 'COALESCE("f_ann_date", "ann_date")' in manager.context.calls[1][0]
+
+
+def test_financial_indicators_tracks_income_and_balance_watermarks(monkeypatch):
+    manager = PITFinancialIndicatorsManager()
+    manager.logger = Mock()
+    manager.context = Mock()
+    manager.context.query_dataframe.return_value = pd.DataFrame()
+    captured = {}
+
+    def resolve(days, source_specs):
+        captured["source_specs"] = source_specs
+        return "2026-07-01", "2026-08-26"
+
+    monkeypatch.setattr(manager, "resolve_incremental_date_range", resolve)
+    monkeypatch.setattr(manager, "_ensure_table_exists", lambda: None)
+    monkeypatch.setattr(manager, "ensure_table_exists", lambda: None)
+    monkeypatch.setattr(manager, "_initialize_calculator", lambda: None)
+    monkeypatch.setattr(manager, "_remove_forecast_indicator_rows", lambda: 0)
+
+    result = manager.incremental_update(days=7, batch_size=100)
+
+    assert result["updated_records"] == 0
+    assert {spec[0] for spec in captured["source_specs"]} == {
+        "pit.pit_income_quarterly",
+        "pit.pit_balance_quarterly",
+    }
+
+
+def test_financial_indicators_incremental_preserves_original_error(monkeypatch):
+    manager = PITFinancialIndicatorsManager()
+    manager.logger = Mock()
+    manager.context = Mock()
+    manager.context.query_dataframe.side_effect = RuntimeError("indicator source failed")
+    monkeypatch.setattr(
+        manager,
+        "resolve_incremental_date_range",
+        lambda days, source_specs: ("2026-07-01", "2026-08-26"),
+    )
+    monkeypatch.setattr(manager, "_ensure_table_exists", lambda: None)
+    monkeypatch.setattr(manager, "ensure_table_exists", lambda: None)
+    monkeypatch.setattr(manager, "_initialize_calculator", lambda: None)
+    monkeypatch.setattr(manager, "_remove_forecast_indicator_rows", lambda: 0)
+
+    result = manager.incremental_update(days=7, batch_size=100)
+
+    assert result["updated_records"] == 0
+    assert result["error"] == "indicator source failed"
 
 
 def test_balance_preprocess_validates_including_minority_and_keeps_sources(monkeypatch):

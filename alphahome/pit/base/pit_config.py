@@ -35,6 +35,14 @@ class PITConfig:
                 'n_income': 'numeric(20,4)',
                 'total_profit': 'numeric(20,4)',
                 'net_profit_mid': 'numeric(20,4)',
+                # 正式财报原始累计值：在单季化前保留，供年度超预期计算。
+                'n_income_attr_p_ytd': 'numeric(20,4)',
+                'basic_eps_ytd': 'numeric(20,6)',
+                'diluted_eps_ytd': 'numeric(20,6)',
+                'report_source_update_time': 'timestamp without time zone',
+                'report_source_row_count': 'integer',
+                'report_source_value_conflict': 'boolean',
+                'report_source_selection_basis': 'varchar(64)',
                 'forecast_horizon_days': 'integer',
                 'forecast_horizon_bucket': 'varchar(32)',
                 'forecast_horizon_status': 'varchar(32)',
@@ -152,6 +160,36 @@ class PITConfig:
             'standard_data_source': False,
             'depends_on': ['pit_stock_fttm_monthly', 'pit_industry_classification'],
         },
+        'pit_industry_fapi_monthly': {
+            'description': '申万一级、二级行业相对中证800的FAPI月末PIT快照',
+            'source_tables': [
+                'pit.pit_stock_fttm_monthly',
+                'pit.pit_industry_classification',
+                'rawdata.stock_dailybasic',
+                'rawdata.index_weight',
+            ],
+            'key_fields': [
+                'obs_date',
+                'classification_source',
+                'industry_level',
+                'industry_code',
+                'benchmark_code',
+                'method_version',
+            ],
+            'data_fields': [
+                'fapi_spread_equal',
+                'fapi_spread_weighted',
+                'fapi_ratio_equal',
+                'fapi_ratio_weighted',
+                'expected_roe_equal',
+                'expected_roe_weighted',
+            ],
+            'has_historical_data': True,
+            'supports_incremental': True,
+            'snapshot_mode': True,
+            'standard_data_source': False,
+            'depends_on': ['pit_stock_fttm_monthly', 'pit_industry_classification'],
+        },
         'pit_index_fttm_monthly': {
             'description': '重要指数与全A的FTTM月末PIT快照',
             'source_tables': [
@@ -172,6 +210,86 @@ class PITConfig:
             'snapshot_mode': True,
             'standard_data_source': False,
             'depends_on': ['pit_stock_fttm_monthly'],
+        },
+        'pit_etf_index_members_monthly': {
+            'description': 'ETF跟踪指数成分月末PIT快照，官方权重优先、ETF持仓降级',
+            'source_tables': [
+                'rawdata.index_weight',
+                'rawdata.fund_etf_basic',
+                'rawdata.fund_etf_index',
+                'rawdata.fund_portfolio',
+            ],
+            'key_fields': [
+                'obs_date',
+                'index_code',
+                'ts_code',
+                'method_version',
+            ],
+            'data_fields': [
+                'weight',
+                'weight_basis',
+                'source_coverage_rate',
+                'source_quality',
+            ],
+            'has_historical_data': True,
+            'supports_incremental': True,
+            'snapshot_mode': True,
+            'standard_data_source': False,
+        },
+        'pit_etf_index_fapi_monthly': {
+            'description': 'ETF跟踪指数相对中证800的FAPI与预期ROE月末PIT快照',
+            'source_tables': [
+                'pit.pit_etf_index_members_monthly',
+                'pit.pit_stock_fttm_monthly',
+                'rawdata.stock_dailybasic',
+                'rawdata.index_weight',
+            ],
+            'key_fields': [
+                'obs_date',
+                'index_code',
+                'benchmark_code',
+                'method_version',
+            ],
+            'data_fields': [
+                'fapi_spread_equal',
+                'fapi_spread_weighted',
+                'expected_roe_equal',
+                'expected_roe_weighted',
+            ],
+            'has_historical_data': True,
+            'supports_incremental': True,
+            'snapshot_mode': True,
+            'standard_data_source': False,
+            'depends_on': [
+                'pit_etf_index_members_monthly',
+                'pit_stock_fttm_monthly',
+            ],
+        },
+        'pit_stock_consensus_fy_monthly': {
+            'description': '个股固定财年分析师一致预期月末PIT快照',
+            'source_tables': ['rawdata.stock_report_rc'],
+            'key_fields': ['obs_date', 'ts_code', 'target_year'],
+            'data_fields': ['np_consensus_median', 'eps_consensus_median'],
+            'has_historical_data': True,
+            'supports_incremental': True,
+            'snapshot_mode': True,
+            'standard_data_source': False,
+        },
+        'pit_earnings_surprise_annual': {
+            'description': '年度业绩实际值相对公告前固定财年一致预期',
+            'source_tables': [
+                'pit.pit_income_quarterly',
+                'pit.pit_stock_consensus_fy_monthly',
+            ],
+            'key_fields': ['ts_code', 'end_date', 'ann_date'],
+            'data_fields': ['np_surprise_abs_10k', 'np_surprise_rate'],
+            'has_historical_data': True,
+            'supports_incremental': True,
+            'standard_data_source': False,
+            'depends_on': [
+                'pit_income_quarterly',
+                'pit_stock_consensus_fy_monthly',
+            ],
         }
     }
     
@@ -188,7 +306,12 @@ class PITConfig:
         'pit_financial_indicators': 500,
         'pit_stock_fttm_monthly': 5000,
         'pit_industry_fttm_monthly': 1000,
+        'pit_industry_fapi_monthly': 1000,
         'pit_index_fttm_monthly': 1000,
+        'pit_etf_index_members_monthly': 5000,
+        'pit_etf_index_fapi_monthly': 1000,
+        'pit_stock_consensus_fy_monthly': 5000,
+        'pit_earnings_surprise_annual': 5000,
     }
     
     # 默认日期范围
