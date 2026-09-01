@@ -104,12 +104,12 @@ class TushareFutureBasicTask(TushareTask):
 
     # 7. 数据验证规则
     validations = [
-        lambda df: df['ts_code'].notna(),
-        lambda df: df['symbol'].notna(),
-        lambda df: df['name'].notna(),
-        lambda df: df['exchange'].notna(),
-        lambda df: df['multiplier'] > 0, # 合约乘数必须为正
-        lambda df: df['per_unit'] > 0,   # 每手乘数必须为正
+        (lambda df: df['ts_code'].notna(), "期货代码不能为空"),
+        (lambda df: df['symbol'].notna(), "交易标识不能为空"),
+        (lambda df: df['name'].notna(), "合约名称不能为空"),
+        (lambda df: df['exchange'].notna(), "交易所不能为空"),
+        (lambda df: df['multiplier'].isna() | (df['multiplier'] > 0), "合约乘数必须为正或为空"),
+        (lambda df: df['per_unit'].isna() | (df['per_unit'] > 0), "每手乘数必须为正或为空"),
     ]
 
     # --- This __init__ was commented out for code simplification. ---

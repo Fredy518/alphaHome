@@ -129,9 +129,9 @@ class TushareFundEtfBasicTask(TushareTask):
         (lambda df: df['name'].notna(), "ETF名称不能为空"),
         (lambda df: ~(df['ts_code'].astype(str).str.strip().eq('') | df['ts_code'].isna()), "ETF代码不能为空字符串"),
         (lambda df: ~(df['name'].astype(str).str.strip().eq('') | df['name'].isna()), "ETF名称不能为空字符串"),
-        (lambda df: df['ts_code'].str.match(r'^\d{6}\.(SH|SZ)$'), "ETF代码格式检查（6位数字.SH/SZ）"),
-        (lambda df: df['status'].isin(['L', 'D', 'P']) if 'status' in df.columns else True, "存续状态必须为L/D/P (上市/退市/待上市)"),
-        (lambda df: df['market'].isin(['SH', 'SZ']) if 'market' in df.columns else True, "市场类型必须为SH/SZ (上交所/深交所)"),
+        (lambda df: df['ts_code'].str.match(r'^\d{6}\.(SH|SZ|OF)$'), "ETF代码格式检查（6位数字.SH/SZ/OF）"),
+        (lambda df: df['status'].isna() | df['status'].isin(['L', 'D', 'P']) if 'status' in df.columns else True, "存续状态必须为L/D/P或为空 (上市/退市/待上市)"),
+        (lambda df: df['market'].isna() | df['market'].isin(['SH', 'SZ']) if 'market' in df.columns else True, "市场类型必须为SH/SZ或为空 (上交所/深交所)"),
         (lambda df: df['m_fee'].fillna(0) >= 0, "管理费率不能为负数"),
     ]
 

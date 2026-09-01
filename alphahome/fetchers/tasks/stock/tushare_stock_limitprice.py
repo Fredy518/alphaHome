@@ -71,7 +71,14 @@ class TushareStockLimitPriceTask(TushareTask):
         (lambda df: df["ts_code"].notna(), "股票代码不能为空"),
         (lambda df: df["pre_close"].isna() | (df["pre_close"] > 0), "昨日收盘价必须大于0或为空"),
         (lambda df: df["up_limit"].isna() | (df["up_limit"] > 0), "涨停价必须大于0或为空"),
-        (lambda df: df["down_limit"].isna() | (df["down_limit"] > 0), "跌停价必须大于0或为空"),
+        (
+            lambda df: (
+                df["down_limit"].isna()
+                | (df["down_limit"] > 0)
+                | ((df["down_limit"] == 0) & (df["up_limit"] >= 99999))
+            ),
+            "跌停价必须大于0、为空或符合无涨跌停哨兵值",
+        ),
         (lambda df: df["down_limit"].isna() | df["up_limit"].isna() | (df["down_limit"] <= df["up_limit"]), "跌停价不得高于涨停价"),
     ]
 

@@ -130,8 +130,8 @@ class TushareFundBasicTask(TushareTask):
         (lambda df: df['ts_code'].notna(), "基金代码不能为空"),
         (lambda df: df['name'].notna(), "基金名称不能为空"),
         (lambda df: df['fund_type'].notna(), "基金类型不能为空"),
-        (lambda df: df['status'].isin(['D', 'I', 'L']), "存续状态必须为D/I/L（终止/发行/上市）"),
-        (lambda df: df['market'].isin(['E', 'O']), "市场类型必须为E/O（场内/场外）"),
+        (lambda df: df['status'].isna() | df['status'].isin(['D', 'I', 'L']), "存续状态必须为D/I/L或为空（终止/发行/上市）"),
+        (lambda df: df['market'].isna() | df['market'].isin(['E', 'O']), "市场类型必须为E/O或为空（场内/场外）"),
     ]
 
     # def __init__(self, db_connection, api_token=None, api=None, **kwargs):

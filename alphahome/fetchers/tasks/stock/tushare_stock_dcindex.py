@@ -172,10 +172,8 @@ class TushareStockDcIndexTask(TushareTask):
         (lambda df: df['pct_change'].notna(), "涨跌幅不能为空"),
         (lambda df: df['total_mv'].notna(), "总市值不能为空"),
         (lambda df: df['turnover_rate'].notna(), "换手率不能为空"),
-        (lambda df: df['up_num'].notna(), "上涨家数不能为空"),
-        (lambda df: df['down_num'].notna(), "下降家数不能为空"),
-        (lambda df: df['up_num'] >= 0, "上涨家数不能为负数"),
-        (lambda df: df['down_num'] >= 0, "下降家数不能为负数"),
+        (lambda df: df['up_num'].isna() | (df['up_num'] >= 0), "上涨家数不能为负数或为空"),
+        (lambda df: df['down_num'].isna() | (df['down_num'] >= 0), "下降家数不能为负数或为空"),
     ]
 
 

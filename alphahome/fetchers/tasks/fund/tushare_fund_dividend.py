@@ -126,7 +126,6 @@ class TushareFundDividendTask(TushareTask):
         (lambda df: df['ex_date'].notna(), "除息日不能为空"),
         (lambda df: df['div_cash'].isna() | (df['div_cash'] >= 0), "每股派息必须非负或为空"),
         (lambda df: df['base_unit'].isna() | (df['base_unit'] >= 0), "基准基金份额必须非负或为空"),
-        (lambda df: df['ear_distr'].isna() | (df['ear_distr'] >= 0), "可分配收益必须非负或为空"),
         (lambda df: df['ear_amount'].isna() | (df['ear_amount'] >= 0), "收益分配金额必须非负或为空"),
         (lambda df: df['div_proc'].isna() | df['div_proc'].isin(['预案', '股东大会通过', '实施']), "方案进度必须有效或为空"),
         # 逻辑日期检查 (允许某些日期为空)

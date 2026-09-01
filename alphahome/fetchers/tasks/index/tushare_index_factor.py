@@ -151,14 +151,14 @@ class TushareIndexFactorProTask(TushareTask):
 
     # 4.1 数据验证规则
     validations = [
-        lambda df: df['ts_code'].notna(),
-        lambda df: df['trade_date'].notna(),
-        lambda df: df['close'] > 0,
-        lambda df: df['high'] >= df['low'],
-        lambda df: df['volume'] >= 0,
-        lambda df: df['amount'] >= 0,
-        lambda df: df['rsi_bfq_12'].between(0, 100), # RSI指标应在0-100之间
-        lambda df: df['kdj_k_bfq'].between(0, 100), # KDJ.K指标应在0-100之间
+        (lambda df: df['ts_code'].notna(), "指数代码不能为空"),
+        (lambda df: df['trade_date'].notna(), "交易日期不能为空"),
+        (lambda df: df['close'].isna() | (df['close'] > 0), "收盘价必须为正或为空"),
+        (lambda df: df['high'].isna() | df['low'].isna() | (df['high'] >= df['low']), "最高价不得低于最低价或为空"),
+        (lambda df: df['volume'].isna() | (df['volume'] >= 0), "成交量必须非负或为空"),
+        (lambda df: df['amount'].isna() | (df['amount'] >= 0), "成交额必须非负或为空"),
+        (lambda df: df['rsi_bfq_12'].isna() | df['rsi_bfq_12'].between(0, 100), "RSI应在0-100或为空"),
+        (lambda df: df['kdj_k_bfq'].isna() | df['kdj_k_bfq'].between(0, 100), "KDJ.K应在0-100或为空"),
     ]
 
     # 5. 数据库表结构

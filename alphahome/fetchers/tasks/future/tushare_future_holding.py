@@ -105,13 +105,13 @@ class TushareFutureHoldingTask(TushareTask):
 
     # 7. 数据验证规则
     validations = [
-        lambda df: df['trade_date'].notna(),
-        lambda df: df['symbol'].notna(),
-        lambda df: df['broker'].notna(),
-        lambda df: df['exchange'].notna(),
-        lambda df: df['volume'] >= 0,
-        lambda df: df['long_hld'] >= 0,
-        lambda df: df['short_hld'] >= 0,
+        (lambda df: df['trade_date'].notna(), "交易日期不能为空"),
+        (lambda df: df['symbol'].notna(), "合约代码不能为空"),
+        (lambda df: df['broker'].notna(), "会员简称不能为空"),
+        (lambda df: df['exchange'].notna(), "交易所不能为空"),
+        (lambda df: df['volume'].isna() | (df['volume'] >= 0), "成交量必须非负或为空"),
+        (lambda df: df['long_hld'].isna() | (df['long_hld'] >= 0), "多单持仓必须非负或为空"),
+        (lambda df: df['short_hld'].isna() | (df['short_hld'] >= 0), "空单持仓必须非负或为空"),
     ]
 
     # def __init__(

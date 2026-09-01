@@ -124,15 +124,16 @@ class TushareStockDividendTask(TushareTask):
 
     # 7. 数据验证规则
     validations = [
-        lambda df: df['ts_code'].notna(),
-        lambda df: df['ex_date'].notna(),
-        lambda df: df['stk_div'] >= 0,
-        lambda df: df['cash_div'] >= 0,
-        lambda df: df['cash_div_tax'] >= df['cash_div'], # 税前分红应大于等于税后
-        lambda df: df['div_proc'].isin(['预案', '股东大会通过', '实施']),
+        (lambda df: df['ts_code'].notna(), "股票代码不能为空"),
+        (lambda df: df['ex_date'].notna(), "除权除息日不能为空"),
+        (lambda df: df['stk_div'].isna() | (df['stk_div'] >= 0), "送转比例必须非负或为空"),
+        (lambda df: df['cash_div'].isna() | (df['cash_div'] >= 0), "税前现金分红必须非负或为空"),
+        (lambda df: df['cash_div_tax'].isna() | (df['cash_div_tax'] >= 0), "税后现金分红必须非负或为空"),
+        (lambda df: df['cash_div'].isna() | df['cash_div_tax'].isna() | (df['cash_div'] >= df['cash_div_tax']), "税前现金分红不得低于税后现金分红"),
+        (lambda df: df['div_proc'].isna() | df['div_proc'].isin(['预案', '股东大会通过', '实施']), "分红进度必须有效或为空"),
         # 逻辑日期检查 (允许某些日期为空)
-        lambda df: (df['ex_date'] >= df['record_date']) | df['record_date'].isnull(),
-        lambda df: (df['pay_date'] >= df['ex_date']) | df['pay_date'].isnull(),
+        (lambda df: (df['ex_date'] >= df['record_date']) | df['record_date'].isnull(), "除息日不得早于登记日或登记日为空"),
+        (lambda df: (df['pay_date'] >= df['ex_date']) | df['pay_date'].isnull(), "派息日不得早于除息日或为空"),
     ]
 
     async def get_batch_list(self, **kwargs) -> List[Dict]:

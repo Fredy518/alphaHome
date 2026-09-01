@@ -129,7 +129,7 @@ class TushareStockBasicTask(TushareTask):
 
     # 验证规则：使用 validations 列表（真正生效的验证机制）
     validations = [
-        (lambda df: df['ts_code'].str.match(r'^\d{6}\.(SH|SZ|BJ)$'), "股票代码格式检查（6位数字.SH/SZ/BJ）"),
+        (lambda df: df['ts_code'].str.match(r'^T?\d{6}\.(SH|SZ|BJ)$'), "股票代码格式检查（含T前缀历史代码）"),
         (lambda df: df['symbol'].notna(), "股票简称不能为空"),
         (lambda df: df['name'].notna(), "股票名称不能为空"),
         (lambda df: ~(df['symbol'].astype(str).str.strip().eq('') | df['symbol'].isna()), "股票简称不能为空字符串"),

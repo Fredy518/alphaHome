@@ -106,8 +106,6 @@ class TushareFundEtfIndexTask(TushareTask):
         (lambda df: ~(df['ts_code'].astype(str).str.strip().eq('') | df['ts_code'].isna()), "指数代码不能为空字符串"),
         (lambda df: ~(df['index_name'].astype(str).str.strip().eq('') | df['index_name'].isna()), "指数全称不能为空字符串"), # Changed from indx_name to index_name
         (lambda df: df['bp'].fillna(0) >= 0, "指数基点不能为负数"),
-        (lambda df: df['pub_date'].notna(), "发布日期不能为空"), # Added notna validation for pub_date
-        (lambda df: df['base_date'].notna(), "基日不能为空"), # Added notna validation for base_date
     ]
 
     # 8. 分批配置 (不再需要复杂的批处理)

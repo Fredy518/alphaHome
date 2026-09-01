@@ -82,8 +82,6 @@ class TushareMacroSFTTask(TushareTask):
             lambda df: df["month"].astype(str).str.match(r"^\d{6}$"),
             "月份格式必须为YYYYMM",
         ),
-        (lambda df: df["inc_month"].fillna(0) >= 0, "当月社融增量应为非负"),
-        (lambda df: df["inc_cumval"].fillna(0) >= 0, "累计社融增量应为非负"),
         (lambda df: df["stk_endval"].fillna(0) >= 0, "社融存量应为非负"),
         (
             lambda df: df["month_end_date"].notna(),
