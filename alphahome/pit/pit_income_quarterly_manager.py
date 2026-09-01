@@ -27,6 +27,7 @@ from functools import lru_cache
 
 from .base.pit_table_manager import PITTableManager
 from .base.pit_config import PITConfig
+from .financial_code_utils import normalize_tushare_financial_ts_codes
 
 from typing import Dict, Any
 
@@ -720,7 +721,7 @@ class PITIncomeQuarterlyManager(PITTableManager):
 
         self.logger.info(f"开始数据预处理: {len(data)} 条记录")
 
-        processed_data = data.copy()
+        processed_data = normalize_tushare_financial_ts_codes(data, self.logger)
 
         # 1. data_source 已在各自_fetch_*阶段固定为 report/express/forecast
         # 若缺失则默认为 report（保守回退），但会记录告警
@@ -2376,6 +2377,7 @@ class PITIncomeQuarterlyManager(PITTableManager):
                     r_res = self._upsert_batch(upsert_sql, r_batch, all_fields)
                     batch_inserted += r_res['inserted']
                     batch_updated += r_res['updated']
+                    batch_errors += r_res['errors']
 
                 # 2) express 预填充后写入
                 e_batch = batch_data.loc[mask_e]
@@ -2387,6 +2389,7 @@ class PITIncomeQuarterlyManager(PITTableManager):
                     e_res = self._upsert_batch(upsert_sql, e_prepared, all_fields)
                     batch_inserted += e_res['inserted']
                     batch_updated += e_res['updated']
+                    batch_errors += e_res['errors']
 
                 # 3) forecast 最后写入
                 f_batch = batch_data.loc[mask_f]
@@ -2396,6 +2399,7 @@ class PITIncomeQuarterlyManager(PITTableManager):
                     f_res = self._upsert_batch(upsert_sql, f_prepared, all_fields)
                     batch_inserted += f_res['inserted']
                     batch_updated += f_res['updated']
+                    batch_errors += f_res['errors']
 
             except Exception as e:
                 self.logger.error(f"批次 {b_idx} 处理失败: {e}")
@@ -2443,6 +2447,7 @@ class PITIncomeQuarterlyManager(PITTableManager):
 
         inserted_count = 0
         updated_count = 0
+        error_count = 0
 
         for _, row in batch_data.iterrows():
             try:
@@ -2468,10 +2473,11 @@ class PITIncomeQuarterlyManager(PITTableManager):
                     inserted_count += 1
 
             except Exception as e:
+                error_count += 1
                 self.logger.error(f"UPSERT记录失败 {row['ts_code']}-{row['end_date']}-{row['ann_date']}: {e}")
                 continue
 
-        return {'inserted': inserted_count, 'updated': updated_count}
+        return {'inserted': inserted_count, 'updated': updated_count, 'errors': error_count}
 
 def main():
     """主函数 - 命令行接口"""

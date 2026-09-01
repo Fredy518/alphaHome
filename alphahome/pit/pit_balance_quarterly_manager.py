@@ -25,6 +25,7 @@ import pandas as pd
 
 from .base.pit_table_manager import PITTableManager
 from .base.pit_config import PITConfig
+from .financial_code_utils import normalize_tushare_financial_ts_codes
 
 class PITBalanceQuarterlyManager(PITTableManager):
     """PIT资产负债表管理器"""
@@ -147,6 +148,8 @@ class PITBalanceQuarterlyManager(PITTableManager):
         self.logger.info(f"批次大小: {batch_size}")
 
         try:
+            # 0. 确保目标表存在（与 full/single-backfill 路径保持一致）
+            self._ensure_table_exists()
             # 1. 获取增量数据
             incremental_data = self._fetch_tushare_data(start_date, end_date)
 
@@ -260,7 +263,7 @@ class PITBalanceQuarterlyManager(PITTableManager):
 
         self.logger.info(f"开始数据预处理: {len(data)} 条记录")
 
-        processed_data = data.copy()
+        processed_data = normalize_tushare_financial_ts_codes(data, self.logger)
 
         # 1. 字段映射 (tushare字段名 -> PIT表字段名)
         field_mapping = {
@@ -427,6 +430,7 @@ class PITBalanceQuarterlyManager(PITTableManager):
                     r_res = self._upsert_batch(upsert_sql, report_batch, all_fields)
                     inserted_count += r_res['inserted']
                     updated_count += r_res['updated']
+                    error_count += r_res['errors']
 
                 # 2) 对 express 执行填充（可利用已写入的 report），再写入
                 express_batch = batch_data.loc[express_mask]
@@ -439,6 +443,7 @@ class PITBalanceQuarterlyManager(PITTableManager):
                     e_res = self._upsert_batch(upsert_sql, express_prepared, all_fields)
                     inserted_count += e_res['inserted']
                     updated_count += e_res['updated']
+                    error_count += e_res['errors']
 
                 # 3) 其余数据源（若有）
                 other_mask = ~(report_mask | express_mask)
@@ -448,6 +453,7 @@ class PITBalanceQuarterlyManager(PITTableManager):
                     o_res = self._upsert_batch(upsert_sql, other_batch, all_fields)
                     inserted_count += o_res['inserted']
                     updated_count += o_res['updated']
+                    error_count += o_res['errors']
 
             except Exception as e:
                 self.logger.error(f"批次 {i//batch_size + 1} 处理失败: {e}")
@@ -990,6 +996,7 @@ class PITBalanceQuarterlyManager(PITTableManager):
 
         inserted_count = 0
         updated_count = 0
+        error_count = 0
 
         for _, row in batch_data.iterrows():
             try:
@@ -1014,10 +1021,11 @@ class PITBalanceQuarterlyManager(PITTableManager):
                     inserted_count += 1
 
             except Exception as e:
+                error_count += 1
                 self.logger.error(f"UPSERT记录失败 {row['ts_code']}-{row['end_date']}-{row['ann_date']}: {e}")
                 continue
 
-        return {'inserted': inserted_count, 'updated': updated_count}
+        return {'inserted': inserted_count, 'updated': updated_count, 'errors': error_count}
     def _ensure_balance_unique_keys(self) -> None:
         """将 pit_balance_quarterly 唯一键升级为 (ts_code, end_date, ann_date, data_source)。幂等执行。"""
         try:

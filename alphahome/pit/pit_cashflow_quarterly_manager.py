@@ -13,6 +13,7 @@ import pandas as pd
 
 from .base.pit_config import PITConfig
 from .base.pit_table_manager import PITTableManager
+from .financial_code_utils import normalize_tushare_financial_ts_codes
 
 
 class PITCashflowQuarterlyManager(PITTableManager):
@@ -218,7 +219,7 @@ class PITCashflowQuarterlyManager(PITTableManager):
         if data is None or data.empty:
             return pd.DataFrame()
 
-        work = data.copy()
+        work = normalize_tushare_financial_ts_codes(data, self.logger)
         work["data_source"] = "report"
         work["end_date"] = pd.to_datetime(work["end_date"], errors="coerce").dt.date
         work["ann_date"] = pd.to_datetime(work["ann_date"], errors="coerce").dt.date

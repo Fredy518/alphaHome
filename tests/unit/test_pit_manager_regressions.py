@@ -6,6 +6,7 @@ import pandas as pd
 import time_machine
 
 from alphahome.pit.base.pit_config import PITConfig
+from alphahome.pit.financial_code_utils import normalize_tushare_financial_ts_code
 from alphahome.pit.pit_balance_quarterly_manager import PITBalanceQuarterlyManager
 from alphahome.pit.pit_cashflow_quarterly_manager import PITCashflowQuarterlyManager
 from alphahome.pit.calculators.financial_indicators_calculator import FinancialIndicatorsCalculator
@@ -260,6 +261,8 @@ def test_balance_incremental_counts_inserted_records(monkeypatch):
     _patch_common_incremental_manager(monkeypatch, manager, {"inserted": 7, "updated": 0, "errors": 0})
     monkeypatch.setattr(manager, "_ensure_balance_unique_keys", lambda: None)
     captured = {}
+    ensure_calls = []
+    monkeypatch.setattr(manager, "_ensure_table_exists", lambda: ensure_calls.append(True))
 
     def resolve(days, source_specs):
         captured["source_specs"] = source_specs
@@ -272,6 +275,7 @@ def test_balance_incremental_counts_inserted_records(monkeypatch):
     assert result["updated_records"] == 7
     assert result["inserted_records"] == 7
     assert result["updated_existing_records"] == 0
+    assert ensure_calls == [True]
     assert {spec[0] for spec in captured["source_specs"]} == {
         "tushare.fina_balancesheet",
         "tushare.fina_express",
@@ -413,6 +417,125 @@ def test_balance_preprocess_validates_including_minority_and_keeps_sources(monke
     assert "_tot_equity_including_minority" not in result.columns
     warning_messages = [call.args[0] for call in manager.logger.warning.call_args_list]
     assert warning_messages == ["发现 1 条资产负债不平衡的记录"]
+
+
+def test_tushare_financial_alias_normalizer_is_narrow():
+    assert normalize_tushare_financial_ts_code("833243!1.BJ") == "833243.BJ"
+    assert normalize_tushare_financial_ts_code("000001!27.sz") == "000001.SZ"
+    assert normalize_tushare_financial_ts_code("IO2608-C-4000.CFX") == "IO2608-C-4000.CFX"
+    assert normalize_tushare_financial_ts_code(None) is None
+
+
+def test_balance_preprocess_collapses_tushare_financial_alias(monkeypatch):
+    manager = PITBalanceQuarterlyManager()
+    manager.logger = Mock()
+    monkeypatch.setattr(manager, "_fill_express_missing_fields", lambda data: data)
+    raw = pd.DataFrame(
+        {
+            "ts_code": ["833243!1.BJ", "833243.BJ"],
+            "end_date": ["2026-06-30"] * 2,
+            "ann_date": ["2026-08-26"] * 2,
+            "data_source": ["report"] * 2,
+            "total_assets": [1_838_614_835.55] * 2,
+            "total_liab": [747_790_723.68] * 2,
+            "total_hldr_eqy_exc_min_int": [1_028_283_814.56] * 2,
+            "total_hldr_eqy_inc_min_int": [1_090_824_111.87] * 2,
+        }
+    )
+
+    result = manager._preprocess_data(raw)
+
+    assert result["ts_code"].tolist() == ["833243.BJ"]
+    assert "833243!1.BJ->833243.BJ" in manager.logger.warning.call_args_list[0].args[0]
+
+
+def test_income_preprocess_collapses_tushare_financial_alias(monkeypatch):
+    manager = PITIncomeQuarterlyManager()
+    manager.logger = Mock()
+    monkeypatch.setattr(manager, "_enrich_express_parent_profit", lambda data: data)
+    monkeypatch.setattr(manager, "_quarterize_to_single", lambda data: data)
+    monkeypatch.setattr(manager, "_fill_forecast_profit_proxies", lambda data: data)
+    raw = pd.DataFrame(
+        {
+            "ts_code": ["833243!1.BJ", "833243.BJ"],
+            "end_date": ["2026-06-30"] * 2,
+            "ann_date": ["2026-08-26"] * 2,
+            "data_source": ["report"] * 2,
+            "revenue": [100.0] * 2,
+            "oper_cost": [70.0] * 2,
+            "n_income_attr_p": [20.0] * 2,
+            "operate_profit": [25.0] * 2,
+        }
+    )
+
+    result = manager._preprocess_data(raw)
+
+    assert result["ts_code"].tolist() == ["833243.BJ"]
+
+
+def test_cashflow_preprocess_collapses_tushare_financial_alias():
+    manager = PITCashflowQuarterlyManager()
+    manager.logger = Mock()
+    raw = pd.DataFrame(
+        {
+            "ts_code": ["833243!1.BJ", "833243.BJ"],
+            "end_date": ["2026-06-30"] * 2,
+            "ann_date": ["2026-08-26"] * 2,
+            "net_profit": [20.0] * 2,
+        }
+    )
+
+    result = manager._preprocess_data(raw)
+
+    assert result["ts_code"].tolist() == ["833243.BJ"]
+
+
+def test_balance_upsert_batch_counts_row_errors():
+    manager = PITBalanceQuarterlyManager()
+    manager.logger = Mock()
+    manager.context = Mock()
+    manager.context.query_dataframe.return_value = pd.DataFrame()
+    manager.context.db_manager.execute_sync.side_effect = RuntimeError("value too long")
+    batch = pd.DataFrame(
+        {
+            "ts_code": ["833243.BJ"],
+            "end_date": [date(2026, 6, 30)],
+            "ann_date": [date(2026, 8, 26)],
+            "data_source": ["report"],
+        }
+    )
+
+    result = manager._upsert_batch(
+        "INSERT failure",
+        batch,
+        ["ts_code", "end_date", "ann_date", "data_source"],
+    )
+
+    assert result == {"inserted": 0, "updated": 0, "errors": 1}
+
+
+def test_income_upsert_batch_counts_row_errors():
+    manager = PITIncomeQuarterlyManager()
+    manager.logger = Mock()
+    manager.context = Mock()
+    manager.context.query_dataframe.return_value = pd.DataFrame()
+    manager.context.db_manager.execute_sync.side_effect = RuntimeError("write failure")
+    batch = pd.DataFrame(
+        {
+            "ts_code": ["833243.BJ"],
+            "end_date": [date(2026, 6, 30)],
+            "ann_date": [date(2026, 8, 26)],
+            "data_source": ["report"],
+        }
+    )
+
+    result = manager._upsert_batch(
+        "INSERT failure",
+        batch,
+        ["ts_code", "end_date", "ann_date", "data_source"],
+    )
+
+    assert result == {"inserted": 0, "updated": 0, "errors": 1}
 
 
 @time_machine.travel("2026-07-03 13:30:00", tick=False)
