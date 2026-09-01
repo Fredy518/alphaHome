@@ -45,6 +45,8 @@ RECOMMENDED_FULL_STARTS = {
     "tinysoft_stock_lending_balance": "20130228",
     "tinysoft_stock_lending_summary": "20130228",
     "tinysoft_stock_lending_trade": "20130228",
+    "tinysoft_stock_margin": "20100331",
+    "tinysoft_stock_margindetail": "20100331",
     "tinysoft_stock_minute": "20240101",
     "tinysoft_stock_pledge_balance": "20130624",
     "tinysoft_stock_pledge_detail": "20130624",
