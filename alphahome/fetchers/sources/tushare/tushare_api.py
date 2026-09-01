@@ -241,6 +241,7 @@ class TushareAPI:
         fields: Optional[Union[str, List[str]]] = None,
         max_retries: int = 3,
         stop_event: Optional[asyncio.Event] = None,
+        max_pages: Optional[int] = None,
         **params,
     ) -> Optional[pd.DataFrame]:
         """
@@ -250,6 +251,7 @@ class TushareAPI:
             api_name=api_name,
             fields=fields,
             max_retries=max_retries,
+            max_pages=max_pages,
             stop_event=stop_event,
             **params,
         )
@@ -260,6 +262,7 @@ class TushareAPI:
         fields: Optional[Union[str, List[str]]],
         max_retries: int,
         stop_event: Optional[asyncio.Event] = None,
+        max_pages: Optional[int] = None,
         **params,
     ) -> Optional[pd.DataFrame]:
         """
@@ -291,6 +294,9 @@ class TushareAPI:
 
         all_data: List[pd.DataFrame] = []
         offset = 0
+
+        if max_pages is not None and max_pages < 1:
+            raise ValueError("max_pages must be at least 1 when provided")
 
         limit = params.get("limit")
         effective_page_size = limit if limit is not None and limit > 0 else 5000
@@ -470,6 +476,12 @@ class TushareAPI:
                 if len(items) < effective_page_size:
                     has_more = False
                 else:
+                    if max_pages is not None and request_count >= max_pages:
+                        raise RuntimeError(
+                            f"Tushare API pagination guard reached for {api_name}: "
+                            f"page {request_count} was full ({len(items)} rows), "
+                            "so the request may be missing an effective filter."
+                        )
                     offset += len(items)
 
         if not all_data:

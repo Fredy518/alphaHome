@@ -39,6 +39,7 @@ class TushareTask(FetcherTask, abc.ABC):
 
     # Tushare 特有配置
     default_page_size = 5000
+    default_max_pages: Optional[int] = None
     default_rate_limit_delay = 65
     default_stream_batches = True
 
@@ -92,6 +93,10 @@ class TushareTask(FetcherTask, abc.ABC):
         self.page_size = int(
             task_config.get("page_size", cls.default_page_size)
         )
+        configured_max_pages = task_config.get("max_pages", cls.default_max_pages)
+        self.max_pages = (
+            int(configured_max_pages) if configured_max_pages is not None else None
+        )
         self.rate_limit_delay = int(
             task_config.get("rate_limit_delay", cls.default_rate_limit_delay)
         )
@@ -125,6 +130,7 @@ class TushareTask(FetcherTask, abc.ABC):
                 api_name=self.api_name,
                 fields=self.fields,
                 limit=self.page_size,
+                max_pages=self.max_pages,
                 stop_event=stop_event,
                 **clean_params  # 将清理后的批处理参数解包传递
             )

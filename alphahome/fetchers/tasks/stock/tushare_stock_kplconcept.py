@@ -6,11 +6,11 @@
 获取开盘啦概念题材列表，每天盘后更新。
 该任务使用Tushare的kpl_concept接口获取数据。
 
-{{ AURA-X: [Create] - 基于 Tushare kpl_concept API 创建开盘啦题材库任务. Source: tushare.pro/document/2?doc_id=350 }}
+接口参数以 Tushare ``kpl_concept`` 当前返回契约为准。
 """
 
 from datetime import datetime
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
@@ -39,6 +39,7 @@ class TushareStockKplConceptTask(TushareTask):
     # --- 代码级默认配置 (会被 config.json 覆盖) --- #
     default_concurrent_limit = 5  # 默认并发限制
     default_page_size = 5000  # 单次最大5000行数据
+    default_max_pages = 1  # 单交易日结果应在一页内；防止日期参数失效后抓取全历史
 
     # 2.自定义索引
     indexes = [
@@ -99,6 +100,50 @@ class TushareStockKplConceptTask(TushareTask):
 
     # 9. 分批配置
     batch_trade_days = 1  # 每个批次的交易日数量 (1个交易日)
+
+    async def prepare_params(self, batch_params: Dict) -> Dict:
+        """Convert the generic one-day range into kpl_concept.trade_date."""
+
+        params = batch_params.copy()
+        trade_date = params.get("trade_date")
+        start_date = params.pop("start_date", None)
+        end_date = params.pop("end_date", None)
+
+        if not trade_date:
+            if not start_date or not end_date:
+                raise ValueError("kpl_concept 批次缺少 trade_date")
+            if str(start_date) != str(end_date):
+                raise ValueError(
+                    "kpl_concept 只支持单日批次，"
+                    f"收到范围 {start_date}-{end_date}"
+                )
+            trade_date = start_date
+
+        params["trade_date"] = str(trade_date)
+        return params
+
+    async def fetch_batch(
+        self,
+        params: Dict[str, Any],
+        stop_event: Optional[Any] = None,
+    ) -> Optional[pd.DataFrame]:
+        """Reject responses that do not match the requested trade date."""
+
+        data = await super().fetch_batch(params, stop_event=stop_event)
+        if data is None or data.empty:
+            return data
+
+        requested_date = pd.to_datetime(params["trade_date"]).strftime("%Y%m%d")
+        returned_dates = pd.to_datetime(
+            data["trade_date"], errors="coerce"
+        ).dt.strftime("%Y%m%d")
+        if returned_dates.isna().any() or not returned_dates.eq(requested_date).all():
+            observed = sorted(returned_dates.dropna().unique().tolist())[:5]
+            raise ValueError(
+                "kpl_concept 返回日期与请求不一致: "
+                f"requested={requested_date}, observed={observed}"
+            )
+        return data
 
     async def get_batch_list(self, **kwargs: Any) -> List[Dict]:
         """

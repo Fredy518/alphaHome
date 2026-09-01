@@ -200,6 +200,41 @@ async def test_tushare_api_raises_after_max_retries(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_tushare_api_max_pages_guard_stops_unbounded_pagination(monkeypatch):
+    api = TushareAPI(token="test", logger=logging.getLogger("test"))
+
+    async def _no_wait(_api_name: str):
+        return None
+
+    monkeypatch.setattr(api, "_wait_for_rate_limit_slot", _no_wait)
+
+    response_json = {
+        "code": 0,
+        "data": {
+            "fields": ["trade_date"],
+            "items": [["20241014"], ["20241015"]],
+        },
+    }
+    fake_session = _FakeClientSession(fail_times=0, response_json=response_json)
+
+    def _session_factory(*args, **kwargs):
+        return fake_session
+
+    monkeypatch.setattr(tushare_api_module.aiohttp, "ClientSession", _session_factory)
+
+    with pytest.raises(RuntimeError, match="pagination guard reached"):
+        await api.query(
+            api_name="kpl_concept",
+            fields="trade_date",
+            limit=2,
+            max_pages=1,
+            trade_date="20260828",
+        )
+
+    assert fake_session.post_calls == 1
+
+
+@pytest.mark.asyncio
 async def test_tushare_api_does_not_split_generic_50101(monkeypatch):
     api = TushareAPI(token="test", logger=logging.getLogger("test"))
 
