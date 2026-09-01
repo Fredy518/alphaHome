@@ -17,6 +17,8 @@ from ...common.logging_utils import get_logger
 from ...common.task_system import UnifiedTaskFactory
 from ..utils.common import format_status_chinese, format_datetime_for_display
 from ...common.constants import UpdateTypes
+from ...pit.base.monthly_snapshot_manager import PITMonthlySnapshotManager
+from ...pit.base.pit_task import PIT_MONTH_END_CUTOFF_CONFIG_KEY
 
 logger = get_logger(__name__)
 
@@ -52,6 +54,35 @@ def toggle_history_mode():
 def get_current_display_mode():
     """获取当前显示模式。"""
     return "历史任务" if _show_history_mode else "当前会话任务"
+
+
+def _is_pit_task(task_info: Dict[str, Any]) -> bool:
+    task_name = str(task_info.get("task_name") or "")
+    return task_info.get("task_type") == "pit" or task_name.startswith("pit_")
+
+
+def _is_monthly_pit_task(task_info: Dict[str, Any]) -> bool:
+    if not _is_pit_task(task_info):
+        return False
+    pit_time_key = task_info.get("pit_time_key")
+    if pit_time_key is not None:
+        return pit_time_key == "obs_date"
+    task_name = str(task_info.get("task_name") or "")
+    task_class = getattr(UnifiedTaskFactory, "_task_registry", {}).get(task_name)
+    contract = getattr(task_class, "contract", None)
+    if contract is not None:
+        return getattr(contract, "pit_time_key", None) == "obs_date"
+    return True
+
+
+def _freeze_pit_month_end_cutoff(
+    tasks_to_run: List[Dict[str, Any]],
+    batch_started_at: Optional[datetime] = None,
+):
+    if not any(_is_monthly_pit_task(task_info) for task_info in tasks_to_run):
+        return None
+    started_at = batch_started_at or datetime.now()
+    return PITMonthlySnapshotManager.latest_complete_month(started_at.date())
 
 
 def _order_tasks_by_dependencies(tasks_to_run: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -184,6 +215,7 @@ async def run_tasks(
 ):
     """Runs a list of selected tasks with the given parameters."""
     global _global_stop_event, _current_running_tasks, _is_running
+    batch_started_at = datetime.now()
     
     if not db_manager:
         logger.error("DB Manager not initialized in run_tasks.")
@@ -199,6 +231,15 @@ async def run_tasks(
         return
 
     _is_running = True
+
+    pit_month_end_cutoff = _freeze_pit_month_end_cutoff(
+        tasks_to_run,
+        batch_started_at=batch_started_at,
+    )
+    if pit_month_end_cutoff is not None:
+        logger.info(
+            "本批PIT任务冻结完整月末截止日: %s", pit_month_end_cutoff.isoformat()
+        )
 
     # 创建新的停止事件
     _global_stop_event = asyncio.Event()
@@ -256,6 +297,12 @@ async def run_tasks(
 
             # 添加数据保存策略参数
             task_init_params['use_insert_mode'] = use_insert_mode
+            if pit_month_end_cutoff is not None and _is_monthly_pit_task(task_info):
+                task_config = dict(task_info.get("task_config") or {})
+                task_config[PIT_MONTH_END_CUTOFF_CONFIG_KEY] = (
+                    pit_month_end_cutoff.isoformat()
+                )
+                task_init_params["task_config"] = task_config
 
             try:
                 task_instance = await UnifiedTaskFactory.create_task_instance(

@@ -47,6 +47,17 @@ class PITMonthlySnapshotManager(PITTableManager):
         current = today or datetime.now().date()
         return current.replace(day=1) - timedelta(days=1)
 
+    @classmethod
+    def complete_month_cutoff(
+        cls, cutoff_date: date | str | pd.Timestamp | None = None
+    ) -> date:
+        """Return the latest complete month, optionally capped by a batch cutoff."""
+
+        latest = cls.latest_complete_month()
+        if cutoff_date is None:
+            return latest
+        return min(cls.as_month_end(cutoff_date), latest)
+
     @staticmethod
     def previous_month_end(value: date | str | pd.Timestamp) -> date:
         stamp = pd.Timestamp(value).normalize()

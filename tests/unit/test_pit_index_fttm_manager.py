@@ -21,7 +21,11 @@ def test_configured_universe_count_respects_first_valid_weight_dates():
 def test_bounded_index_replay_propagates_to_immediate_next_month(monkeypatch):
     manager = PITIndexFTTMManager()
     captured = {}
-    monkeypatch.setattr(manager, "_latest_available_month", lambda: date(2024, 3, 31))
+    monkeypatch.setattr(
+        manager,
+        "_latest_available_month",
+        lambda cutoff_date=None: date(2024, 3, 31),
+    )
     monkeypatch.setattr(
         manager,
         "_run_months",
@@ -37,7 +41,11 @@ def test_bounded_index_replay_propagates_to_immediate_next_month(monkeypatch):
 def test_index_incremental_uses_at_least_eight_complete_months(monkeypatch):
     manager = PITIndexFTTMManager()
     captured = {}
-    monkeypatch.setattr(manager, "_latest_available_month", lambda: date(2026, 7, 31))
+    monkeypatch.setattr(
+        manager,
+        "_latest_available_month",
+        lambda cutoff_date=None: date(2026, 7, 31),
+    )
     monkeypatch.setattr(
         manager,
         "_run_months",

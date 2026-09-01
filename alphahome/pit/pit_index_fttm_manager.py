@@ -67,9 +67,12 @@ class PITIndexFTTMManager(PITMonthlySnapshotManager):
         self._apply_idempotent_table_ddl()
 
     def incremental_update(
-        self, months: int = DEFAULT_INCREMENTAL_MONTHS, batch_size: int | None = None
+        self,
+        months: int = DEFAULT_INCREMENTAL_MONTHS,
+        batch_size: int | None = None,
+        cutoff_date: date | str | pd.Timestamp | None = None,
     ) -> Dict[str, Any]:
-        latest = self._latest_available_month()
+        latest = self._latest_available_month(cutoff_date=cutoff_date)
         if latest is None:
             raise RuntimeError("指数FTTM上游没有共同可用的完整月份")
         requested = max(
@@ -390,8 +393,10 @@ class PITIndexFTTMManager(PITMonthlySnapshotManager):
         forecasts = load_stock_fttm_forecast_sources(self.context, source_start, anchor)
         return StockFTTMCalculator().calculate(forecasts, [anchor])
 
-    def _latest_available_month(self) -> date | None:
-        latest_complete = self.latest_complete_month()
+    def _latest_available_month(
+        self, cutoff_date: date | str | pd.Timestamp | None = None
+    ) -> date | None:
+        latest_complete = self.complete_month_cutoff(cutoff_date)
         codes = [spec.code for spec in IMPORTANT_INDEX_SPECS]
         frame = self.context.query_dataframe(
             """

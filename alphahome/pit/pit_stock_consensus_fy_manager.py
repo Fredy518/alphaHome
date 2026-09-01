@@ -24,12 +24,15 @@ class PITStockConsensusFYMonthlyManager(PITMonthlySnapshotManager):
         self,
         months: int = DEFAULT_INCREMENTAL_MONTHS,
         batch_size: int | None = None,
+        cutoff_date: date | str | pd.Timestamp | None = None,
     ) -> Dict[str, Any]:
         requested = max(
             int(months or self.DEFAULT_INCREMENTAL_MONTHS),
             self.DEFAULT_INCREMENTAL_MONTHS,
         )
-        target_months = self.incremental_months(requested)
+        target_months = self.incremental_months(
+            requested, end_date=self.complete_month_cutoff(cutoff_date)
+        )
         return self._run_months(
             target_months,
             batch_size=batch_size,

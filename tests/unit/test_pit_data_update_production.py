@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime
 
 import pytest
 
@@ -35,6 +36,18 @@ def _fttm_contracts():
             ("pit_stock_fttm_monthly", "pit_industry_classification"),
         ),
     }
+
+
+def test_batch_cutoff_uses_batch_start_date_not_later_task_time():
+    before_midnight = PITDataUpdateCoordinator._freeze_pit_month_end_cutoff(
+        datetime(2026, 8, 31, 23, 59, 59)
+    )
+    after_midnight = PITDataUpdateCoordinator._freeze_pit_month_end_cutoff(
+        datetime(2026, 9, 1, 0, 0, 1)
+    )
+
+    assert before_midnight == "2026-07-31"
+    assert after_midnight == "2026-08-31"
 
 
 def test_explicit_industry_target_expands_transitive_dependencies_into_layers():
@@ -135,12 +148,24 @@ async def test_serial_and_parallel_execute_only_within_topological_layer(
     coordinator = PITDataUpdateCoordinator(max_workers=2)
     contracts = _fttm_contracts()
     calls = []
+    configs = []
+    cutoff_references = []
     upstream_done = set()
 
+    def freeze_cutoff(reference_time=None):
+        cutoff_references.append(reference_time)
+        return "2026-07-31"
+
     monkeypatch.setattr(coordinator, "_registered_contracts", lambda: contracts)
+    monkeypatch.setattr(
+        coordinator,
+        "_freeze_pit_month_end_cutoff",
+        freeze_cutoff,
+    )
 
     async def _run_task(task_name, target, update_type, task_config=None):
         calls.append(task_name)
+        configs.append(dict(task_config or {}))
         if task_name == "pit_industry_fttm_monthly":
             assert upstream_done == {
                 "pit_stock_fttm_monthly",
@@ -162,6 +187,13 @@ async def test_serial_and_parallel_execute_only_within_topological_layer(
         "pit_industry_fttm_monthly",
     ]
     assert calls[-1] == "pit_industry_fttm_monthly"
+    assert len(cutoff_references) == 1
+    assert isinstance(cutoff_references[0], datetime)
+    assert configs == [
+        {"pit_month_end_cutoff": "2026-07-31"},
+        {"pit_month_end_cutoff": "2026-07-31"},
+        {"pit_month_end_cutoff": "2026-07-31"},
+    ]
 
 
 @pytest.mark.asyncio

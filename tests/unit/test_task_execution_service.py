@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 
 import asyncio
+from datetime import date, datetime
 from unittest.mock import AsyncMock
 
 import pytest
@@ -61,6 +62,77 @@ def test_order_tasks_by_dependencies_moves_selected_inputs_before_dependent():
         "pit_financial_indicators",
         "pit_industry_classification",
     ]
+
+
+def test_pit_batch_cutoff_is_frozen_to_last_complete_month():
+    tasks = [{"task_name": "pit_stock_fttm_monthly", "task_type": "pit"}]
+
+    before_midnight = task_execution_service._freeze_pit_month_end_cutoff(
+        tasks, datetime(2026, 8, 31, 23, 59, 59)
+    )
+    after_midnight = task_execution_service._freeze_pit_month_end_cutoff(
+        tasks, datetime(2026, 9, 1, 0, 0, 1)
+    )
+
+    assert before_midnight == date(2026, 7, 31)
+    assert after_midnight == date(2026, 8, 31)
+    assert (
+        task_execution_service._freeze_pit_month_end_cutoff(
+            [
+                {
+                    "task_name": "pit_income_quarterly",
+                    "task_type": "pit",
+                    "pit_time_key": "ann_date",
+                }
+            ],
+            datetime(2026, 9, 1, 0, 0, 1),
+        )
+        is None
+    )
+
+
+@pytest.mark.asyncio
+async def test_run_tasks_passes_one_frozen_cutoff_to_every_pit_task(monkeypatch):
+    first = _TaskWithoutIncrementalCapabilityMethod()
+    second = _TaskWithoutIncrementalCapabilityMethod()
+    create_task_instance = AsyncMock(side_effect=[first, second])
+    cutoff_references = []
+
+    def freeze_cutoff(tasks_to_run, batch_started_at=None):
+        cutoff_references.append(batch_started_at)
+        return date(2026, 7, 31)
+
+    monkeypatch.setattr(task_execution_service, "_is_running", False)
+    monkeypatch.setattr(
+        task_execution_service,
+        "_freeze_pit_month_end_cutoff",
+        freeze_cutoff,
+    )
+    monkeypatch.setattr(task_execution_service, "_ensure_task_status_table_exists", AsyncMock())
+    monkeypatch.setattr(task_execution_service, "_record_task_status", AsyncMock())
+    monkeypatch.setattr(task_execution_service, "get_all_task_status", AsyncMock())
+    monkeypatch.setattr(
+        task_execution_service.UnifiedTaskFactory,
+        "create_task_instance",
+        create_task_instance,
+    )
+
+    await task_execution_service.run_tasks(
+        db_manager=object(),
+        tasks_to_run=[
+            {"task_name": "pit_stock_fttm_monthly", "task_type": "pit"},
+            {"task_name": "pit_industry_fttm_monthly", "task_type": "pit"},
+        ],
+        start_date=None,
+        end_date=None,
+        exec_mode="智能增量",
+    )
+
+    expected_config = {"pit_month_end_cutoff": "2026-07-31"}
+    assert len(cutoff_references) == 1
+    assert isinstance(cutoff_references[0], datetime)
+    assert create_task_instance.await_args_list[0].kwargs["task_config"] == expected_config
+    assert create_task_instance.await_args_list[1].kwargs["task_config"] == expected_config
 
 
 @pytest.mark.asyncio

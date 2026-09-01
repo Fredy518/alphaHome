@@ -35,9 +35,10 @@ class PITETFIndexMembersMonthlyManager(PITMonthlySnapshotManager):
         months: int = DEFAULT_INCREMENTAL_MONTHS,
         batch_size: int | None = None,
         index_codes: Sequence[str] | None = None,
+        cutoff_date: date | str | pd.Timestamp | None = None,
     ) -> dict[str, Any]:
         requested = max(int(months or self.DEFAULT_INCREMENTAL_MONTHS), 1)
-        latest = self.latest_complete_month()
+        latest = self.complete_month_cutoff(cutoff_date)
         target_months = self.incremental_months(requested, end_date=latest)
         return self._run_months(
             target_months,

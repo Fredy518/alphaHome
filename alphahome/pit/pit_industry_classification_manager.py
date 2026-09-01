@@ -26,6 +26,7 @@ import pandas as pd
 
 from .base.pit_table_manager import PITTableManager
 from .base.pit_config import PITConfig
+from .base.monthly_snapshot_manager import PITMonthlySnapshotManager
 
 class PITIndustryClassificationManager(PITTableManager):
     """PIT行业分类管理器"""
@@ -114,7 +115,8 @@ class PITIndustryClassificationManager(PITTableManager):
     
     def incremental_update(self, 
                           months: int = None,
-                          batch_size: int = None) -> Dict[str, Any]:
+                          batch_size: int = None,
+                          cutoff_date: date | str | pd.Timestamp | None = None) -> Dict[str, Any]:
         """
         增量更新 - 检测行业变更并更新快照
         
@@ -131,9 +133,11 @@ class PITIndustryClassificationManager(PITTableManager):
         if months is None:
             months = 3  # 默认检查最近3个月
         
-        # 计算检查日期范围
-        end_date = datetime.now().date()
-        start_date = end_date - relativedelta(months=months)
+        # 同一批次共用一个完整月末截止日，避免长任务跨零点后口径漂移。
+        end_date = PITMonthlySnapshotManager.complete_month_cutoff(cutoff_date)
+        start_date = end_date.replace(day=1) - relativedelta(
+            months=max(int(months), 1) - 1
+        )
         
         self.logger.info(f"检查变更日期范围: {start_date} ~ {end_date}")
         
@@ -141,7 +145,10 @@ class PITIndustryClassificationManager(PITTableManager):
             # 0. 确保目标表存在
             self._ensure_table_exists()
             # 1. 检测行业变更
-            changes = self._detect_industry_changes(start_date.strftime('%Y-%m-%d'))
+            changes = self._detect_industry_changes(
+                start_date.strftime('%Y-%m-%d'),
+                end_date=end_date,
+            )
 
             if not changes['has_changes']:
                 self.logger.info("未检测到行业变更")
@@ -150,7 +157,10 @@ class PITIndustryClassificationManager(PITTableManager):
             self.logger.info(f"检测到行业变更: SW {changes['sw_changes']}, CI {changes['ci_changes']}")
             
             # 2. 获取受影响的月份
-            affected_months = self._get_affected_months(start_date.strftime('%Y-%m-%d'))
+            affected_months = self._get_affected_months(
+                start_date.strftime('%Y-%m-%d'),
+                cutoff_date=end_date,
+            )
             
             # 3. 重新生成受影响月份的快照
             total_records = 0
@@ -396,24 +406,29 @@ class PITIndustryClassificationManager(PITTableManager):
             for record in batch:
                 self.context.db_manager.execute_sync(insert_sql, record)
 
-    def _detect_industry_changes(self, since_date: str) -> Dict:
+    def _detect_industry_changes(
+        self, since_date: str, end_date: date | None = None
+    ) -> Dict:
         """检测行业变更"""
 
         since_dt = datetime.strptime(since_date, '%Y-%m-%d').date()
+        until_dt = end_date or datetime.now().date()
 
         # 检查申万数据变更
         sw_changes = self.context.query_dataframe("""
             SELECT COUNT(*) as change_count
             FROM tushare.index_swmember
-            WHERE in_date > %s OR out_date > %s
-        """, (since_dt, since_dt))
+            WHERE (in_date > %s AND in_date <= %s)
+               OR (out_date > %s AND out_date <= %s)
+        """, (since_dt, until_dt, since_dt, until_dt))
 
         # 检查中信数据变更
         ci_changes = self.context.query_dataframe("""
             SELECT COUNT(*) as change_count
             FROM tushare.index_cimember
-            WHERE in_date > %s OR out_date > %s
-        """, (since_dt, since_dt))
+            WHERE (in_date > %s AND in_date <= %s)
+               OR (out_date > %s AND out_date <= %s)
+        """, (since_dt, until_dt, since_dt, until_dt))
 
         sw_count = sw_changes.iloc[0]['change_count'] if sw_changes is not None and not sw_changes.empty else 0
         ci_count = ci_changes.iloc[0]['change_count'] if ci_changes is not None and not ci_changes.empty else 0
@@ -424,22 +439,21 @@ class PITIndustryClassificationManager(PITTableManager):
             'ci_changes': ci_count
         }
 
-    def _get_affected_months(self, since_date: str) -> List[date]:
+    def _get_affected_months(
+        self,
+        since_date: str,
+        cutoff_date: date | str | pd.Timestamp | None = None,
+    ) -> List[date]:
         """获取受行业变更影响的月份"""
 
         since_dt = datetime.strptime(since_date, '%Y-%m-%d').date()
-        current_date = datetime.now().date()
 
-        # 从变更开始日期到最近一个已完成月末的所有月份。
-        # 月度快照以月末 obs_date 表示，不能在月中提前生成未来月末快照。
+        # 从变更开始日期到批次冻结的完整月末。
         affected_months = []
         current_month = since_dt.replace(day=1)
-        current_month_start = current_date.replace(day=1)
-        current_month_end = self._get_month_end_date(current_month_start)
-        if current_month_end <= current_date:
-            end_month = current_month_start
-        else:
-            end_month = current_month_start - relativedelta(months=1)
+        end_month = PITMonthlySnapshotManager.complete_month_cutoff(
+            cutoff_date
+        ).replace(day=1)
 
         while current_month <= end_month:
             affected_months.append(current_month)

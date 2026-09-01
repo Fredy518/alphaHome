@@ -14,6 +14,9 @@ from alphahome.common.schema_names import PIT_SCHEMA
 from alphahome.common.task_system.base_task import BaseTask
 
 
+PIT_MONTH_END_CUTOFF_CONFIG_KEY = "pit_month_end_cutoff"
+
+
 def _class_path(value: Any) -> str:
     if isinstance(value, str):
         return value
@@ -189,12 +192,24 @@ class PITTask(BaseTask):
         for key in ("days", "months", "batch_size"):
             if self.task_config.get(key) is not None:
                 kwargs[key] = self.task_config[key]
+        cutoff_date = (
+            self.task_config.get(PIT_MONTH_END_CUTOFF_CONFIG_KEY)
+            if self.contract.pit_time_key == "obs_date"
+            else None
+        )
+        if cutoff_date is not None:
+            kwargs["cutoff_date"] = cutoff_date
         return kwargs
 
     def _kwargs_for_backfill(self) -> Dict[str, Any]:
         kwargs: Dict[str, Any] = {}
         start_date = self.start_date or self.task_config.get("start_date")
-        end_date = self.end_date or self.task_config.get("end_date")
+        cutoff_date = (
+            self.task_config.get(PIT_MONTH_END_CUTOFF_CONFIG_KEY)
+            if self.contract.pit_time_key == "obs_date"
+            else None
+        )
+        end_date = self.end_date or self.task_config.get("end_date") or cutoff_date
         if start_date:
             kwargs["start_date"] = start_date
         if end_date:

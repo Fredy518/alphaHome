@@ -207,15 +207,16 @@ def get_selected_pit_tasks() -> List[Dict[str, Any]]:
     selected = []
     for task in _full_pit_task_list:
         if task.get("selected"):
-            selected.append(
-                {
-                    "task_name": task["name"],
-                    "task_type": "pit",
-                    "description": task.get("description", ""),
-                    "data_source": "pit",
-                    "dependencies": list(task.get("dependencies") or []),
-                }
-            )
+            task_info = {
+                "task_name": task["name"],
+                "task_type": "pit",
+                "description": task.get("description", ""),
+                "data_source": "pit",
+                "dependencies": list(task.get("dependencies") or []),
+            }
+            if task.get("pit_time_key") is not None:
+                task_info["pit_time_key"] = task["pit_time_key"]
+            selected.append(task_info)
     return selected
 
 

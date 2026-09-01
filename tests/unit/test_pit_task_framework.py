@@ -1,8 +1,14 @@
+import inspect
+
 import pytest
 
 from alphahome.common.constants import UpdateTypes
 from alphahome.common.task_system import UnifiedTaskFactory
-from alphahome.pit.base.pit_task import PITTask, PITTaskContract
+from alphahome.pit.base.pit_task import (
+    PIT_MONTH_END_CUTOFF_CONFIG_KEY,
+    PITTask,
+    PITTaskContract,
+)
 from alphahome.pit.tasks import discover_tasks
 
 
@@ -25,8 +31,17 @@ class _FakeManager:
         self.exit_stats.append(dict(self.stats))
         return False
 
-    def incremental_update(self, days=None, batch_size=None):
-        self.calls.append(("incremental_update", {"days": days, "batch_size": batch_size}))
+    def incremental_update(self, days=None, batch_size=None, cutoff_date=None):
+        self.calls.append(
+            (
+                "incremental_update",
+                {
+                    "days": days,
+                    "batch_size": batch_size,
+                    "cutoff_date": cutoff_date,
+                },
+            )
+        )
         return {"updated_records": 3}
 
     def full_backfill(self, start_date=None, end_date=None, batch_size=None):
@@ -49,6 +64,20 @@ class _FakePITTask(PITTask):
         primary_keys=("ts_code", "end_date", "ann_date", "data_source"),
         dependencies=(),
         supported_modes=("incremental", "full_backfill", "manual_range", "audit_only"),
+        manager_class=_FakeManager,
+    )
+
+
+class _FakeMonthlyPITTask(PITTask):
+    contract = PITTaskContract(
+        task_name="fake_monthly_pit_task",
+        domain="monthly",
+        source_tables=("pit.fake_source",),
+        output_table="pit.fake_monthly_pit_task",
+        pit_time_key="obs_date",
+        primary_keys=("obs_date", "entity"),
+        dependencies=(),
+        supported_modes=("incremental", "full_backfill"),
         manager_class=_FakeManager,
     )
 
@@ -127,6 +156,22 @@ def test_pit_task_discovery_finds_all_fttm_tasks_without_manual_import():
     assert proxy_fapi.output_table == "pit.pit_etf_index_fapi_monthly"
 
 
+def test_every_monthly_pit_manager_accepts_frozen_cutoff():
+    discover_tasks()
+    missing = []
+    for task_name, task_class in UnifiedTaskFactory._task_registry.items():
+        contract = getattr(task_class, "contract", None)
+        if contract is None or contract.pit_time_key != "obs_date":
+            continue
+        parameters = inspect.signature(
+            contract.manager_class.incremental_update
+        ).parameters
+        if "cutoff_date" not in parameters:
+            missing.append(task_name)
+
+    assert missing == []
+
+
 @pytest.mark.asyncio
 async def test_pit_task_dispatches_smart_to_incremental():
     _FakeManager.calls = []
@@ -137,7 +182,12 @@ async def test_pit_task_dispatches_smart_to_incremental():
 
     assert result["status"] == "success"
     assert result["rows"] == 3
-    assert _FakeManager.calls == [("incremental_update", {"days": 9, "batch_size": 2})]
+    assert _FakeManager.calls == [
+        (
+            "incremental_update",
+            {"days": 9, "batch_size": 2, "cutoff_date": None},
+        )
+    ]
     assert _FakeManager.exit_stats == [
         {
             "processed_records": 3,
@@ -167,5 +217,65 @@ async def test_pit_task_dispatches_manual_range_to_full_backfill():
         (
             "full_backfill",
             {"start_date": "2025-01-01", "end_date": "2025-12-31", "batch_size": 4},
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_monthly_pit_task_forwards_frozen_cutoff_to_incremental_manager():
+    _FakeManager.calls = []
+    task = _FakeMonthlyPITTask(
+        object(),
+        update_type=UpdateTypes.SMART,
+        task_config={PIT_MONTH_END_CUTOFF_CONFIG_KEY: "2026-07-31"},
+    )
+
+    result = await task.execute()
+
+    assert result["status"] == "success"
+    assert _FakeManager.calls == [
+        (
+            "incremental_update",
+            {"days": None, "batch_size": None, "cutoff_date": "2026-07-31"},
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_monthly_full_backfill_uses_frozen_cutoff_when_end_is_implicit():
+    _FakeManager.calls = []
+    task = _FakeMonthlyPITTask(
+        object(),
+        update_type=UpdateTypes.FULL,
+        task_config={PIT_MONTH_END_CUTOFF_CONFIG_KEY: "2026-07-31"},
+    )
+
+    result = await task.execute()
+
+    assert result["status"] == "success"
+    assert _FakeManager.calls == [
+        (
+            "full_backfill",
+            {"start_date": None, "end_date": "2026-07-31", "batch_size": None},
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_financial_full_backfill_ignores_month_end_cutoff():
+    _FakeManager.calls = []
+    task = _FakePITTask(
+        object(),
+        update_type=UpdateTypes.FULL,
+        task_config={PIT_MONTH_END_CUTOFF_CONFIG_KEY: "2026-07-31"},
+    )
+
+    result = await task.execute()
+
+    assert result["status"] == "success"
+    assert _FakeManager.calls == [
+        (
+            "full_backfill",
+            {"start_date": None, "end_date": None, "batch_size": None},
         )
     ]

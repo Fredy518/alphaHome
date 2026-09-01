@@ -11,7 +11,11 @@ from alphahome.pit.pit_industry_fttm_manager import PITIndustryFTTMManager
 def test_bounded_industry_replay_propagates_to_immediate_next_month(monkeypatch):
     manager = PITIndustryFTTMManager()
     captured = {}
-    monkeypatch.setattr(manager, "_latest_available_month", lambda: date(2024, 3, 31))
+    monkeypatch.setattr(
+        manager,
+        "_latest_available_month",
+        lambda cutoff_date=None: date(2024, 3, 31),
+    )
     monkeypatch.setattr(
         manager,
         "_run_months",
@@ -27,7 +31,11 @@ def test_bounded_industry_replay_propagates_to_immediate_next_month(monkeypatch)
 def test_industry_incremental_uses_eight_month_window_capped_by_classification(monkeypatch):
     manager = PITIndustryFTTMManager()
     captured = {}
-    monkeypatch.setattr(manager, "_latest_available_month", lambda: date(2026, 7, 31))
+    monkeypatch.setattr(
+        manager,
+        "_latest_available_month",
+        lambda cutoff_date=None: date(2026, 7, 31),
+    )
     monkeypatch.setattr(
         manager,
         "_run_months",
@@ -56,7 +64,9 @@ def test_latest_available_month_is_capped_by_slowest_dependency(monkeypatch):
         },
     )()
     monkeypatch.setattr(
-        manager, "latest_complete_month", lambda today=None: date(2026, 8, 31)
+        PITIndustryFTTMManager,
+        "latest_complete_month",
+        staticmethod(lambda today=None: date(2026, 8, 31)),
     )
 
     assert manager._latest_available_month() == date(2026, 7, 31)

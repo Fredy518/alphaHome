@@ -44,8 +44,9 @@ class PITETFIndexFAPIMonthlyManager(PITMonthlySnapshotManager):
         months: int = DEFAULT_INCREMENTAL_MONTHS,
         batch_size: int | None = None,
         index_codes: Sequence[str] | None = None,
+        cutoff_date: date | str | pd.Timestamp | None = None,
     ) -> dict[str, Any]:
-        latest = self._latest_available_month()
+        latest = self._latest_available_month(cutoff_date=cutoff_date)
         if latest is None:
             raise RuntimeError("ETF指数FAPI上游没有共同可用的完整月份")
         requested = max(
@@ -433,8 +434,10 @@ class PITETFIndexFAPIMonthlyManager(PITMonthlySnapshotManager):
             connection.rollback()
             raise
 
-    def _latest_available_month(self) -> date | None:
-        latest_complete = self.latest_complete_month()
+    def _latest_available_month(
+        self, cutoff_date: date | str | pd.Timestamp | None = None
+    ) -> date | None:
+        latest_complete = self.complete_month_cutoff(cutoff_date)
         frame = self.context.query_dataframe(
             """
             SELECT

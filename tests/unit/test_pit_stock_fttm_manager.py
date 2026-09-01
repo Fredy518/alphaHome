@@ -20,9 +20,13 @@ def test_stock_incremental_enforces_minimum_eight_complete_months(monkeypatch):
         )
         or {result_key: 0},
     )
-    monkeypatch.setattr(manager, "latest_complete_month", lambda today=None: date(2026, 7, 31))
+    monkeypatch.setattr(
+        PITStockFTTMManager,
+        "latest_complete_month",
+        staticmethod(lambda today=None: date(2026, 8, 31)),
+    )
 
-    manager.incremental_update(months=2)
+    manager.incremental_update(months=2, cutoff_date=date(2026, 7, 31))
 
     assert len(captured["months"]) == 8
     assert captured["months"][0] == date(2025, 12, 31)

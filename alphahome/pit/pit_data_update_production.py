@@ -15,7 +15,11 @@ from alphahome.common.config_manager import get_database_url
 from alphahome.common.constants import UpdateTypes
 from alphahome.common.logging_utils import get_logger
 from alphahome.common.task_system import UnifiedTaskFactory
-from alphahome.pit.base.pit_task import PITTaskContract
+from alphahome.pit.base.monthly_snapshot_manager import PITMonthlySnapshotManager
+from alphahome.pit.base.pit_task import (
+    PIT_MONTH_END_CUTOFF_CONFIG_KEY,
+    PITTaskContract,
+)
 
 logger = get_logger(__name__)
 
@@ -83,6 +87,7 @@ class PITDataUpdateCoordinator:
             logger.warning("关闭PIT任务工厂连接失败: %s", exc)
 
     async def run_updates(self, targets: List[str], mode: str = "incremental", parallel: bool = False):
+        batch_started_at = datetime.now().astimezone()
         normalized_targets = self._normalize_targets(targets)
         update_type = self._update_type_from_mode(mode)
         logger.info("开始执行PIT任务: targets=%s, mode=%s, parallel=%s", normalized_targets, mode, parallel)
@@ -90,6 +95,20 @@ class PITDataUpdateCoordinator:
         requested_tasks = [TARGET_TO_TASK[target] for target in normalized_targets]
         execution_tasks = self._expand_dependency_closure(requested_tasks, contracts)
         layers = self._topological_layers(execution_tasks, contracts)
+        has_monthly_tasks = any(
+            contracts[task_name].pit_time_key == "obs_date"
+            for task_name in execution_tasks
+        )
+        pit_month_end_cutoff = (
+            self._freeze_pit_month_end_cutoff(batch_started_at)
+            if has_monthly_tasks
+            else None
+        )
+        if pit_month_end_cutoff is not None:
+            logger.info(
+                "本批月度PIT任务冻结完整月末截止日: %s",
+                pit_month_end_cutoff,
+            )
         target_for_task = {task_name: target for target, task_name in TARGET_TO_TASK.items()}
         results_by_task: Dict[str, Dict[str, Any]] = {}
 
@@ -107,8 +126,18 @@ class PITDataUpdateCoordinator:
                 if self._is_failed_result(results_by_task.get(dependency))
             ]
             target = target_for_task.get(task_name, task_name)
+            task_cutoff = (
+                pit_month_end_cutoff
+                if contracts[task_name].pit_time_key == "obs_date"
+                else None
+            )
+            task_config = (
+                {PIT_MONTH_END_CUTOFF_CONFIG_KEY: task_cutoff}
+                if task_cutoff is not None
+                else {}
+            )
             if dependency_failures:
-                return {
+                skipped = {
                     "target": target,
                     "task": task_name,
                     "status": "skipped_dependency_failed",
@@ -117,13 +146,28 @@ class PITDataUpdateCoordinator:
                     "run_started_at": run_started_at,
                     "run_completed_at": datetime.now().astimezone().isoformat(),
                 }
+                if task_cutoff is not None:
+                    skipped["pit_month_end_cutoff"] = task_cutoff
+                return skipped
             try:
                 if parallel:
                     async with semaphore:
-                        result = await self._run_task(task_name, target, update_type)
+                        result = await self._run_task(
+                            task_name,
+                            target,
+                            update_type,
+                            task_config=task_config,
+                        )
                 else:
-                    result = await self._run_task(task_name, target, update_type)
+                    result = await self._run_task(
+                        task_name,
+                        target,
+                        update_type,
+                        task_config=task_config,
+                    )
                 result.setdefault("dependency_statuses", dependency_statuses)
+                if task_cutoff is not None:
+                    result.setdefault("pit_month_end_cutoff", task_cutoff)
                 result.setdefault("run_started_at", run_started_at)
                 result.setdefault(
                     "run_completed_at", datetime.now().astimezone().isoformat()
@@ -131,7 +175,7 @@ class PITDataUpdateCoordinator:
                 return result
             except Exception as exc:
                 logger.error("PIT任务失败: %s: %s", target, exc, exc_info=True)
-                return {
+                failed = {
                     "target": target,
                     "task": task_name,
                     "status": "error",
@@ -140,6 +184,9 @@ class PITDataUpdateCoordinator:
                     "run_started_at": run_started_at,
                     "run_completed_at": datetime.now().astimezone().isoformat(),
                 }
+                if task_cutoff is not None:
+                    failed["pit_month_end_cutoff"] = task_cutoff
+                return failed
 
         for layer in layers:
             if parallel:
@@ -223,7 +270,14 @@ class PITDataUpdateCoordinator:
         task_config: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         task_name = TARGET_TO_TASK[target]
-        return await self._run_task(task_name, target, update_type, task_config)
+        config = dict(task_config or {})
+        contract = self._registered_contracts().get(task_name)
+        if contract is not None and contract.pit_time_key == "obs_date":
+            config.setdefault(
+                PIT_MONTH_END_CUTOFF_CONFIG_KEY,
+                self._freeze_pit_month_end_cutoff(),
+            )
+        return await self._run_task(task_name, target, update_type, config)
 
     async def _run_task(
         self,
@@ -254,6 +308,13 @@ class PITDataUpdateCoordinator:
             raise ValueError(f"未知PIT target: {unknown}")
         requested = list(dict.fromkeys(targets))
         return [target for target in DEFAULT_TARGET_ORDER if target in requested]
+
+    @staticmethod
+    def _freeze_pit_month_end_cutoff(reference_time: Optional[datetime] = None) -> str:
+        started_at = reference_time or datetime.now().astimezone()
+        return PITMonthlySnapshotManager.latest_complete_month(
+            started_at.date()
+        ).isoformat()
 
     @staticmethod
     def _registered_contracts() -> Dict[str, PITTaskContract]:
