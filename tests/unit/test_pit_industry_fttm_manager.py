@@ -41,6 +41,27 @@ def test_industry_incremental_uses_eight_month_window_capped_by_classification(m
     assert captured["months"][-1] == date(2026, 7, 31)
 
 
+def test_latest_available_month_is_capped_by_slowest_dependency(monkeypatch):
+    manager = PITIndustryFTTMManager()
+    manager.context = type(
+        "Context",
+        (),
+        {
+            "query_dataframe": lambda self, sql, params: pd.DataFrame(
+                {
+                    "classification_max_obs_date": [date(2026, 8, 31)],
+                    "stock_fttm_max_obs_date": [date(2026, 7, 31)],
+                }
+            )
+        },
+    )()
+    monkeypatch.setattr(
+        manager, "latest_complete_month", lambda today=None: date(2026, 8, 31)
+    )
+
+    assert manager._latest_available_month() == date(2026, 7, 31)
+
+
 def test_dependency_guard_rejects_missing_stock_month():
     classifications = pd.DataFrame(
         {

@@ -267,18 +267,29 @@ class PITIndustryFTTMManager(PITMonthlySnapshotManager):
         latest_complete = self.latest_complete_month()
         frame = self.context.query_dataframe(
             """
-            SELECT MAX(obs_date)::date AS max_date
-            FROM pit.pit_industry_classification
-            WHERE data_source = 'sw'
-              AND industry_code1 IS NOT NULL
-              AND industry_code2 IS NOT NULL
-              AND obs_date <= %s
+            SELECT
+                (SELECT MAX(obs_date)::date
+                 FROM pit.pit_industry_classification
+                 WHERE data_source = 'sw'
+                   AND industry_code1 IS NOT NULL
+                   AND industry_code2 IS NOT NULL
+                   AND obs_date <= %s) AS classification_max_obs_date,
+                (SELECT MAX(obs_date)::date
+                 FROM pit.pit_stock_fttm_monthly
+                 WHERE obs_date <= %s) AS stock_fttm_max_obs_date
             """,
-            (latest_complete,),
+            (latest_complete, latest_complete),
         )
-        if frame.empty or pd.isna(frame.iloc[0]["max_date"]):
+        if frame.empty:
             return None
-        return pd.Timestamp(frame.iloc[0]["max_date"]).date()
+        values = [
+            frame.iloc[0]["classification_max_obs_date"],
+            frame.iloc[0]["stock_fttm_max_obs_date"],
+            latest_complete,
+        ]
+        if any(pd.isna(value) for value in values):
+            return None
+        return min(pd.Timestamp(value).date() for value in values)
 
     def _load_sources(self, obs_dates: list[date]) -> dict[str, pd.DataFrame]:
         placeholders = ", ".join(["(%s::date)"] * len(obs_dates))
