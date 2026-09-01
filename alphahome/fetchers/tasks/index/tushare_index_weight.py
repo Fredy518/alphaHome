@@ -3,7 +3,6 @@ from typing import Any, Dict, List, Optional
 from datetime import datetime, timedelta
 
 import pandas as pd
-from pandas.tseries.offsets import YearBegin, YearEnd  # 需要导入
 
 # 假设 TushareTask 是 Tushare 相关任务的基类。
 # 如果导入路径不同，请相应调整。
@@ -35,6 +34,7 @@ class TushareIndexWeightTask(TushareTask):
     default_page_size = (
         6000  # TushareAPI 处理分页；index_weight 是月度数据，此限制通常不触发
     )
+    max_batch_days = 366
 
     # 2. TushareTask 特有的属性
     api_name = "index_weight"  # Tushare API 名称
@@ -72,11 +72,10 @@ class TushareIndexWeightTask(TushareTask):
 
     # 7. 数据验证规则
     validations = [
-        lambda df: df['index_code'].notna(),
-        lambda df: df['con_code'].notna(),
-        lambda df: df['trade_date'].notna(),
-        lambda df: df['weight'] > 0,      # 权重必须为正
-        lambda df: df['weight'] < 100,    # 权重通常小于100（百分比）
+        (lambda df: df['index_code'].notna(), "指数代码不能为空"),
+        (lambda df: df['con_code'].notna(), "成分代码不能为空"),
+        (lambda df: df['trade_date'].notna(), "交易日期不能为空"),
+        (lambda df: df['weight'].isna() | df['weight'].between(-100, 100), "权重应在-100到100之间或为空"),
     ]
 
     # 构造函数：基类的 __init__ 方法期望处理 task_id, task_name, cfg, db_manager, api, logger 参数。
@@ -154,11 +153,10 @@ class TushareIndexWeightTask(TushareTask):
 
     async def get_batch_list(self, **kwargs: Any) -> List[Dict[str, Any]]:
         """
-        使用 ExtendedBatchPlanner 的智能时间分区策略生成批处理参数列表。
+        按指数代码生成精确、不扩边界的日期范围批次。
 
-        半年拆分策略：
-        - 按半年为单位进行批次拆分（每个批次包含6个月的时间范围）
-        - 适用于各种时间跨度的数据处理，提供良好的性能和精度平衡
+        index_weight 的增量水位由数据库最新日期决定，批次规划不得把
+        该范围扩展到年初或月初，否则单日增量会退化为全历史重抓。
         """
         # 参数提取和验证
         start_date_str = kwargs.get("start_date")
@@ -174,37 +172,26 @@ class TushareIndexWeightTask(TushareTask):
             self.logger.warning(f"任务 {self.name}: 未找到指数代码以创建批处理")
             return []
 
-        # 使用 ExtendedBatchPlanner 生成智能时间批次
         try:
-            from alphahome.common.planning.extended_batch_planner import (
-                ExtendedBatchPlanner, SmartTimePartition, ExtendedMap, TimeRangeSource
+            time_batches = self._split_exact_date_range(
+                str(start_date_str),
+                str(end_date_str),
             )
-
-            # 创建智能时间批处理规划器
-            planner = ExtendedBatchPlanner(
-                source=TimeRangeSource.create(start_date_str, end_date_str),
-                partition_strategy=SmartTimePartition.create(),
-                map_strategy=ExtendedMap.to_smart_time_range(),
-                enable_stats=True
-            )
-
-            time_batches = await planner.generate()
-            stats = planner.get_stats()
-
-            if not time_batches:
-                self.logger.warning(f"任务 {self.name}: 未生成任何时间批次")
-                return []
-
-            # 记录优化效果
-            self.logger.info(
-                f"任务 {self.name}: 智能批次生成完成 - "
-                f"生成 {len(time_batches)} 个时间批次，"
-                f"生成耗时：{stats.get('generation_time', 0):.3f}s"
-            )
-
-        except Exception as e:
-            self.logger.error(f"任务 {self.name}: 生成智能时间批次时出错: {e}", exc_info=True)
+        except ValueError as exc:
+            self.logger.error("任务 %s: 日期范围无效: %s", self.name, exc)
             return []
+
+        if not time_batches:
+            self.logger.warning(f"任务 {self.name}: 未生成任何时间批次")
+            return []
+
+        self.logger.info(
+            "任务 %s: 生成 %d 个精确日期批次，边界 %s-%s",
+            self.name,
+            len(time_batches),
+            start_date_str,
+            end_date_str,
+        )
 
         # 转换为任务特定的API参数批次
         batches = []
@@ -220,5 +207,32 @@ class TushareIndexWeightTask(TushareTask):
             f"任务 {self.name}: 成功生成 {len(batches)} 个批次 "
             f"({len(index_codes)} 个指数 × {len(time_batches)} 个时间批次)"
         )
+        return batches
+
+    @classmethod
+    def _split_exact_date_range(
+        cls,
+        start_date: str,
+        end_date: str,
+    ) -> List[Dict[str, str]]:
+        start = datetime.strptime(start_date, "%Y%m%d")
+        end = datetime.strptime(end_date, "%Y%m%d")
+        if start > end:
+            return []
+
+        batches: List[Dict[str, str]] = []
+        cursor = start
+        while cursor <= end:
+            chunk_end = min(
+                cursor + timedelta(days=cls.max_batch_days - 1),
+                end,
+            )
+            batches.append(
+                {
+                    "start_date": cursor.strftime("%Y%m%d"),
+                    "end_date": chunk_end.strftime("%Y%m%d"),
+                }
+            )
+            cursor = chunk_end + timedelta(days=1)
         return batches
     
