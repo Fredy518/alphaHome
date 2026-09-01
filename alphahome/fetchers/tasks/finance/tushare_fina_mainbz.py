@@ -1,5 +1,6 @@
+import asyncio
 from datetime import datetime, timedelta
-from typing import Dict, List
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 import pandas as pd
@@ -23,7 +24,12 @@ class TushareFinaMainbzTask(TushareTask):
     name = "tushare_fina_mainbz"
     description = "获取上市公司主营业务构成数据"
     table_name = "fina_mainbz"
-    primary_keys = ["ts_code", "end_date", "bz_item"]
+    primary_keys = ["ts_code", "end_date", "bz_type", "bz_item"]
+    # Existing deployments used a key that omitted the P/D/I query dimension.
+    # Opt in to the guarded schema migration and label preserved legacy rows as
+    # unknown until the affected periods are explicitly rebuilt.
+    migrate_primary_key_on_schema_check = True
+    primary_key_migration_defaults = {"bz_type": "U"}
     date_column = "end_date"
     default_start_date = "20001231"  # 最早的数据起始日期
 
@@ -33,6 +39,7 @@ class TushareFinaMainbzTask(TushareTask):
         {"name": "idx_fina_mainbz_end_date", "columns": "end_date"},
         {"name": "idx_fina_mainbz_code_item", "columns": "bz_code"},
         {"name": "idx_fina_mainbz_item", "columns": "bz_item"},
+        {"name": "idx_fina_mainbz_type", "columns": "bz_type"},
         {"name": "idx_fina_mainbz_update_time", "columns": "update_time"},
     ]
 
@@ -66,6 +73,7 @@ class TushareFinaMainbzTask(TushareTask):
         "end_date": {"type": "DATE", "constraints": "NOT NULL"},
         "bz_code": {"type": "VARCHAR(50)"},
         "bz_item": {"type": "VARCHAR(200)", "constraints": "NOT NULL"},
+        "bz_type": {"type": "VARCHAR(1)", "constraints": "NOT NULL"},
         "bz_sales": {"type": "NUMERIC(20,4)"},
         "bz_profit": {"type": "NUMERIC(20,4)"},
         "bz_cost": {"type": "NUMERIC(20,4)"},
@@ -78,6 +86,7 @@ class TushareFinaMainbzTask(TushareTask):
         (lambda df: df['ts_code'].notna(), "股票代码不能为空"),
         (lambda df: df['end_date'].notna(), "报告期不能为空"),
         (lambda df: df['bz_item'].notna(), "主营业务项目不能为空"),
+        (lambda df: df['bz_type'].isin(['P', 'D', 'I']), "主营业务类型必须为P/D/I"),
         (lambda df: df['bz_code'].notna() | df['bz_item'].notna(), "主营业务代码或项目至少有一个不能为空"),
     ]
 
@@ -148,3 +157,20 @@ class TushareFinaMainbzTask(TushareTask):
             params['type'] = 'P'  # 默认为产品类型
 
         return params
+
+    async def fetch_batch(
+        self,
+        params: Dict[str, Any],
+        stop_event: Optional[asyncio.Event] = None,
+    ) -> Optional[pd.DataFrame]:
+        """Persist the P/D/I request dimension on every returned row."""
+
+        biz_type = params.get("type")
+        if biz_type not in {"P", "D", "I"}:
+            raise ValueError(f"无效的主营业务类型: {biz_type!r}")
+
+        data = await super().fetch_batch(params, stop_event=stop_event)
+        if data is not None and not data.empty:
+            data = data.copy()
+            data["bz_type"] = biz_type
+        return data

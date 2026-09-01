@@ -14,6 +14,8 @@ from typing import Any, Dict, List, Optional, Union
 
 import asyncpg
 import pandas as pd
+
+from ..data_cleaning import normalize_database_string
 import psycopg2.extras
 
 
@@ -596,13 +598,9 @@ class DatabaseOperationsMixin:
                             parsed_date = self._parse_date_string(val)
                             processed_values.append(parsed_date)
                         else:
-                            # 仅清理真正有问题的字符，保留正常的空格
-                            cleaned_val = val.replace('\x00', '')  # 移除NULL字符
-                            cleaned_val = cleaned_val.replace('\r', '')  # 移除回车符
-                            cleaned_val = cleaned_val.replace('\n', '')  # 移除换行符
-                            cleaned_val = cleaned_val.replace('\t', ' ')  # 制表符替换为空格
-                            # 不要替换双引号，让asyncpg自己处理
-                            processed_values.append(cleaned_val if cleaned_val else None)
+                            # 与 BaseTask 保存前主键去重共享同一套清洗规则。
+                            # 不要替换双引号，让 asyncpg 自己处理。
+                            processed_values.append(normalize_database_string(val))
                     elif pd.api.types.is_datetime64_any_dtype(pd.Series([val])):
                         # 处理pandas datetime对象
                         if pd.isnull(val): # type: ignore

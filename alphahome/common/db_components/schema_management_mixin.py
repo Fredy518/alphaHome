@@ -247,6 +247,175 @@ class SchemaManagementMixin:
     def _quote_ident(self, name: str) -> str:
         return '"' + str(name).replace('"', '""') + '"'
 
+    def _quote_literal(self, value: Any) -> str:
+        if value is None:
+            return "NULL"
+        if isinstance(value, bool):
+            return "TRUE" if value else "FALSE"
+        if isinstance(value, (int, float)):
+            return str(value)
+        return "'" + str(value).replace("'", "''") + "'"
+
+    async def _get_primary_key_definition(
+        self,
+        conn: Any,
+        *,
+        schema: str,
+        table: str,
+    ) -> tuple[Optional[str], List[str]]:
+        row = await conn.fetchrow(
+            """
+            SELECT
+                con.conname,
+                array_agg(att.attname ORDER BY key_col.ordinality) AS columns
+            FROM pg_constraint con
+            JOIN pg_class rel ON rel.oid = con.conrelid
+            JOIN pg_namespace nsp ON nsp.oid = rel.relnamespace
+            CROSS JOIN LATERAL unnest(con.conkey)
+                WITH ORDINALITY AS key_col(attnum, ordinality)
+            JOIN pg_attribute att
+              ON att.attrelid = rel.oid
+             AND att.attnum = key_col.attnum
+            WHERE con.contype = 'p'
+              AND nsp.nspname = $1
+              AND rel.relname = $2
+            GROUP BY con.conname
+            """,
+            schema,
+            table,
+        )
+        if not row:
+            return None, []
+        return row["conname"], list(row["columns"] or [])
+
+    async def _ensure_opt_in_primary_key_compatible(
+        self,
+        target: Any,
+        *,
+        schema: str,
+        table: str,
+    ) -> List[str]:
+        """Migrate a primary key only for tasks that explicitly opt in.
+
+        Primary-key changes are not generally safe to infer from task metadata.
+        A task must set ``migrate_primary_key_on_schema_check = True`` and may
+        provide ``primary_key_migration_defaults`` for newly introduced key
+        columns. The migration is atomic and refuses NULL or duplicate target
+        keys before replacing the existing constraint.
+        """
+
+        if not getattr(target, "migrate_primary_key_on_schema_check", False):
+            return []
+
+        desired_columns = list(getattr(target, "primary_keys", None) or [])
+        if not desired_columns:
+            return []
+
+        migration_defaults = dict(
+            getattr(target, "primary_key_migration_defaults", None) or {}
+        )
+        resolved_table_name = (
+            f"{self._quote_ident(schema)}.{self._quote_ident(table)}"
+        )
+        quoted_columns = ", ".join(
+            self._quote_ident(column) for column in desired_columns
+        )
+        actions: List[str] = []
+
+        async with self.pool.acquire() as conn:  # type: ignore
+            constraint_name, current_columns = (
+                await self._get_primary_key_definition(
+                    conn,
+                    schema=schema,
+                    table=table,
+                )
+            )
+            if current_columns == desired_columns:
+                return []
+
+            async with conn.transaction():
+                await conn.execute(
+                    f"LOCK TABLE {resolved_table_name} IN ACCESS EXCLUSIVE MODE;"
+                )
+
+                # Re-read under the lock in case another process migrated the
+                # table after the optimistic check above.
+                constraint_name, current_columns = (
+                    await self._get_primary_key_definition(
+                        conn,
+                        schema=schema,
+                        table=table,
+                    )
+                )
+                if current_columns == desired_columns:
+                    return []
+
+                for column in desired_columns:
+                    quoted_column = self._quote_ident(column)
+                    null_count = int(
+                        await conn.fetchval(
+                            f"SELECT COUNT(*) FROM {resolved_table_name} "
+                            f"WHERE {quoted_column} IS NULL;"
+                        )
+                        or 0
+                    )
+                    if not null_count:
+                        continue
+
+                    if column not in migration_defaults:
+                        raise ValueError(
+                            f"Cannot migrate primary key for {schema}.{table}: "
+                            f"column {column!r} contains {null_count} NULL rows "
+                            "and has no migration default."
+                        )
+
+                    await conn.execute(
+                        f"UPDATE {resolved_table_name} SET {quoted_column} = $1 "
+                        f"WHERE {quoted_column} IS NULL;",
+                        migration_defaults[column],
+                    )
+                    actions.append(
+                        f"backfill_primary_key:{column}:{null_count}"
+                    )
+
+                has_duplicates = bool(
+                    await conn.fetchval(
+                        f"""
+                        SELECT EXISTS (
+                            SELECT 1
+                            FROM {resolved_table_name}
+                            GROUP BY {quoted_columns}
+                            HAVING COUNT(*) > 1
+                            LIMIT 1
+                        );
+                        """
+                    )
+                )
+                if has_duplicates:
+                    raise ValueError(
+                        f"Cannot migrate primary key for {schema}.{table}: "
+                        f"duplicate rows exist for {desired_columns}."
+                    )
+
+                if constraint_name:
+                    await conn.execute(
+                        f"ALTER TABLE {resolved_table_name} DROP CONSTRAINT "
+                        f"{self._quote_ident(constraint_name)};"
+                    )
+
+                await conn.execute(
+                    f"ALTER TABLE {resolved_table_name} "
+                    f"ADD PRIMARY KEY ({quoted_columns});"
+                )
+                actions.append(
+                    "migrate_primary_key:"
+                    + ",".join(current_columns)
+                    + "->"
+                    + ",".join(desired_columns)
+                )
+
+        return actions
+
     def _normalize_index_columns(self, index_columns: Any) -> Optional[List[str]]:
         """规范化索引列定义，兼容单列、列表和逗号分隔字符串。"""
         raw_columns: List[str]
@@ -415,24 +584,47 @@ class SchemaManagementMixin:
         if auto_add_update_time and "update_time" not in desired_types:
             desired_types["update_time"] = "TIMESTAMP WITHOUT TIME ZONE"
 
-        # 0) Add missing columns (safe: only add with type, no NOT NULL enforcement here)
+        # 0) Add missing columns. Explicit opt-in PK migrations may use a
+        # temporary default so existing rows can be labeled without a table-wide
+        # UPDATE; the default is dropped immediately after the column is added.
         missing_cols = [c for c in desired_types.keys() if c not in existing_by_name]
         if missing_cols:
+            migration_defaults = dict(
+                getattr(target, "primary_key_migration_defaults", None) or {}
+            )
+            migrate_primary_key = bool(
+                getattr(target, "migrate_primary_key_on_schema_check", False)
+            )
             async with self.pool.acquire() as conn:  # type: ignore
                 async with conn.transaction():
                     for col_name in missing_cols:
                         col_type = desired_types[col_name]
-                        default_clause = (
-                            " DEFAULT CURRENT_TIMESTAMP"
-                            if auto_add_update_time and col_name == "update_time"
-                            else ""
+                        use_migration_default = (
+                            migrate_primary_key
+                            and col_name in migration_defaults
+                            and col_name in (getattr(target, "primary_keys", None) or [])
                         )
+                        if auto_add_update_time and col_name == "update_time":
+                            default_clause = " DEFAULT CURRENT_TIMESTAMP"
+                        elif use_migration_default:
+                            default_clause = (
+                                " DEFAULT "
+                                + self._quote_literal(migration_defaults[col_name])
+                                + " NOT NULL"
+                            )
+                        else:
+                            default_clause = ""
                         sql = (
                             f'ALTER TABLE {resolved_table_name} '
                             f'ADD COLUMN IF NOT EXISTS "{col_name}" {col_type}{default_clause};'
                         )
                         await conn.execute(sql)
                         actions.append(f"add_column:{col_name}")
+                        if use_migration_default:
+                            await conn.execute(
+                                f'ALTER TABLE {resolved_table_name} '
+                                f'ALTER COLUMN "{col_name}" DROP DEFAULT;'
+                            )
 
             # refresh schema snapshot for subsequent type/length adjustments
             existing_cols = await self.get_table_schema(target)
@@ -534,6 +726,14 @@ class SchemaManagementMixin:
                         view_def = view_defs.get(oid)
                         if view_def:
                             await conn.execute(f"CREATE OR REPLACE VIEW {fq} AS {view_def};")
+
+        actions.extend(
+            await self._ensure_opt_in_primary_key_compatible(
+                target,
+                schema=schema,
+                table=table,
+            )
+        )
 
         if auto_add_update_time:
             ensured_index = await self._ensure_update_time_index(

@@ -81,6 +81,16 @@ class _DefaultStreamingBatchFetcherTask(_StreamingBatchFetcherTask):
     default_stream_batches = True
 
 
+class _TextPrimaryKeyTask(_FailingBatchFetcherTask):
+    name = "text_primary_key_fetcher"
+    table_name = "text_primary_key_fetcher"
+    primary_keys = ["key"]
+    schema_def = {
+        "key": {"type": "TEXT", "constraints": "NOT NULL"},
+        "value": {"type": "INTEGER"},
+    }
+
+
 @pytest.mark.asyncio
 async def test_execute_batches_raises_when_any_batch_exhausts_retries():
     task = _FailingBatchFetcherTask(
@@ -162,6 +172,26 @@ async def test_streaming_defaults_to_full_update_type_only():
     assert result["rows"] == 3
     assert task.process_call_lengths == [3]
     assert [len(chunk) for chunk in db.saved_chunks] == [3]
+
+
+@pytest.mark.asyncio
+async def test_save_normalizes_text_primary_keys_before_deduplication():
+    db = _StreamingDB()
+    task = _TextPrimaryKeyTask(db_connection=db)
+    data = pd.DataFrame(
+        {
+            "key": ["易拉盖高速生产设备及系统改造", "易拉盖高速生产设\r备及系统改造"],
+            "value": [1, 2],
+        }
+    )
+
+    result = await task._save_data(data)
+
+    assert result["rows"] == 1
+    assert len(db.saved_chunks) == 1
+    assert db.saved_chunks[0].to_dict("records") == [
+        {"key": "易拉盖高速生产设备及系统改造", "value": 2}
+    ]
 
 
 @pytest.mark.asyncio

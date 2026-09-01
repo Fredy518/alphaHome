@@ -8,6 +8,7 @@ from typing import Any, Callable, Dict, List, Optional, Union, Tuple
 import numpy as np
 import pandas as pd
 from ..constants import UpdateTypes
+from ..data_cleaning import normalize_database_string
 
 
 class BaseTask(ABC):
@@ -571,9 +572,17 @@ class BaseTask(ABC):
 
         # 新增：在保存前根据主键去重
         if self.primary_keys and not data.empty:
+            # 主键必须先按数据库 COPY 路径的规则清洗，再判断重复。
+            # 否则包含回车、换行等字符的两个不同 Python 字符串可能在
+            # 入库时变成同一个键，导致 PostgreSQL CardinalityViolation。
+            valid_primary_keys = [pk for pk in self.primary_keys if pk in data.columns]
+            if valid_primary_keys:
+                data = data.copy()
+                for pk_col in valid_primary_keys:
+                    data[pk_col] = data[pk_col].map(normalize_database_string)
+
             initial_rows = len(data)
             # 确保主键列存在
-            valid_primary_keys = [pk for pk in self.primary_keys if pk in data.columns]
             if valid_primary_keys:
                 data = data.drop_duplicates(subset=valid_primary_keys, keep='last').copy()
                 dropped_rows = initial_rows - len(data)
