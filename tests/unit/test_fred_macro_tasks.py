@@ -69,7 +69,9 @@ class _FakeFredAPI:
 
 
 def _make_task(task_cls, fake_api, update_type=UpdateTypes.FULL, **kwargs):
-    return task_cls(db_connection=_MockDB(), api=fake_api, update_type=update_type, **kwargs)
+    return task_cls(
+        db_connection=_MockDB(), api=fake_api, update_type=update_type, **kwargs
+    )
 
 
 def _run_fred_process(task, df: pd.DataFrame) -> pd.DataFrame:
@@ -80,6 +82,7 @@ def _run_fred_process(task, df: pd.DataFrame) -> pd.DataFrame:
 # --------------------------------------------------------------------------
 # FredAPI CSV 解析测试
 # --------------------------------------------------------------------------
+
 
 class _FakeResponse:
     def __init__(self, text: str, status_code: int = 200):
@@ -100,12 +103,16 @@ def test_fred_api_parses_csv_and_handles_dot_as_nan(monkeypatch):
         captured["params"] = params
         return _FakeResponse(csv_text, 200)
 
-    monkeypatch.setattr("alphahome.fetchers.sources.fred.fred_api.requests.get", fake_get)
+    monkeypatch.setattr(
+        "alphahome.fetchers.sources.fred.fred_api.requests.get", fake_get
+    )
 
     api = FredAPI(request_interval=0, max_retries=1)
     import asyncio
 
-    df = asyncio.run(api.fetch_series("DFEDTARU", start_date="20240101", end_date="20240103"))
+    df = asyncio.run(
+        api.fetch_series("DFEDTARU", start_date="20240101", end_date="20240103")
+    )
 
     assert captured["params"] == {
         "id": "DFEDTARU",
@@ -123,7 +130,9 @@ def test_fred_api_raises_on_4xx(monkeypatch):
     def fake_get(url, params=None, timeout=None):
         return _FakeResponse("Bad Request", 400)
 
-    monkeypatch.setattr("alphahome.fetchers.sources.fred.fred_api.requests.get", fake_get)
+    monkeypatch.setattr(
+        "alphahome.fetchers.sources.fred.fred_api.requests.get", fake_get
+    )
 
     api = FredAPI(request_interval=0, max_retries=1)
     import asyncio
@@ -135,6 +144,7 @@ def test_fred_api_raises_on_4xx(monkeypatch):
 # --------------------------------------------------------------------------
 # 单序列 FRED 任务 process_data 测试
 # --------------------------------------------------------------------------
+
 
 def test_dxy_attributes():
     assert FredMacroDxyTask.name == "fred_macro_dxy"
@@ -182,9 +192,7 @@ def test_vix_process_data_drops_null_dates():
 def test_sofr_attributes_and_process_data():
     assert FredMacroSofrTask.series_ids == ["SOFR"]
     task = _make_task(FredMacroSofrTask, _FakeFredAPI({}))
-    raw = pd.DataFrame(
-        [{"date": "2024-04-01", "sofr": "3.63"}]
-    )
+    raw = pd.DataFrame([{"date": "2024-04-01", "sofr": "3.63"}])
     processed = _run_fred_process(task, raw)
     assert processed["date"].tolist() == [date(2024, 4, 1)]
     assert processed["sofr"].tolist() == [3.63]
@@ -199,6 +207,7 @@ def test_ted_attributes_marked_discontinued():
 # --------------------------------------------------------------------------
 # 多序列合并任务（fed_rate）fetch_batch 测试
 # --------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_fed_rate_fetch_batch_merges_three_series_on_date():
@@ -217,9 +226,7 @@ async def test_fed_rate_fetch_batch_merges_three_series_on_date():
                 ]
             ),
             # DFF 缺少 04-02，外连接后该日 effective_rate 为 NaN
-            "DFF": pd.DataFrame(
-                [{"observation_date": "2024-04-01", "DFF": "3.63"}]
-            ),
+            "DFF": pd.DataFrame([{"observation_date": "2024-04-01", "DFF": "3.63"}]),
         }
     )
     task = _make_task(FredMacroFedRateTask, fake_api, update_type=UpdateTypes.FULL)
@@ -248,6 +255,7 @@ async def test_fed_rate_fetch_batch_returns_none_when_all_series_empty():
 # --------------------------------------------------------------------------
 # MANUAL 窗口过滤测试
 # --------------------------------------------------------------------------
+
 
 def test_dxy_process_data_applies_manual_window():
     task = _make_task(
@@ -278,6 +286,7 @@ def test_dxy_process_data_applies_manual_window():
 # Yahoo v8 fallback 测试
 # --------------------------------------------------------------------------
 
+
 def test_yahoo_api_parses_v8_json(monkeypatch):
     """YahooAPI 正确解析 v8 chart JSON：timestamp + indicators.quote.close。"""
     payload = {
@@ -288,8 +297,12 @@ def test_yahoo_api_parses_v8_json(monkeypatch):
                     "timestamp": [1718942400, 1719115200, 1719201600],
                     "indicators": {
                         "quote": [
-                            {"open": [18.0, None, 18.5], "close": [18.44, None, 18.2],
-                             "high": [18.6, None, 18.7], "low": [18.1, None, 18.0]}
+                            {
+                                "open": [18.0, None, 18.5],
+                                "close": [18.44, None, 18.2],
+                                "high": [18.6, None, 18.7],
+                                "low": [18.1, None, 18.0],
+                            }
                         ]
                     },
                 }
@@ -299,6 +312,7 @@ def test_yahoo_api_parses_v8_json(monkeypatch):
 
     class _FakeResp:
         status_code = 200
+
         def json(self):
             return payload
 
@@ -315,7 +329,10 @@ def test_yahoo_api_parses_v8_json(monkeypatch):
 
     api = YahooAPI()
     import asyncio
-    df = asyncio.run(api.fetch_close("^VIX", start_date="20240620", end_date="20240624"))
+
+    df = asyncio.run(
+        api.fetch_close("^VIX", start_date="20240620", end_date="20240624")
+    )
 
     # 第二个点 close=None 应被丢弃
     assert len(df) == 2
@@ -330,6 +347,7 @@ def test_yahoo_api_raises_on_4xx(monkeypatch):
     class _FakeResp:
         status_code = 404
         text = "Not Found"
+
     monkeypatch.setattr(
         "alphahome.fetchers.sources.yahoo.yahoo_api.requests.get",
         lambda url, params=None, headers=None, timeout=None: _FakeResp(),
@@ -337,6 +355,7 @@ def test_yahoo_api_raises_on_4xx(monkeypatch):
     api = YahooAPI()
     import asyncio
     from alphahome.fetchers.sources.yahoo.yahoo_api import YahooAPIError
+
     with pytest.raises(YahooAPIError):
         asyncio.run(api.fetch_close("BADSYM"))
 
@@ -344,7 +363,9 @@ def test_yahoo_api_raises_on_4xx(monkeypatch):
 class _FailingFredAPI(_FakeFredAPI):
     """FRED 总是抛异常的替身，用于触发 Yahoo fallback。"""
 
-    async def fetch_series(self, series_id, start_date=None, end_date=None, stop_event=None):
+    async def fetch_series(
+        self, series_id, start_date=None, end_date=None, stop_event=None
+    ):
         self.calls.append(series_id)
         raise FredAPIError(f"FRED {series_id} unreachable (simulated)")
 
@@ -354,7 +375,9 @@ async def test_dxy_falls_back_to_yahoo_when_fred_fails(monkeypatch):
     """FRED 不可达时，DXY 任务自动 fallback 至 Yahoo v8 取 DX-Y.NYB。"""
     fake_fred = _FailingFredAPI({})
 
-    async def fake_yahoo_close(self, symbol, start_date=None, end_date=None, stop_event=None):
+    async def fake_yahoo_close(
+        self, symbol, start_date=None, end_date=None, stop_event=None
+    ):
         assert symbol == "DX-Y.NYB"
         return pd.DataFrame(
             [
@@ -382,11 +405,11 @@ async def test_vix_falls_back_to_yahoo(monkeypatch):
     """VIX 任务 FRED 失败时 fallback 至 ^VIX。"""
     fake_fred = _FailingFredAPI({})
 
-    async def fake_yahoo_close(self, symbol, start_date=None, end_date=None, stop_event=None):
+    async def fake_yahoo_close(
+        self, symbol, start_date=None, end_date=None, stop_event=None
+    ):
         assert symbol == "^VIX"
-        return pd.DataFrame(
-            [{"observation_date": "2024-04-01", "close": 18.44}]
-        )
+        return pd.DataFrame([{"observation_date": "2024-04-01", "close": 18.44}])
 
     monkeypatch.setattr(YahooAPI, "fetch_close", fake_yahoo_close)
 
@@ -410,6 +433,7 @@ async def test_fed_rate_has_no_yahoo_fallback():
 # --------------------------------------------------------------------------
 # SOFR 体系任务测试
 # --------------------------------------------------------------------------
+
 
 def test_sofr_term_attributes():
     assert FredMacroSofrTermTask.name == "fred_macro_sofr_term"
@@ -474,9 +498,7 @@ async def test_us_short_rate_fetch_batch_merges_with_mismatched_starts():
             "RRPONTSYAWARD": pd.DataFrame(
                 [{"observation_date": "2015-01-01", "RRPONTSYAWARD": "0.25"}]
             ),
-            "OBFR": pd.DataFrame(
-                [{"observation_date": "2015-01-01", "OBFR": "0.12"}]
-            ),
+            "OBFR": pd.DataFrame([{"observation_date": "2015-01-01", "OBFR": "0.12"}]),
             # IORB 2015 年尚无数据
         }
     )
@@ -493,13 +515,18 @@ async def test_us_short_rate_fetch_batch_merges_with_mismatched_starts():
 def test_treasury_yield_attributes():
     assert FredMacroTreasuryYieldTask.name == "fred_macro_treasury_yield"
     assert FredMacroTreasuryYieldTask.table_name == "macro_treasury_yield"
-    assert FredMacroTreasuryYieldTask.series_ids == ["DGS1MO", "DGS3MO"]
+    assert FredMacroTreasuryYieldTask.series_ids == [
+        "DGS1MO",
+        "DGS3MO",
+        "DGS5",
+        "DGS10",
+    ]
     # yield_3m 注释应体现 TED 替代用途
     assert "SOFR-国债" in FredMacroTreasuryYieldTask.schema_def["yield_3m"]["comment"]
 
 
 @pytest.mark.asyncio
-async def test_treasury_yield_fetch_batch_merges_two_tenors():
+async def test_treasury_yield_fetch_batch_merges_four_tenors():
     fake_api = _FakeFredAPI(
         {
             "DGS1MO": pd.DataFrame(
@@ -511,20 +538,35 @@ async def test_treasury_yield_fetch_batch_merges_two_tenors():
                     {"observation_date": "2024-04-02", "DGS3MO": "3.85"},
                 ]
             ),
+            "DGS5": pd.DataFrame(
+                [
+                    {"observation_date": "2024-04-01", "DGS5": "4.21"},
+                    {"observation_date": "2024-04-02", "DGS5": "4.18"},
+                ]
+            ),
+            "DGS10": pd.DataFrame(
+                [{"observation_date": "2024-04-02", "DGS10": "4.36"}]
+            ),
         }
     )
-    task = _make_task(FredMacroTreasuryYieldTask, fake_api, update_type=UpdateTypes.FULL)
+    task = _make_task(
+        FredMacroTreasuryYieldTask, fake_api, update_type=UpdateTypes.FULL
+    )
     merged = await task.fetch_batch({"start_date": "20240401", "end_date": "20240402"})
 
     assert len(merged) == 2
     assert merged["yield_1m"].iloc[0] == "3.68"
     assert pd.isna(merged["yield_1m"].iloc[1])  # DGS1MO 04-02 缺失
     assert merged["yield_3m"].tolist() == ["3.83", "3.85"]
+    assert merged["yield_5y"].tolist() == ["4.21", "4.18"]
+    assert pd.isna(merged["yield_10y"].iloc[0])
+    assert merged["yield_10y"].iloc[1] == "4.36"
 
 
 # --------------------------------------------------------------------------
 # 第二批：美联储资产负债表 + 信用利差
 # --------------------------------------------------------------------------
+
 
 def test_fed_balance_attributes():
     assert FredMacroFedBalanceTask.name == "fred_macro_fed_balance"
@@ -564,11 +606,7 @@ def test_credit_spread_attributes():
 @pytest.mark.asyncio
 async def test_credit_spread_fetch_batch():
     fake_api = _FakeFredAPI(
-        {
-            "BAAFF": pd.DataFrame(
-                [{"observation_date": "2024-04-01", "BAAFF": "2.36"}]
-            )
-        }
+        {"BAAFF": pd.DataFrame([{"observation_date": "2024-04-01", "BAAFF": "2.36"}])}
     )
     task = _make_task(FredMacroCreditSpreadTask, fake_api, update_type=UpdateTypes.FULL)
     merged = await task.fetch_batch({"start_date": "20240401", "end_date": "20240401"})
