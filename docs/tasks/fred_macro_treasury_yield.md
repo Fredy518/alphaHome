@@ -4,6 +4,8 @@
 创建者：ZCode
 关联协议：RIPER-5 + Multidimensional + Agent Protocol
 
+> 当前状态（2026-09-04）：任务已扩展为 `DGS1MO/DGS3MO/DGS5/DGS10` 四序列，默认起点调整为 1962-01-02；下文保留 2026-06-21 首次只建设 1M/3M 短端任务的历史实施记录。
+
 # 任务描述
 新增 `fred_macro_treasury_yield.py`，通过 FRED 两序列获取美国 1M/3M 短端国债收益率。用于算 SOFR-国债利差（经典 TED 利差的现代替代：原 TED = 3M LIBOR - 3M 国债，LIBOR 停用后可用 SOFR-3M国债 反映融资压力）。配合 macro_sofr / macro_us_short_rate 使用。
 

@@ -5,17 +5,18 @@
 用途：供 CrossLens SPEC-015 及下游消费方参考的宏观数据表字段、口径、代理标注、新鲜度与推荐用法说明
 
 ## 概述
-本文档覆盖 22 张宏观数据表（物理表位于 `akshare.*` / `fred.*` schema，`rawdata.*` 为自动管理的同名视图）。所有表经 `@task_register()` 注册，可通过 GUI 或生产 SMART runner 增量更新。
+本文档覆盖 25 张宏观数据表（物理表位于 `akshare.*` / `fred.*` schema，`rawdata.*` 为自动管理的同名视图）。所有表经 `@task_register()` 注册，可通过 GUI 或生产 SMART runner 增量更新。
 
 **通用约定：**
 - 所有数值列单位见各表"口径"列（% / pp / 亿元 / 百万美元）
 - `update_time` 为行写入时间戳（TIMESTAMP，自动维护）
 - 主键（PK）驱动 UPSERT，重跑幂等无重复
 - `rawdata.<table>` 视图 = `SELECT * FROM <schema>.<table>`，下游查询可用任一
+- `period_end_date` 只表示宏观指标统计期，不表示发布日期或当时可用日。下游做 PIT 研究时，优先连接可审计的发布日历；没有发布日证据时必须保留策略约定的保守固定滞后，不得把月末标签当作月末已知。
 
 ---
 
-## 一、中国宏观/流动性（6 表）
+## 一、中国宏观/流动性（9 表）
 
 ### 1. `akshare.macro_usa_cpi` — 美国 CPI 同比
 > ⚠️ 表名含 usa 但归类此处因与美实际利率计算强相关；实为美国数据
@@ -110,11 +111,62 @@
 - **新鲜度**：最新 2026-06-18，✅ 新鲜
 - **用途**：输入型通胀综合指标（单看铜/油不够，CCI 综合）。与 `future_daily`（单品种）互补
 
+### 7. `akshare.macro_fixed_asset_investment` — 固定资产投资
+
+| 字段 | 类型 | 口径/说明 |
+|---|---|---|
+| `period_end_date` *(PK)* | DATE | 统计期月末，**不是发布日期** |
+| `period_label` | VARCHAR | 上游月份标签 |
+| `monthly_value` | NUMERIC | 固定资产投资当月值（亿元） |
+| `monthly_yoy` | NUMERIC | 固定资产投资当月同比（%） |
+| `monthly_mom` | NUMERIC | 固定资产投资当月环比（%） |
+| `cumulative_value` | NUMERIC | 自年初累计值（亿元） |
+| `source_url` | TEXT | 东方财富公开宏观数据页 |
+
+- **数据源**：AkShare `macro_china_gdzctz`（东方财富公开页）
+- **覆盖与新鲜度（2026-09-04 核验）**：160 行，2012-02 至 2026-07
+- **用途**：旧风格轮动策略的 `fixedasset_investment_yoy` 对应 `monthly_yoy`
+- **⚠️ PIT**：源接口不提供可信发布日期；必须使用发布日历或保守固定滞后
+
+### 8. `akshare.macro_industrial_value_added` — 规模以上工业增加值
+
+| 字段 | 类型 | 口径/说明 |
+|---|---|---|
+| `period_end_date` *(PK)* | DATE | 统计期月末，**不是发布日期** |
+| `period_label` | VARCHAR | 上游月份标签 |
+| `monthly_yoy` | NUMERIC | 工业增加值当月同比（%） |
+| `cumulative_yoy` | NUMERIC | 工业增加值累计同比（%） |
+| `period_source_date` | DATE | 上游所谓“发布时间”，实为统计期月初，**明确不可作发布日期** |
+| `source_url` | TEXT | 东方财富公开宏观数据页 |
+
+- **数据源**：AkShare `macro_china_gyzjz`（东方财富公开页）
+- **覆盖与新鲜度（2026-09-04 核验）**：204 行，2008-02 至 2026-07
+- **用途**：旧风格轮动策略的 `industrial_value_added_yoy` 对应 `monthly_yoy`
+- **⚠️ PIT**：`period_source_date` 不能用于可用日判断；必须使用发布日历或保守固定滞后
+
+### 9. `akshare.macro_retail_sales` — 社会消费品零售总额
+
+| 字段 | 类型 | 口径/说明 |
+|---|---|---|
+| `period_end_date` *(PK)* | DATE | 统计期月末，**不是发布日期** |
+| `period_label` | VARCHAR | 上游月份标签 |
+| `monthly_value` | NUMERIC | 社会消费品零售总额当月值（亿元） |
+| `monthly_yoy` | NUMERIC | 社会消费品零售总额当月同比（%） |
+| `monthly_mom` | NUMERIC | 社会消费品零售总额当月环比（%） |
+| `cumulative_value` | NUMERIC | 累计值（亿元） |
+| `cumulative_yoy` | NUMERIC | 累计同比（%） |
+| `source_url` | TEXT | 东方财富公开宏观数据页 |
+
+- **数据源**：AkShare `macro_china_consumer_goods_retail`（东方财富公开页）
+- **覆盖与新鲜度（2026-09-04 核验）**：208 行，2008-01 至 2026-07
+- **用途**：13 票风格轮动方案中的消费票使用 `monthly_yoy`；不要误接累计同比
+- **⚠️ PIT**：源接口不提供可信发布日期；必须使用发布日历或保守固定滞后
+
 ---
 
 ## 二、美国宏观（5 表）
 
-### 7. `akshare.macro_fed_decision` — 美联储利率决议
+### 10. `akshare.macro_fed_decision` — 美联储利率决议
 
 | 字段 | 类型 | 口径/说明 |
 |---|---|---|
@@ -128,7 +180,7 @@
 - **用途**：与 `fred.macro_fed_rate` 互补——决议=政策动作点，有效利率=市场实际
 - **⚠️ 不宜作实时信号**：数据源滞后，需用 `fred.macro_fed_rate.target_upper` 变化点替代实时观测
 
-### 8. `akshare.macro_core_pce` — 美国核心 PCE
+### 11. `akshare.macro_core_pce` — 美国核心 PCE
 
 | 字段 | 类型 | 口径/说明 |
 |---|---|---|
@@ -142,7 +194,7 @@
 - **用途**：美联储通胀目标锚定核心 PCE 2%（非 CPI），FOMC 决策真正依据
 - **⚠️ 不宜作实时信号**：数据源滞后
 
-### 9. `akshare.macro_usa_nonfarm` — 美国非农就业
+### 12. `akshare.macro_usa_nonfarm` — 美国非农就业
 
 | 字段 | 类型 | 口径/说明 |
 |---|---|---|
@@ -155,7 +207,7 @@
 - **用途**：美联储双目标就业侧（新增流量，与失业率存量互补）
 - **⚠️ 单位**：rate 单位为**万人**（非 %），易误用
 
-### 10. `akshare.macro_usa_unemployment` — 美国失业率
+### 13. `akshare.macro_usa_unemployment` — 美国失业率
 
 | 字段 | 类型 | 口径/说明 |
 |---|---|---|
@@ -167,7 +219,7 @@
 - **数据源**：akshare `macro_usa_unemployment_rate`
 - **用途**：美联储双目标就业侧（存量比率，与非农互补）
 
-### 11. `fred.macro_fed_balance` — 美联储资产负债表
+### 14. `fred.macro_fed_balance` — 美联储资产负债表
 
 | 字段 | 类型 | 口径/说明 |
 |---|---|---|
@@ -183,7 +235,7 @@
 
 ## 三、全球流动性/风险（3 表）
 
-### 12. `fred.macro_dxy` — 美元指数
+### 15. `fred.macro_dxy` — 美元指数
 
 | 字段 | 类型 | 口径/说明 |
 |---|---|---|
@@ -195,7 +247,7 @@
 - **用途**：`global_liquidity_metrics.usd_index`；global_score 外部因子
 - **⚠️ 口径注意**：主源 `DTWEXBGS` 是**贸易加权广义美元指数（2006 基期=100）**，非 ICE DXY（6 发达货币篮子）。FRED 不可达时 fallback 至 Yahoo `DX-Y.NYB`（ICE DXY 本尊），**口径会切换**，下游需按 source 标注或降权
 
-### 13. `fred.macro_vix` — VIX 波动率指数
+### 16. `fred.macro_vix` — VIX 波动率指数
 
 | 字段 | 类型 | 口径/说明 |
 |---|---|---|
@@ -207,7 +259,7 @@
 - **用途**：`market_regime_label` 分类辅助（risk_on/risk_off）
 - **⚠️ 口径注意**：仅收盘价（无 OHLC）。fallback Yahoo ^VIX 口径一致无需降权
 
-### 14. `fred.macro_credit_spread` — 美国信用利差
+### 17. `fred.macro_credit_spread` — 美国信用利差
 
 | 字段 | 类型 | 口径/说明 |
 |---|---|---|
@@ -223,7 +275,7 @@
 
 ## 四、利率体系（8 表）
 
-### 15. `fred.macro_fed_rate` — 美联储联邦基金利率
+### 18. `fred.macro_fed_rate` — 美联储联邦基金利率
 
 | 字段 | 类型 | 口径/说明 |
 |---|---|---|
@@ -237,7 +289,7 @@
 - **用途**：`global_liquidity_metrics.fed_target_rate`；美联储政策姿态主指标
 - **对账已验证**：effective_rate 全部落在 [target_lower, target_upper] 区间内 ✅
 
-### 16. `fred.macro_sofr` — SOFR（担保隔夜融资利率）
+### 19. `fred.macro_sofr` — SOFR（担保隔夜融资利率）
 
 | 字段 | 类型 | 口径/说明 |
 |---|---|---|
@@ -248,7 +300,7 @@
 - **新鲜度**：最新 2026-06-17，✅ 新鲜
 - **用途**：LIBOR 退出后的美元短期利率基准
 
-### 17. `fred.macro_sofr_term` — SOFR 期限结构
+### 20. `fred.macro_sofr_term` — SOFR 期限结构
 
 | 字段 | 类型 | 口径/说明 |
 |---|---|---|
@@ -260,7 +312,7 @@
 - **数据源**：FRED `SOFR30/90/180DAYAVG`
 - **用途**：SOFR 利率曲线期限结构
 
-### 18. `fred.macro_us_short_rate` — 美元隔夜短期利率集合
+### 21. `fred.macro_us_short_rate` — 美元隔夜短期利率集合
 
 | 字段 | 类型 | 口径/说明 |
 |---|---|---|
@@ -273,20 +325,23 @@
 - **用途**：美元短端利率全貌；`iorb` 算 SOFR-IORB 利差替代 TED
 - **⚠️ 高 NULL 率（53%，合理）**：三序列起点不一（on_rrp 2013、obfr 2016、iorb 2021），外连接后早期日部分列 NULL
 
-### 19. `fred.macro_treasury_yield` — 美国短端国债收益率
+### 22. `fred.macro_treasury_yield` — 美国国债关键期限收益率
 
 | 字段 | 类型 | 口径/说明 |
 |---|---|---|
 | `date` *(PK)* | DATE | 交易日 |
 | `yield_1m` | NUMERIC | 1 个月美国国债收益率（%） |
 | `yield_3m` | NUMERIC | 3 个月美国国债收益率（%） |
+| `yield_5y` | NUMERIC | 5 年美国国债收益率（%，FRED DGS5） |
+| `yield_10y` | NUMERIC | 10 年美国国债收益率（%，FRED DGS10） |
 
-- **数据源**：FRED `DGS1MO/DGS3MO`
-- **用途**：算 SOFR-3M国债 利差替代 TED
-- **⚠️ 高 NULL 率（47%，合理）**：yield_1m 2001 起、yield_3m 1981 起，起点不一
-- **补充**：AlphaDB 原有 `macro_bond_rate` 含 2y/5y/10y/30y，本表补 1M/3M 短端
+- **数据源**：FRED `DGS1MO/DGS3MO/DGS5/DGS10`
+- **覆盖与新鲜度（2026-09-04 核验）**：16,872 行，1962-01-02 至 2026-09-02
+- **用途**：1M/3M 用于短端融资压力与 SOFR-3M 国债利差；5Y/10Y 为风格轮动提供官方 FRED 口径
+- **⚠️ 起点差异**：5Y/10Y 自 1962 年起、3M 自 1981 年起、1M 自 2001 年起；早期短端为空是源序列边界，不是缺数故障
+- **补充**：5Y/10Y 与 `macro_bond_rate` 的第三方镜像并存，下游应明确所选来源口径
 
-### 20. `fred.macro_ted` — TED 利差（已停用）
+### 23. `fred.macro_ted` — TED 利差（已停用）
 
 | 字段 | 类型 | 口径/说明 |
 |---|---|---|
@@ -298,7 +353,7 @@
 - **用途**：仅历史参考，**不作实时信号**
 - **实时替代**：(1) SOFR-IORB 利差 = `macro_sofr.sofr - macro_us_short_rate.iorb`；(2) SOFR-3M国债 利差 = `macro_sofr.sofr - macro_treasury_yield.yield_3m`
 
-### 21-22. `akshare.macro_ecb_rate` / `akshare.macro_boj_rate` — 欧/日央行利率决议
+### 24-25. `akshare.macro_ecb_rate` / `akshare.macro_boj_rate` — 欧/日央行利率决议
 
 | 字段 | 类型 | 口径/说明 |
 |---|---|---|
@@ -351,7 +406,10 @@
 | 风险偏好 | `macro_vix.vix_close` + `macro_credit_spread` |
 | 输入型通胀 | `macro_cci.cci` |
 
-## 八、新鲜度审计结果（2026-06-21）
+## 八、新鲜度审计记录
+
+- **2026-09-04 定向复核**：fixed_asset_investment / industrial_value_added / retail_sales 均更新至 2026-07；treasury_yield 更新至 2026-09-02。四张表与当时源端返回逐字段一致。
+- **以下为 2026-06-21 基线记录，未在 2026-09-04 全量重审：**
 
 - ✅ **新鲜**：repo_rate、policy_rate、money_supply、cn_cb_balance、cci、dxy、fed_rate、vix、sofr、sofr_term、us_short_rate、treasury_yield、fed_balance、credit_spread、usa_cpi
 - ⚠️ **数据源滞后（akshare 事件类，非采集问题）**：fed_decision（325天）、ecb_rate（332天）、boj_rate（325天）、core_pce
