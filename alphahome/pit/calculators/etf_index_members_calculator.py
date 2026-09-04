@@ -59,9 +59,7 @@ class ETFIndexMembersCalculator:
         "method_version",
     ]
 
-    def __init__(
-        self, threshold: ETFIndexMemberQualityThreshold | None = None
-    ) -> None:
+    def __init__(self, threshold: ETFIndexMemberQualityThreshold | None = None) -> None:
         self.threshold = threshold or ETFIndexMemberQualityThreshold()
         self.last_audit: dict[str, Any] = {}
 
@@ -94,11 +92,7 @@ class ETFIndexMembersCalculator:
             wanted_codes = sorted(code for code in discovered_codes if code)
         else:
             wanted_codes = sorted(
-                {
-                    str(code).strip()
-                    for code in index_codes
-                    if str(code).strip()
-                }
+                {str(code).strip() for code in index_codes if str(code).strip()}
             )
 
         official_groups = {
@@ -160,19 +154,37 @@ class ETFIndexMembersCalculator:
             "output_row_count": int(len(result)),
             "source_pair_counts": source_counts,
             "quality_pair_counts": quality_counts,
-            "eligible_pair_count": int(
-                result.loc[result["is_eligible"]]
-                .drop_duplicates(["obs_date", "index_code"])
-                .shape[0]
-            )
-            if not result.empty
-            else 0,
+            "eligible_pair_count": (
+                int(
+                    result.loc[result["is_eligible"]]
+                    .drop_duplicates(["obs_date", "index_code"])
+                    .shape[0]
+                )
+                if not result.empty
+                else 0
+            ),
         }
         return result
 
     @staticmethod
     def _string_column(frame: pd.DataFrame, column: str) -> pd.Series:
         return frame[column].astype("string").fillna("").str.strip()
+
+    @staticmethod
+    def normalize_member_code(value: Any) -> str:
+        """Return one canonical TS code for zero-padded security aliases."""
+
+        if value is None or pd.isna(value):
+            return ""
+        code = str(value).strip().upper()
+        if "." not in code:
+            return code
+        symbol, market = code.rsplit(".", 1)
+        if market == "HK" and symbol.isdigit():
+            return f"{symbol.lstrip('0').zfill(5)}.HK"
+        if market in {"SH", "SZ", "BJ"} and symbol.isdigit():
+            return f"{symbol.zfill(6)}.{market}"
+        return code
 
     def _prepare_official(self, frame: pd.DataFrame) -> pd.DataFrame:
         required = {
@@ -189,14 +201,13 @@ class ETFIndexMembersCalculator:
             return pd.DataFrame(columns=sorted(required))
 
         source = frame[list(required)].copy()
-        for column in ("index_code", "index_name", "ts_code"):
+        for column in ("index_code", "index_name"):
             source[column] = self._string_column(source, column)
+        source["ts_code"] = source["ts_code"].map(self.normalize_member_code)
         source["weight_trade_date"] = pd.to_datetime(
             source["weight_trade_date"], errors="coerce"
         ).dt.normalize()
-        source["raw_weight"] = pd.to_numeric(
-            source["raw_weight"], errors="coerce"
-        )
+        source["raw_weight"] = pd.to_numeric(source["raw_weight"], errors="coerce")
         source = source.loc[
             source["index_code"].ne("")
             & source["ts_code"].ne("")
@@ -206,9 +217,7 @@ class ETFIndexMembersCalculator:
         ].copy()
         return source.sort_values(
             ["index_code", "weight_trade_date", "ts_code"], kind="mergesort"
-        ).drop_duplicates(
-            ["index_code", "weight_trade_date", "ts_code"], keep="last"
-        )
+        ).drop_duplicates(["index_code", "weight_trade_date", "ts_code"], keep="last")
 
     def _prepare_holdings(self, frame: pd.DataFrame) -> pd.DataFrame:
         required = {
@@ -227,15 +236,14 @@ class ETFIndexMembersCalculator:
             return pd.DataFrame(columns=sorted(required))
 
         source = frame[list(required)].copy()
-        for column in ("index_code", "index_name", "etf_code", "ts_code"):
+        for column in ("index_code", "index_name", "etf_code"):
             source[column] = self._string_column(source, column)
+        source["ts_code"] = source["ts_code"].map(self.normalize_member_code)
         for column in ("ann_date", "end_date"):
             source[column] = pd.to_datetime(
                 source[column], errors="coerce"
             ).dt.normalize()
-        source["raw_weight"] = pd.to_numeric(
-            source["raw_weight"], errors="coerce"
-        )
+        source["raw_weight"] = pd.to_numeric(source["raw_weight"], errors="coerce")
         source = source.loc[
             source["index_code"].ne("")
             & source["etf_code"].ne("")
@@ -463,9 +471,7 @@ class ETFIndexMembersCalculator:
         result["source_code"] = source_code
         result["source_effective_date"] = source_effective_date
         result["source_available_date"] = source_available_date
-        result["source_staleness_days"] = int(
-            (obs_date - source_effective_date).days
-        )
+        result["source_staleness_days"] = int((obs_date - source_effective_date).days)
         result["source_member_count"] = source_member_count
         result["source_weight_sum"] = source_weight_sum
         result["source_coverage_rate"] = source_weight_sum / 100.0

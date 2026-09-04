@@ -93,6 +93,41 @@ def test_holding_fallback_combines_visible_top_ten_and_residual_disclosure():
     assert april["weight"].sum() == pytest.approx(1.0)
 
 
+def test_holding_fallback_normalizes_zero_padded_hk_aliases():
+    rows = []
+    for number in range(20, 30):
+        for symbol in (f"{number:05d}.HK", f"{number}.HK"):
+            rows.append(
+                {
+                    "index_code": "IDX",
+                    "index_name": "测试指数",
+                    "etf_code": "526030.SH",
+                    "ann_date": "2026-06-23",
+                    "end_date": "2026-06-18",
+                    "ts_code": symbol,
+                    "raw_weight": 7.2,
+                }
+            )
+    holdings = pd.DataFrame(rows)
+
+    result = ETFIndexMembersCalculator().calculate(
+        pd.DataFrame(), holdings, ["2026-08-31"], ["IDX"]
+    )
+
+    assert len(result) == 10
+    assert result["source_member_count"].unique().tolist() == [10]
+    assert result["source_weight_sum"].unique().tolist() == [pytest.approx(72.0)]
+    assert result["source_coverage_rate"].unique().tolist() == [pytest.approx(0.72)]
+    assert result["source_quality"].unique().tolist() == ["partial"]
+    assert result["is_eligible"].all()
+    assert result["weight"].sum() == pytest.approx(1.0)
+
+
+@pytest.mark.parametrize("value", [None, pd.NA, pd.NaT, float("nan")])
+def test_member_code_normalization_treats_missing_scalars_as_empty(value):
+    assert ETFIndexMembersCalculator.normalize_member_code(value) == ""
+
+
 def test_future_holding_announcement_is_not_visible():
     holdings = _holding_rows(
         ann_date="2026-03-31",
@@ -145,9 +180,7 @@ def test_manager_load_sources_accepts_empty_query_without_columns():
     manager.context = FakeContext()
     manager._load_index_names = lambda _codes: {"IDX": "测试指数"}
 
-    sources = manager._load_sources(
-        [pd.Timestamp("2026-01-31").date()], ["IDX"]
-    )
+    sources = manager._load_sources([pd.Timestamp("2026-01-31").date()], ["IDX"])
 
     assert sources["official_weights"]["index_name"].tolist() == ["测试指数"] * 5
     assert sources["fund_holdings"].empty
