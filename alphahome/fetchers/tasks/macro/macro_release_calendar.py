@@ -189,19 +189,20 @@ def is_pmi_schedule_title(value: str) -> bool:
 def pbc_period_labels(period_end_date: pd.Timestamp) -> List[str]:
     year = period_end_date.year
     month = period_end_date.month
+    month_labels = [f"{year}年{month}月", f"{year}年{month}月份"]
     if month == 3:
-        return [f"{year}年一季度"]
+        return [f"{year}年一季度", *month_labels]
     if month == 6:
-        return [f"{year}年上半年"]
+        return [f"{year}年上半年", *month_labels]
     if month == 9:
-        return [f"{year}年前三季度"]
+        return [f"{year}年前三季度", *month_labels]
     if month == 12:
-        return [f"{year}年"]
-    return [f"{year}年{month}月", f"{year}年{month}月份"]
+        return [f"{year}年", *month_labels]
+    return month_labels
 
 
 def money_queries(period_end_date: pd.Timestamp) -> List[str]:
-    return [f"{pbc_period_labels(period_end_date)[0]}金融统计数据报告"]
+    return [f"{label}金融统计数据报告" for label in pbc_period_labels(period_end_date)]
 
 
 def credit_queries(period_end_date: pd.Timestamp) -> List[str]:
