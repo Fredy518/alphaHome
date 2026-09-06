@@ -5,8 +5,8 @@
 SPEC-015 用途：输入型通胀综合指标。单看铜/油等单一商品不够，CCI 大宗商品指数综合
 反映原材料价格趋势，是国内 PPI 输入型通胀的前瞻信号。与 future_daily（单品种）互补。
 
-数据源：akshare index_cci_cx（大宗商品指数，4234 行，日频，免费，已实测可用）。
-原始列：日期/大宗商品指数/变化值，直接映射。
+数据源：财新公开图表接口，由项目内 index_cci_cx 扩展适配，日频全历史。
+原始列：日期/大宗商品指数/变化值，直接映射；变化值为涨跌幅（%）。
 """
 
 from __future__ import annotations
@@ -50,7 +50,7 @@ class AkShareMacroCciTask(AkShareNoDateSingleBatchTask):
     schema_def = {
         "date": {"type": "DATE", "constraints": "NOT NULL", "comment": "交易日"},
         "cci": {"type": "NUMERIC(12,4)", "comment": "大宗商品指数（输入型通胀综合指标）"},
-        "change": {"type": "NUMERIC(12,4)", "comment": "当日变化值"},
+        "change": {"type": "NUMERIC(12,4)", "comment": "较上一观测日涨跌幅（%）"},
     }
 
     indexes = [

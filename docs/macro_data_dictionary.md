@@ -126,10 +126,10 @@
 |---|---|---|
 | `date` *(PK)* | DATE | 交易日 |
 | `cci` | NUMERIC | 大宗商品指数（输入型通胀综合指标） |
-| `change` | NUMERIC | 当日变化值 |
+| `change` | NUMERIC | 较上一观测日涨跌幅（%），非点位差 |
 
-- **数据源**：akshare `index_cci_cx`
-- **新鲜度**：最新 2026-06-18，✅ 新鲜
+- **数据源**：项目内 `index_cci_cx` 扩展适配财新新版公开接口 `POST /dataindices/cci`（`month=""` 获取全历史）
+- **新鲜度**：2026-09-05 smart 复跑核验，最新 2026-09-04，共 4,289 行
 - **用途**：输入型通胀综合指标（单看铜/油不够，CCI 综合）。与 `future_daily`（单品种）互补
 
 ### 7. `akshare.macro_fixed_asset_investment` — 固定资产投资

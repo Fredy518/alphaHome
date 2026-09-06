@@ -26,6 +26,7 @@ except ImportError:
 
 from .stock_limitup_reason_ext import stock_limitup_reason
 from .index_cons_csindex_ext import index_stock_cons_csindex
+from .index_cci_cx_ext import index_cci_cx
 
 class AkShareAPIError(Exception):
     """AkShare API 调用错误"""
@@ -71,6 +72,8 @@ class AkShareAPI:
         "stock_limitup_reason": stock_limitup_reason,
         # Override buggy akshare impl for .xls reading
         "index_stock_cons_csindex": index_stock_cons_csindex,
+        # 财新新版公开图表接口；旧 AkShare 地址已失效。
+        "index_cci_cx": index_cci_cx,
     }
     def __init__(
         self,
