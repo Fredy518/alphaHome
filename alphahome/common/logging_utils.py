@@ -45,6 +45,13 @@ _log_config = {
 }
 
 
+def ensure_standard_streams() -> None:
+    """Provide writable streams when an application starts without a console."""
+    for stream_name in ("stdout", "stderr"):
+        if getattr(sys, stream_name) is None:
+            setattr(sys, stream_name, open(os.devnull, "w", encoding="utf-8"))
+
+
 def setup_logging(
     log_level: Union[int, str] = DEFAULT_LOG_LEVEL,
     log_format: str = DEFAULT_LOG_FORMAT,
@@ -70,6 +77,7 @@ def setup_logging(
         None
     """
     global _logging_initialized, _log_config
+    ensure_standard_streams()
 
     # 已经初始化且不需要重置，则直接返回
     if _logging_initialized and not reset:

@@ -1,10 +1,33 @@
 import asyncio
+import sys
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
 
 from alphahome.gui import controller, main_window
+
+
+def test_gui_startup_provides_writable_streams_without_console(monkeypatch):
+    original_stdout = sys.stdout
+    original_stderr = sys.stderr
+    monkeypatch.setattr(sys, "stdout", None)
+    monkeypatch.setattr(sys, "stderr", None)
+
+    main_window.ensure_standard_streams()
+    fallback_stdout = sys.stdout
+    fallback_stderr = sys.stderr
+
+    try:
+        assert fallback_stdout is not None
+        assert fallback_stderr is not None
+        fallback_stdout.write("")
+        fallback_stderr.write("")
+    finally:
+        monkeypatch.setattr(sys, "stdout", original_stdout)
+        monkeypatch.setattr(sys, "stderr", original_stderr)
+        fallback_stdout.close()
+        fallback_stderr.close()
 
 
 @pytest.mark.asyncio

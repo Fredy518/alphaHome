@@ -58,7 +58,7 @@ from typing import Any, Dict
 
 from async_tkinter_loop import async_handler
 
-from ..common.logging_utils import get_logger, setup_logging
+from ..common.logging_utils import ensure_standard_streams, get_logger, setup_logging
 from ..common.task_system import UnifiedTaskFactory
 from . import controller
 from .handlers import (
@@ -69,10 +69,11 @@ from .handlers import (
     task_execution_handler,
     task_log_handler,
 )
-from .utils.screen_utils import get_window_geometry_string, position_window_top_left
-from .utils.dpi_manager import initialize_dpi_manager
+from .mixins import WindowDpiMixin, WindowEventsMixin, WindowLayoutMixin
 from .utils.dpi_aware_ui import initialize_ui_factory
-from .mixins import WindowEventsMixin, WindowDpiMixin, WindowLayoutMixin
+from .utils.dpi_manager import initialize_dpi_manager
+from .utils.screen_utils import get_window_geometry_string, position_window_top_left
+
 
 # --- DPI Awareness ---
 def enable_dpi_awareness():
@@ -390,6 +391,8 @@ def main():
     ## 初始化异步服务并启动GUI的同步入口点。
     ## 负责核心服务初始化、DPI感知启用和异步事件循环启动。
     """
+    ensure_standard_streams()
+
     async def init_and_run():
         # Initialize services first
         try:
