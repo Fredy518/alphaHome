@@ -409,7 +409,14 @@ async def run_tasks(
                     if isinstance(result, dict):
                         result_status = result.get("status", "success")
                         rows = result.get("rows", 0)
-                        if result_status == "no_data":
+                        if result_status == "error":
+                            error = result.get("error") or result.get("message")
+                            result_details = (
+                                f"执行失败: {error}"
+                                if error
+                                else f"执行失败 (行数: {rows})"
+                            )
+                        elif result_status == "no_data":
                             result_details = "没有获取到数据"
                         elif result_status == "partial_success":
                             result_details = "部分数据保存，存在验证警告"
@@ -422,9 +429,13 @@ async def run_tasks(
                         log_msg = f"任务 {task_name} 执行完成，状态: {result_status}，{result_details}"
                     else:
                         log_msg = f"任务 {task_name} 执行完成，状态: {result_status}"
-                    logger.info(log_msg)
+                    if result_status == "error":
+                        logger.error(log_msg)
+                    else:
+                        logger.info(log_msg)
                     if _send_response_callback:
-                        _send_response_callback("LOG", {"level": "info", "message": log_msg})
+                        level = "error" if result_status == "error" else "info"
+                        _send_response_callback("LOG", {"level": level, "message": log_msg})
 
                     await _record_task_status(db_manager, task_name, result_status, result_details)
 

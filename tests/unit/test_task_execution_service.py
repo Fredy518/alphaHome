@@ -3,7 +3,7 @@
 
 import asyncio
 from datetime import date, datetime
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -281,4 +281,62 @@ async def test_run_tasks_records_error_when_task_factory_fails(monkeypatch):
         "broken_task",
         "error",
         "任务实例创建失败: factory boom",
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("result_fields", "expected_details"),
+    [
+        ({"error": "OPI request timeout"}, "执行失败: OPI request timeout"),
+        ({"message": "OPI request timeout"}, "执行失败: OPI request timeout"),
+        (
+            {"error": "OPI request timeout", "message": "Summary"},
+            "执行失败: OPI request timeout",
+        ),
+        (
+            {"error": "", "message": "OPI request timeout"},
+            "执行失败: OPI request timeout",
+        ),
+        ({}, "执行失败 (行数: 0)"),
+        ({"rows": 7}, "执行失败 (行数: 7)"),
+    ],
+)
+async def test_run_tasks_preserves_returned_error_details(
+    monkeypatch, caplog, result_fields, expected_details
+):
+    task = _TaskWithoutIncrementalCapabilityMethod()
+    task.execute = AsyncMock(return_value={"status": "error", **result_fields})
+    record_task_status = AsyncMock()
+    send_response = Mock()
+    monkeypatch.setattr(task_execution_service, "_is_running", False)
+    monkeypatch.setattr(
+        task_execution_service, "_send_response_callback", send_response
+    )
+    monkeypatch.setattr(
+        task_execution_service, "_ensure_task_status_table_exists", AsyncMock()
+    )
+    monkeypatch.setattr(
+        task_execution_service, "_record_task_status", record_task_status
+    )
+    monkeypatch.setattr(task_execution_service, "get_all_task_status", AsyncMock())
+    monkeypatch.setattr(
+        task_execution_service.UnifiedTaskFactory,
+        "create_task_instance",
+        AsyncMock(return_value=task),
+    )
+    db = object()
+
+    await task_execution_service.run_tasks(
+        db, [{"task_name": "tinysoft_failed"}], None, None, "智能增量"
+    )
+
+    record_task_status.assert_any_await(
+        db, "tinysoft_failed", "error", expected_details
+    )
+    expected_log = f"任务 tinysoft_failed 执行完成，状态: error，{expected_details}"
+    send_response.assert_any_call("LOG", {"level": "error", "message": expected_log})
+    assert any(
+        record.levelname == "ERROR" and record.getMessage() == expected_log
+        for record in caplog.records
     )
