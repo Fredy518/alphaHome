@@ -26,9 +26,12 @@ pip install -e .
 
 # 可选依赖
 pip install -e ".[akshare]"
+pip install -e ".[tinysoft]"  # Tinysoft pyTSL 后端
 pip install -e ".[research]"
 pip install -e ".[test]"
 ```
+
+Tinysoft 的 pyTSL 后端通过 `tspytsl` 安装包提供 `import pyTSL`；OPI 后端使用已包含的 `aiohttp`，无需安装该可选依赖。平台要求及验证方法见[安装指南](docs/setup/installation.md#tinysoftpytsl)。
 
 复制配置模板到用户配置目录并编辑：
 

@@ -53,6 +53,9 @@ alphahome = "alphahome.gui.main_window:run_gui" # 当用户安装后，可以运
 akshare = [
     "akshare>=1.15.0",
 ]
+tinysoft = [
+    "tspytsl>=1.9",  # 安装包名为 tspytsl，导入名为 pyTSL；仅 pytsl 后端需要
+]
 research = [
     "jupyterlab>=4.0.0",
     "papermill>=2.4.0",

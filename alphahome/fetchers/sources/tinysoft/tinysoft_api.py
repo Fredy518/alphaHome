@@ -87,7 +87,10 @@ class TinySoftAPI:
     def _ensure_dependency() -> None:
         if pyTSL is None:
             raise TinySoftDependencyError(
-                "pyTSL 未安装，无法使用 Tinysoft 数据源。"
+                "pyTSL 不可用，无法使用 Tinysoft pyTSL 后端。"
+                "请在运行 AlphaHome 的 Python 环境中执行 "
+                "python -m pip install 'tspytsl>=1.9'；"
+                "Windows 若提示 DLL load failed，请检查 Visual C++ 运行库。"
             )
 
     async def _wait_for_request_slot(self) -> None:
