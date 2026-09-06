@@ -8,10 +8,14 @@
 
 ```bash
 pip install -e .
-pip install -e ".[akshare]"   # 可选
+pip install -e ".[akshare]"   # AkShare 数据源
+pip install -e ".[tinysoft]"  # Tinysoft pyTSL 后端
 pip install -e ".[research]"  # 可选
 pip install -e ".[test]"      # 可选
 ```
+
+Tinysoft 的发行包名是 `tspytsl`，导入模块名是 `pyTSL`；使用 OPI 后端时
+无需安装 `tinysoft` extra。
 
 当前仓库没有 `requirements.txt`。
 
@@ -64,7 +68,7 @@ alphahome
 
 - 数据库配置无效，`UnifiedTaskFactory` 初始化失败。
 - 任务模块未成功导入，查看启动日志中的 import error。
-- 依赖缺失，例如可选数据源包未安装。
+- 安装未完成、对应数据源 extra 未安装，或当前运行的 Python 环境不正确。
 
 ## CLI
 

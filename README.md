@@ -24,7 +24,7 @@ python -m venv .venv
 python -m pip install --upgrade pip
 pip install -e .
 
-# 可选依赖
+# 可选数据源、研究和测试依赖
 pip install -e ".[akshare]"
 pip install -e ".[tinysoft]"  # Tinysoft pyTSL 后端
 pip install -e ".[research]"

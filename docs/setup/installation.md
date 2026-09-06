@@ -18,7 +18,7 @@ python -m pip install --upgrade pip
 pip install -e .
 ```
 
-可选依赖：
+可选数据源、研究和测试依赖：
 
 ```bash
 pip install -e ".[akshare]"

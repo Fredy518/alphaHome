@@ -15,10 +15,11 @@ pip install -e .
 pip install -e ".[test]"
 ```
 
-可选依赖按需要安装：
+数据源和研究依赖按需要安装：
 
 ```bash
 pip install -e ".[akshare]"
+pip install -e ".[tinysoft]"
 pip install -e ".[research]"
 ```
 

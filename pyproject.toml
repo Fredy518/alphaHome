@@ -21,13 +21,16 @@ classifiers = [
 dependencies = [
     "aiohttp>=3.12.13",
     "aiolimiter>=1.1.0",
+    "async-tkinter-loop>=0.10.4",
     "asyncpg>=0.30.0",
+    "beautifulsoup4>=4.9.1",
     "psycopg2-binary>=2.9.9",
     "matplotlib>=3.9.0",
     "numpy>=1.26.0",
     "openpyxl>=3.1.0",
     "pandas>=2.2.0",
     "python-dotenv>=1.0.0",
+    "requests>=2.22.0",
     "tkcalendar>=1.6.0",
     "tqdm>=4.66.0",
     "appdirs>=1.4.4",
@@ -62,9 +65,12 @@ research = [
     "nbconvert>=7.16.0",
 ]
 test = [
+    "black>=24.10.0",
+    "hypothesis>=6.0.0",
+    "isort>=5.13.2",
     "pytest>=7.0.0",
     "pytest-asyncio>=0.21.0",
-    "hypothesis>=6.0.0",
+    "time-machine>=3.5.0",
 ]
 
 [tool.black]
