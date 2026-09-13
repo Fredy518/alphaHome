@@ -224,6 +224,18 @@ class TestDynamicEnumerationPatterns:
         assert "index_code" in sql.lower(), \
             "应按 index_code 筛选跟踪目标指数的 ETF"
 
+    def test_etf_product_facts_current_contract(self):
+        """ETF 产品事实应保留计算口径和当前快照边界。"""
+        from alphahome.features.recipes.mv import ETFProductFactsCurrentMV
+
+        sql = ETFProductFactsCurrentMV(schema="features").get_create_sql().lower()
+
+        assert "avg(amount)" in sql and "/ 100000.0" in sql
+        assert "matched_recency_rank <= 60" in sql
+        assert "total_netasset / 100000000.0" in sql
+        assert "unit_nav * s.fd_share / 10000.0" in sql
+        assert "(e.status is null or e.status = 'l')" in sql
+
 
 class TestIndexCodePatterns:
     """指数代码正确性测试"""
@@ -308,6 +320,23 @@ class TestMVContracts:
             mv = mv_cls(schema="features")
             sql = mv.get_create_sql().lower()
             assert "create index" not in sql, f"{mv_cls.__name__} create_sql contains CREATE INDEX"
+
+    def test_migrated_observation_views_keep_research_boundaries(self):
+        from alphahome.features.recipes.mv import (
+            ETFExposureTechnicalCurrentUniverseDailyMV,
+            IndexDirectValuationDailyMV,
+            IndustryEarningsObservationMonthlyMV,
+        )
+
+        technical = ETFExposureTechnicalCurrentUniverseDailyMV(schema="features")
+        valuation = IndexDirectValuationDailyMV(schema="features")
+        earnings = IndustryEarningsObservationMonthlyMV(schema="features")
+
+        assert technical.quality_checks["not_survivorship_free"] is True
+        assert "valuation_route" in valuation.get_create_sql()
+        assert "reconstruct" not in valuation.description.lower()
+        assert earnings.quality_checks["posthoc_composite_state"] is False
+        assert "ROWS BETWEEN 12 PRECEDING AND 1 PRECEDING" in earnings.get_create_sql()
 
 
 class TestSourceTablePatterns:

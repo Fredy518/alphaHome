@@ -56,11 +56,18 @@ from .index.index_technical_daily import IndexTechnicalDailyMV
 from .index.index_fundamental_daily import IndexFundamentalDailyMV
 from .index.index_rsrs_daily import IndexRSRSDailyMV
 from .index.style_features_daily import StyleFeaturesDailyMV
+from .index.index_direct_valuation_daily import IndexDirectValuationDailyMV
+from .index.etf_exposure_technical_current_universe_daily import (
+    ETFExposureTechnicalCurrentUniverseDailyMV,
+)
 
 # --- industry 子域 ---
 from .industry.industry_features_daily import IndustryFeaturesDailyMV
 from .industry.industry_toplist_signal_daily import IndustryToplistSignalDailyMV
 from .industry.dc_index_features_daily import DCIndexFeaturesDailyMV
+from .industry.industry_earnings_observation_monthly import (
+    IndustryEarningsObservationMonthlyMV,
+)
 
 # --- derivatives 子域 ---
 from .derivatives.futures_features_daily import FuturesFeaturesDailyMV
@@ -72,6 +79,7 @@ from .macro.macro_liquidity_monthly import MacroLiquidityMonthlyMV
 
 # --- fund 子域 ---
 from .fund.fund_holdings_quarterly import FundHoldingsQuarterlyMV
+from .fund.etf_product_facts_current import ETFProductFactsCurrentMV
 
 # =============================================================================
 # 兼容别名（后续版本将逐步移除）
@@ -115,10 +123,13 @@ __all__ = [
     "IndexFundamentalDailyMV",
     "IndexRSRSDailyMV",
     "StyleFeaturesDailyMV",
+    "IndexDirectValuationDailyMV",
+    "ETFExposureTechnicalCurrentUniverseDailyMV",
     # === industry 子域 ===
     "IndustryFeaturesDailyMV",
     "IndustryToplistSignalDailyMV",
     "DCIndexFeaturesDailyMV",
+    "IndustryEarningsObservationMonthlyMV",
     # === derivatives 子域 ===
     "FuturesFeaturesDailyMV",
     "OptionSentimentDailyMV",
@@ -127,6 +138,7 @@ __all__ = [
     "MacroLiquidityMonthlyMV",
     # === fund 子域 ===
     "FundHoldingsQuarterlyMV",
+    "ETFProductFactsCurrentMV",
     # === 兼容别名（后续版本将移除）===
     "MarketStatsMV",
     "StockSwIndustryMV",

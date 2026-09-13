@@ -19,6 +19,10 @@ from .index_technical_daily import IndexTechnicalDailyMV
 from .index_fundamental_daily import IndexFundamentalDailyMV
 from .index_rsrs_daily import IndexRSRSDailyMV
 from .style_features_daily import StyleFeaturesDailyMV
+from .index_direct_valuation_daily import IndexDirectValuationDailyMV
+from .etf_exposure_technical_current_universe_daily import (
+    ETFExposureTechnicalCurrentUniverseDailyMV,
+)
 
 __all__ = [
     "IndexFeaturesDailyMV",
@@ -26,4 +30,6 @@ __all__ = [
     "IndexFundamentalDailyMV",
     "IndexRSRSDailyMV",
     "StyleFeaturesDailyMV",
+    "IndexDirectValuationDailyMV",
+    "ETFExposureTechnicalCurrentUniverseDailyMV",
 ]

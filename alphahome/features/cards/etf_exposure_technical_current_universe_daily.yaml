@@ -1,0 +1,24 @@
+name: etf_exposure_technical_current_universe_daily
+version: "1.0"
+status: active
+
+sources:
+  - table: fund_pool_on.etf_candidate_master_current
+    usage: "当前候选母表的跟踪指数集"
+  - table: rawdata.index_factor_pro
+    usage: "通用指数 OHLCV"
+  - table: rawdata.index_swdaily
+    usage: "申万行业指数 OHLCV 补充"
+
+migration:
+  original_fetchers: []
+  replacement: features.mv_etf_exposure_technical_current_universe_daily
+
+meta:
+  frequency: daily
+  grain: trade_date x index_code
+  universe: current candidate master only
+  pit_safe_for_historical_universe: false
+  authority: observation_only_no_capital_no_orders
+  created_at: 2026-09-13
+  created_by: Codex

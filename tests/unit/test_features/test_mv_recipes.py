@@ -168,6 +168,17 @@ import pytest
             "FundHoldingsQuarterlyMV",
             ["rawdata.fund_portfolio"],
         ),
+        # ETF 候选池维护所需的产品动态事实
+        (
+            "ETFProductFactsCurrentMV",
+            [
+                "rawdata.fund_etf_basic",
+                "rawdata.fund_basic",
+                "rawdata.fund_daily",
+                "rawdata.fund_nav",
+                "rawdata.fund_share",
+            ],
+        ),
         # 新增三星级特征：AH溢价
         (
             "AHPremiumDailyMV",
@@ -182,6 +193,25 @@ import pytest
         (
             "IndexRSRSDailyMV",
             ["rawdata.index_factor_pro"],
+        ),
+        (
+            "IndexDirectValuationDailyMV",
+            ["rawdata.index_dailybasic", "rawdata.index_swdaily"],
+        ),
+        (
+            "ETFExposureTechnicalCurrentUniverseDailyMV",
+            [
+                "fund_pool_on.etf_candidate_master_current",
+                "rawdata.index_factor_pro",
+                "rawdata.index_swdaily",
+            ],
+        ),
+        (
+            "IndustryEarningsObservationMonthlyMV",
+            [
+                "pit.pit_industry_fapi_monthly",
+                "pit.pit_industry_fttm_monthly",
+            ],
         ),
     ],
 )

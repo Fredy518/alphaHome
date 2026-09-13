@@ -15,9 +15,11 @@ recipes.mv.industry - 行业级别特征物化视图配方
 from .industry_features_daily import IndustryFeaturesDailyMV
 from .industry_toplist_signal_daily import IndustryToplistSignalDailyMV
 from .dc_index_features_daily import DCIndexFeaturesDailyMV
+from .industry_earnings_observation_monthly import IndustryEarningsObservationMonthlyMV
 
 __all__ = [
     "IndustryFeaturesDailyMV",
     "IndustryToplistSignalDailyMV",
     "DCIndexFeaturesDailyMV",
+    "IndustryEarningsObservationMonthlyMV",
 ]

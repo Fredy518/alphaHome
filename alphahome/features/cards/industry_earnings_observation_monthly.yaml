@@ -1,0 +1,21 @@
+name: industry_earnings_observation_monthly
+version: "1.0"
+status: active
+
+sources:
+  - table: pit.pit_industry_fapi_monthly
+    usage: "行业分析师预期与预期ROE的PIT月度事实"
+  - table: pit.pit_industry_fttm_monthly
+    usage: "行业FTTM、扩散度与修正活动的PIT月度事实"
+
+migration:
+  original_fetchers: []
+  replacement: features.mv_industry_earnings_observation_monthly
+
+meta:
+  frequency: monthly
+  grain: obs_date x classification_source x industry_level x industry_code
+  posthoc_composite_state: false
+  authority: research_facts_only
+  created_at: 2026-09-13
+  created_by: Codex

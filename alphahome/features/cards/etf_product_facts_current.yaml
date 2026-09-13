@@ -1,0 +1,30 @@
+# 入库卡片：ETF 产品动态事实当前快照
+
+name: etf_product_facts_current
+version: "1.0"
+status: active
+
+sources:
+  - table: rawdata.fund_etf_basic
+    usage: "ETF 产品身份、上市日、跟踪指数和管理费"
+  - table: rawdata.fund_basic
+    usage: "托管费与管理费补充"
+  - table: rawdata.fund_daily
+    usage: "收盘价与成交额"
+  - table: rawdata.fund_nav
+    usage: "净值、净资产与折溢价基准"
+  - table: rawdata.fund_share
+    usage: "份额与 AUM 回退计算"
+
+migration:
+  original_fetchers: []
+  replacement: features.mv_etf_product_facts_current
+
+meta:
+  frequency: daily
+  grain: fund_code current snapshot
+  refresh: after raw ETF daily, NAV and share updates
+  pit_safe_for_history: false
+  authority: facts_only_no_capital_no_orders
+  created_at: 2026-09-13
+  created_by: Codex

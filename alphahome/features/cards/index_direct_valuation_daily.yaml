@@ -1,0 +1,21 @@
+name: index_direct_valuation_daily
+version: "1.0"
+status: active
+
+sources:
+  - table: rawdata.index_dailybasic
+    usage: "指数 PE/PE_TTM/PB 直接口径"
+  - table: rawdata.index_swdaily
+    usage: "申万行业指数 PE/PB 直接口径"
+
+migration:
+  original_fetchers: []
+  replacement: features.mv_index_direct_valuation_daily
+
+meta:
+  frequency: daily
+  grain: trade_date x index_code
+  reconstructed_valuation: false
+  authority: facts_only
+  created_at: 2026-09-13
+  created_by: Codex
