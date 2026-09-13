@@ -37,6 +37,14 @@ from .task_execution_handler import (
     update_task_run_status,
 )
 from .task_log_handler import handle_clear_log, update_task_log
+from .etf_research_handler import (
+    handle_choose_snapshot,
+    handle_progress,
+    handle_refresh_status,
+    handle_run_update,
+    handle_update_complete,
+    update_status_ui,
+)
 from .feature_update_handler import (
     handle_category_filter_change,
     handle_create_missing_features,
@@ -89,6 +97,13 @@ __all__ = [
     # task_log_handler
     "update_task_log",
     "handle_clear_log",
+    # etf_research_handler
+    "handle_choose_snapshot",
+    "handle_progress",
+    "handle_refresh_status",
+    "handle_run_update",
+    "handle_update_complete",
+    "update_status_ui",
     # feature_update_handler
     "update_feature_list_ui",
     "handle_feature_refresh_complete",

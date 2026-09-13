@@ -66,6 +66,7 @@ from .services import (
     task_registry_service,
     configuration_service,
     task_execution_service,
+    etf_research_service,
     feature_service,
     pit_service,
 )
@@ -115,6 +116,7 @@ async def initialize_controller(response_callback):
     task_registry_service.initialize_task_registry(response_callback)
     configuration_service.initialize_storage_settings(response_callback)
     task_execution_service.set_response_callback(response_callback)
+    etf_research_service.initialize_etf_research_service(response_callback)
     feature_service.initialize_feature_service(response_callback)
     pit_service.initialize_pit_service(response_callback)
     
@@ -215,6 +217,16 @@ async def handle_get_features():
     委托给特征服务处理，获取所有已注册的特征配方。
     """
     await feature_service.handle_get_features()
+
+
+async def handle_get_etf_research_status():
+    """处理ETF研究底座状态请求。"""
+    await etf_research_service.handle_get_status()
+
+
+async def handle_update_etf_research_foundation(candidate_snapshot: str):
+    """处理ETF研究底座统一维护请求。"""
+    await etf_research_service.handle_update(candidate_snapshot)
 
 
 async def handle_get_pit_tasks():
@@ -341,6 +353,14 @@ async def handle_request(command: str, data: Optional[Dict[str, Any]] = None):
         # --- 特征更新相关命令 ---
         elif command == "GET_FEATURES":
             await handle_get_features()
+
+        elif command == "GET_ETF_RESEARCH_STATUS":
+            await handle_get_etf_research_status()
+
+        elif command == "UPDATE_ETF_RESEARCH_FOUNDATION":
+            await handle_update_etf_research_foundation(
+                data.get("candidate_snapshot", "")
+            )
         
         elif command == "REFRESH_FEATURES":
             feature_names = data.get("feature_names", [])
@@ -390,6 +410,21 @@ def request_feature_list():
     创建异步任务来获取特征配方列表，避免阻塞当前线程。
     """
     asyncio.create_task(handle_request("GET_FEATURES"))
+
+
+def request_etf_research_status():
+    """请求ETF研究底座当前状态。"""
+    asyncio.create_task(handle_request("GET_ETF_RESEARCH_STATUS"))
+
+
+def request_update_etf_research_foundation(candidate_snapshot: str):
+    """请求校验快照并执行ETF研究底座统一维护。"""
+    asyncio.create_task(
+        handle_request(
+            "UPDATE_ETF_RESEARCH_FOUNDATION",
+            {"candidate_snapshot": candidate_snapshot},
+        )
+    )
 
 
 def request_pit_tasks():

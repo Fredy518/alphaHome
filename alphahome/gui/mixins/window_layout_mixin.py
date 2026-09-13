@@ -11,6 +11,7 @@
 from tkinter import ttk
 from ..ui import (
     data_collection_tab,
+    etf_research_tab,
     feature_update_tab,
     pit_management_tab,
     storage_settings_tab,
@@ -31,6 +32,7 @@ class WindowLayoutMixin:
         data_collection_frame = ttk.Frame(notebook, padding="10")
         pit_management_frame = ttk.Frame(notebook, padding="10")
         feature_update_frame = ttk.Frame(notebook, padding="10")
+        etf_research_frame = ttk.Frame(notebook, padding="10")
         storage_settings_frame = ttk.Frame(notebook, padding="10")
         task_execution_frame = ttk.Frame(notebook, padding="10")
         task_log_frame = ttk.Frame(notebook, padding="10")
@@ -38,6 +40,7 @@ class WindowLayoutMixin:
         notebook.add(data_collection_frame, text="数据采集")
         notebook.add(pit_management_frame, text="PIT 管理")
         notebook.add(feature_update_frame, text="特征更新")
+        notebook.add(etf_research_frame, text="ETF 研究底座")
         notebook.add(task_execution_frame, text="任务运行与状态")
         notebook.add(task_log_frame, text="任务日志")
         notebook.add(storage_settings_frame, text="存储与设置")
@@ -53,6 +56,9 @@ class WindowLayoutMixin:
         )
         self.ui_elements.update(
             feature_update_tab.create_feature_update_tab(feature_update_frame)
+        )
+        self.ui_elements.update(
+            etf_research_tab.create_etf_research_tab(etf_research_frame)
         )
         self.ui_elements.update(
             task_execution_tab.create_task_execution_tab(

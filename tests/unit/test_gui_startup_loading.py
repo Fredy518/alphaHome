@@ -36,6 +36,7 @@ async def test_initial_async_load_starts_independent_lists_concurrently(monkeypa
         "GET_COLLECTION_TASKS",
         "GET_PIT_TASKS",
         "GET_FEATURES",
+        "GET_ETF_RESEARCH_STATUS",
         "GET_STORAGE_SETTINGS",
     }
     started = set()

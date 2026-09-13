@@ -15,6 +15,7 @@ GUI服务模块
 from . import task_registry_service
 from . import task_execution_service
 from . import configuration_service
+from . import etf_research_service
 from . import feature_service
 from . import pit_service
 
@@ -22,6 +23,7 @@ __all__ = [
     "task_registry_service",
     "task_execution_service",
     "configuration_service",
+    "etf_research_service",
     "feature_service",
     "pit_service",
 ]

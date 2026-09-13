@@ -13,6 +13,7 @@ from async_tkinter_loop import async_handler
 from .. import controller
 from ..handlers import (
     data_collection_handler,
+    etf_research_handler,
     feature_update_handler,
     pit_management_handler,
     storage_settings_handler,
@@ -204,6 +205,21 @@ class WindowEventsMixin:
                     c, self.ui_elements
                 ),
             )
+
+        # ETF Research Foundation Binds
+        self.ui_elements["etf_research_choose_button"].config(
+            command=lambda: etf_research_handler.handle_choose_snapshot(
+                self.ui_elements
+            )
+        )
+        self.ui_elements["etf_research_refresh_button"].config(
+            command=lambda: etf_research_handler.handle_refresh_status(
+                self.ui_elements
+            )
+        )
+        self.ui_elements["etf_research_run_button"].config(
+            command=lambda: etf_research_handler.handle_run_update(self.ui_elements)
+        )
 
         # Task Execution Binds
         self.ui_elements["run_tasks_button"].config(

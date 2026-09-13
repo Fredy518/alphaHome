@@ -63,6 +63,7 @@ from ..common.task_system import UnifiedTaskFactory
 from . import controller
 from .handlers import (
     data_collection_handler,
+    etf_research_handler,
     feature_update_handler,
     pit_management_handler,
     storage_settings_handler,
@@ -212,6 +213,7 @@ class MainWindow(WindowEventsMixin, WindowDpiMixin, WindowLayoutMixin, tk.Tk):
         # PIT 实时统计，任一页面完成即可立即通过回调更新界面。
         await asyncio.gather(
             controller.handle_request("GET_FEATURES"),
+            controller.handle_request("GET_ETF_RESEARCH_STATUS"),
             controller.handle_request("GET_COLLECTION_TASKS"),
             controller.handle_request("GET_PIT_TASKS"),
             controller.handle_request("GET_STORAGE_SETTINGS"),
@@ -286,6 +288,18 @@ class MainWindow(WindowEventsMixin, WindowDpiMixin, WindowLayoutMixin, tk.Tk):
             ),
             "FEATURE_OPERATION_COMPLETE": (
                 feature_update_handler.handle_feature_operation_complete,
+                [self.ui_elements, data],
+            ),
+            "ETF_RESEARCH_STATUS_UPDATE": (
+                etf_research_handler.update_status_ui,
+                [self.ui_elements, data],
+            ),
+            "ETF_RESEARCH_PROGRESS": (
+                etf_research_handler.handle_progress,
+                [self.ui_elements, data],
+            ),
+            "ETF_RESEARCH_UPDATE_COMPLETE": (
+                etf_research_handler.handle_update_complete,
                 [self.ui_elements, data],
             ),
         }
