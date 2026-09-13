@@ -1,4 +1,4 @@
-import logging
+from collections.abc import Iterable
 from typing import Any, Dict, List, Optional
 from datetime import datetime, timedelta
 
@@ -166,8 +166,22 @@ class TushareIndexWeightTask(TushareTask):
             self.logger.error(f"任务 {self.name}: 缺少必要的日期参数")
             return []
 
-        # 获取指数代码列表
-        index_codes = await self.get_index_codes()
+        # 手动补库需要能够精确指定指数，否则一次缺口修复会扩成全市场抓取。
+        # 未指定时继续沿用原来的 ETF 指数全集，保持智能更新兼容性。
+        index_codes = self._normalize_requested_index_codes(
+            kwargs.get("index_codes"), kwargs.get("index_code")
+        )
+        if not index_codes:
+            index_codes = self._normalize_requested_index_codes(
+                self.task_specific_config.get("index_codes"),
+                self.task_specific_config.get("index_code"),
+            )
+        if not index_codes:
+            index_codes = await self.get_index_codes()
+            extra_codes = self._normalize_requested_index_codes(
+                self.task_specific_config.get("extra_index_codes")
+            )
+            index_codes = list(dict.fromkeys([*index_codes, *extra_codes]))
         if not index_codes:
             self.logger.warning(f"任务 {self.name}: 未找到指数代码以创建批处理")
             return []
@@ -208,6 +222,34 @@ class TushareIndexWeightTask(TushareTask):
             f"({len(index_codes)} 个指数 × {len(time_batches)} 个时间批次)"
         )
         return batches
+
+    @staticmethod
+    def _normalize_requested_index_codes(
+        index_codes: Any = None,
+        index_code: Any = None,
+    ) -> List[str]:
+        """Return de-duplicated explicit index codes in caller order."""
+
+        requested: List[Any] = []
+        for value in (index_codes, index_code):
+            if value is None:
+                continue
+            if isinstance(value, str):
+                requested.extend(part for part in value.replace(";", ",").split(","))
+            elif isinstance(value, Iterable):
+                requested.extend(value)
+            else:
+                requested.append(value)
+
+        normalized: List[str] = []
+        seen: set[str] = set()
+        for value in requested:
+            code = str(value or "").strip().upper()
+            if not code or code in seen:
+                continue
+            seen.add(code)
+            normalized.append(code)
+        return normalized
 
     @classmethod
     def _split_exact_date_range(
