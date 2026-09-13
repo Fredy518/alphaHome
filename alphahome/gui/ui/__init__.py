@@ -20,7 +20,6 @@ from .storage_settings_tab import create_storage_settings_tab
 from .task_execution_tab import create_task_execution_tab
 from .task_log_tab import create_task_log_tab
 from .feature_update_tab import create_feature_update_tab
-from .etf_research_tab import create_etf_research_tab
 from .pit_management_tab import create_pit_management_tab
 
 __all__ = [
@@ -30,5 +29,4 @@ __all__ = [
     "create_task_execution_tab",
     "create_task_log_tab",
     "create_feature_update_tab",
-    "create_etf_research_tab",
 ]

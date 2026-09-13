@@ -25,9 +25,9 @@
 node "D:\TradeHome\个人投资框架\ETF账户\功能模块\00_公共接口\src\export_etf_candidate_master.mjs"
 ```
 
-导出后可在 AlphaHome GUI 的 **ETF 研究底座** 页选择该 JSON，点击“校验并统一维护”。GUI 会依次刷新独立事实、幂等载入候选版本、刷新候选指数技术事实，并展示候选版本、事实水位与技术/直接估值覆盖率。它只接受标准化 JSON，不在 AlphaHome 内重复解析 Excel。
+四个 `features.mv_*` 对象都通过 `@feature_register` 注册，现有 AlphaHome GUI 的 **特征更新** 页会自动发现它们，可分别创建或刷新。人工候选母表版本、`fund_pool_on` 版本表和覆盖视图不属于计算特征，现有 GUI 不负责选择外部 JSON 或载入这些对象。
 
-无 GUI 环境时，可执行同一套共享服务的命令行入口：
+候选版本载入及“基础事实 → 候选版本 → 当前候选宇宙技术事实 → 覆盖视图”的有序维护使用命令行入口：
 
 ```powershell
 .venv\Scripts\python.exe scripts\curation\update_etf_research_foundation.py `
