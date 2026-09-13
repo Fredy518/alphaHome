@@ -87,6 +87,32 @@
 - **用途**：`liquidity_metrics.dr007`（代理）
 - **⚠️ 口径注意**：`fr007` 是**定盘利率（报价撮合）**，非 DR007（存款类机构成交加权利率）。走势相关但口径不同，**下游 evidence confidence 需降权**。回溯仅至 2023-06。
 
+### 3A. `excel.macro_dr007_history` — DR007 历史缓存证据
+
+`rawdata.macro_dr007_history` 指向本表。该序列用于没有 Wind/iFinD 在线
+API 权限时的历史研究补库，不替代实时官方数据源。
+
+| 字段 | 类型 | 口径/说明 |
+|---|---|---|
+| `trade_date` *(PK)* | DATE | 工作簿中的日度日期 |
+| `dr007_pct` | NUMERIC | 存款类机构 7 天质押式回购成交加权利率（%） |
+| `availability_date_proxy` | DATE | 日度市场收盘可用日代理，等于 `trade_date` |
+| `is_weekend` | BOOLEAN | 工作簿缓存是否落在周末；下游仍须按正式交易日历筛选 |
+| `source_series_id` | VARCHAR | iFinD 指标编号 `L001619493` |
+| `source_workbook_sha256` | VARCHAR | 本次来源工作簿内容哈希 |
+| `source_workbook_mtime` | TIMESTAMP | 本项目首次可核验的文件修改时间 |
+| `source_cell` | VARCHAR | 原工作簿单元格位置 |
+| `evidence_status` | VARCHAR | 固定为历史供应商缓存、无在线 API 复核 |
+
+- **数据源**：`宏观指标与逻辑.xlsx` 的 `DateRate`/`DR007` 列，iFinD
+  指标编号 `L001619493`。
+- **现有覆盖**：2014-12-15 至 2025-05-27，共 2,799 行；2021-09-01
+  至 2024-12-31 覆盖全部 807 个沪深交易日。
+- **维护约束**：`tasks.excel_macro_dr007_history.expected_workbook_sha256`
+  锁定来源版本；工作簿变化后必须复核哈希再更新配置。
+- **使用边界**：工作簿含周末缓存值，模型输入只连接正式交易日；
+  `FR007` 与 `DR007` 不是同一指标，禁止拼接或相互冒充。
+
 ### 4. `akshare.macro_money_supply` — 中国货币供应量（M0/M1/M2，长表）
 
 | 字段 | 类型 | 口径/说明 |
