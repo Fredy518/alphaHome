@@ -42,3 +42,9 @@ research/
 .hypothesis/
 .kiro/
 projects/
+
+# Ignore task-local scratch outputs; durable evidence belongs under docs/.
+/tmp/
+
+# Licensed vendor manuals are local references and must not enter public remotes.
+/docs/references/tinysoft/
