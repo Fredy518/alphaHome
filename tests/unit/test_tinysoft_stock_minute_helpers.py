@@ -108,6 +108,30 @@ async def test_get_batch_list_groups_symbols_for_panel_query():
 
 
 @pytest.mark.asyncio
+async def test_stock_minute_batches_are_date_major_for_safe_resume():
+    task = TinySoftStockMinuteTask(
+        db_connection=object(),
+        api=_DummyApi(),
+        tinysoft_config={},
+        task_config={},
+    )
+
+    batches = await task.get_batch_list(
+        start_date="20260302",
+        end_date="20260303",
+        ts_codes=["000001.SZ", "600000.SH", "000002.SZ"],
+        symbol_batch_size=2,
+    )
+
+    assert len(batches) == 4
+    assert [pair["stock"] for pair in batches[0]["symbol_pairs"]] == ["SZ000001", "SH600000"]
+    assert [pair["stock"] for pair in batches[1]["symbol_pairs"]] == ["SZ000002"]
+    assert batches[0]["begin_time"].startswith("2026-03-02")
+    assert batches[1]["begin_time"].startswith("2026-03-02")
+    assert batches[2]["begin_time"].startswith("2026-03-03")
+
+
+@pytest.mark.asyncio
 async def test_fetch_batch_prefers_panel_query_for_symbol_pairs():
     api = _PanelApi()
     task = TinySoftStockMinuteTask(

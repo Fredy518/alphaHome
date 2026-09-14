@@ -1,6 +1,7 @@
 import pandas as pd
 import pytest
 
+from alphahome.common.constants import UpdateTypes
 from alphahome.fetchers.tasks.fund.tinysoft_fund_minute import TinySoftFundMinuteTask
 
 
@@ -101,3 +102,30 @@ async def test_get_batch_list_groups_funds_for_panel_query():
     assert [pair["stock"] for pair in batches[0]["symbol_pairs"]] == ["SH510300", "SZ159915"]
     assert [pair["stock"] for pair in batches[1]["symbol_pairs"]] == ["SH588000"]
     assert batches[1]["stock"] == "SH588000"
+
+
+@pytest.mark.asyncio
+async def test_fund_minute_batches_are_date_major_for_safe_resume():
+    task = TinySoftFundMinuteTask(
+        db_connection=_FundDB(),
+        api=_DummyApi(),
+        tinysoft_config={},
+        task_config={},
+    )
+
+    batches = await task.get_batch_list(
+        start_date="20260302",
+        end_date="20260303",
+        ts_codes=["510300.SH", "159915.SZ", "588000.SH"],
+        symbol_batch_size=2,
+    )
+
+    assert len(batches) == 4
+    assert [pair["stock"] for pair in batches[0]["symbol_pairs"]] == ["SH510300", "SZ159915"]
+    assert [pair["stock"] for pair in batches[1]["symbol_pairs"]] == ["SH588000"]
+    assert batches[0]["begin_time"].startswith("2026-03-02")
+    assert batches[1]["begin_time"].startswith("2026-03-02")
+    assert batches[2]["begin_time"].startswith("2026-03-03")
+    assert task.smart_initial_lookback_days == 2
+    assert task.stream_batches is True
+    assert UpdateTypes.SMART in task.stream_update_types

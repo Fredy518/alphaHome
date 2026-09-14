@@ -41,6 +41,7 @@ class FetcherTask(BaseTask, ABC):
     default_stream_save_batch_size = BaseTask.default_save_batch_size
     default_stream_update_types = (UpdateTypes.FULL,)
     smart_lookback_days = 10
+    smart_initial_lookback_days: Optional[int] = None
     smart_refresh_interval_days: Optional[int] = None
 
     def __init__(
@@ -144,6 +145,14 @@ class FetcherTask(BaseTask, ABC):
             cls.default_stream_update_types,
         )
         self.smart_lookback_days = int(task_config.get("smart_lookback_days", cls.smart_lookback_days))
+        raw_initial_lookback = task_config.get(
+            "smart_initial_lookback_days",
+            cls.smart_initial_lookback_days,
+        )
+        if raw_initial_lookback in (None, ""):
+            self.smart_initial_lookback_days = None
+        else:
+            self.smart_initial_lookback_days = max(1, int(raw_initial_lookback))
         raw_refresh_interval = task_config.get(
             "smart_refresh_interval_days",
             cls.smart_refresh_interval_days,
@@ -285,7 +294,20 @@ class FetcherTask(BaseTask, ABC):
                 default_start_dt = datetime.strptime(self.default_start_date, "%Y%m%d").date()
                 start_dt = max(start_dt, default_start_dt)
             else:
-                start_dt = datetime.strptime(self.default_start_date, "%Y%m%d").date()
+                default_start_dt = datetime.strptime(self.default_start_date, "%Y%m%d").date()
+                if self.smart_initial_lookback_days:
+                    start_dt = max(
+                        end_dt - timedelta(days=self.smart_initial_lookback_days - 1),
+                        default_start_dt,
+                    )
+                    self.logger.info(
+                        "'%s' - 无历史数据，SMART 初始窗口限制为最近 %s 天，"
+                        "显式 FULL 才从默认起点回填。",
+                        self.name,
+                        self.smart_initial_lookback_days,
+                    )
+                else:
+                    start_dt = default_start_dt
 
             if start_dt > end_dt:
                 self.logger.info(f"'{self.name}' - Data is already up to date. No batches to generate.")

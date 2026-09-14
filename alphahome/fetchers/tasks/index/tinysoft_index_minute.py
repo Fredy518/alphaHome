@@ -414,11 +414,10 @@ class TinySoftIndexMinuteTask(TinySoftStockMinuteTask):
             ]
 
         final_batches: List[Dict[str, Any]] = []
-        for symbol_group in symbol_groups:
-            if not symbol_group:
-                continue
-
-            for batch in date_batches:
+        for batch in date_batches:
+            for symbol_group in symbol_groups:
+                if not symbol_group:
+                    continue
                 batch_params: Dict[str, Any] = {
                     "symbol_pairs": symbol_group,
                     "cycle": self.cycle,

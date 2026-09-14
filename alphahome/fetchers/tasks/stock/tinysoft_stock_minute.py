@@ -17,6 +17,7 @@ import pandas as pd
 from ...sources.tinysoft import TinySoftTask
 from ...sources.tushare.batch_utils import generate_natural_day_batches, normalize_date_range
 from ....common.task_system.task_decorator import task_register
+from ....common.constants import UpdateTypes
 
 
 def normalize_ts_code(ts_code: str) -> str:
@@ -76,6 +77,7 @@ class TinySoftStockMinuteTask(TinySoftTask):
     date_column = "trade_time"
     default_start_date = "20240101"
     smart_lookback_days = 2
+    smart_initial_lookback_days = 2
 
     default_concurrent_limit = 2
     default_query_timeout_ms = 45_000
@@ -84,6 +86,8 @@ class TinySoftStockMinuteTask(TinySoftTask):
     default_batch_days = 1
     default_symbol_batch_size = 50
     default_symbols = ["000001.SZ"]
+    default_stream_batches = True
+    default_stream_update_types = (UpdateTypes.FULL, UpdateTypes.SMART)
 
     # pyTSL 返回字段建议包含 date / StockID / OHLC / vol / amount
     fields = ["date", "StockID", "open", "high", "low", "close", "vol", "amount"]
@@ -240,10 +244,10 @@ class TinySoftStockMinuteTask(TinySoftTask):
             ]
 
         final_batches: List[Dict[str, Any]] = []
-        for symbol_group in symbol_groups:
-            if not symbol_group:
-                continue
-            for b in date_batches:
+        for b in date_batches:
+            for symbol_group in symbol_groups:
+                if not symbol_group:
+                    continue
                 batch_params: Dict[str, Any] = {
                     "symbol_pairs": symbol_group,
                     "cycle": self.cycle,

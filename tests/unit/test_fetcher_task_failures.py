@@ -278,6 +278,20 @@ async def test_smart_date_range_uses_today_anchor_when_latest_date_is_future(mon
 
 
 @pytest.mark.asyncio
+async def test_smart_initial_window_can_avoid_implicit_full_backfill(monkeypatch):
+    monkeypatch.setattr(fetcher_task_module, "datetime", _FrozenDateTime)
+    task = _FailingBatchFetcherTask(
+        db_connection=_LatestDateDB(None),
+        update_type=UpdateTypes.SMART,
+        task_config={"smart_initial_lookback_days": 3},
+    )
+
+    date_range = await task._determine_date_range()
+
+    assert date_range == {"start_date": "20260518", "end_date": "20260520"}
+
+
+@pytest.mark.asyncio
 async def test_smart_refresh_interval_skips_recently_updated_table(monkeypatch):
     monkeypatch.setattr(fetcher_task_module, "datetime", _FrozenDateTime)
     db = _RecentUpdateDB(datetime(2026, 5, 19, 12, 0), latest_date=date(2026, 5, 10))
