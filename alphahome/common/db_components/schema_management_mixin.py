@@ -811,10 +811,10 @@ class SchemaManagementMixin:
                         pk_cols_str = ", ".join([f'"{pk}"' for pk in primary_keys])
                         columns.append(f"PRIMARY KEY ({pk_cols_str})")
 
-                    columns_str = ", ".join(columns)
+                    columns_str = ",\n            ".join(columns)
                     create_table_sql = f"""
                     CREATE TABLE IF NOT EXISTS {resolved_table_name} (
-                        {",\n            ".join(columns)}
+                        {columns_str}
                     );
                     """
 
