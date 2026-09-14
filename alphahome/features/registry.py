@@ -13,7 +13,8 @@ FeatureRegistry - 特征注册表
 import importlib
 import logging
 import pkgutil
-from typing import Any, Callable, Dict, List, Optional, Type, TypeVar
+from threading import Lock, RLock, get_ident
+from typing import Callable, Dict, List, Optional, Type, TypeVar
 
 logger = logging.getLogger(__name__)
 
@@ -47,12 +48,21 @@ class FeatureRegistry:
 
     _recipes: Dict[str, Type] = {}
     _discovered: bool = False
+    _lock = RLock()
+    _discovery_lock = Lock()
+    _discovery_owner: Optional[int] = None
+    _pending: Optional[Dict[str, Type]] = None
 
     # 注册时必须校验的字段
     REQUIRED_FIELDS = ["name", "description", "source_tables"]
 
     @classmethod
     def register(cls, recipe_cls: Type) -> None:
+        with cls._lock:
+            cls._register_locked(recipe_cls)
+
+    @classmethod
+    def _register_locked(cls, recipe_cls: Type) -> None:
         """
         注册一个特征配方类。
         
@@ -80,8 +90,12 @@ class FeatureRegistry:
                 )
         
         # 检查重复注册
-        if name in cls._recipes:
-            existing = cls._recipes[name]
+        staging = cls._pending is not None and cls._discovery_owner == get_ident()
+        recipes = cls._pending if staging else dict(cls._recipes)
+        if name in recipes:
+            existing = recipes[name]
+            if staging and existing is recipe_cls:
+                return
             raise DuplicateRecipeError(
                 f"Recipe name '{name}' 重复注册:\n"
                 f"  已存在: {existing.__module__}.{existing.__name__}\n"
@@ -89,7 +103,10 @@ class FeatureRegistry:
             )
         
         # 注册
-        cls._recipes[name] = recipe_cls
+        recipes[name] = recipe_cls
+        recipe_cls._feature_registered_recipe = True
+        if not staging:
+            cls._recipes = recipes
         logger.debug(
             f"已注册 Recipe: {name} ({recipe_cls.__module__}.{recipe_cls.__name__})"
         )
@@ -132,10 +149,10 @@ class FeatureRegistry:
         """
         自动发现 features/recipes/ 下所有 Recipe。
         
-        使用 pkgutil.walk_packages 动态扫描，import 触发 @feature_register()。
+        扫描声明并重建候选注册表，全部成功后发布；缓存模块也会重新提取已注册的类。
         
         Args:
-            force_reload: 是否强制重新扫描（忽略缓存）
+            force_reload: 是否强制重新扫描；不重复执行缓存模块的顶层代码
             
         Returns:
             已注册的 Recipe 类列表
@@ -143,58 +160,60 @@ class FeatureRegistry:
         Raises:
             ImportError: 如果某个模块导入失败（默认不容错）
         """
-        if cls._discovered and not force_reload:
-            logger.debug("discover() 使用缓存，跳过扫描")
-            return list(cls._recipes.values())
-        
-        if force_reload:
-            # 清空已有注册（仅在强制重载时）
-            cls._recipes.clear()
-            logger.info("discover(force_reload=True): 清空已有注册")
-        
-        logger.info("开始扫描 alphahome.features.recipes ...")
-        
-        # 导入 recipes 包
-        try:
-            import alphahome.features.recipes as recipes_pkg
-        except ImportError as e:
-            logger.error(f"无法导入 alphahome.features.recipes: {e}")
-            raise
-        
-        # 递归扫描所有子模块
-        scanned_count = 0
-        for importer, modname, ispkg in pkgutil.walk_packages(
-            recipes_pkg.__path__,
-            prefix="alphahome.features.recipes."
-        ):
-            # 跳过 __pycache__ 等
-            if "__pycache__" in modname:
-                continue
-            
+        if cls._discovery_owner == get_ident():
+            raise RuntimeError("Recursive feature discovery is not supported")
+        with cls._discovery_lock:
+            if cls._discovered and not force_reload:
+                return list(cls._recipes.values())
+            prefix = "alphahome.features.recipes."
+            # Keep explicitly registered external extensions. Builtins are
+            # reconstructed from module declarations, including cached imports.
+            with cls._lock:
+                cls._discovery_owner = get_ident()
+                cls._pending = {
+                    name: recipe for name, recipe in cls._recipes.items()
+                    if not recipe.__module__.startswith(prefix)
+                }
             try:
-                importlib.import_module(modname)
-                scanned_count += 1
-                logger.debug(f"已导入: {modname}")
-            except Exception as e:
-                # 默认不容错，直接抛出
-                logger.error(f"导入模块 {modname} 失败: {e}")
-                raise
-        
-        cls._discovered = True
-        logger.info(
-            f"discover() 完成: 扫描 {scanned_count} 个模块, "
-            f"注册 {len(cls._recipes)} 个 Recipe"
-        )
-        
-        return list(cls._recipes.values())
+                import alphahome.features.recipes as recipes_pkg
+
+                scanned = 0
+                for _, modname, _ in pkgutil.walk_packages(recipes_pkg.__path__, prefix=prefix):
+                    if "__pycache__" in modname:
+                        continue
+                    module = importlib.import_module(modname)
+                    scanned += 1
+                    for recipe in vars(module).values():
+                        if (isinstance(recipe, type) and recipe.__module__ == modname
+                                and recipe.__dict__.get("_feature_registered_recipe", False)):
+                            cls.register(recipe)
+                with cls._lock:
+                    # An unrelated importer may have registered an extension
+                    # while we waited for Python's module import lock.
+                    for recipe in cls._recipes.values():
+                        if not recipe.__module__.startswith(prefix):
+                            cls._register_locked(recipe)
+                    rebuilt = dict(cls._pending)
+                    cls._recipes = rebuilt
+                    cls._discovered = True
+            finally:
+                with cls._lock:
+                    cls._pending = None
+                    cls._discovery_owner = None
+            logger.info("Feature discovery: modules=%s recipes=%s", scanned, len(rebuilt))
+            return list(rebuilt.values())
 
     @classmethod
     def reset(cls) -> None:
         """
         重置注册表（主要用于测试）。
         """
-        cls._recipes.clear()
-        cls._discovered = False
+        if cls._discovery_owner == get_ident():
+            raise RuntimeError("Cannot reset during feature discovery")
+        with cls._discovery_lock:
+            with cls._lock:
+                cls._recipes = {}
+                cls._discovered = False
         logger.debug("FeatureRegistry 已重置")
 
 
