@@ -313,8 +313,8 @@ class FactorRepairService:
                             WHERE run_id <> %s
                               AND (task_name, calc_date) IN (
                                   SELECT task_name, calc_date
-                                  FROM factors.factor_repair_date
-                                  WHERE repair_id = %s
+                                  FROM factors.factor_run_date
+                                  WHERE run_id = %s
                               )
                               AND status IN ('success', 'shadow_unchanged')
                             ORDER BY task_name, calc_date, created_at DESC, run_id DESC
@@ -326,7 +326,7 @@ class FactorRepairService:
                           AND ledger.task_name = previous.task_name
                           AND ledger.calc_date = previous.calc_date
                         """,
-                        (str(factor_run_id), repair_uuid),
+                        (str(factor_run_id), str(factor_run_id)),
                     )
                     cursor.execute(
                         """
