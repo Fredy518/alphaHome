@@ -1,0 +1,2783 @@
+{
+  "task_counts": {
+    "factor": 2,
+    "fetch": 188,
+    "pit": 15,
+    "processor": 1
+  },
+  "feature_count": 43,
+  "tasks": [
+    {
+      "name": "akshare_fund_cf_em",
+      "module": "alphahome.fetchers.tasks.fund.akshare_fund_cf_em",
+      "type": "fetch",
+      "table": "fund_cf_em",
+      "source": "akshare",
+      "contract": null
+    },
+    {
+      "name": "akshare_fund_fee_em",
+      "module": "alphahome.fetchers.tasks.fund.akshare_fund_fee_em",
+      "type": "fetch",
+      "table": "fund_fee_em",
+      "source": "akshare",
+      "contract": null
+    },
+    {
+      "name": "akshare_fund_individual_detail_info_xq",
+      "module": "alphahome.fetchers.tasks.fund.akshare_fund_individual_detail_info_xq",
+      "type": "fetch",
+      "table": "fund_individual_detail_info_xq",
+      "source": "akshare",
+      "contract": null
+    },
+    {
+      "name": "akshare_fund_overview_em",
+      "module": "alphahome.fetchers.tasks.fund.akshare_fund_overview_em",
+      "type": "fetch",
+      "table": "fund_overview_em",
+      "source": "akshare",
+      "contract": null
+    },
+    {
+      "name": "akshare_fund_purchase_em",
+      "module": "alphahome.fetchers.tasks.fund.akshare_fund_purchase_em",
+      "type": "fetch",
+      "table": "fund_purchase_limit",
+      "source": "akshare",
+      "contract": null
+    },
+    {
+      "name": "akshare_index_csindex_all",
+      "module": "alphahome.fetchers.tasks.index.akshare_index_csindex_all",
+      "type": "fetch",
+      "table": "index_csindex_all",
+      "source": "akshare",
+      "contract": null
+    },
+    {
+      "name": "akshare_index_stock_cons_csindex",
+      "module": "alphahome.fetchers.tasks.index.akshare_index_stock_cons_csindex",
+      "type": "fetch",
+      "table": "index_stock_cons_csindex",
+      "source": "akshare",
+      "contract": null
+    },
+    {
+      "name": "akshare_index_stock_cons_weight_csindex",
+      "module": "alphahome.fetchers.tasks.index.akshare_index_stock_cons_weight_csindex",
+      "type": "fetch",
+      "table": "index_stock_cons_weight_csindex",
+      "source": "akshare",
+      "contract": null
+    },
+    {
+      "name": "akshare_macro_boj_rate",
+      "module": "alphahome.fetchers.tasks.macro.akshare_macro_boj_rate",
+      "type": "fetch",
+      "table": "macro_boj_rate",
+      "source": "akshare",
+      "contract": null
+    },
+    {
+      "name": "akshare_macro_bond_rate",
+      "module": "alphahome.fetchers.tasks.macro.akshare_macro_bond_rate",
+      "type": "fetch",
+      "table": "macro_bond_rate",
+      "source": "akshare",
+      "contract": null
+    },
+    {
+      "name": "akshare_macro_cci",
+      "module": "alphahome.fetchers.tasks.macro.akshare_macro_cci",
+      "type": "fetch",
+      "table": "macro_cci",
+      "source": "akshare",
+      "contract": null
+    },
+    {
+      "name": "akshare_macro_china_market_margin_sh",
+      "module": "alphahome.fetchers.tasks.macro.akshare_macro_china_market_margin",
+      "type": "fetch",
+      "table": "macro_china_market_margin_sh",
+      "source": "akshare",
+      "contract": null
+    },
+    {
+      "name": "akshare_macro_china_market_margin_sz",
+      "module": "alphahome.fetchers.tasks.macro.akshare_macro_china_market_margin",
+      "type": "fetch",
+      "table": "macro_china_market_margin_sz",
+      "source": "akshare",
+      "contract": null
+    },
+    {
+      "name": "akshare_macro_china_rmb_fixing",
+      "module": "alphahome.fetchers.tasks.macro.akshare_macro_china_rmb_fixing",
+      "type": "fetch",
+      "table": "macro_china_rmb_fixing",
+      "source": "akshare",
+      "contract": null
+    },
+    {
+      "name": "akshare_macro_cn_cb_balance",
+      "module": "alphahome.fetchers.tasks.macro.akshare_macro_cn_cb_balance",
+      "type": "fetch",
+      "table": "macro_cn_cb_balance",
+      "source": "akshare",
+      "contract": null
+    },
+    {
+      "name": "akshare_macro_core_pce",
+      "module": "alphahome.fetchers.tasks.macro.akshare_macro_core_pce",
+      "type": "fetch",
+      "table": "macro_core_pce",
+      "source": "akshare",
+      "contract": null
+    },
+    {
+      "name": "akshare_macro_ecb_rate",
+      "module": "alphahome.fetchers.tasks.macro.akshare_macro_ecb_rate",
+      "type": "fetch",
+      "table": "macro_ecb_rate",
+      "source": "akshare",
+      "contract": null
+    },
+    {
+      "name": "akshare_macro_fixed_asset_investment",
+      "module": "alphahome.fetchers.tasks.macro.akshare_macro_china_activity",
+      "type": "fetch",
+      "table": "macro_fixed_asset_investment",
+      "source": "akshare",
+      "contract": null
+    },
+    {
+      "name": "akshare_macro_industrial_value_added",
+      "module": "alphahome.fetchers.tasks.macro.akshare_macro_china_activity",
+      "type": "fetch",
+      "table": "macro_industrial_value_added",
+      "source": "akshare",
+      "contract": null
+    },
+    {
+      "name": "akshare_macro_lpr",
+      "module": "alphahome.fetchers.tasks.macro.akshare_macro_lpr",
+      "type": "fetch",
+      "table": "macro_policy_rate",
+      "source": "akshare",
+      "contract": null
+    },
+    {
+      "name": "akshare_macro_money_supply",
+      "module": "alphahome.fetchers.tasks.macro.akshare_macro_money_supply",
+      "type": "fetch",
+      "table": "macro_money_supply",
+      "source": "akshare",
+      "contract": null
+    },
+    {
+      "name": "akshare_macro_repo_rate",
+      "module": "alphahome.fetchers.tasks.macro.akshare_macro_repo_rate",
+      "type": "fetch",
+      "table": "macro_repo_rate",
+      "source": "akshare",
+      "contract": null
+    },
+    {
+      "name": "akshare_macro_retail_sales",
+      "module": "alphahome.fetchers.tasks.macro.akshare_macro_china_activity",
+      "type": "fetch",
+      "table": "macro_retail_sales",
+      "source": "akshare",
+      "contract": null
+    },
+    {
+      "name": "akshare_macro_ths_rmb_deposit",
+      "module": "alphahome.fetchers.tasks.macro.akshare_macro_ths_rmb_deposit",
+      "type": "fetch",
+      "table": "macro_ths_rmb_deposit",
+      "source": "akshare",
+      "contract": null
+    },
+    {
+      "name": "akshare_macro_ths_rmb_loan",
+      "module": "alphahome.fetchers.tasks.macro.akshare_macro_ths_rmb_loan",
+      "type": "fetch",
+      "table": "macro_ths_rmb_loan",
+      "source": "akshare",
+      "contract": null
+    },
+    {
+      "name": "akshare_macro_usa_cpi",
+      "module": "alphahome.fetchers.tasks.macro.akshare_macro_usa_cpi",
+      "type": "fetch",
+      "table": "macro_usa_cpi",
+      "source": "akshare",
+      "contract": null
+    },
+    {
+      "name": "akshare_macro_usa_fed_decision",
+      "module": "alphahome.fetchers.tasks.macro.akshare_macro_usa_fed_decision",
+      "type": "fetch",
+      "table": "macro_fed_decision",
+      "source": "akshare",
+      "contract": null
+    },
+    {
+      "name": "akshare_macro_usa_nonfarm",
+      "module": "alphahome.fetchers.tasks.macro.akshare_macro_usa_nonfarm",
+      "type": "fetch",
+      "table": "macro_usa_nonfarm",
+      "source": "akshare",
+      "contract": null
+    },
+    {
+      "name": "akshare_macro_usa_unemployment",
+      "module": "alphahome.fetchers.tasks.macro.akshare_macro_usa_unemployment",
+      "type": "fetch",
+      "table": "macro_usa_unemployment",
+      "source": "akshare",
+      "contract": null
+    },
+    {
+      "name": "akshare_stock_limitup_reason",
+      "module": "alphahome.fetchers.tasks.stock.akshare_stock_limitup_reason",
+      "type": "fetch",
+      "table": "stock_limitup_reason",
+      "source": "akshare",
+      "contract": null
+    },
+    {
+      "name": "csindex_index_performance",
+      "module": "alphahome.fetchers.tasks.index.csindex_index_performance",
+      "type": "fetch",
+      "table": "index_performance",
+      "source": "csindex",
+      "contract": null
+    },
+    {
+      "name": "excel_fastrategy_basic",
+      "module": "alphahome.fetchers.tasks.fastrategy.excel_fastrategy_basic",
+      "type": "fetch",
+      "table": "fastrategy_basic",
+      "source": "excel",
+      "contract": null
+    },
+    {
+      "name": "excel_fastrategy_fof_versus",
+      "module": "alphahome.fetchers.tasks.fastrategy.excel_fastrategy_fof_versus",
+      "type": "fetch",
+      "table": "fastrategy_fof_versus",
+      "source": "excel",
+      "contract": null
+    },
+    {
+      "name": "excel_fastrategy_portfolio",
+      "module": "alphahome.fetchers.tasks.fastrategy.excel_fastrategy_portfolio",
+      "type": "fetch",
+      "table": "fastrategy_portfolio",
+      "source": "excel",
+      "contract": null
+    },
+    {
+      "name": "excel_fund_analysis_outlook",
+      "module": "alphahome.fetchers.tasks.fund.excel_fund_analysis_outlook",
+      "type": "fetch",
+      "table": "fund_analysis_outlook",
+      "source": "excel",
+      "contract": null
+    },
+    {
+      "name": "excel_macro_dr007_history",
+      "module": "alphahome.fetchers.tasks.macro.excel_macro_dr007_history",
+      "type": "fetch",
+      "table": "macro_dr007_history",
+      "source": "excel",
+      "contract": null
+    },
+    {
+      "name": "excel_macro_style_rotation_legacy",
+      "module": "alphahome.fetchers.tasks.macro.excel_macro_style_rotation_legacy",
+      "type": "fetch",
+      "table": "macro_style_rotation_legacy",
+      "source": "excel",
+      "contract": null
+    },
+    {
+      "name": "factor_g",
+      "module": "alphahome.factors.tasks.pg",
+      "type": "factor",
+      "table": "g_factor",
+      "source": "factors",
+      "contract": {
+        "task_name": "factor_g",
+        "domain": "growth",
+        "source_tables": [
+          "factors.p_factor"
+        ],
+        "output_table": "factors.g_factor",
+        "calc_date_key": "calc_date",
+        "primary_keys": [
+          "ts_code",
+          "calc_date"
+        ],
+        "dependencies": [
+          "factor_p"
+        ],
+        "readiness_dependencies": [],
+        "supported_modes": [
+          "smart",
+          "manual",
+          "full",
+          "audit"
+        ],
+        "calculator_class": "alphahome.factors.core.g_factor_calculator.GFactorCalculator",
+        "formula_version": "v1.1",
+        "cadence": "weekly_friday",
+        "date_strategy": "calendar_friday_last_complete",
+        "eligibility_policy": "same_date_p_with_existing_history_threshold",
+        "audit_denominator": "same_date_p_snapshot",
+        "history_lookback_days": 730
+      }
+    },
+    {
+      "name": "factor_p",
+      "module": "alphahome.factors.tasks.pg",
+      "type": "factor",
+      "table": "p_factor",
+      "source": "factors",
+      "contract": {
+        "task_name": "factor_p",
+        "domain": "quality",
+        "source_tables": [
+          "pit.pit_financial_indicators",
+          "pit.pit_industry_classification",
+          "tushare.stock_basic"
+        ],
+        "output_table": "factors.p_factor",
+        "calc_date_key": "calc_date",
+        "primary_keys": [
+          "ts_code",
+          "calc_date"
+        ],
+        "dependencies": [],
+        "readiness_dependencies": [
+          "pit_financial_indicators",
+          "pit_industry_classification"
+        ],
+        "supported_modes": [
+          "smart",
+          "manual",
+          "full",
+          "audit"
+        ],
+        "calculator_class": "alphahome.factors.core.p_factor_calculator.PFactorCalculator",
+        "formula_version": "v2.0",
+        "cadence": "weekly_friday",
+        "date_strategy": "calendar_friday_last_complete",
+        "eligibility_policy": "latest_eligible_pit_financial_indicator",
+        "audit_denominator": "latest_eligible_pit_financial_indicator",
+        "history_lookback_days": 0
+      }
+    },
+    {
+      "name": "fred_macro_credit_spread",
+      "module": "alphahome.fetchers.tasks.macro.fred_macro_credit_spread",
+      "type": "fetch",
+      "table": "macro_credit_spread",
+      "source": "fred",
+      "contract": null
+    },
+    {
+      "name": "fred_macro_dxy",
+      "module": "alphahome.fetchers.tasks.macro.fred_macro_dxy",
+      "type": "fetch",
+      "table": "macro_dxy",
+      "source": "fred",
+      "contract": null
+    },
+    {
+      "name": "fred_macro_fed_balance",
+      "module": "alphahome.fetchers.tasks.macro.fred_macro_fed_balance",
+      "type": "fetch",
+      "table": "macro_fed_balance",
+      "source": "fred",
+      "contract": null
+    },
+    {
+      "name": "fred_macro_fed_rate",
+      "module": "alphahome.fetchers.tasks.macro.fred_macro_fed_rate",
+      "type": "fetch",
+      "table": "macro_fed_rate",
+      "source": "fred",
+      "contract": null
+    },
+    {
+      "name": "fred_macro_sofr",
+      "module": "alphahome.fetchers.tasks.macro.fred_macro_sofr",
+      "type": "fetch",
+      "table": "macro_sofr",
+      "source": "fred",
+      "contract": null
+    },
+    {
+      "name": "fred_macro_sofr_term",
+      "module": "alphahome.fetchers.tasks.macro.fred_macro_sofr_term",
+      "type": "fetch",
+      "table": "macro_sofr_term",
+      "source": "fred",
+      "contract": null
+    },
+    {
+      "name": "fred_macro_ted",
+      "module": "alphahome.fetchers.tasks.macro.fred_macro_ted",
+      "type": "fetch",
+      "table": "macro_ted",
+      "source": "fred",
+      "contract": null
+    },
+    {
+      "name": "fred_macro_treasury_yield",
+      "module": "alphahome.fetchers.tasks.macro.fred_macro_treasury_yield",
+      "type": "fetch",
+      "table": "macro_treasury_yield",
+      "source": "fred",
+      "contract": null
+    },
+    {
+      "name": "fred_macro_us_short_rate",
+      "module": "alphahome.fetchers.tasks.macro.fred_macro_us_short_rate",
+      "type": "fetch",
+      "table": "macro_us_short_rate",
+      "source": "fred",
+      "contract": null
+    },
+    {
+      "name": "fred_macro_vix",
+      "module": "alphahome.fetchers.tasks.macro.fred_macro_vix",
+      "type": "fetch",
+      "table": "macro_vix",
+      "source": "fred",
+      "contract": null
+    },
+    {
+      "name": "macro_release_calendar",
+      "module": "alphahome.fetchers.tasks.macro.macro_release_calendar",
+      "type": "fetch",
+      "table": "macro_release_calendar",
+      "source": "akshare",
+      "contract": null
+    },
+    {
+      "name": "nbs_macro_housing_newstarts",
+      "module": "alphahome.fetchers.tasks.macro.nbs_macro_housing_newstarts",
+      "type": "fetch",
+      "table": "macro_housing_newstarts",
+      "source": "nbs",
+      "contract": null
+    },
+    {
+      "name": "pbc_macro_mlt_loan",
+      "module": "alphahome.fetchers.tasks.macro.pbc_macro_mlt_loan",
+      "type": "fetch",
+      "table": "macro_mlt_loan",
+      "source": "pbc",
+      "contract": null
+    },
+    {
+      "name": "pit_balance_quarterly",
+      "module": "alphahome.pit.tasks.financials",
+      "type": "pit",
+      "table": "pit_balance_quarterly",
+      "source": "pit",
+      "contract": {
+        "task_name": "pit_balance_quarterly",
+        "domain": "financials",
+        "source_tables": [
+          "tushare.fina_balancesheet",
+          "tushare.fina_express"
+        ],
+        "output_table": "pit.pit_balance_quarterly",
+        "pit_time_key": "ann_date",
+        "primary_keys": [
+          "ts_code",
+          "end_date",
+          "ann_date",
+          "data_source"
+        ],
+        "dependencies": [],
+        "supported_modes": [
+          "incremental",
+          "full_backfill",
+          "manual_range",
+          "single_backfill",
+          "audit_only"
+        ],
+        "manager_class": "alphahome.pit.pit_balance_quarterly_manager.PITBalanceQuarterlyManager",
+        "audit_entity_keys": [],
+        "audit_denominator": "current_listed_stocks"
+      }
+    },
+    {
+      "name": "pit_cashflow_quarterly",
+      "module": "alphahome.pit.tasks.financials",
+      "type": "pit",
+      "table": "pit_cashflow_quarterly",
+      "source": "pit",
+      "contract": {
+        "task_name": "pit_cashflow_quarterly",
+        "domain": "financials",
+        "source_tables": [
+          "tushare.fina_cashflow"
+        ],
+        "output_table": "pit.pit_cashflow_quarterly",
+        "pit_time_key": "ann_date",
+        "primary_keys": [
+          "ts_code",
+          "end_date",
+          "ann_date",
+          "data_source"
+        ],
+        "dependencies": [],
+        "supported_modes": [
+          "incremental",
+          "full_backfill",
+          "manual_range",
+          "single_backfill",
+          "audit_only"
+        ],
+        "manager_class": "alphahome.pit.pit_cashflow_quarterly_manager.PITCashflowQuarterlyManager",
+        "audit_entity_keys": [],
+        "audit_denominator": "current_listed_stocks"
+      }
+    },
+    {
+      "name": "pit_earnings_surprise_annual",
+      "module": "alphahome.pit.tasks.analyst_expectations",
+      "type": "pit",
+      "table": "pit_earnings_surprise_annual",
+      "source": "pit",
+      "contract": {
+        "task_name": "pit_earnings_surprise_annual",
+        "domain": "earnings_surprise",
+        "source_tables": [
+          "pit.pit_income_quarterly",
+          "pit.pit_stock_consensus_fy_monthly"
+        ],
+        "output_table": "pit.pit_earnings_surprise_annual",
+        "pit_time_key": "ann_date",
+        "primary_keys": [
+          "ts_code",
+          "end_date",
+          "ann_date"
+        ],
+        "dependencies": [
+          "pit_income_quarterly",
+          "pit_stock_consensus_fy_monthly"
+        ],
+        "supported_modes": [
+          "incremental",
+          "full_backfill",
+          "manual_range",
+          "audit_only"
+        ],
+        "manager_class": "alphahome.pit.pit_earnings_surprise_annual_manager.PITEarningsSurpriseAnnualManager",
+        "audit_entity_keys": [
+          "ts_code",
+          "end_date"
+        ],
+        "audit_denominator": "annual_report_events_at_ann_date"
+      }
+    },
+    {
+      "name": "pit_etf_index_a_share_proxy_fapi_monthly",
+      "module": "alphahome.pit.tasks.etf_index_a_share_proxy",
+      "type": "pit",
+      "table": "pit_etf_index_fapi_monthly",
+      "source": "pit",
+      "contract": {
+        "task_name": "pit_etf_index_a_share_proxy_fapi_monthly",
+        "domain": "etf_index_a_share_proxy_fapi",
+        "source_tables": [
+          "pit.pit_etf_index_members_monthly",
+          "pit.pit_stock_fttm_monthly",
+          "rawdata.stock_dailybasic",
+          "rawdata.index_weight"
+        ],
+        "output_table": "pit.pit_etf_index_fapi_monthly",
+        "pit_time_key": "obs_date",
+        "primary_keys": [
+          "obs_date",
+          "index_code",
+          "benchmark_code",
+          "method_version"
+        ],
+        "dependencies": [
+          "pit_etf_index_a_share_proxy_members_monthly",
+          "pit_stock_fttm_monthly"
+        ],
+        "supported_modes": [
+          "incremental",
+          "full_backfill",
+          "manual_range"
+        ],
+        "manager_class": "alphahome.pit.pit_etf_index_a_share_proxy_fapi_manager.PITETFIndexAShareProxyFAPIMonthlyManager",
+        "audit_entity_keys": [
+          "index_code",
+          "benchmark_code",
+          "method_version"
+        ],
+        "audit_denominator": "registered_cross_market_a_share_proxy_indices"
+      }
+    },
+    {
+      "name": "pit_etf_index_a_share_proxy_members_monthly",
+      "module": "alphahome.pit.tasks.etf_index_a_share_proxy",
+      "type": "pit",
+      "table": "pit_etf_index_members_monthly",
+      "source": "pit",
+      "contract": {
+        "task_name": "pit_etf_index_a_share_proxy_members_monthly",
+        "domain": "etf_index_a_share_proxy_members",
+        "source_tables": [
+          "rawdata.index_weight",
+          "rawdata.fund_etf_basic",
+          "rawdata.fund_etf_index"
+        ],
+        "output_table": "pit.pit_etf_index_members_monthly",
+        "pit_time_key": "obs_date",
+        "primary_keys": [
+          "obs_date",
+          "index_code",
+          "ts_code",
+          "method_version"
+        ],
+        "dependencies": [],
+        "supported_modes": [
+          "incremental",
+          "full_backfill",
+          "manual_range"
+        ],
+        "manager_class": "alphahome.pit.pit_etf_index_a_share_proxy_members_manager.PITETFIndexAShareProxyMembersMonthlyManager",
+        "audit_entity_keys": [
+          "index_code",
+          "ts_code",
+          "method_version"
+        ],
+        "audit_denominator": "registered_cross_market_a_share_proxy_members"
+      }
+    },
+    {
+      "name": "pit_etf_index_fapi_monthly",
+      "module": "alphahome.pit.tasks.etf_index_fapi",
+      "type": "pit",
+      "table": "pit_etf_index_fapi_monthly",
+      "source": "pit",
+      "contract": {
+        "task_name": "pit_etf_index_fapi_monthly",
+        "domain": "etf_index_fapi",
+        "source_tables": [
+          "pit.pit_etf_index_members_monthly",
+          "pit.pit_stock_fttm_monthly",
+          "rawdata.stock_dailybasic",
+          "rawdata.index_weight"
+        ],
+        "output_table": "pit.pit_etf_index_fapi_monthly",
+        "pit_time_key": "obs_date",
+        "primary_keys": [
+          "obs_date",
+          "index_code",
+          "benchmark_code",
+          "method_version"
+        ],
+        "dependencies": [
+          "pit_etf_index_members_monthly",
+          "pit_stock_fttm_monthly"
+        ],
+        "supported_modes": [
+          "incremental",
+          "full_backfill",
+          "manual_range"
+        ],
+        "manager_class": "alphahome.pit.pit_etf_index_fapi_manager.PITETFIndexFAPIMonthlyManager",
+        "audit_entity_keys": [
+          "index_code",
+          "benchmark_code",
+          "method_version"
+        ],
+        "audit_denominator": "etf_index_member_source_pairs"
+      }
+    },
+    {
+      "name": "pit_etf_index_members_monthly",
+      "module": "alphahome.pit.tasks.etf_index_members",
+      "type": "pit",
+      "table": "pit_etf_index_members_monthly",
+      "source": "pit",
+      "contract": {
+        "task_name": "pit_etf_index_members_monthly",
+        "domain": "etf_index_members",
+        "source_tables": [
+          "rawdata.index_weight",
+          "rawdata.fund_etf_basic",
+          "rawdata.fund_etf_index",
+          "rawdata.fund_portfolio"
+        ],
+        "output_table": "pit.pit_etf_index_members_monthly",
+        "pit_time_key": "obs_date",
+        "primary_keys": [
+          "obs_date",
+          "index_code",
+          "ts_code",
+          "method_version"
+        ],
+        "dependencies": [],
+        "supported_modes": [
+          "incremental",
+          "full_backfill",
+          "manual_range"
+        ],
+        "manager_class": "alphahome.pit.pit_etf_index_members_manager.PITETFIndexMembersMonthlyManager",
+        "audit_entity_keys": [
+          "index_code",
+          "ts_code",
+          "method_version"
+        ],
+        "audit_denominator": "etf_index_member_source_pairs"
+      }
+    },
+    {
+      "name": "pit_financial_indicators",
+      "module": "alphahome.pit.tasks.financials",
+      "type": "pit",
+      "table": "pit_financial_indicators",
+      "source": "pit",
+      "contract": {
+        "task_name": "pit_financial_indicators",
+        "domain": "financials",
+        "source_tables": [
+          "pit.pit_income_quarterly",
+          "pit.pit_balance_quarterly"
+        ],
+        "output_table": "pit.pit_financial_indicators",
+        "pit_time_key": "ann_date",
+        "primary_keys": [
+          "ts_code",
+          "end_date",
+          "ann_date",
+          "data_source"
+        ],
+        "dependencies": [
+          "pit_income_quarterly",
+          "pit_balance_quarterly"
+        ],
+        "supported_modes": [
+          "incremental",
+          "full_backfill",
+          "manual_range",
+          "single_backfill",
+          "audit_only"
+        ],
+        "manager_class": "alphahome.pit.pit_financial_indicators_manager.PITFinancialIndicatorsManager",
+        "audit_entity_keys": [],
+        "audit_denominator": "current_listed_stocks"
+      }
+    },
+    {
+      "name": "pit_income_quarterly",
+      "module": "alphahome.pit.tasks.financials",
+      "type": "pit",
+      "table": "pit_income_quarterly",
+      "source": "pit",
+      "contract": {
+        "task_name": "pit_income_quarterly",
+        "domain": "financials",
+        "source_tables": [
+          "tushare.fina_income",
+          "tushare.fina_express",
+          "tushare.fina_forecast"
+        ],
+        "output_table": "pit.pit_income_quarterly",
+        "pit_time_key": "ann_date",
+        "primary_keys": [
+          "ts_code",
+          "end_date",
+          "ann_date",
+          "data_source"
+        ],
+        "dependencies": [],
+        "supported_modes": [
+          "incremental",
+          "full_backfill",
+          "manual_range",
+          "single_backfill",
+          "audit_only"
+        ],
+        "manager_class": "alphahome.pit.pit_income_quarterly_manager.PITIncomeQuarterlyManager",
+        "audit_entity_keys": [],
+        "audit_denominator": "current_listed_stocks"
+      }
+    },
+    {
+      "name": "pit_index_fttm_monthly",
+      "module": "alphahome.pit.tasks.index_fttm",
+      "type": "pit",
+      "table": "pit_index_fttm_monthly",
+      "source": "pit",
+      "contract": {
+        "task_name": "pit_index_fttm_monthly",
+        "domain": "index_fttm",
+        "source_tables": [
+          "pit.pit_stock_fttm_monthly",
+          "rawdata.index_weight",
+          "rawdata.stock_dailybasic",
+          "rawdata.stock_basic"
+        ],
+        "output_table": "pit.pit_index_fttm_monthly",
+        "pit_time_key": "obs_date",
+        "primary_keys": [
+          "obs_date",
+          "universe_type",
+          "universe_code",
+          "weight_basis"
+        ],
+        "dependencies": [
+          "pit_stock_fttm_monthly"
+        ],
+        "supported_modes": [
+          "incremental",
+          "full_backfill",
+          "manual_range",
+          "audit_only"
+        ],
+        "manager_class": "alphahome.pit.pit_index_fttm_manager.PITIndexFTTMManager",
+        "audit_entity_keys": [
+          "universe_type",
+          "universe_code",
+          "weight_basis"
+        ],
+        "audit_denominator": "configured_index_fttm_universes"
+      }
+    },
+    {
+      "name": "pit_industry_classification",
+      "module": "alphahome.pit.tasks.industry",
+      "type": "pit",
+      "table": "pit_industry_classification",
+      "source": "pit",
+      "contract": {
+        "task_name": "pit_industry_classification",
+        "domain": "industry",
+        "source_tables": [
+          "tushare.index_swmember",
+          "tushare.index_cimember"
+        ],
+        "output_table": "pit.pit_industry_classification",
+        "pit_time_key": "obs_date",
+        "primary_keys": [
+          "ts_code",
+          "obs_date",
+          "data_source"
+        ],
+        "dependencies": [],
+        "supported_modes": [
+          "incremental",
+          "full_backfill",
+          "manual_range",
+          "audit_only"
+        ],
+        "manager_class": "alphahome.pit.pit_industry_classification_manager.PITIndustryClassificationManager",
+        "audit_entity_keys": [],
+        "audit_denominator": "current_listed_stocks"
+      }
+    },
+    {
+      "name": "pit_industry_fapi_monthly",
+      "module": "alphahome.pit.tasks.fapi",
+      "type": "pit",
+      "table": "pit_industry_fapi_monthly",
+      "source": "pit",
+      "contract": {
+        "task_name": "pit_industry_fapi_monthly",
+        "domain": "industry_fapi",
+        "source_tables": [
+          "pit.pit_stock_fttm_monthly",
+          "pit.pit_industry_classification",
+          "rawdata.stock_dailybasic",
+          "rawdata.index_weight"
+        ],
+        "output_table": "pit.pit_industry_fapi_monthly",
+        "pit_time_key": "obs_date",
+        "primary_keys": [
+          "obs_date",
+          "classification_source",
+          "industry_level",
+          "industry_code",
+          "benchmark_code",
+          "method_version"
+        ],
+        "dependencies": [
+          "pit_stock_fttm_monthly",
+          "pit_industry_classification"
+        ],
+        "supported_modes": [
+          "incremental",
+          "full_backfill",
+          "manual_range",
+          "audit_only"
+        ],
+        "manager_class": "alphahome.pit.pit_industry_fapi_manager.PITIndustryFAPIManager",
+        "audit_entity_keys": [
+          "classification_source",
+          "industry_level",
+          "industry_code"
+        ],
+        "audit_denominator": "pit_time_structural_industries"
+      }
+    },
+    {
+      "name": "pit_industry_fttm_monthly",
+      "module": "alphahome.pit.tasks.fttm",
+      "type": "pit",
+      "table": "pit_industry_fttm_monthly",
+      "source": "pit",
+      "contract": {
+        "task_name": "pit_industry_fttm_monthly",
+        "domain": "industry_fttm",
+        "source_tables": [
+          "pit.pit_stock_fttm_monthly",
+          "pit.pit_industry_classification",
+          "rawdata.stock_dailybasic",
+          "rawdata.stock_basic"
+        ],
+        "output_table": "pit.pit_industry_fttm_monthly",
+        "pit_time_key": "obs_date",
+        "primary_keys": [
+          "obs_date",
+          "classification_source",
+          "industry_level",
+          "industry_code",
+          "weight_basis"
+        ],
+        "dependencies": [
+          "pit_stock_fttm_monthly",
+          "pit_industry_classification"
+        ],
+        "supported_modes": [
+          "incremental",
+          "full_backfill",
+          "manual_range",
+          "audit_only"
+        ],
+        "manager_class": "alphahome.pit.pit_industry_fttm_manager.PITIndustryFTTMManager",
+        "audit_entity_keys": [
+          "classification_source",
+          "industry_level",
+          "industry_code",
+          "weight_basis"
+        ],
+        "audit_denominator": "pit_time_structural_industries"
+      }
+    },
+    {
+      "name": "pit_stock_consensus_fy_monthly",
+      "module": "alphahome.pit.tasks.analyst_expectations",
+      "type": "pit",
+      "table": "pit_stock_consensus_fy_monthly",
+      "source": "pit",
+      "contract": {
+        "task_name": "pit_stock_consensus_fy_monthly",
+        "domain": "stock_consensus_fy",
+        "source_tables": [
+          "rawdata.stock_report_rc"
+        ],
+        "output_table": "pit.pit_stock_consensus_fy_monthly",
+        "pit_time_key": "obs_date",
+        "primary_keys": [
+          "obs_date",
+          "ts_code",
+          "target_year"
+        ],
+        "dependencies": [],
+        "supported_modes": [
+          "incremental",
+          "full_backfill",
+          "manual_range",
+          "audit_only"
+        ],
+        "manager_class": "alphahome.pit.pit_stock_consensus_fy_manager.PITStockConsensusFYMonthlyManager",
+        "audit_entity_keys": [
+          "ts_code"
+        ],
+        "audit_denominator": "pit_time_active_stocks"
+      }
+    },
+    {
+      "name": "pit_stock_fttm_monthly",
+      "module": "alphahome.pit.tasks.fttm",
+      "type": "pit",
+      "table": "pit_stock_fttm_monthly",
+      "source": "pit",
+      "contract": {
+        "task_name": "pit_stock_fttm_monthly",
+        "domain": "stock_fttm",
+        "source_tables": [
+          "rawdata.stock_report_rc",
+          "rawdata.stock_dailybasic"
+        ],
+        "output_table": "pit.pit_stock_fttm_monthly",
+        "pit_time_key": "obs_date",
+        "primary_keys": [
+          "ts_code",
+          "org_name",
+          "obs_date"
+        ],
+        "dependencies": [],
+        "supported_modes": [
+          "incremental",
+          "full_backfill",
+          "manual_range",
+          "audit_only"
+        ],
+        "manager_class": "alphahome.pit.pit_stock_fttm_manager.PITStockFTTMManager",
+        "audit_entity_keys": [
+          "ts_code"
+        ],
+        "audit_denominator": "pit_time_active_stocks"
+      }
+    },
+    {
+      "name": "tinysoft_bond_basic_ext",
+      "module": "alphahome.fetchers.tasks.cbond.tinysoft_bond_basic_ext",
+      "type": "fetch",
+      "table": "bond_basic_ext",
+      "source": "tinysoft",
+      "contract": null
+    },
+    {
+      "name": "tinysoft_cbond_price_chg",
+      "module": "alphahome.fetchers.tasks.cbond.tinysoft_cbond_price_chg",
+      "type": "fetch",
+      "table": "cbond_price_chg",
+      "source": "tinysoft",
+      "contract": null
+    },
+    {
+      "name": "tinysoft_fund_abs_holding_detail",
+      "module": "alphahome.fetchers.tasks.fund.tinysoft_fund_p0_ext",
+      "type": "fetch",
+      "table": "fund_abs_holding_detail",
+      "source": "tinysoft",
+      "contract": null
+    },
+    {
+      "name": "tinysoft_fund_asset_alloc",
+      "module": "alphahome.fetchers.tasks.fund.tinysoft_fund_p0_ext",
+      "type": "fetch",
+      "table": "fund_asset_alloc",
+      "source": "tinysoft",
+      "contract": null
+    },
+    {
+      "name": "tinysoft_fund_basic_ext",
+      "module": "alphahome.fetchers.tasks.fund.tinysoft_fund_p0_ext",
+      "type": "fetch",
+      "table": "fund_basic_ext",
+      "source": "tinysoft",
+      "contract": null
+    },
+    {
+      "name": "tinysoft_fund_bond_alloc",
+      "module": "alphahome.fetchers.tasks.fund.tinysoft_fund_p0_ext",
+      "type": "fetch",
+      "table": "fund_bond_alloc",
+      "source": "tinysoft",
+      "contract": null
+    },
+    {
+      "name": "tinysoft_fund_bond_holding_detail",
+      "module": "alphahome.fetchers.tasks.fund.tinysoft_fund_p0_ext",
+      "type": "fetch",
+      "table": "fund_bond_holding_detail",
+      "source": "tinysoft",
+      "contract": null
+    },
+    {
+      "name": "tinysoft_fund_broker_seat",
+      "module": "alphahome.fetchers.tasks.fund.tinysoft_fund_p0_ext",
+      "type": "fetch",
+      "table": "fund_broker_seat",
+      "source": "tinysoft",
+      "contract": null
+    },
+    {
+      "name": "tinysoft_fund_cbond_holding_detail",
+      "module": "alphahome.fetchers.tasks.fund.tinysoft_fund_p0_ext",
+      "type": "fetch",
+      "table": "fund_cbond_holding_detail",
+      "source": "tinysoft",
+      "contract": null
+    },
+    {
+      "name": "tinysoft_fund_classification_info",
+      "module": "alphahome.fetchers.tasks.fund.tinysoft_fund_p0_ext",
+      "type": "fetch",
+      "table": "fund_classification_info",
+      "source": "tinysoft",
+      "contract": null
+    },
+    {
+      "name": "tinysoft_fund_classification_member",
+      "module": "alphahome.fetchers.tasks.fund.tinysoft_fund_p0_ext",
+      "type": "fetch",
+      "table": "fund_classification_member",
+      "source": "tinysoft",
+      "contract": null
+    },
+    {
+      "name": "tinysoft_fund_financial_quarterly_ext",
+      "module": "alphahome.fetchers.tasks.fund.tinysoft_fund_p0_ext",
+      "type": "fetch",
+      "table": "fund_financial_quarterly_ext",
+      "source": "tinysoft",
+      "contract": null
+    },
+    {
+      "name": "tinysoft_fund_fof_holding_detail",
+      "module": "alphahome.fetchers.tasks.fund.tinysoft_fund_p0_ext",
+      "type": "fetch",
+      "table": "fund_fof_holding_detail",
+      "source": "tinysoft",
+      "contract": null
+    },
+    {
+      "name": "tinysoft_fund_holder_structure",
+      "module": "alphahome.fetchers.tasks.fund.tinysoft_fund_p0_ext",
+      "type": "fetch",
+      "table": "fund_holder_structure",
+      "source": "tinysoft",
+      "contract": null
+    },
+    {
+      "name": "tinysoft_fund_industry_alloc",
+      "module": "alphahome.fetchers.tasks.fund.tinysoft_fund_p0_ext",
+      "type": "fetch",
+      "table": "fund_industry_alloc",
+      "source": "tinysoft",
+      "contract": null
+    },
+    {
+      "name": "tinysoft_fund_manager_ext",
+      "module": "alphahome.fetchers.tasks.fund.tinysoft_fund_p0_ext",
+      "type": "fetch",
+      "table": "fund_manager_ext",
+      "source": "tinysoft",
+      "contract": null
+    },
+    {
+      "name": "tinysoft_fund_minute",
+      "module": "alphahome.fetchers.tasks.fund.tinysoft_fund_minute",
+      "type": "fetch",
+      "table": "fund_minute",
+      "source": "tinysoft",
+      "contract": null
+    },
+    {
+      "name": "tinysoft_fund_stock_holding_detail",
+      "module": "alphahome.fetchers.tasks.fund.tinysoft_fund_p0_ext",
+      "type": "fetch",
+      "table": "fund_stock_holding_detail",
+      "source": "tinysoft",
+      "contract": null
+    },
+    {
+      "name": "tinysoft_fund_stock_trade_summary",
+      "module": "alphahome.fetchers.tasks.fund.tinysoft_fund_p0_ext",
+      "type": "fetch",
+      "table": "fund_stock_trade_summary",
+      "source": "tinysoft",
+      "contract": null
+    },
+    {
+      "name": "tinysoft_fund_top_holder",
+      "module": "alphahome.fetchers.tasks.fund.tinysoft_fund_p0_ext",
+      "type": "fetch",
+      "table": "fund_top_holder",
+      "source": "tinysoft",
+      "contract": null
+    },
+    {
+      "name": "tinysoft_future_basic_ext",
+      "module": "alphahome.fetchers.tasks.future.tinysoft_future_basic_ext",
+      "type": "fetch",
+      "table": "future_basic_ext",
+      "source": "tinysoft",
+      "contract": null
+    },
+    {
+      "name": "tinysoft_future_product_mapping_ext",
+      "module": "alphahome.fetchers.tasks.future.tinysoft_future_basic_ext",
+      "type": "fetch",
+      "table": "future_product_mapping_ext",
+      "source": "tinysoft",
+      "contract": null
+    },
+    {
+      "name": "tinysoft_index_basic_ext",
+      "module": "alphahome.fetchers.tasks.index.tinysoft_index_p0_cross_domain",
+      "type": "fetch",
+      "table": "index_basic_ext",
+      "source": "tinysoft",
+      "contract": null
+    },
+    {
+      "name": "tinysoft_index_member_versioned",
+      "module": "alphahome.fetchers.tasks.index.tinysoft_index_p0_cross_domain",
+      "type": "fetch",
+      "table": "index_member_versioned",
+      "source": "tinysoft",
+      "contract": null
+    },
+    {
+      "name": "tinysoft_index_minute",
+      "module": "alphahome.fetchers.tasks.index.tinysoft_index_minute",
+      "type": "fetch",
+      "table": "index_minute",
+      "source": "tinysoft",
+      "contract": null
+    },
+    {
+      "name": "tinysoft_market_calendar_multi",
+      "module": "alphahome.fetchers.tasks.index.tinysoft_index_p0_cross_domain",
+      "type": "fetch",
+      "table": "market_calendar_multi",
+      "source": "tinysoft",
+      "contract": null
+    },
+    {
+      "name": "tinysoft_option_basic_daily_ext",
+      "module": "alphahome.fetchers.tasks.option.tinysoft_option_basic_ext",
+      "type": "fetch",
+      "table": "option_basic_daily_ext",
+      "source": "tinysoft",
+      "contract": null
+    },
+    {
+      "name": "tinysoft_stock_basic_ext",
+      "module": "alphahome.fetchers.tasks.stock.tinysoft_stock_basic_ext",
+      "type": "fetch",
+      "table": "stock_basic_ext",
+      "source": "tinysoft",
+      "contract": null
+    },
+    {
+      "name": "tinysoft_stock_fina_pit_ext",
+      "module": "alphahome.fetchers.tasks.stock.tinysoft_stock_fina_pit_ext",
+      "type": "fetch",
+      "table": "fina_pit_ext",
+      "source": "tinysoft",
+      "contract": null
+    },
+    {
+      "name": "tinysoft_stock_holder_change_ext",
+      "module": "alphahome.fetchers.tasks.stock.tinysoft_stock_events_ext",
+      "type": "fetch",
+      "table": "stock_holder_change_ext",
+      "source": "tinysoft",
+      "contract": null
+    },
+    {
+      "name": "tinysoft_stock_hsgt_daily",
+      "module": "alphahome.fetchers.tasks.stock.tinysoft_stock_hsgt_ext",
+      "type": "fetch",
+      "table": "stock_hsgt_daily",
+      "source": "tinysoft",
+      "contract": null
+    },
+    {
+      "name": "tinysoft_stock_hsgt_hold",
+      "module": "alphahome.fetchers.tasks.stock.tinysoft_stock_hsgt_ext",
+      "type": "fetch",
+      "table": "stock_hsgt_hold",
+      "source": "tinysoft",
+      "contract": null
+    },
+    {
+      "name": "tinysoft_stock_hsgt_short_balance",
+      "module": "alphahome.fetchers.tasks.stock.tinysoft_stock_hsgt_ext",
+      "type": "fetch",
+      "table": "stock_hsgt_short_balance",
+      "source": "tinysoft",
+      "contract": null
+    },
+    {
+      "name": "tinysoft_stock_hsgt_top10",
+      "module": "alphahome.fetchers.tasks.stock.tinysoft_stock_hsgt_ext",
+      "type": "fetch",
+      "table": "stock_hsgt_top10",
+      "source": "tinysoft",
+      "contract": null
+    },
+    {
+      "name": "tinysoft_stock_industry_versioned",
+      "module": "alphahome.fetchers.tasks.stock.tinysoft_stock_industry_versioned",
+      "type": "fetch",
+      "table": "stock_industry_versioned",
+      "source": "tinysoft",
+      "contract": null
+    },
+    {
+      "name": "tinysoft_stock_lending_balance",
+      "module": "alphahome.fetchers.tasks.stock.tinysoft_stock_lending_ext",
+      "type": "fetch",
+      "table": "stock_lending_balance",
+      "source": "tinysoft",
+      "contract": null
+    },
+    {
+      "name": "tinysoft_stock_lending_summary",
+      "module": "alphahome.fetchers.tasks.stock.tinysoft_stock_lending_ext",
+      "type": "fetch",
+      "table": "stock_lending_summary",
+      "source": "tinysoft",
+      "contract": null
+    },
+    {
+      "name": "tinysoft_stock_lending_trade",
+      "module": "alphahome.fetchers.tasks.stock.tinysoft_stock_lending_ext",
+      "type": "fetch",
+      "table": "stock_lending_trade",
+      "source": "tinysoft",
+      "contract": null
+    },
+    {
+      "name": "tinysoft_stock_margin",
+      "module": "alphahome.fetchers.tasks.stock.tinysoft_stock_margin",
+      "type": "fetch",
+      "table": "stock_margin",
+      "source": "tinysoft",
+      "contract": null
+    },
+    {
+      "name": "tinysoft_stock_margindetail",
+      "module": "alphahome.fetchers.tasks.stock.tinysoft_stock_margin",
+      "type": "fetch",
+      "table": "stock_margindetail",
+      "source": "tinysoft",
+      "contract": null
+    },
+    {
+      "name": "tinysoft_stock_minute",
+      "module": "alphahome.fetchers.tasks.stock.tinysoft_stock_minute",
+      "type": "fetch",
+      "table": "stock_minute",
+      "source": "tinysoft",
+      "contract": null
+    },
+    {
+      "name": "tinysoft_stock_pledge_balance",
+      "module": "alphahome.fetchers.tasks.stock.tinysoft_stock_pledge_ext",
+      "type": "fetch",
+      "table": "stock_pledge_balance",
+      "source": "tinysoft",
+      "contract": null
+    },
+    {
+      "name": "tinysoft_stock_pledge_detail",
+      "module": "alphahome.fetchers.tasks.stock.tinysoft_stock_pledge_ext",
+      "type": "fetch",
+      "table": "stock_pledge_detail",
+      "source": "tinysoft",
+      "contract": null
+    },
+    {
+      "name": "tinysoft_stock_pledge_rate",
+      "module": "alphahome.fetchers.tasks.stock.tinysoft_stock_pledge_ext",
+      "type": "fetch",
+      "table": "stock_pledge_rate",
+      "source": "tinysoft",
+      "contract": null
+    },
+    {
+      "name": "tinysoft_stock_pledge_summary",
+      "module": "alphahome.fetchers.tasks.stock.tinysoft_stock_pledge_ext",
+      "type": "fetch",
+      "table": "stock_pledge_summary",
+      "source": "tinysoft",
+      "contract": null
+    },
+    {
+      "name": "tinysoft_stock_public_trade_info",
+      "module": "alphahome.fetchers.tasks.stock.tinysoft_stock_events_ext",
+      "type": "fetch",
+      "table": "stock_public_trade_info",
+      "source": "tinysoft",
+      "contract": null
+    },
+    {
+      "name": "tinysoft_stock_repurchase_ext",
+      "module": "alphahome.fetchers.tasks.stock.tinysoft_stock_events_ext",
+      "type": "fetch",
+      "table": "stock_repurchase_ext",
+      "source": "tinysoft",
+      "contract": null
+    },
+    {
+      "name": "tinysoft_stock_suspend",
+      "module": "alphahome.fetchers.tasks.stock.tinysoft_stock_suspend",
+      "type": "fetch",
+      "table": "stock_suspend",
+      "source": "tinysoft",
+      "contract": null
+    },
+    {
+      "name": "tinysoft_stock_unlock_schedule",
+      "module": "alphahome.fetchers.tasks.stock.tinysoft_stock_events_ext",
+      "type": "fetch",
+      "table": "stock_unlock_schedule",
+      "source": "tinysoft",
+      "contract": null
+    },
+    {
+      "name": "tushare_cbond_basic",
+      "module": "alphahome.fetchers.tasks.cbond.tushare_cbond_basic",
+      "type": "fetch",
+      "table": "cbond_basic",
+      "source": "tushare",
+      "contract": null
+    },
+    {
+      "name": "tushare_cbond_call",
+      "module": "alphahome.fetchers.tasks.cbond.tushare_cbond_call",
+      "type": "fetch",
+      "table": "cbond_call",
+      "source": "tushare",
+      "contract": null
+    },
+    {
+      "name": "tushare_cbond_daily",
+      "module": "alphahome.fetchers.tasks.cbond.tushare_cbond_daily",
+      "type": "fetch",
+      "table": "cbond_daily",
+      "source": "tushare",
+      "contract": null
+    },
+    {
+      "name": "tushare_cbond_factor_pro",
+      "module": "alphahome.fetchers.tasks.cbond.tushare_cbond_factor_pro",
+      "type": "fetch",
+      "table": "cbond_factor_pro",
+      "source": "tushare",
+      "contract": null
+    },
+    {
+      "name": "tushare_cbond_issue",
+      "module": "alphahome.fetchers.tasks.cbond.tushare_cbond_issue",
+      "type": "fetch",
+      "table": "cbond_issue",
+      "source": "tushare",
+      "contract": null
+    },
+    {
+      "name": "tushare_cbond_rate",
+      "module": "alphahome.fetchers.tasks.cbond.tushare_cbond_rate",
+      "type": "fetch",
+      "table": "cbond_rate",
+      "source": "tushare",
+      "contract": null
+    },
+    {
+      "name": "tushare_cbond_share",
+      "module": "alphahome.fetchers.tasks.cbond.tushare_cbond_share",
+      "type": "fetch",
+      "table": "cbond_share",
+      "source": "tushare",
+      "contract": null
+    },
+    {
+      "name": "tushare_fina_balancesheet",
+      "module": "alphahome.fetchers.tasks.finance.tushare_fina_balancesheet",
+      "type": "fetch",
+      "table": "fina_balancesheet",
+      "source": "tushare",
+      "contract": null
+    },
+    {
+      "name": "tushare_fina_cashflow",
+      "module": "alphahome.fetchers.tasks.finance.tushare_fina_cashflow",
+      "type": "fetch",
+      "table": "fina_cashflow",
+      "source": "tushare",
+      "contract": null
+    },
+    {
+      "name": "tushare_fina_disclosure",
+      "module": "alphahome.fetchers.tasks.finance.tushare_fina_disclosure",
+      "type": "fetch",
+      "table": "fina_disclosure",
+      "source": "tushare",
+      "contract": null
+    },
+    {
+      "name": "tushare_fina_express",
+      "module": "alphahome.fetchers.tasks.finance.tushare_fina_express",
+      "type": "fetch",
+      "table": "fina_express",
+      "source": "tushare",
+      "contract": null
+    },
+    {
+      "name": "tushare_fina_forecast",
+      "module": "alphahome.fetchers.tasks.finance.tushare_fina_forecast",
+      "type": "fetch",
+      "table": "fina_forecast",
+      "source": "tushare",
+      "contract": null
+    },
+    {
+      "name": "tushare_fina_income",
+      "module": "alphahome.fetchers.tasks.finance.tushare_fina_income",
+      "type": "fetch",
+      "table": "fina_income",
+      "source": "tushare",
+      "contract": null
+    },
+    {
+      "name": "tushare_fina_indicator",
+      "module": "alphahome.fetchers.tasks.finance.tushare_fina_indicator",
+      "type": "fetch",
+      "table": "fina_indicator",
+      "source": "tushare",
+      "contract": null
+    },
+    {
+      "name": "tushare_fina_mainbz",
+      "module": "alphahome.fetchers.tasks.finance.tushare_fina_mainbz",
+      "type": "fetch",
+      "table": "fina_mainbz",
+      "source": "tushare",
+      "contract": null
+    },
+    {
+      "name": "tushare_fund_adjfactor",
+      "module": "alphahome.fetchers.tasks.fund.tushare_fund_adjfactor",
+      "type": "fetch",
+      "table": "fund_adjfactor",
+      "source": "tushare",
+      "contract": null
+    },
+    {
+      "name": "tushare_fund_basic",
+      "module": "alphahome.fetchers.tasks.fund.tushare_fund_basic",
+      "type": "fetch",
+      "table": "fund_basic",
+      "source": "tushare",
+      "contract": null
+    },
+    {
+      "name": "tushare_fund_daily",
+      "module": "alphahome.fetchers.tasks.fund.tushare_fund_daily",
+      "type": "fetch",
+      "table": "fund_daily",
+      "source": "tushare",
+      "contract": null
+    },
+    {
+      "name": "tushare_fund_dividend",
+      "module": "alphahome.fetchers.tasks.fund.tushare_fund_dividend",
+      "type": "fetch",
+      "table": "fund_dividend",
+      "source": "tushare",
+      "contract": null
+    },
+    {
+      "name": "tushare_fund_etf_basic",
+      "module": "alphahome.fetchers.tasks.fund.tushare_fund_etf_basic",
+      "type": "fetch",
+      "table": "fund_etf_basic",
+      "source": "tushare",
+      "contract": null
+    },
+    {
+      "name": "tushare_fund_etf_index",
+      "module": "alphahome.fetchers.tasks.fund.tushare_fund_etf_index",
+      "type": "fetch",
+      "table": "fund_etf_index",
+      "source": "tushare",
+      "contract": null
+    },
+    {
+      "name": "tushare_fund_factor_pro",
+      "module": "alphahome.fetchers.tasks.fund.tushare_fund_factor_pro",
+      "type": "fetch",
+      "table": "fund_factor_pro",
+      "source": "tushare",
+      "contract": null
+    },
+    {
+      "name": "tushare_fund_manager",
+      "module": "alphahome.fetchers.tasks.fund.tushare_fund_manager",
+      "type": "fetch",
+      "table": "fund_manager",
+      "source": "tushare",
+      "contract": null
+    },
+    {
+      "name": "tushare_fund_nav",
+      "module": "alphahome.fetchers.tasks.fund.tushare_fund_nav",
+      "type": "fetch",
+      "table": "fund_nav",
+      "source": "tushare",
+      "contract": null
+    },
+    {
+      "name": "tushare_fund_portfolio",
+      "module": "alphahome.fetchers.tasks.fund.tushare_fund_portfolio",
+      "type": "fetch",
+      "table": "fund_portfolio",
+      "source": "tushare",
+      "contract": null
+    },
+    {
+      "name": "tushare_fund_share",
+      "module": "alphahome.fetchers.tasks.fund.tushare_fund_share",
+      "type": "fetch",
+      "table": "fund_share",
+      "source": "tushare",
+      "contract": null
+    },
+    {
+      "name": "tushare_future_basic",
+      "module": "alphahome.fetchers.tasks.future.tushare_future_basic",
+      "type": "fetch",
+      "table": "future_basic",
+      "source": "tushare",
+      "contract": null
+    },
+    {
+      "name": "tushare_future_daily",
+      "module": "alphahome.fetchers.tasks.future.tushare_future_daily",
+      "type": "fetch",
+      "table": "future_daily",
+      "source": "tushare",
+      "contract": null
+    },
+    {
+      "name": "tushare_future_holding",
+      "module": "alphahome.fetchers.tasks.future.tushare_future_holding",
+      "type": "fetch",
+      "table": "future_holding",
+      "source": "tushare",
+      "contract": null
+    },
+    {
+      "name": "tushare_future_mapping",
+      "module": "alphahome.fetchers.tasks.future.tushare_future_mapping",
+      "type": "fetch",
+      "table": "future_mapping",
+      "source": "tushare",
+      "contract": null
+    },
+    {
+      "name": "tushare_hk_basic",
+      "module": "alphahome.fetchers.tasks.hk.tushare_hk_basic",
+      "type": "fetch",
+      "table": "hk_basic",
+      "source": "tushare",
+      "contract": null
+    },
+    {
+      "name": "tushare_index_basic",
+      "module": "alphahome.fetchers.tasks.index.tushare_index_basic",
+      "type": "fetch",
+      "table": "index_basic",
+      "source": "tushare",
+      "contract": null
+    },
+    {
+      "name": "tushare_index_cidaily",
+      "module": "alphahome.fetchers.tasks.index.tushare_index_cidaily",
+      "type": "fetch",
+      "table": "index_cidaily",
+      "source": "tushare",
+      "contract": null
+    },
+    {
+      "name": "tushare_index_cimember",
+      "module": "alphahome.fetchers.tasks.index.tushare_index_cimember",
+      "type": "fetch",
+      "table": "index_cimember",
+      "source": "tushare",
+      "contract": null
+    },
+    {
+      "name": "tushare_index_dailybasic",
+      "module": "alphahome.fetchers.tasks.index.tushare_index_dailybasic",
+      "type": "fetch",
+      "table": "index_dailybasic",
+      "source": "tushare",
+      "contract": null
+    },
+    {
+      "name": "tushare_index_factor_pro",
+      "module": "alphahome.fetchers.tasks.index.tushare_index_factor",
+      "type": "fetch",
+      "table": "index_factor_pro",
+      "source": "tushare",
+      "contract": null
+    },
+    {
+      "name": "tushare_index_global",
+      "module": "alphahome.fetchers.tasks.index.tushare_index_global",
+      "type": "fetch",
+      "table": "index_global",
+      "source": "tushare",
+      "contract": null
+    },
+    {
+      "name": "tushare_index_swdaily",
+      "module": "alphahome.fetchers.tasks.index.tushare_index_swdaily",
+      "type": "fetch",
+      "table": "index_swdaily",
+      "source": "tushare",
+      "contract": null
+    },
+    {
+      "name": "tushare_index_swmember",
+      "module": "alphahome.fetchers.tasks.index.tushare_index_swmember",
+      "type": "fetch",
+      "table": "index_swmember",
+      "source": "tushare",
+      "contract": null
+    },
+    {
+      "name": "tushare_index_weight",
+      "module": "alphahome.fetchers.tasks.index.tushare_index_weight",
+      "type": "fetch",
+      "table": "index_weight",
+      "source": "tushare",
+      "contract": null
+    },
+    {
+      "name": "tushare_macro_cnm",
+      "module": "alphahome.fetchers.tasks.macro.tushare_macro_cnm",
+      "type": "fetch",
+      "table": "macro_cn_m",
+      "source": "tushare",
+      "contract": null
+    },
+    {
+      "name": "tushare_macro_cpi",
+      "module": "alphahome.fetchers.tasks.macro.tushare_macro_cpi",
+      "type": "fetch",
+      "table": "macro_cpi",
+      "source": "tushare",
+      "contract": null
+    },
+    {
+      "name": "tushare_macro_ecocal",
+      "module": "alphahome.fetchers.tasks.macro.tushare_macro_ecocal",
+      "type": "fetch",
+      "table": "macro_ecocal",
+      "source": "tushare",
+      "contract": null
+    },
+    {
+      "name": "tushare_macro_hibor",
+      "module": "alphahome.fetchers.tasks.macro.tushare_macro_hibor",
+      "type": "fetch",
+      "table": "macro_hibor",
+      "source": "tushare",
+      "contract": null
+    },
+    {
+      "name": "tushare_macro_pmi",
+      "module": "alphahome.fetchers.tasks.macro.tushare_macro_pmi",
+      "type": "fetch",
+      "table": "macro_pmi",
+      "source": "tushare",
+      "contract": null
+    },
+    {
+      "name": "tushare_macro_ppi",
+      "module": "alphahome.fetchers.tasks.macro.tushare_macro_ppi",
+      "type": "fetch",
+      "table": "macro_ppi",
+      "source": "tushare",
+      "contract": null
+    },
+    {
+      "name": "tushare_macro_sf",
+      "module": "alphahome.fetchers.tasks.macro.tushare_macro_sf",
+      "type": "fetch",
+      "table": "macro_sf_month",
+      "source": "tushare",
+      "contract": null
+    },
+    {
+      "name": "tushare_macro_shibor",
+      "module": "alphahome.fetchers.tasks.macro.tushare_macro_shibor",
+      "type": "fetch",
+      "table": "macro_shibor",
+      "source": "tushare",
+      "contract": null
+    },
+    {
+      "name": "tushare_option_basic",
+      "module": "alphahome.fetchers.tasks.option.tushare_option_basic",
+      "type": "fetch",
+      "table": "option_basic",
+      "source": "tushare",
+      "contract": null
+    },
+    {
+      "name": "tushare_option_daily",
+      "module": "alphahome.fetchers.tasks.option.tushare_option_daily",
+      "type": "fetch",
+      "table": "option_daily",
+      "source": "tushare",
+      "contract": null
+    },
+    {
+      "name": "tushare_others_hktradecal",
+      "module": "alphahome.fetchers.tasks.others.tushare_others_hktradecal",
+      "type": "fetch",
+      "table": "others_calendar",
+      "source": "tushare",
+      "contract": null
+    },
+    {
+      "name": "tushare_others_tradecal",
+      "module": "alphahome.fetchers.tasks.others.tushare_others_tradecal",
+      "type": "fetch",
+      "table": "others_calendar",
+      "source": "tushare",
+      "contract": null
+    },
+    {
+      "name": "tushare_stock_adjfactor",
+      "module": "alphahome.fetchers.tasks.stock.tushare_stock_adjfactor",
+      "type": "fetch",
+      "table": "stock_adjfactor",
+      "source": "tushare",
+      "contract": null
+    },
+    {
+      "name": "tushare_stock_ahcomparison",
+      "module": "alphahome.fetchers.tasks.stock.tushare_stock_ahcomparison",
+      "type": "fetch",
+      "table": "stock_ahcomparison",
+      "source": "tushare",
+      "contract": null
+    },
+    {
+      "name": "tushare_stock_basic",
+      "module": "alphahome.fetchers.tasks.stock.tushare_stock_basic",
+      "type": "fetch",
+      "table": "stock_basic",
+      "source": "tushare",
+      "contract": null
+    },
+    {
+      "name": "tushare_stock_blocktrade",
+      "module": "alphahome.fetchers.tasks.stock.tushare_stock_blocktrade",
+      "type": "fetch",
+      "table": "stock_blocktrade",
+      "source": "tushare",
+      "contract": null
+    },
+    {
+      "name": "tushare_stock_codemapping",
+      "module": "alphahome.fetchers.tasks.stock.tushare_stock_codemapping",
+      "type": "processor",
+      "table": "stock_code_mapping",
+      "source": "tushare",
+      "contract": null
+    },
+    {
+      "name": "tushare_stock_daily",
+      "module": "alphahome.fetchers.tasks.stock.tushare_stock_daily",
+      "type": "fetch",
+      "table": "stock_daily",
+      "source": "tushare",
+      "contract": null
+    },
+    {
+      "name": "tushare_stock_dailybasic",
+      "module": "alphahome.fetchers.tasks.stock.tushare_stock_dailybasic",
+      "type": "fetch",
+      "table": "stock_dailybasic",
+      "source": "tushare",
+      "contract": null
+    },
+    {
+      "name": "tushare_stock_dcdaily",
+      "module": "alphahome.fetchers.tasks.stock.tushare_stock_dcdaily",
+      "type": "fetch",
+      "table": "stock_dcdaily",
+      "source": "tushare",
+      "contract": null
+    },
+    {
+      "name": "tushare_stock_dcindex",
+      "module": "alphahome.fetchers.tasks.stock.tushare_stock_dcindex",
+      "type": "fetch",
+      "table": "stock_dcindex",
+      "source": "tushare",
+      "contract": null
+    },
+    {
+      "name": "tushare_stock_dcmember",
+      "module": "alphahome.fetchers.tasks.stock.tushare_stock_dcmember",
+      "type": "fetch",
+      "table": "stock_dcmember",
+      "source": "tushare",
+      "contract": null
+    },
+    {
+      "name": "tushare_stock_dividend",
+      "module": "alphahome.fetchers.tasks.stock.tushare_stock_dividend",
+      "type": "fetch",
+      "table": "stock_dividend",
+      "source": "tushare",
+      "contract": null
+    },
+    {
+      "name": "tushare_stock_factor_pro",
+      "module": "alphahome.fetchers.tasks.stock.tushare_stock_factor",
+      "type": "fetch",
+      "table": "stock_factor_pro",
+      "source": "tushare",
+      "contract": null
+    },
+    {
+      "name": "tushare_stock_hk_hold",
+      "module": "alphahome.fetchers.tasks.stock.tushare_stock_hk_hold",
+      "type": "fetch",
+      "table": "stock_hk_hold",
+      "source": "tushare",
+      "contract": null
+    },
+    {
+      "name": "tushare_stock_holdernumber",
+      "module": "alphahome.fetchers.tasks.stock.tushare_stock_holdernumber",
+      "type": "fetch",
+      "table": "stock_holdernumber",
+      "source": "tushare",
+      "contract": null
+    },
+    {
+      "name": "tushare_stock_holdertrade",
+      "module": "alphahome.fetchers.tasks.stock.tushare_stock_holdertrade",
+      "type": "fetch",
+      "table": "stock_holdertrade",
+      "source": "tushare",
+      "contract": null
+    },
+    {
+      "name": "tushare_stock_hsgt_top10",
+      "module": "alphahome.fetchers.tasks.stock.tushare_stock_hsgt_top10",
+      "type": "fetch",
+      "table": "stock_hsgt_top10",
+      "source": "tushare",
+      "contract": null
+    },
+    {
+      "name": "tushare_stock_kplconcept",
+      "module": "alphahome.fetchers.tasks.stock.tushare_stock_kplconcept",
+      "type": "fetch",
+      "table": "stock_kplconcept",
+      "source": "tushare",
+      "contract": null
+    },
+    {
+      "name": "tushare_stock_kpllist",
+      "module": "alphahome.fetchers.tasks.stock.tushare_stock_kpllist",
+      "type": "fetch",
+      "table": "stock_kpllist",
+      "source": "tushare",
+      "contract": null
+    },
+    {
+      "name": "tushare_stock_kplmember",
+      "module": "alphahome.fetchers.tasks.stock.tushare_stock_kplmember",
+      "type": "fetch",
+      "table": "stock_kplmember",
+      "source": "tushare",
+      "contract": null
+    },
+    {
+      "name": "tushare_stock_limitlist",
+      "module": "alphahome.fetchers.tasks.stock.tushare_stock_limitlist",
+      "type": "fetch",
+      "table": "stock_limitlist",
+      "source": "tushare",
+      "contract": null
+    },
+    {
+      "name": "tushare_stock_limitprice",
+      "module": "alphahome.fetchers.tasks.stock.tushare_stock_limitprice",
+      "type": "fetch",
+      "table": "stock_limitprice",
+      "source": "tushare",
+      "contract": null
+    },
+    {
+      "name": "tushare_stock_margin",
+      "module": "alphahome.fetchers.tasks.stock.tushare_stock_margin",
+      "type": "fetch",
+      "table": "stock_margin",
+      "source": "tushare",
+      "contract": null
+    },
+    {
+      "name": "tushare_stock_margindetail",
+      "module": "alphahome.fetchers.tasks.stock.tushare_stock_margindetail",
+      "type": "fetch",
+      "table": "stock_margindetail",
+      "source": "tushare",
+      "contract": null
+    },
+    {
+      "name": "tushare_stock_moneyflow",
+      "module": "alphahome.fetchers.tasks.stock.tushare_stock_moneyflow",
+      "type": "fetch",
+      "table": "stock_moneyflow",
+      "source": "tushare",
+      "contract": null
+    },
+    {
+      "name": "tushare_stock_moneyflow_hsgt",
+      "module": "alphahome.fetchers.tasks.stock.tushare_stock_moneyflow_hsgt",
+      "type": "fetch",
+      "table": "stock_moneyflow_hsgt",
+      "source": "tushare",
+      "contract": null
+    },
+    {
+      "name": "tushare_stock_monthly",
+      "module": "alphahome.fetchers.tasks.stock.tushare_stock_monthly",
+      "type": "fetch",
+      "table": "stock_monthly",
+      "source": "tushare",
+      "contract": null
+    },
+    {
+      "name": "tushare_stock_namechange",
+      "module": "alphahome.fetchers.tasks.stock.tushare_stock_namechange",
+      "type": "fetch",
+      "table": "stock_namechange",
+      "source": "tushare",
+      "contract": null
+    },
+    {
+      "name": "tushare_stock_pledgestat",
+      "module": "alphahome.fetchers.tasks.stock.tushare_stock_pledgestat",
+      "type": "fetch",
+      "table": "stock_pledgestat",
+      "source": "tushare",
+      "contract": null
+    },
+    {
+      "name": "tushare_stock_report_rc",
+      "module": "alphahome.fetchers.tasks.stock.tushare_stock_report_rc",
+      "type": "fetch",
+      "table": "stock_report_rc",
+      "source": "tushare",
+      "contract": null
+    },
+    {
+      "name": "tushare_stock_repurchase",
+      "module": "alphahome.fetchers.tasks.stock.tushare_stock_repurchase",
+      "type": "fetch",
+      "table": "stock_repurchase",
+      "source": "tushare",
+      "contract": null
+    },
+    {
+      "name": "tushare_stock_sharefloat",
+      "module": "alphahome.fetchers.tasks.stock.tushare_stock_sharefloat",
+      "type": "fetch",
+      "table": "stock_sharefloat",
+      "source": "tushare",
+      "contract": null
+    },
+    {
+      "name": "tushare_stock_st",
+      "module": "alphahome.fetchers.tasks.stock.tushare_stock_st",
+      "type": "fetch",
+      "table": "stock_st",
+      "source": "tushare",
+      "contract": null
+    },
+    {
+      "name": "tushare_stock_thsdaily",
+      "module": "alphahome.fetchers.tasks.stock.tushare_stock_thsdaily",
+      "type": "fetch",
+      "table": "stock_thsdaily",
+      "source": "tushare",
+      "contract": null
+    },
+    {
+      "name": "tushare_stock_thsindex",
+      "module": "alphahome.fetchers.tasks.stock.tushare_stock_thsindex",
+      "type": "fetch",
+      "table": "stock_thsindex",
+      "source": "tushare",
+      "contract": null
+    },
+    {
+      "name": "tushare_stock_thsmember",
+      "module": "alphahome.fetchers.tasks.stock.tushare_stock_thsmember",
+      "type": "fetch",
+      "table": "stock_thsmember",
+      "source": "tushare",
+      "contract": null
+    },
+    {
+      "name": "tushare_stock_topinst",
+      "module": "alphahome.fetchers.tasks.stock.tushare_stock_topinst",
+      "type": "fetch",
+      "table": "stock_topinst",
+      "source": "tushare",
+      "contract": null
+    },
+    {
+      "name": "tushare_stock_toplist",
+      "module": "alphahome.fetchers.tasks.stock.tushare_stock_toplist",
+      "type": "fetch",
+      "table": "stock_toplist",
+      "source": "tushare",
+      "contract": null
+    },
+    {
+      "name": "tushare_stock_weekly",
+      "module": "alphahome.fetchers.tasks.stock.tushare_stock_weekly",
+      "type": "fetch",
+      "table": "stock_weekly",
+      "source": "tushare",
+      "contract": null
+    }
+  ],
+  "features": [
+    {
+      "name": "stock_balance_quarterly",
+      "module": "alphahome.features.recipes.mv.stock.stock_balance_quarterly",
+      "target": "features.mv_stock_balance_quarterly",
+      "sources": [
+        "rawdata.fina_balancesheet",
+        "rawdata.fina_express"
+      ],
+      "strategies": [
+        "full",
+        "concurrent"
+      ],
+      "primary_keys": []
+    },
+    {
+      "name": "stock_daily_enriched",
+      "module": "alphahome.features.recipes.mv.stock.stock_daily_enriched",
+      "target": "features.mv_stock_daily_enriched",
+      "sources": [
+        "rawdata.stock_daily",
+        "rawdata.stock_dailybasic"
+      ],
+      "strategies": [
+        "full",
+        "incremental"
+      ],
+      "primary_keys": [
+        "ts_code",
+        "trade_date"
+      ]
+    },
+    {
+      "name": "stock_fina_indicator",
+      "module": "alphahome.features.recipes.mv.stock.stock_fina_indicator",
+      "target": "features.mv_stock_fina_indicator",
+      "sources": [
+        "rawdata.fina_indicator"
+      ],
+      "strategies": [
+        "full",
+        "concurrent"
+      ],
+      "primary_keys": []
+    },
+    {
+      "name": "stock_income_quarterly",
+      "module": "alphahome.features.recipes.mv.stock.stock_income_quarterly",
+      "target": "features.mv_stock_income_quarterly",
+      "sources": [
+        "rawdata.fina_income",
+        "rawdata.fina_express",
+        "rawdata.fina_forecast"
+      ],
+      "strategies": [
+        "full",
+        "concurrent"
+      ],
+      "primary_keys": []
+    },
+    {
+      "name": "stock_industry_monthly_snapshot",
+      "module": "alphahome.features.recipes.mv.stock.stock_industry_monthly_snapshot",
+      "target": "features.mv_stock_industry_monthly_snapshot",
+      "sources": [
+        "rawdata.index_swmember",
+        "rawdata.index_cimember"
+      ],
+      "strategies": [
+        "full",
+        "concurrent"
+      ],
+      "primary_keys": []
+    },
+    {
+      "name": "stock_cashflow_quarterly",
+      "module": "alphahome.features.recipes.mv.stock.stock_cashflow_quarterly",
+      "target": "features.mv_stock_cashflow_quarterly",
+      "sources": [
+        "rawdata.fina_cashflow"
+      ],
+      "strategies": [
+        "full",
+        "concurrent"
+      ],
+      "primary_keys": []
+    },
+    {
+      "name": "stock_shareholder_concentration",
+      "module": "alphahome.features.recipes.mv.stock.stock_shareholder_concentration",
+      "target": "features.mv_stock_shareholder_concentration",
+      "sources": [
+        "rawdata.stock_holdernumber"
+      ],
+      "strategies": [
+        "full",
+        "concurrent"
+      ],
+      "primary_keys": []
+    },
+    {
+      "name": "stock_toplist_event_daily",
+      "module": "alphahome.features.recipes.mv.stock.stock_toplist_event_daily",
+      "target": "features.mv_stock_toplist_event_daily",
+      "sources": [
+        "rawdata.stock_toplist",
+        "rawdata.stock_daily"
+      ],
+      "strategies": [
+        "full",
+        "concurrent"
+      ],
+      "primary_keys": []
+    },
+    {
+      "name": "stock_analyst_coverage",
+      "module": "alphahome.features.recipes.mv.stock.stock_analyst_coverage",
+      "target": "features.mv_stock_analyst_coverage",
+      "sources": [
+        "rawdata.stock_report_rc"
+      ],
+      "strategies": [
+        "full",
+        "concurrent"
+      ],
+      "primary_keys": []
+    },
+    {
+      "name": "stock_sharefloat_schedule",
+      "module": "alphahome.features.recipes.mv.stock.stock_sharefloat_schedule",
+      "target": "features.mv_stock_sharefloat_schedule",
+      "sources": [
+        "rawdata.stock_sharefloat",
+        "rawdata.stock_dailybasic"
+      ],
+      "strategies": [
+        "full",
+        "concurrent"
+      ],
+      "primary_keys": []
+    },
+    {
+      "name": "market_stats_daily",
+      "module": "alphahome.features.recipes.mv.market.market_stats_daily",
+      "target": "features.mv_market_stats_daily",
+      "sources": [
+        "rawdata.stock_dailybasic"
+      ],
+      "strategies": [
+        "full",
+        "concurrent"
+      ],
+      "primary_keys": []
+    },
+    {
+      "name": "market_sentiment_daily",
+      "module": "alphahome.features.recipes.mv.market.market_sentiment_daily",
+      "target": "features.mv_market_sentiment_daily",
+      "sources": [
+        "tushare.stock_factor_pro",
+        "tushare.stock_limitlist",
+        "tushare.stock_st",
+        "tushare.stock_margin",
+        "tushare.stock_dailybasic"
+      ],
+      "strategies": [
+        "full",
+        "incremental"
+      ],
+      "primary_keys": [
+        "trade_date"
+      ]
+    },
+    {
+      "name": "market_technical_daily",
+      "module": "alphahome.features.recipes.mv.market.market_technical_daily",
+      "target": "features.mv_market_technical_daily",
+      "sources": [
+        "tushare.stock_factor_pro"
+      ],
+      "strategies": [
+        "full",
+        "incremental"
+      ],
+      "primary_keys": [
+        "trade_date"
+      ]
+    },
+    {
+      "name": "market_size_daily",
+      "module": "alphahome.features.recipes.mv.market.market_size_daily",
+      "target": "features.mv_market_size_daily",
+      "sources": [
+        "tushare.stock_factor_pro"
+      ],
+      "strategies": [
+        "full",
+        "concurrent"
+      ],
+      "primary_keys": []
+    },
+    {
+      "name": "margin_turnover_daily",
+      "module": "alphahome.features.recipes.mv.market.margin_turnover_daily",
+      "target": "features.mv_margin_turnover_daily",
+      "sources": [
+        "tushare.stock_margin",
+        "tushare.stock_daily"
+      ],
+      "strategies": [
+        "full",
+        "concurrent"
+      ],
+      "primary_keys": []
+    },
+    {
+      "name": "etf_flow_daily",
+      "module": "alphahome.features.recipes.mv.market.etf_flow_daily",
+      "target": "features.mv_etf_flow_daily",
+      "sources": [
+        "tushare.fund_share",
+        "tushare.fund_nav",
+        "tushare.fund_etf_basic"
+      ],
+      "strategies": [
+        "full",
+        "concurrent"
+      ],
+      "primary_keys": []
+    },
+    {
+      "name": "risk_appetite_daily",
+      "module": "alphahome.features.recipes.mv.market.risk_appetite_daily",
+      "target": "features.mv_risk_appetite_daily",
+      "sources": [
+        "tushare.stock_factor_pro",
+        "tushare.stock_st",
+        "tushare.stock_basic",
+        "tushare.cbond_daily"
+      ],
+      "strategies": [
+        "full",
+        "concurrent"
+      ],
+      "primary_keys": []
+    },
+    {
+      "name": "money_flow_daily",
+      "module": "alphahome.features.recipes.mv.market.money_flow_daily",
+      "target": "features.mv_money_flow_daily",
+      "sources": [
+        "tushare.stock_moneyflow"
+      ],
+      "strategies": [
+        "full",
+        "concurrent"
+      ],
+      "primary_keys": []
+    },
+    {
+      "name": "limit_industry_daily",
+      "module": "alphahome.features.recipes.mv.market.limit_industry_daily",
+      "target": "features.mv_limit_industry_daily",
+      "sources": [
+        "tushare.stock_limitlist",
+        "rawdata.index_swmember"
+      ],
+      "strategies": [
+        "full",
+        "concurrent"
+      ],
+      "primary_keys": []
+    },
+    {
+      "name": "concept_features_daily",
+      "module": "alphahome.features.recipes.mv.market.concept_features_daily",
+      "target": "features.mv_concept_features_daily",
+      "sources": [
+        "rawdata.stock_kplconcept"
+      ],
+      "strategies": [
+        "full",
+        "concurrent"
+      ],
+      "primary_keys": []
+    },
+    {
+      "name": "ah_premium_daily",
+      "module": "alphahome.features.recipes.mv.market.ah_premium_daily",
+      "target": "features.mv_ah_premium_daily",
+      "sources": [
+        "rawdata.stock_ahcomparison"
+      ],
+      "strategies": [
+        "full",
+        "concurrent"
+      ],
+      "primary_keys": []
+    },
+    {
+      "name": "repurchase_weekly",
+      "module": "alphahome.features.recipes.mv.market.repurchase_weekly",
+      "target": "features.mv_repurchase_weekly",
+      "sources": [
+        "tushare.stock_repurchase"
+      ],
+      "strategies": [
+        "full",
+        "concurrent"
+      ],
+      "primary_keys": []
+    },
+    {
+      "name": "holdertrade_weekly",
+      "module": "alphahome.features.recipes.mv.market.holdertrade_weekly",
+      "target": "features.mv_holdertrade_weekly",
+      "sources": [
+        "tushare.stock_holdertrade"
+      ],
+      "strategies": [
+        "full",
+        "concurrent"
+      ],
+      "primary_keys": []
+    },
+    {
+      "name": "index_features_daily",
+      "module": "alphahome.features.recipes.mv.index.index_features_daily",
+      "target": "features.mv_index_features_daily",
+      "sources": [
+        "tushare.index_dailybasic",
+        "tushare.index_factor_pro",
+        "akshare.macro_bond_rate"
+      ],
+      "strategies": [
+        "full",
+        "concurrent"
+      ],
+      "primary_keys": []
+    },
+    {
+      "name": "index_technical_daily",
+      "module": "alphahome.features.recipes.mv.index.index_technical_daily",
+      "target": "features.mv_index_technical_daily",
+      "sources": [
+        "tushare.index_factor_pro"
+      ],
+      "strategies": [
+        "full",
+        "concurrent"
+      ],
+      "primary_keys": []
+    },
+    {
+      "name": "index_fundamental_daily",
+      "module": "alphahome.features.recipes.mv.index.index_fundamental_daily",
+      "target": "features.mv_index_fundamental_daily",
+      "sources": [
+        "tushare.index_weight",
+        "tushare.stock_dailybasic"
+      ],
+      "strategies": [
+        "full",
+        "concurrent"
+      ],
+      "primary_keys": []
+    },
+    {
+      "name": "index_rsrs_daily",
+      "module": "alphahome.features.recipes.mv.index.index_rsrs_daily",
+      "target": "features.mv_index_rsrs_daily",
+      "sources": [
+        "rawdata.index_factor_pro"
+      ],
+      "strategies": [
+        "full",
+        "concurrent"
+      ],
+      "primary_keys": []
+    },
+    {
+      "name": "style_features_daily",
+      "module": "alphahome.features.recipes.mv.index.style_features_daily",
+      "target": "features.mv_style_features_daily",
+      "sources": [
+        "tushare.index_factor_pro"
+      ],
+      "strategies": [
+        "full",
+        "concurrent"
+      ],
+      "primary_keys": []
+    },
+    {
+      "name": "index_direct_valuation_daily",
+      "module": "alphahome.features.recipes.mv.index.index_direct_valuation_daily",
+      "target": "features.mv_index_direct_valuation_daily",
+      "sources": [
+        "rawdata.index_dailybasic",
+        "rawdata.index_swdaily"
+      ],
+      "strategies": [
+        "full",
+        "concurrent"
+      ],
+      "primary_keys": []
+    },
+    {
+      "name": "etf_exposure_technical_current_universe_daily",
+      "module": "alphahome.features.recipes.mv.index.etf_exposure_technical_current_universe_daily",
+      "target": "features.mv_etf_exposure_technical_current_universe_daily",
+      "sources": [
+        "fund_pool_on.etf_candidate_master_current",
+        "rawdata.index_factor_pro",
+        "rawdata.index_swdaily"
+      ],
+      "strategies": [
+        "full",
+        "concurrent"
+      ],
+      "primary_keys": []
+    },
+    {
+      "name": "industry_features_daily",
+      "module": "alphahome.features.recipes.mv.industry.industry_features_daily",
+      "target": "features.mv_industry_features_daily",
+      "sources": [
+        "tushare.index_swdaily",
+        "tushare.index_swmember"
+      ],
+      "strategies": [
+        "full",
+        "concurrent"
+      ],
+      "primary_keys": []
+    },
+    {
+      "name": "industry_toplist_signal_daily",
+      "module": "alphahome.features.recipes.mv.industry.industry_toplist_signal_daily",
+      "target": "features.mv_industry_toplist_signal_daily",
+      "sources": [
+        "rawdata.stock_toplist",
+        "rawdata.index_swmember",
+        "rawdata.stock_daily"
+      ],
+      "strategies": [
+        "full",
+        "incremental"
+      ],
+      "primary_keys": [
+        "industry_level",
+        "industry_code",
+        "trade_date"
+      ]
+    },
+    {
+      "name": "dc_index_features_daily",
+      "module": "alphahome.features.recipes.mv.industry.dc_index_features_daily",
+      "target": "features.mv_dc_index_features_daily",
+      "sources": [
+        "rawdata.stock_dcindex",
+        "rawdata.stock_dcdaily"
+      ],
+      "strategies": [
+        "full",
+        "incremental"
+      ],
+      "primary_keys": [
+        "ts_code",
+        "trade_date"
+      ]
+    },
+    {
+      "name": "industry_earnings_observation_monthly",
+      "module": "alphahome.features.recipes.mv.industry.industry_earnings_observation_monthly",
+      "target": "features.mv_industry_earnings_observation_monthly",
+      "sources": [
+        "pit.pit_industry_fapi_monthly",
+        "pit.pit_industry_fttm_monthly"
+      ],
+      "strategies": [
+        "full",
+        "concurrent"
+      ],
+      "primary_keys": []
+    },
+    {
+      "name": "futures_features_daily",
+      "module": "alphahome.features.recipes.mv.derivatives.futures_features_daily",
+      "target": "features.mv_futures_features_daily",
+      "sources": [
+        "tushare.future_daily",
+        "tushare.future_holding",
+        "rawdata.index_factor_pro"
+      ],
+      "strategies": [
+        "full",
+        "concurrent"
+      ],
+      "primary_keys": []
+    },
+    {
+      "name": "option_sentiment_daily",
+      "module": "alphahome.features.recipes.mv.derivatives.option_sentiment_daily",
+      "target": "features.mv_option_sentiment_daily",
+      "sources": [
+        "tushare.option_basic",
+        "tushare.option_daily"
+      ],
+      "strategies": [
+        "full",
+        "concurrent"
+      ],
+      "primary_keys": []
+    },
+    {
+      "name": "macro_liquidity_monthly",
+      "module": "alphahome.features.recipes.mv.macro.macro_liquidity_monthly",
+      "target": "features.mv_macro_liquidity_monthly",
+      "sources": [
+        "rawdata.macro_sf_month",
+        "rawdata.macro_cn_m"
+      ],
+      "strategies": [
+        "full",
+        "concurrent"
+      ],
+      "primary_keys": []
+    },
+    {
+      "name": "macro_rate_daily",
+      "module": "alphahome.features.recipes.mv.macro.macro_rate_daily",
+      "target": "features.mv_macro_rate_daily",
+      "sources": [
+        "akshare.macro_bond_rate"
+      ],
+      "strategies": [
+        "full",
+        "concurrent"
+      ],
+      "primary_keys": []
+    },
+    {
+      "name": "fund_holdings_quarterly",
+      "module": "alphahome.features.recipes.mv.fund.fund_holdings_quarterly",
+      "target": "features.mv_fund_holdings_quarterly",
+      "sources": [
+        "rawdata.fund_portfolio"
+      ],
+      "strategies": [
+        "full",
+        "concurrent"
+      ],
+      "primary_keys": []
+    },
+    {
+      "name": "etf_product_facts_current",
+      "module": "alphahome.features.recipes.mv.fund.etf_product_facts_current",
+      "target": "features.mv_etf_product_facts_current",
+      "sources": [
+        "rawdata.fund_etf_basic",
+        "rawdata.fund_basic",
+        "rawdata.fund_daily",
+        "rawdata.fund_nav",
+        "rawdata.fund_share"
+      ],
+      "strategies": [
+        "full",
+        "concurrent"
+      ],
+      "primary_keys": []
+    },
+    {
+      "name": "stock_sma_daily",
+      "module": "alphahome.features.recipes.python.stock_sma_daily",
+      "target": "features.mv_stock_sma_daily",
+      "sources": [
+        "rawdata.stock_daily"
+      ],
+      "strategies": [
+        "full",
+        "incremental"
+      ],
+      "primary_keys": [
+        "ts_code",
+        "trade_date"
+      ]
+    },
+    {
+      "name": "all_a_index_daily",
+      "module": "alphahome.features.recipes.python.index.all_a_index_daily",
+      "target": "features.all_a_index_daily",
+      "sources": [
+        "rawdata.stock_daily",
+        "rawdata.stock_dailybasic",
+        "rawdata.stock_basic",
+        "rawdata.stock_code_mapping",
+        "rawdata.stock_dividend",
+        "rawdata.others_calendar"
+      ],
+      "strategies": [
+        "full",
+        "incremental"
+      ],
+      "primary_keys": []
+    },
+    {
+      "name": "all_a_index_expma_monthly",
+      "module": "alphahome.features.recipes.python.index.all_a_expma_monthly",
+      "target": "features.all_a_expma_monthly",
+      "sources": [
+        "features.all_a_index_daily",
+        "rawdata.others_calendar"
+      ],
+      "strategies": [
+        "full",
+        "incremental"
+      ],
+      "primary_keys": []
+    }
+  ]
+}

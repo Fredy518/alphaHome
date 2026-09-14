@@ -34,7 +34,6 @@ from concurrent.futures import ThreadPoolExecutor
 # 添加项目根目录到 Python 路径
 sys.path.insert(0, '.')
 
-from alphahome.common.db_manager import create_async_manager
 from alphahome.common.logging_utils import get_logger
 from alphahome.common.task_system import UnifiedTaskFactory
 from alphahome.common.constants import UpdateTypes
@@ -87,6 +86,10 @@ class DataCollectionProductionUpdater:
     async def initialize(self):
         """初始化数据库连接和任务工厂"""
         try:
+            discover_tasks()
+            if self.dry_run:
+                logger.info("干运行只发现任务，不读取数据库配置或建立连接")
+                return True
             logger.info("正在初始化数据库连接...")
 
             # 获取数据库连接字符串
@@ -94,9 +97,8 @@ class DataCollectionProductionUpdater:
             if not db_url:
                 raise ValueError("无法获取数据库连接字符串，请检查配置文件")
 
-            self.db_manager = create_async_manager(db_url)
-            discover_tasks()
-            await UnifiedTaskFactory.initialize()
+            await UnifiedTaskFactory.initialize(db_url=db_url)
+            self.db_manager = UnifiedTaskFactory.get_db_manager()
 
             logger.info("[SUCCESS] 数据库连接和任务工厂初始化成功")
             return True
@@ -537,7 +539,10 @@ class DataCollectionProductionUpdater:
             if self.executor:
                 self.executor.shutdown(wait=True)
             if self.db_manager:
-                await self.db_manager.close()
+                if self.db_manager is UnifiedTaskFactory._db_manager:
+                    await UnifiedTaskFactory.shutdown()
+                else:
+                    await self.db_manager.close()
 
 
 async def main():

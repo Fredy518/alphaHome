@@ -8,7 +8,7 @@ AlphaHome 是一个面向个人和内部投研环境的量化数据与离线特�
 | --- | --- | --- |
 | `alphahome.fetchers` | 可用 | 统一任务框架，已覆盖 Tushare、AkShare、Tinysoft、Excel 等数据源任务 |
 | `alphahome.common` | 可用 | 配置、数据库、日志、任务生命周期、批处理规划等基础设施 |
-| `alphahome.features` | 可用 | 离线特征和物化视图，当前有 36 张 feature card、36 个 MV recipe、1 个 Python recipe |
+| `alphahome.features` | 可用 | 离线特征和物化视图，当前有 43 个注册配方，详见生成清单 |
 | `alphahome.factors` | 可用 | P/G 因子任务契约、FactorCoordinator、审计、诊断与可回滚修复 |
 | `alphahome.pit` | 可用 | PIT 财务表 manager、财务指标 calculator 和 PIT 更新协调器 |
 | `alphahome.providers` | 部分可用 | 面向研究脚本的简化数据访问工具 `AlphaDataTool` |
@@ -19,18 +19,16 @@ AlphaHome 是一个面向个人和内部投研环境的量化数据与离线特�
 
 ## 快速开始
 
-```bash
-python -m venv .venv
-.venv\Scripts\activate
-python -m pip install --upgrade pip
-pip install -e .
-
-# 可选数据源、研究和测试依赖
-pip install -e ".[akshare]"
-pip install -e ".[tinysoft]"  # Tinysoft pyTSL 后端
-pip install -e ".[research]"
-pip install -e ".[test]"
+```powershell
+# 在新环境安装锁定依赖；现有共享 Python 和 fundpos 环境单独维护
+$env:UV_PROJECT_ENVIRONMENT = 'E:\AlphaHomeRuntimes\candidate-20260914'
+uv sync --locked --python 3.12 --extra test --extra akshare
+uv lock --check --offline
+& "$env:UV_PROJECT_ENVIRONMENT\Scripts\python.exe" scripts/verify_runtime.py
 ```
+
+后续命令中的 `python` 指上述候选环境解释器。完整环境和最低版本验证见[可复现运行环境](docs/development/reproducible-runtime.md)。
+
 
 Tinysoft 的 pyTSL 后端通过 `tspytsl` 安装包提供 `import pyTSL`；OPI 后端使用已包含的 `aiohttp`，无需安装该可选依赖。平台要求及验证方法见[安装指南](docs/setup/installation.md#tinysoftpytsl)。
 
@@ -71,16 +69,17 @@ python scripts/production/data_updaters/tushare/data_collection_smart_update_pro
 # PIT 数据更新
 python scripts/production/data_updaters/pit/pit_data_update_production.py --target all --mode incremental
 
-# Features / MV 初始化
-python scripts/initialize_materialized_views.py
-python scripts/features_init.py --help
+# Features 只读发现、SQL 生成与帮助
+python -m alphahome.features list
+python -m alphahome.features schema
+python -m alphahome.features --help
 python scripts/features_validate_pit.py --help
 
 # P/G 因子补算
 python scripts/production/factor_calculators/p_factor/calculate_p_factor_for_specific_dates.py --dates 2026-05-08
 python scripts/production/factor_calculators/g_factor/calculate_g_factor_for_specific_dates.py --dates 2026-05-08
 
-# P/G 统一治理入口（默认只预览可先加 --dry-run）
+# P/G 统一治理入口（预览必须加 --dry-run；去掉会执行）
 python -m alphahome.factors run --tasks p g --mode smart --dry-run
 python -m alphahome.factors audit --tasks p g
 python -m alphahome.factors repair
@@ -95,6 +94,8 @@ Parquet 仅作入库事务的不可变审计与恢复输入，下游不读取 Ex
 
 部署边界、冻结版本和影子运行证据见
 [公募基金仓位测算 AlphaHome 生产接入记录](docs/tasks/fundpos_production_integration_20260914.md)。
+
+正式入口、运行状态与退役条件见[生产入口矩阵](docs/architecture/production-entrypoints.md)，206 个任务与 43 个配方详见[生成清单](docs/architecture/entrypoint-inventory.json)。生产迁移、角色、凭据、备份恢复和服务更新见[切换手册](docs/setup/production-cutover-runbook.md)。
 
 ## 项目结构
 
@@ -125,7 +126,7 @@ research/
 pytest tests/unit/ -v -m "not requires_db and not requires_api"
 ```
 
-需要数据库或外部 API 的测试请显式启用对应 marker，并确认 `~/.alphahome/config.json` 已配置。
+数据库测试只接受显式 `ALPHAHOME_TEST_DATABASE_URL`：literal loopback、非 5432 端口、`alphahome_test_` 库名前缀。未设置时数据库测试跳过，不读取生产配置作为测试目标。外部 API 测试另需 `ALPHAHOME_TEST_ALLOW_API=1`；日常验证保持未设置。
 
 ## 文档
 
@@ -140,4 +141,4 @@ pytest tests/unit/ -v -m "not requires_db and not requires_api"
 
 ## 许可证
 
-MIT License，详见 [LICENSE](LICENSE)。
+项目代码许可证见 [LICENSE](LICENSE)。第三方资料与冻结数据种子的再分发范围单独核实，见[资料登记](docs/architecture/asset-redistribution-ledger.md)。

@@ -163,20 +163,15 @@ async def create_materialized_views(db_manager: DBManager, views: list = None) -
     if views is None:
         views = get_all_view_classes()
 
-    results = {"success": [], "failed": []}
-
-    for view_class in views:
-        try:
-            view = view_class(db_manager=db_manager, schema="features")
-            logger.info(f"创建物化视图: {view.full_name}")
-            await view.create(if_not_exists=True)
-            results["success"].append(view.name)
-            logger.info(f"{view.name} 创建成功")
-        except Exception as e:
-            results["failed"].append({"name": view_class.name, "error": str(e)})
-            logger.error(f"{view_class.name} 创建失败: {e}")
-
-    return results
+    from alphahome.features.coordinator import execute_feature_request, GOOD
+    if not views:
+        return {"success": [], "failed": []}
+    outcome = await execute_feature_request(db_manager, [cls.name for cls in views], operation="create")
+    return {
+        "success": [name for name, result in outcome["results"].items() if result["status"] in GOOD],
+        "failed": [{"name": name, "error": result.get("error_message", result["status"])}
+                   for name, result in outcome["results"].items() if result["status"] not in GOOD],
+    }
 
 
 # ==============================================================================
@@ -196,7 +191,8 @@ async def main(args: argparse.Namespace) -> int:
     # 获取数据库连接 URL
     try:
         database_url = get_database_url()
-        logger.info(f"数据库连接: {database_url[:50]}...")
+        from alphahome.common.config_manager import redact_url
+        logger.info("数据库连接: %s", redact_url(database_url))
     except Exception as e:
         logger.error(f"获取数据库配置失败: {e}")
         return 1
@@ -221,7 +217,7 @@ async def main(args: argparse.Namespace) -> int:
             if status["views"]:
                 print(f"已创建的视图:       {', '.join(status['views'])}")
             print("=" * 60 + "\n")
-            return 0
+            return 0 if all(status[key] for key in ("schema_exists", "mv_metadata_exists", "mv_refresh_log_exists")) else 1
 
         # 初始化 schema 和元数据表
         logger.info("开始初始化 features schema...")

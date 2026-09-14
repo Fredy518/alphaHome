@@ -105,6 +105,15 @@ async def test_source_drift_rejects_before_creation(feature_plan_db):
     assert await connection.fetchval("SELECT to_regclass($1)", parent().full_name) is None
 
 
+async def test_legacy_create_facade_uses_same_dependency_chain(feature_plan_db):
+    connection, db, parent, child, source = feature_plan_db
+    from scripts.features_init import create_materialized_views
+    result = await create_materialized_views(db, [child])
+    assert result["success"] == [parent.name, child.name]
+    assert result["failed"] == []
+    assert await connection.fetchval("SELECT to_regclass($1)", parent().full_name)
+
+
 @pytest.mark.parametrize("fault", ["index", "metadata"])
 async def test_creation_failure_rolls_back_table_and_metadata(feature_plan_db, monkeypatch, fault):
     connection, db, parent, child, source = feature_plan_db

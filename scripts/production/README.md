@@ -1,5 +1,7 @@
 # 生产脚本说明
 
+> 当前入口、计划契约和退役条件以 [生产入口矩阵](../../docs/architecture/production-entrypoints.md) 为准。调度切换与生产迁移见 [切换手册](../../docs/setup/production-cutover-runbook.md)。
+
 `scripts/production/` 保存日常可运行的生产脚本。所有命令默认在仓库根目录执行。
 
 ## 目录
@@ -105,7 +107,7 @@ python scripts/production/factor_calculators/g_factor/calculate_g_factor_for_spe
 可一次传多个日期：
 
 ```bash
-python scripts/production/factor_calculators/p_factor/calculate_p_factor_for_specific_dates.py --dates 2026-05-08 2026-05-11
+python scripts/production/factor_calculators/p_factor/calculate_p_factor_for_specific_dates.py --dates 2026-05-08 2026-05-15
 ```
 
 ### 缺失日期批量补算

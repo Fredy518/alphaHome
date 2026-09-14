@@ -76,7 +76,7 @@ class TestCLIExecution:
     def test_prod_list_execution(self):
         """测试 prod list 命令执行"""
         result = main(['prod', 'list'])
-        assert result == exitcodes.SUCCESS
+        assert result == exitcodes.UNAVAILABLE
     
     def test_version_flag(self):
         """测试 --version 标志"""

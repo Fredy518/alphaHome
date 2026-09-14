@@ -16,6 +16,7 @@ features 重构后，推荐使用新入口：
 from __future__ import annotations
 
 import asyncio
+import argparse
 import logging
 import os
 import sys
@@ -27,7 +28,6 @@ sys.path.insert(0, str(project_root))
 
 from alphahome.common.config_manager import get_database_url
 from alphahome.common.db_manager import DBManager
-from alphahome.features import FeatureRegistry
 from alphahome.features.storage.database_init import FeaturesDatabaseInit
 
 
@@ -55,30 +55,19 @@ async def initialize_features_views(create_views: bool = True) -> bool:
         if not create_views:
             return True
 
-        view_classes = FeatureRegistry.discover()
-        results: dict[str, list] = {"success": [], "failed": []}
-
-        for view_cls in view_classes:
-            try:
-                view = view_cls(db_manager=db_manager, schema="features")
-                logger.info(f"创建物化视图: {view.full_name}")
-                await view.create(if_not_exists=True)
-                results["success"].append(view.name)
-            except Exception as e:
-                results["failed"].append({"name": view_cls.name, "error": str(e)})
-                logger.error(f"{view_cls.name} 创建失败: {e}")
-
-        logger.info(
-            f"物化视图创建完成：成功 {len(results['success'])} 个，失败 {len(results['failed'])} 个"
-        )
-        return len(results["failed"]) == 0
+        from scripts.features_init import create_materialized_views
+        results = await create_materialized_views(db_manager)
+        logger.info("Features 创建完成：成功 %s，失败 %s", len(results["success"]), len(results["failed"]))
+        return not results["failed"]
 
     finally:
         await db_manager.close()
         logger.info("数据库连接已关闭")
 
 
-def main() -> int:
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser(description="Legacy explicit Features schema/object installer; use python -m alphahome.features")
+    parser.parse_args(argv)
     setup_logging()
     logger = logging.getLogger(__name__)
 
@@ -97,4 +86,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

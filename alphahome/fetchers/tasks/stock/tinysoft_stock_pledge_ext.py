@@ -5,6 +5,9 @@
 
 from __future__ import annotations
 
+from typing import Any
+import pandas as pd
+
 from ....common.task_system.task_decorator import task_register
 from ..tinysoft_p0_base import tinysoft_symbol_to_ts_code_any
 from .tinysoft_stock_p0_base import TinySoftMarketCodeInfoArrayTask, TinySoftStockSymbolInfoArrayTask

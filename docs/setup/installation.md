@@ -8,26 +8,16 @@
 
 ## 安装
 
-```bash
-git clone https://github.com/your-repo/alphahome.git
-cd alphahome
+在已检出的仓库根目录，创建专用候选环境：
 
-python -m venv .venv
-.venv\Scripts\activate
-python -m pip install --upgrade pip
-pip install -e .
+```powershell
+$env:UV_PROJECT_ENVIRONMENT = 'E:\AlphaHomeRuntimes\candidate-20260914'
+uv sync --locked --python 3.12 --extra test --extra akshare
+uv lock --check --offline
+& "$env:UV_PROJECT_ENVIRONMENT\Scripts\python.exe" scripts/verify_runtime.py
 ```
 
-可选数据源、研究和测试依赖：
-
-```bash
-pip install -e ".[akshare]"
-pip install -e ".[tinysoft]"
-pip install -e ".[research]"
-pip install -e ".[test]"
-```
-
-本仓库以 `pyproject.toml` 管理依赖，当前没有 `requirements.txt`。
+依赖权威为根 `pyproject.toml` 和 `uv.lock`。可选组 `tinysoft/research/backtest` 按用途安装；不要将根环境同步到 fundpos 独立环境。完整说明见[可复现运行环境](../development/reproducible-runtime.md)。
 
 ### Tinysoft（pyTSL）
 
@@ -36,10 +26,10 @@ Tinysoft 有两个后端：`api.tinysoft.mode="pytsl"` 使用 pyTSL 原生模块
 在运行 AlphaHome 的 Python 环境中，从仓库根目录安装：
 
 ```bash
-python -m pip install -e ".[tinysoft]"
+uv sync --locked --extra tinysoft
 ```
 
-如只需单独安装或更新 pyTSL：
+仅在独立供应商诊断环境中单独安装 pyTSL；正式候选环境保持锁定：
 
 ```bash
 python -m pip install --upgrade "tspytsl>=1.9"
@@ -54,15 +44,9 @@ Windows 还需要 Visual C++ 运行库，64 位 Python 对应官方文档中的 
 
 ## 数据库
 
-创建 PostgreSQL 数据库：
+数据库创建和 schema 安装由维护角色执行，日常作业使用按领域授权的非超级用户。既有数据库先运行只读计划；缺表返回 `migration_required` 后单独准备迁移。不要用生产配置运行测试。
 
-```sql
-CREATE USER alphahome WITH PASSWORD 'your_password';
-CREATE DATABASE alphadb OWNER alphahome;
-GRANT ALL PRIVILEGES ON DATABASE alphadb TO alphahome;
-```
-
-如果你使用既有数据库，只需要确保配置中的 `database.url` 指向正确库。
+角色 SQL 生成、备份恢复、凭据轮换与切换顺序见[生产切换手册](production-cutover-runbook.md)。
 
 ## 配置
 
@@ -117,7 +101,7 @@ python run.py
 
 ## 常见问题
 
-- `ModuleNotFoundError`: 确认已在仓库根目录执行 `pip install -e .`。
+- `ModuleNotFoundError`: 确认使用候选环境解释器，且已执行 `uv sync --locked` 和所需 extra。
 - 配置不生效：确认文件在 `~/.alphahome/config.json`，不是仓库根目录的 `config.json`。
 - Tushare 任务无法启动：确认 `api.tushare_token` 或环境变量 `TUSHARE_TOKEN` 已设置。
 - 数据库连接失败：先用 `psql` 验证连接串，再检查 PostgreSQL 服务和防火墙。

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 import uuid
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Any, Sequence
 

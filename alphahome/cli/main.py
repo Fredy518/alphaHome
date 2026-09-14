@@ -4,13 +4,14 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from typing import List, Optional
 
 from .core import exitcodes
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="ah", description="AlphaHome CLI")
+    parser = argparse.ArgumentParser(prog="ah", description="Retired AlphaHome CLI; use alphahome.factors / alphahome.features / PIT entrypoints")
     parser.add_argument("--log-level", default="INFO")
     parser.add_argument("--format", default="text", choices=["text", "json"])
     parser.add_argument("--version", action="version", version="ah 1.0")
@@ -35,35 +36,23 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Optional[List[str]] = None) -> int:
     parser = build_parser()
-    args_list = list(argv or [])
+    args_list = list(sys.argv[1:] if argv is None else argv)
     if not args_list:
         parser.print_help()
         return exitcodes.INVALID_ARGS
 
     try:
-        args = parser.parse_args(args_list)
+        parser.parse_args(args_list)
     except SystemExit as exc:
         code = exc.code if isinstance(exc.code, int) else exitcodes.INVALID_ARGS
         return code
 
-    if args.command == "prod":
-        if args.prod_command == "list":
-            return exitcodes.SUCCESS
-        return exitcodes.INVALID_ARGS
-
-    if args.command == "mv":
-        if args.mv_command == "status":
-            return exitcodes.SUCCESS
-        if args.mv_command == "refresh":
-            if args.db_url and "invalid" in args.db_url:
-                return exitcodes.FAILURE
-            return exitcodes.UNAVAILABLE
-        return exitcodes.INVALID_ARGS
-
-    if args.command == "gui":
-        return exitcodes.SUCCESS
-
-    return exitcodes.INVALID_ARGS
+    print("旧统一 CLI 已下线。使用 python run.py、python -m alphahome.factors 或 python -m alphahome.features。", file=sys.stderr)
+    return exitcodes.UNAVAILABLE
 
 
 __all__ = ["build_parser", "main"]
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

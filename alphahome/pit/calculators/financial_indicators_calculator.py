@@ -710,7 +710,6 @@ class FinancialIndicatorsCalculator:
         return indicators
 
     def _find_yoy_baseline_data(self, financial_data: pd.DataFrame, current_end_date, current_data_source) -> Optional[pd.Series]:
-        from datetime import datetime, date
         try:
             if isinstance(current_end_date, str):
                 current_date = datetime.strptime(current_end_date, '%Y-%m-%d').date()

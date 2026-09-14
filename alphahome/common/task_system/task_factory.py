@@ -195,9 +195,6 @@ class UnifiedTaskFactory:
     @classmethod
     def get_task_types(cls) -> List[str]:
         """新增：获取所有任务类型"""
-        if not cls._initialized:
-            raise RuntimeError("UnifiedTaskFactory 尚未初始化，请先调用 initialize() 方法")
-            
         types = set()
         for task_class in cls._task_registry.values():
             if hasattr(task_class, 'task_type'):
@@ -210,9 +207,6 @@ class UnifiedTaskFactory:
     @classmethod
     def get_task_info(cls, task_name: str) -> Dict[str, Any]:
         """新增：获取任务详细信息"""
-        if not cls._initialized:
-            raise RuntimeError("UnifiedTaskFactory 尚未初始化，请先调用 initialize() 方法")
-            
         if task_name not in cls._task_registry:
             raise ValueError(f"未注册的任务类型: {task_name}")
             

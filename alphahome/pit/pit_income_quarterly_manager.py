@@ -29,8 +29,6 @@ from .base.pit_table_manager import PITTableManager
 from .base.pit_config import PITConfig
 from .financial_code_utils import normalize_tushare_financial_ts_codes
 
-from typing import Dict, Any
-
 class PITIncomeQuarterlyManager(PITTableManager):
     """PIT利润表管理器"""
 

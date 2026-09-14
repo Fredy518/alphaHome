@@ -1,23 +1,14 @@
-# AlphaHome CLI 使用说明（已下线）
+# CLI 入口与旧命令退役
 
-> 说明：本项目已在 Phase 3 中下线“统一 CLI”（例如 `ah` / `alphahome-cli` / `refresh-materialized-view` 等入口点已从发布配置中移除）。
-> 该文件保留为迁移提示与历史参考，避免新用户误以为这些命令仍可用。
+旧 `ah/alphahome-cli/refresh-materialized-view` 已从安装入口下线。残留 `alphahome.cli.main` 的业务命令返回 unavailable=3，不再成功空跑；帮助参数仍可用。
 
-## 现在怎么做
-
-### 1) GUI
-
-- 仍可使用 `python run.py` 启动 GUI。
-
-### 2) 物化视图（MV）初始化
-
-使用脚本初始化（已替代旧的 `refresh-materialized-view` / `ah mv`）：
-
-```bash
-python scripts/initialize_materialized_views.py --help
+```powershell
+python run.py
+python -m alphahome.factors --help
+python -m alphahome.features --help
+python -m alphahome.pit.pit_data_update_production --help
 ```
 
-## 旧命令映射（仅供参考）
+Features `list` 只发现注册配方，`schema` 只输出安装 SQL，`refresh/create --dry-run --task NAME` 只读预览。初始化脚本属于显式维护入口，不是普通刷新前置动作。各域 GUI、CLI 和兼容脚本提交相同领域协调器，计划漂移时必须重新预览。
 
-- `ah` / `alphahome-cli`：已下线（不再安装）
-- `refresh-materialized-view`：已下线（不再安装），替代为脚本/Features 模块入口
+见[生产入口矩阵](architecture/production-entrypoints.md)与[生产切换手册](setup/production-cutover-runbook.md)。
