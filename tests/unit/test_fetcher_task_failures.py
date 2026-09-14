@@ -294,6 +294,24 @@ async def test_smart_refresh_interval_skips_recently_updated_table(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_smart_refresh_interval_returns_justified_expected_no_data(monkeypatch):
+    monkeypatch.setattr(fetcher_task_module, "datetime", _FrozenDateTime)
+    db = _RecentUpdateDB(datetime(2026, 5, 19, 12, 0), latest_date=date(2026, 5, 10))
+    task = _FailingBatchFetcherTask(
+        db_connection=db,
+        update_type=UpdateTypes.SMART,
+        task_config={"smart_refresh_interval_days": 7},
+    )
+
+    result = await task.execute()
+
+    assert result["status"] == "expected_no_data"
+    assert "最近更新时间" in result["reason"]
+    assert result["rows"] == 0
+    assert db.latest_date_calls == 0
+
+
+@pytest.mark.asyncio
 async def test_smart_refresh_interval_allows_expired_table(monkeypatch):
     monkeypatch.setattr(fetcher_task_module, "datetime", _FrozenDateTime)
     db = _RecentUpdateDB(datetime(2026, 5, 1, 12, 0), latest_date=date(2026, 5, 10))

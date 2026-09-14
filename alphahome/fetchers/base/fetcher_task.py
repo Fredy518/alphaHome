@@ -779,11 +779,20 @@ class FetcherTask(BaseTask, ABC):
         stop_event: Optional[asyncio.Event] = None,
         **kwargs: Any,
     ):
-        if not self._should_stream_batches(kwargs):
-            return await super().execute(stop_event=stop_event, **kwargs)
-
         try:
-            return await self._execute_streaming(stop_event=stop_event, **kwargs)
+            if self._should_stream_batches(kwargs):
+                result = await self._execute_streaming(stop_event=stop_event, **kwargs)
+            else:
+                result = await super().execute(stop_event=stop_event, **kwargs)
+            skip_reason = getattr(self, "_smart_skip_reason", None)
+            if (
+                isinstance(result, dict)
+                and result.get("status") == "no_data"
+                and self.update_type == UpdateTypes.SMART
+                and skip_reason
+            ):
+                return {**result, "status": "expected_no_data", "reason": skip_reason}
+            return result
         except asyncio.CancelledError:
             self.logger.warning("任务 %s 被取消。", self.name)
             return self._handle_error(asyncio.CancelledError("任务被用户取消"))
