@@ -18,6 +18,15 @@ _SOURCE_TIME_KEYS = {
 }
 
 
+class FactorSourceQueryError(RuntimeError):
+    """A failed dirty-source check must never be interpreted as no changes."""
+
+    def __init__(self, source: str, reason: str):
+        self.source = source
+        self.reason = reason
+        super().__init__(f"dirty_source_query_failed:{source}:{reason}")
+
+
 class FactorRepository:
     def __init__(self, db_manager: Any):
         if not hasattr(db_manager, "fetch_sync"):
@@ -208,20 +217,27 @@ class FactorRepository:
         for source in contract.source_tables:
             previous = previous_watermarks.get(source)
             key = _SOURCE_TIME_KEYS.get(source)
-            if not previous or not key or not self.relation_exists(source):
+            if not previous or not key:
                 continue
             relation = self._relation(source)
             try:
+                if not self.relation_exists(source):
+                    raise FactorSourceQueryError(source, "missing_relation")
                 value = self.db.fetch_val_sync(
                     f"SELECT MIN({key}) FROM {relation} WHERE updated_at > %s",
                     (previous,),
                 )
-            except Exception:
-                continue
+            except FactorSourceQueryError:
+                raise
+            except Exception as exc:
+                # Keep source and error category, without echoing driver SQL/DSNs.
+                raise FactorSourceQueryError(source, type(exc).__name__) from None
             if isinstance(value, datetime):
                 value = value.date()
             if isinstance(value, date):
                 candidates.append(value)
+            elif value is not None:
+                raise FactorSourceQueryError(source, "invalid_date_result")
         return min(candidates) if candidates else None
 
     def readiness(
