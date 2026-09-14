@@ -19,13 +19,12 @@ from alphahome.pit.pit_index_fttm_manager import (
 pytestmark = [pytest.mark.integration, pytest.mark.requires_db]
 
 
-def test_live_alphadb_sample_obeys_stock_and_industry_pit_contracts():
-    try:
-        context = PITContext()
-    except Exception as exc:  # pragma: no cover - environment-specific skip
-        pytest.skip(f"AlphaDB unavailable: {exc}")
+def test_live_alphadb_sample_obeys_stock_and_industry_pit_contracts(isolated_database_url):
+    context = PITContext(database_url=isolated_database_url)
 
     with context:
+        if not context.db_manager.fetch_val_sync("SELECT to_regclass('pit.pit_industry_classification')"):
+            pytest.skip("Isolated database has no imported FTTM sample")
         date_frame = context.query_dataframe(
             """
             SELECT MAX(obs_date)::date AS obs_date
@@ -145,13 +144,12 @@ def test_live_alphadb_sample_obeys_stock_and_industry_pit_contracts():
         assert industry_result["source_max_report_date"].dropna().le(obs_date).all()
 
 
-def test_live_alphadb_sample_obeys_index_and_all_a_pit_contracts():
-    try:
-        context = PITContext()
-    except Exception as exc:  # pragma: no cover - environment-specific skip
-        pytest.skip(f"AlphaDB unavailable: {exc}")
+def test_live_alphadb_sample_obeys_index_and_all_a_pit_contracts(isolated_database_url):
+    context = PITContext(database_url=isolated_database_url)
 
     with context:
+        if not context.db_manager.fetch_val_sync("SELECT to_regclass('pit.pit_index_members_monthly')"):
+            pytest.skip("Isolated database has no imported index FTTM sample")
         manager = PITIndexFTTMManager()
         manager.context = context
         latest = manager._latest_available_month()

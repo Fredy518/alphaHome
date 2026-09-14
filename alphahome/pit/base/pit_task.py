@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import importlib
 import inspect
+import threading
 from dataclasses import asdict, dataclass
 from typing import Any, ClassVar, Dict, Iterable, Optional, Sequence, Type
 
@@ -146,21 +147,56 @@ class PITTask(BaseTask):
         call_name, call_kwargs = self._manager_call(mode)
         self.logger.info("开始执行PIT任务: %s, mode=%s, call=%s", self.name, mode, call_name)
 
+        cancel_requested = threading.Event()
+        worker = asyncio.create_task(asyncio.to_thread(
+            self._run_manager, manager_class, call_name, call_kwargs, cancel_requested,
+        ))
         try:
-            with manager_class() as manager:
-                if stop_event and stop_event.is_set():
-                    return {"status": "cancelled", "task": self.name, "error": "任务被用户取消"}
-                method = getattr(manager, call_name)
-                result = await asyncio.to_thread(self._call_manager_method, method, call_kwargs)
-                self._sync_manager_stats_from_result(manager, result)
+            result = await asyncio.shield(worker)
+        except asyncio.CancelledError:
+            cancel_requested.set()
+            # A synchronous manager may already be committing. Do not release the
+            # caller's run lock or close its session while that worker is alive.
+            while not worker.done():
+                try:
+                    await asyncio.shield(worker)
+                except asyncio.CancelledError:
+                    continue
+                except Exception:
+                    break
+            if not worker.cancelled() and worker.exception() is None:
+                self.last_execution_result = worker.result()
+            raise
         except Exception as exc:
             self.logger.error("PIT任务执行失败: %s", exc, exc_info=True)
             return {"status": "error", "task": self.name, "table": self.table_name, "error": str(exc)}
 
         if stop_event and stop_event.is_set():
-            return {"status": "cancelled", "task": self.name, "error": "任务被用户取消"}
+            result = {**result, "cancel_requested": True}
+            if result.get("status") == "success":
+                result["status"] = "cancelled"
+        self.last_execution_result = result
+        return result
 
-        return self._normalize_result(result)
+    def _run_manager(self, manager_class, call_name, call_kwargs, cancel_requested):
+        """Construct, bind, execute, normalize and close on one worker thread."""
+        if cancel_requested.is_set():
+            return {"status": "cancelled", "task": self.name, "committed_rows": 0}
+        manager = manager_class()
+        connection_string = getattr(self.db, "connection_string", None)
+        if isinstance(connection_string, str) and connection_string:
+            manager.bind_database(database_url=connection_string)
+        else:
+            manager.bind_database(db_manager=self.db)
+        with manager:
+            if cancel_requested.is_set():
+                return {"status": "cancelled", "task": self.name, "committed_rows": 0}
+            result = self._call_manager_method(getattr(manager, call_name), call_kwargs)
+            self._sync_manager_stats_from_result(manager, result)
+            normalized = self._normalize_result(result)
+            if cancel_requested.is_set():
+                normalized["cancel_requested"] = True
+            return normalized
 
     def _resolve_pit_mode(self) -> str:
         explicit = self.task_config.get("pit_mode") or self.task_config.get("mode")

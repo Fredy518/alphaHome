@@ -24,6 +24,10 @@ class _FakeManager:
             "skipped_records": 0,
         }
 
+    def bind_database(self, **kwargs):
+        self.database_target = kwargs
+        return self
+
     def __enter__(self):
         return self
 

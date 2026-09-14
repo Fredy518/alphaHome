@@ -43,6 +43,7 @@ class PITTableManager(ABC):
         self.batch_size = PITConfig.get_batch_size(table_name)
 
         self.context = None
+        self._context_target = {}
         self.logger = None
 
         # 执行统计
@@ -55,24 +56,29 @@ class PITTableManager(ABC):
             'skipped_records': 0
         }
 
+    def bind_database(self, *, db_manager=None, database_url=None):
+        """Bind the task target before opening a worker-owned context."""
+        if self.context is not None:
+            raise RuntimeError("Cannot change the target of an open PIT manager")
+        if (db_manager is None) == (database_url is None):
+            raise ValueError("An explicit PIT database target is required")
+        self._context_target = {"db_manager": db_manager, "database_url": database_url}
+        return self
+
     def __enter__(self):
         """上下文管理器入口"""
         # 初始化数据库连接
-        self.context = PITContext()
+        self.context = PITContext(**self._context_target)
         self.context.__enter__()
-
-        # 设置日志
-        self._setup_logging()
-
-        # 记录开始时间
-        self.stats['start_time'] = datetime.now()
-
-        self.logger.info(f"初始化 {self.table_name} 管理器")
-        self.logger.info(f"表配置: {self.table_config['description']}")
-
-        # 确保 updated_at 触发器已部署（幂等执行）
-        self._ensure_updated_at_triggers()
-
+        try:
+            self._setup_logging()
+            self.stats['start_time'] = datetime.now()
+            self.logger.info(f"初始化 {self.table_name} 管理器")
+            self.logger.info(f"表配置: {self.table_config['description']}")
+        except BaseException:
+            self.context.close()
+            raise
+        # Opening a context is read-only; schema installation is a separate action.
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
@@ -81,11 +87,11 @@ class PITTableManager(ABC):
         self.stats['end_time'] = datetime.now()
 
         # 记录执行统计
-        self._log_execution_stats()
-
-        # 清理资源
-        if self.context:
-            self.context.__exit__(exc_type, exc_val, exc_tb)
+        try:
+            self._log_execution_stats()
+        finally:
+            if self.context:
+                self.context.__exit__(exc_type, exc_val, exc_tb)
 
     def _setup_logging(self):
         """设置日志（统一走全局日志工具，避免重复处理器与重复打印）"""
@@ -230,7 +236,7 @@ class PITTableManager(ABC):
     def _ensure_updated_at_triggers(self) -> None:
         """幂等部署 PIT 四张表的 updated_at 触发器（不复用 pgs_factor 中的代码）。
         - 位置: alphahome/pit/database/create_pit_updated_at_triggers.sql
-        - 在任意 Manager 进入上下文时执行一次，保证环境一致性
+        - 仅由显式建表/迁移流程调用；进入上下文不会部署触发器
         """
         try:
             base_dir = os.path.dirname(os.path.dirname(__file__))
