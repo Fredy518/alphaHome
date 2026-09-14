@@ -88,6 +88,7 @@ def test_plan_failure_never_starts_run_or_persists_watermarks(monkeypatch, contr
     monkeypatch.setattr(coordinator, "contracts", lambda: {"factor_p": contract})
     monkeypatch.setattr(coordinator.repository, "table_date_stats", lambda _: {"first_calc_date": date(2025, 1, 3)})
     monkeypatch.setattr(coordinator.repository, "missing_dates", lambda *args: [])
+    monkeypatch.setattr(coordinator.repository, "source_watermarks", lambda _: {SOURCE: WATERMARK})
     execute = Mock()
     monkeypatch.setattr(coordinator, "_run_task_dates", execute)
 

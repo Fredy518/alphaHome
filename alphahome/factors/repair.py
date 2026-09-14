@@ -193,7 +193,7 @@ class FactorRepairService:
                 raise RuntimeError(f"修复验收失败: {acceptance}")
             summary["acceptance"] = acceptance
             contracts = FactorCoordinator.contracts()
-            final_watermarks = {
+            summary["end_observed_watermarks"] = {
                 name: FactorRepository(self.db).source_watermarks(contracts[name])
                 for name in ("factor_p", "factor_g")
             }
@@ -201,7 +201,8 @@ class FactorRepairService:
                 run_id,
                 "success",
                 details=summary,
-                source_watermarks=final_watermarks,
+                # A bounded repair is not proof of global source consumption.
+                source_watermarks={},
             )
             self._finish_manifest(repair_id, "success", summary)
             self._record_repair_public_status(
@@ -593,6 +594,9 @@ class FactorRepairService:
             },
         )
         try:
+            summary.setdefault("consumed_source_watermarks", {})["factor_p"] = (
+                FactorRepository(read_db).source_watermarks(FactorCoordinator.contracts()["factor_p"])
+            )
             for calc_date_value in dates:
                 codes = calculator._get_trading_stock_codes(calc_date_value.isoformat())
                 frame = calculator.compute_p_factors_pit(
@@ -686,6 +690,9 @@ class FactorRepairService:
             },
         )
         try:
+            summary.setdefault("consumed_source_watermarks", {})["factor_g"] = (
+                FactorRepository(read_db).source_watermarks(FactorCoordinator.contracts()["factor_g"])
+            )
             for calc_date_value in dates:
                 codes = calculator._get_trading_stock_codes(calc_date_value.isoformat())
                 if not codes:

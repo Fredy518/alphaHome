@@ -18,6 +18,7 @@ from .date_policy import FACTOR_TIMEZONE, FactorDatePolicy, coerce_date
 from .governance import FactorGovernanceStore, MIGRATION_HINT, json_ready
 from .persistence import FactorSnapshotWriter
 from .repository import FactorRepository
+from .source_boundary import WATERMARK_CONTRACT, consumed_watermarks
 
 
 @dataclass
@@ -185,6 +186,8 @@ class FactorCoordinator:
 
         for name in names:
             contract = contracts[name]
+            # Capture the consumption ceiling before querying missing/dirty dates.
+            watermarks = self.repository.source_watermarks(contract)
             dates = self._plan_dates(
                 contract,
                 mode,
@@ -203,7 +206,6 @@ class FactorCoordinator:
                     )
                 )
             dates_by_task[name] = dates
-            watermarks = self.repository.source_watermarks(contract)
             blockers = (
                 self.repository.readiness(contract, effective_end, dates, dates_by_task)
                 if mode != "audit"
@@ -290,6 +292,10 @@ class FactorCoordinator:
 
         previous = self.governance.latest_source_watermarks(contract.task_name)
         previous_for_task = previous.get(contract.task_name, previous)
+        if not previous_for_task and first_existing:
+            # Legacy successful runs did not certify consumption. Revalidate
+            # the declared smart window, subject to the existing manual-size gate.
+            return FactorDatePolicy.fridays(start, effective_end)
         dirty_start = self.repository.dirty_start_date(contract, previous_for_task)
         dirty: List[date] = []
         if dirty_start:
@@ -370,11 +376,12 @@ class FactorCoordinator:
                 "timezone": str(FACTOR_TIMEZONE),
                 "cadence": "weekly_friday",
             },
-            source_watermarks=source_watermarks,
+            source_watermarks={},
             details={
                 "plan": plan.to_dict(),
                 "batch_started_at": started,
                 "source_cutoff": source_cutoff or started,
+                "planned_source_watermarks": source_watermarks,
             },
         )
         result = FactorRunResult(
@@ -467,25 +474,36 @@ class FactorCoordinator:
             f"成功日期={result.successful_date_count}, 失败日期={result.failed_date_count}, "
             f"跳过日期={result.skipped_date_count}, 输出行={result.output_count}"
         )
+        certified = {}
+        current_cutoff = self.date_policy.automatic_cutoff(started)
+        complete_scope = plan.effective_cutoff_date == current_cutoff and (
+            plan.mode == "smart" or
+            (plan.mode == "full" and not requested_start) or
+            (requested_start and coerce_date(requested_start) <= current_cutoff - timedelta(days=730))
+        )
+        if complete_scope:
+            for task_plan in plan.task_plans:
+                task_result = result.details["tasks"].get(task_plan.task_name) or {}
+                if len(task_result.get("dates") or {}) != len(task_plan.dates):
+                    continue
+                watermarks = consumed_watermarks(task_result, task_plan.source_watermarks)
+                if watermarks:
+                    certified[task_plan.task_name] = watermarks
+        result.details["watermark_contract"] = WATERMARK_CONTRACT
+        result.details["consumed_watermarks"] = certified
+        result.details["consumption_scope_complete"] = bool(complete_scope)
         try:
-            final_watermarks = {
+            result.details["end_observed_watermarks"] = {
                 name: self.repository.source_watermarks(contracts[name])
                 for name in plan.task_names
             }
         except Exception as exc:
-            result.status = "error"
-            result.message = f"因子计算完成但来源水位读取失败: {exc}"
-            self.governance.finish_run(
-                run_id,
-                "error",
-                details={**result.to_dict(), "phase": "final_watermark"},
-            )
-            raise
+            result.details["end_observation_error"] = type(exc).__name__
         self.governance.finish_run(
             run_id,
             result.status,
-            details=result.to_dict(),
-            source_watermarks=final_watermarks,
+            details={**result.to_dict(), "watermark_contract": WATERMARK_CONTRACT},
+            source_watermarks=certified,
         )
         return result
 
@@ -516,6 +534,7 @@ class FactorCoordinator:
             db_url = getattr(self.db, "connection_string", None)
             if db_url:
                 source_db = DBManager(db_url, mode="sync")
+                owns_source_db = True
                 source_connection = source_db._get_sync_connection()
                 source_connection.set_session(
                     isolation_level="REPEATABLE READ", readonly=True, autocommit=False
@@ -528,8 +547,8 @@ class FactorCoordinator:
                         """
                     )
                     snapshot_row = cursor.fetchone()
-                owns_source_db = True
                 source_snapshot = {
+                    "consistent": True,
                     "started_at": snapshot_row[0],
                     "wal_lsn": snapshot_row[1],
                     "watermarks": FactorRepository(source_db).source_watermarks(
@@ -538,6 +557,7 @@ class FactorCoordinator:
                 }
             else:
                 source_snapshot = {
+                    "consistent": False,
                     "started_at": datetime.now(FACTOR_TIMEZONE),
                     "wal_lsn": None,
                     "watermarks": self.repository.source_watermarks(contract),
@@ -685,9 +705,12 @@ class FactorCoordinator:
                     )
                     break
         finally:
-            if owns_source_db and source_connection is not None:
-                source_connection.rollback()
-                source_db.close_sync()
+            if owns_source_db:
+                try:
+                    if source_connection is not None:
+                        source_connection.rollback()
+                finally:
+                    source_db.close_sync()
         status = (
             "cancelled"
             if cancelled
@@ -700,6 +723,7 @@ class FactorCoordinator:
             "skipped_dates": skipped,
             "output_count": output,
             "dates": details,
+            "source_snapshot": source_snapshot,
         }
 
     def _run_audit_tasks(self, task_names: Sequence[str]) -> List[Dict[str, Any]]:

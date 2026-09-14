@@ -308,11 +308,12 @@ class FactorGovernanceStore:
             FROM factors.factor_run
             WHERE %s = ANY(task_names)
               AND status IN ('success', 'partial_success')
-              AND source_watermarks <> '{}'::jsonb
+              AND details_json->>'watermark_contract' = 'snapshot_consumed_v1'
+              AND source_watermarks ? %s
             ORDER BY finished_at DESC NULLS LAST, started_at DESC
             LIMIT 1
             """,
-            (task_name,),
+            (task_name, task_name),
         )
         if not row:
             return {}
