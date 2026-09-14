@@ -1,3 +1,4 @@
+# ruff: noqa
 """ARCHIVED / DISABLED. Historical writer retained for source archaeology only.
 
 Do not import or execute this module. Production factor writes are owned by

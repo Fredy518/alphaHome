@@ -95,6 +95,7 @@ __all__ = [
     "handle_deselect_all_collection",
     "handle_collection_task_tree_click",
     "handle_collection_type_filter_change",
+    "handle_collection_data_source_filter_change",
     "handle_collection_sort_column",
     # storage_settings_handler
     "update_storage_settings_display",
