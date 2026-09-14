@@ -255,6 +255,13 @@ class ExcelMacroDR007HistoryTask(FetcherTask):
             params.get("expected_workbook_sha256"),
         )
 
+    def supports_incremental_update(self) -> bool:
+        """The cached workbook can be filtered to the requested SMART window."""
+        return True
+
+    def get_incremental_skip_reason(self) -> str:
+        return ""
+
 
 __all__ = [
     "AVAILABILITY_METHOD",

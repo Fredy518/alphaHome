@@ -5,6 +5,7 @@ from openpyxl import Workbook
 
 from alphahome.fetchers.tasks.macro.excel_macro_dr007_history import (
     CALCULATION_VERSION,
+    ExcelMacroDR007HistoryTask,
     SOURCE_SERIES_ID,
     load_dr007_workbook_cache,
 )
@@ -53,3 +54,10 @@ def test_load_dr007_workbook_cache_checks_expected_hash(tmp_path):
 
     with pytest.raises(ValueError, match="哈希不匹配"):
         load_dr007_workbook_cache(path, expected_workbook_sha256="0" * 64)
+
+
+def test_dr007_task_supports_smart_incremental_window():
+    task = object.__new__(ExcelMacroDR007HistoryTask)
+
+    assert task.supports_incremental_update() is True
+    assert task.get_incremental_skip_reason() == ""
