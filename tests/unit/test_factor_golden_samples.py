@@ -149,3 +149,19 @@ def test_optimized_g_yoy_series_matches_frozen_reference_logic():
             expected.append(float(current["p_score"]) - float(match["p_score"]))
 
     assert calculator._build_yoy_delta_series_52w(frame) == expected
+
+
+def test_g_efficiency_surprise_treats_float_noise_as_zero_dispersion():
+    calculator = GFactorCalculator(context=_NoIOContext())
+    base = -24.886850491046097
+    noisy_equal = [base, np.nextafter(base, np.inf), base]
+    assert np.std(noisy_equal) > 0
+    calculator._build_yoy_delta_series_52w = lambda _group: noisy_equal
+
+    result = calculator._calculate_efficiency_surprise(
+        pd.DataFrame(),
+        pd.Series({"p_score": 54.39561950895391}),
+        pd.Series({"p_score": 79.28247}),
+    )
+
+    assert result == base

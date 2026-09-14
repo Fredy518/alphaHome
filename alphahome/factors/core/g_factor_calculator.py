@@ -439,6 +439,22 @@ class GFactorCalculator:
 
         return deltas
 
+    @staticmethod
+    def _has_nonzero_p_score_dispersion(
+        p_score_changes: List[float], std_delta: float
+    ) -> bool:
+        """Distinguish real dispersion from float noise at DB precision.
+
+        P scores are governed at six decimal places.  Differences that become
+        identical at that precision have a mathematical standard deviation of
+        zero; binary-float subtraction can otherwise manufacture a tiny
+        positive denominator and overflow the unchanged G v1.1 formula.
+        """
+        if not np.isfinite(std_delta) or std_delta <= 0:
+            return False
+        canonical = np.round(np.asarray(p_score_changes, dtype=float), 6)
+        return bool(canonical.size and np.ptp(canonical) > 0)
+
     def _calculate_efficiency_surprise(
         self,
         group: pd.DataFrame,
@@ -466,14 +482,14 @@ class GFactorCalculator:
 
         if n_samples >= hard_n:
             std_delta = np.std(p_score_changes)
-            if std_delta > 0:
+            if self._has_nonzero_p_score_dispersion(p_score_changes, std_delta):
                 return (delta_p_score / std_delta) * 1.0
             # std=0 则回退到未归一化
             return delta_p_score * 1.0
 
         if n_samples >= soft_n:
             std_delta = np.std(p_score_changes)
-            if std_delta > 0:
+            if self._has_nonzero_p_score_dispersion(p_score_changes, std_delta):
                 # 软阈值下按样本占比进行衰减，抑制噪声
                 scale = np.sqrt(n_samples / float(hard_n))
                 return (delta_p_score / std_delta) * scale * 1.0
