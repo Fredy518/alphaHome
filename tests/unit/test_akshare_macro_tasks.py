@@ -462,6 +462,7 @@ def test_cn_cb_balance_attributes():
     assert AkShareMacroCnCbBalanceTask.primary_keys == ["date", "item"]
 
 
+@pytest.mark.filterwarnings("error:Could not infer format")
 def test_cn_cb_balance_melts_items_to_long():
     task = AkShareMacroCnCbBalanceTask(db_connection=_MockDB(), update_type=UpdateTypes.FULL)
     raw_df = pd.DataFrame(

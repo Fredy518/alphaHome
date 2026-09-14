@@ -233,7 +233,11 @@ class AkShareDataTransformer:
                     data[col] = data[col].replace('', None)
 
                 # 尝试转换日期
-                converted_col = pd.to_datetime(data[col], errors='coerce')
+                # Source tables use several explicit date spellings, including
+                # YYYY.M, ISO dates and compact YYYYMMDD values.  ``mixed`` is
+                # deterministic for that contract and avoids pandas falling
+                # back to element-by-element dateutil inference.
+                converted_col = pd.to_datetime(data[col], errors='coerce', format='mixed')
 
                 new_nan_count = converted_col.isna().sum()
 
