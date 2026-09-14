@@ -1,4 +1,5 @@
 import logging
+from datetime import date
 from unittest.mock import AsyncMock
 
 import pandas as pd
@@ -21,7 +22,7 @@ from alphahome.fetchers.tasks.stock.tushare_stock_kplmember import (
 async def test_smart_monthly_member_marks_current_incomplete_month_as_expected(task_type):
     task = object.__new__(task_type)
     task.logger = logging.getLogger(task_type.name)
-    task.get_latest_date_for_task = AsyncMock(return_value=pd.Timestamp("2026-08-31"))
+    task.get_latest_date_for_task = AsyncMock(return_value=date(2026, 8, 31))
 
     batches = await task.get_batch_list(
         update_type=UpdateTypes.SMART,

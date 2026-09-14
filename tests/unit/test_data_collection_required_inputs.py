@@ -39,6 +39,24 @@ def test_missing_result_or_unjustified_success_fails(updater, results):
     assert not updater.evaluate_batch(["a"], results)
 
 
+def test_capability_declared_expected_skip_requires_reason(updater):
+    assert updater.evaluate_batch(
+        ["full_only"],
+        [{
+            "task_name": "full_only",
+            "status": "expected_skip",
+            "result": {
+                "status": "expected_skip",
+                "reason": "task explicitly supports full refresh only",
+            },
+        }],
+    )
+    assert not updater.evaluate_batch(
+        ["full_only"],
+        [{"task_name": "full_only", "status": "expected_skip"}],
+    )
+
+
 def test_protocol_errors_and_unknown_optional_task_fail_closed(updater):
     with pytest.raises(ValueError, match="重复"):
         updater.evaluate_batch(["a"], [{"task_name": "a"}] * 2)

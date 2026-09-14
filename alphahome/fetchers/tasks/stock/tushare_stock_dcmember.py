@@ -171,7 +171,8 @@ class TushareStockDcMemberTask(TushareTask):
             if not batch_list:
                 self._smart_skip_reason = (
                     f"SMART 模式截至 {end_date.date()} 没有新的完整月末批次；"
-                    f"数据库最新月末为 {latest_date.date() if latest_date else '无'}。"
+                    f"数据库最新月末为 "
+                    f"{pd.Timestamp(latest_date).date() if latest_date else '无'}。"
                 )
 
             self.logger.info(f"任务 {self.name}: 智能增量模式，生成 {len(batch_list)} 个批次")

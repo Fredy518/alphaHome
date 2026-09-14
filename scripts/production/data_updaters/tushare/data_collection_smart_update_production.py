@@ -222,8 +222,12 @@ class DataCollectionProductionUpdater:
                 logger.warning(f"[{task_name}] 跳过: {skip_reason}")
                 return {
                     'task_name': task_name,
-                    'status': 'skipped',
+                    'status': 'expected_skip',
                     'message': skip_reason,
+                    'result': {
+                        'status': 'expected_skip',
+                        'reason': skip_reason,
+                    },
                     'attempts': attempt
                 }
 
@@ -399,7 +403,10 @@ class DataCollectionProductionUpdater:
             print()
 
         # 显示跳过的任务详情
-        skipped_tasks = [r for r in results if isinstance(r, dict) and r.get('status') == 'skipped']
+        skipped_tasks = [
+            r for r in results
+            if isinstance(r, dict) and r.get('status') in {'skipped', 'expected_skip'}
+        ]
         if skipped_tasks:
             print("[SKIPPED_DETAILS] 跳过任务详情:")
             for task in skipped_tasks:
@@ -434,13 +441,19 @@ class DataCollectionProductionUpdater:
                 raise ValueError(f"任务返回重复结果: {name}")
             by_name[name] = result
         failures = set(expected - set(by_name))
-        accepted = {'skipped_dry_run'} if self.dry_run else {'success', 'expected_no_data'}
+        accepted = {'skipped_dry_run'} if self.dry_run else {
+            'success',
+            'expected_no_data',
+            'expected_skip',
+        }
         for name, result in by_name.items():
             payload = result.get('result') if isinstance(result.get('result'), dict) else result
             has_errors = any(payload.get(key) for key in ('error', 'error_records', 'failed_batches', 'errors'))
             if result.get('status') not in accepted or has_errors:
                 failures.add(name)
             elif result.get('status') == 'expected_no_data' and not payload.get('reason'):
+                failures.add(name)
+            elif result.get('status') == 'expected_skip' and not payload.get('reason'):
                 failures.add(name)
         # Missing results are a protocol failure even for optional tasks.
         blocking = (failures - self.optional_tasks) | (expected - set(by_name))
@@ -487,7 +500,7 @@ class DataCollectionProductionUpdater:
                     self.stats['successful_tasks'] += 1
                 elif status in ['failed', 'error', 'partial_success', 'completed_with_warnings']:
                     self.stats['failed_tasks'] += 1
-                elif status in ['skipped', 'skipped_dry_run']:
+                elif status in ['skipped', 'expected_skip', 'skipped_dry_run']:
                     self.stats['skipped_tasks'] += 1
                 else:
                     # 处理其他未知状态
@@ -512,7 +525,7 @@ class DataCollectionProductionUpdater:
                         ds_stats['success'] += 1
                     elif status in ['failed', 'error', 'partial_success', 'completed_with_warnings']:
                         ds_stats['failed'] += 1
-                    elif status in ['skipped', 'skipped_dry_run']:
+                    elif status in ['skipped', 'expected_skip', 'skipped_dry_run']:
                         ds_stats['skipped'] += 1
 
                     # 记录执行时间
