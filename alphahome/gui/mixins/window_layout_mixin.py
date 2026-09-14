@@ -11,6 +11,7 @@
 from tkinter import ttk
 from ..ui import (
     data_collection_tab,
+    factor_management_tab,
     feature_update_tab,
     pit_management_tab,
     storage_settings_tab,
@@ -30,6 +31,7 @@ class WindowLayoutMixin:
 
         data_collection_frame = ttk.Frame(notebook, padding="10")
         pit_management_frame = ttk.Frame(notebook, padding="10")
+        factor_management_frame = ttk.Frame(notebook, padding="10")
         feature_update_frame = ttk.Frame(notebook, padding="10")
         storage_settings_frame = ttk.Frame(notebook, padding="10")
         task_execution_frame = ttk.Frame(notebook, padding="10")
@@ -37,6 +39,7 @@ class WindowLayoutMixin:
 
         notebook.add(data_collection_frame, text="数据采集")
         notebook.add(pit_management_frame, text="PIT 管理")
+        notebook.add(factor_management_frame, text="因子管理")
         notebook.add(feature_update_frame, text="特征更新")
         notebook.add(task_execution_frame, text="任务运行与状态")
         notebook.add(task_log_frame, text="任务日志")
@@ -50,6 +53,9 @@ class WindowLayoutMixin:
         )
         self.ui_elements.update(
             pit_management_tab.create_pit_management_tab(pit_management_frame)
+        )
+        self.ui_elements.update(
+            factor_management_tab.create_factor_management_tab(factor_management_frame)
         )
         self.ui_elements.update(
             feature_update_tab.create_feature_update_tab(feature_update_frame)

@@ -9,6 +9,7 @@ import pytest
 
 from alphahome.common.constants import UpdateTypes
 from alphahome.gui.services import task_execution_service
+from alphahome.factors.tasks import discover_tasks as discover_factor_tasks
 
 
 class _TaskWithoutIncrementalCapabilityMethod:
@@ -63,6 +64,20 @@ def test_order_tasks_by_dependencies_moves_selected_inputs_before_dependent():
         "pit_industry_classification",
     ]
 
+
+def test_factor_dependency_expansion_adds_p_before_g_without_pit_tasks():
+    discover_factor_tasks()
+
+    expanded = task_execution_service._expand_factor_dependencies(
+        [{"task_name": "factor_g", "task_type": "factor"}]
+    )
+
+    assert [item["task_name"] for item in expanded] == ["factor_p", "factor_g"]
+    assert all(
+        item["task_config"]["factor_expand_dependencies"] is False
+        for item in expanded
+    )
+    assert not any(item["task_name"].startswith("pit_") for item in expanded)
 
 def test_pit_batch_cutoff_is_frozen_to_last_complete_month():
     tasks = [{"task_name": "pit_stock_fttm_monthly", "task_type": "pit"}]

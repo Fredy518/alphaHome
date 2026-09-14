@@ -35,6 +35,7 @@ async def test_initial_async_load_starts_independent_lists_concurrently(monkeypa
     commands = {
         "GET_COLLECTION_TASKS",
         "GET_PIT_TASKS",
+        "GET_FACTOR_TASKS",
         "GET_FEATURES",
         "GET_STORAGE_SETTINGS",
     }

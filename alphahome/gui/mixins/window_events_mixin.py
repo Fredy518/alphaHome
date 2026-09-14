@@ -13,6 +13,7 @@ from async_tkinter_loop import async_handler
 from .. import controller
 from ..handlers import (
     data_collection_handler,
+    factor_management_handler,
     feature_update_handler,
     pit_management_handler,
     storage_settings_handler,
@@ -140,6 +141,70 @@ class WindowEventsMixin:
         self.ui_elements["pit_task_tree"].bind(
             "<<TreeviewSelect>>",
             lambda event: pit_management_handler.handle_pit_tree_select(
+                event, self.ui_elements
+            ),
+        )
+
+        # Factor Management Binds
+        self.ui_elements["factor_refresh_button"].config(
+            command=lambda: factor_management_handler.handle_refresh_factor_tasks(
+                self.ui_elements
+            )
+        )
+        self.ui_elements["factor_select_all_button"].config(
+            command=lambda: factor_management_handler.handle_select_all_factor(
+                self.ui_elements
+            )
+        )
+        self.ui_elements["factor_deselect_all_button"].config(
+            command=lambda: factor_management_handler.handle_deselect_all_factor(
+                self.ui_elements
+            )
+        )
+        self.ui_elements["factor_smart_button"].config(
+            command=lambda: factor_management_handler.handle_smart_selected_factor(
+                self.ui_elements
+            )
+        )
+        self.ui_elements["factor_manual_button"].config(
+            command=lambda: factor_management_handler.handle_manual_selected_factor(
+                self.ui_elements
+            )
+        )
+        self.ui_elements["factor_full_button"].config(
+            command=lambda: factor_management_handler.handle_full_selected_factor(
+                self.ui_elements
+            )
+        )
+        self.ui_elements["factor_audit_button"].config(
+            command=lambda: factor_management_handler.handle_audit_selected_factor(
+                self.ui_elements
+            )
+        )
+        self.ui_elements["factor_gaps_button"].config(
+            command=lambda: factor_management_handler.handle_view_factor_gaps(
+                self.ui_elements
+            )
+        )
+        self.ui_elements["factor_date_diagnosis_button"].config(
+            command=lambda: factor_management_handler.handle_factor_date_diagnosis(
+                self.ui_elements
+            )
+        )
+        self.ui_elements["factor_stock_diagnosis_button"].config(
+            command=lambda: factor_management_handler.handle_factor_stock_diagnosis(
+                self.ui_elements
+            )
+        )
+        self.ui_elements["factor_task_tree"].bind(
+            "<ButtonRelease-1>",
+            lambda event: factor_management_handler.handle_factor_tree_click(
+                event, self.ui_elements
+            ),
+        )
+        self.ui_elements["factor_task_tree"].bind(
+            "<<TreeviewSelect>>",
+            lambda event: factor_management_handler.handle_factor_tree_select(
                 event, self.ui_elements
             ),
         )

@@ -66,6 +66,7 @@ from .services import (
     task_registry_service,
     configuration_service,
     task_execution_service,
+    factor_service,
     feature_service,
     pit_service,
 )
@@ -108,6 +109,10 @@ async def initialize_controller(response_callback):
     from alphahome.pit import tasks as pit_tasks
 
     pit_tasks.discover_tasks()
+    logger.info("正在导入因子任务模块...")
+    from alphahome.factors import tasks as factor_tasks
+
+    factor_tasks.discover_tasks()
 
     logger.info("正在初始化所有后端控制器逻辑模块...")
     
@@ -117,6 +122,7 @@ async def initialize_controller(response_callback):
     task_execution_service.set_response_callback(response_callback)
     feature_service.initialize_feature_service(response_callback)
     pit_service.initialize_pit_service(response_callback)
+    factor_service.initialize_factor_service(response_callback)
     
     # 初始化任务执行会话
     task_execution_service.initialize_session()
@@ -237,6 +243,35 @@ async def handle_diagnose_pit_stock(ts_code: str):
     await pit_service.handle_diagnose_stock(ts_code)
 
 
+async def handle_get_factor_tasks():
+    await factor_service.handle_get_factor_tasks()
+
+
+async def handle_factor_preflight(
+    task_names: List[str],
+    mode: str,
+    start_date: Optional[str],
+    end_date: Optional[str],
+):
+    await factor_service.handle_preflight(task_names, mode, start_date, end_date)
+
+
+async def handle_audit_factor_tasks(task_names: Optional[List[str]] = None):
+    await factor_service.handle_audit(task_names)
+
+
+async def handle_get_factor_gaps(task_names: Optional[List[str]] = None):
+    await factor_service.handle_get_gaps(task_names)
+
+
+async def handle_diagnose_factor_date(task_name: str, calc_date: str):
+    await factor_service.handle_diagnose_date(task_name, calc_date)
+
+
+async def handle_diagnose_factor_stock(ts_code: str):
+    await factor_service.handle_diagnose_stock(ts_code)
+
+
 async def handle_refresh_features(feature_names: List[str], strategy: str = "default"):
     """
     处理刷新指定特征视图的请求
@@ -314,6 +349,31 @@ async def handle_request(command: str, data: Optional[Dict[str, Any]] = None):
 
         elif command == "DIAGNOSE_PIT_STOCK":
             await handle_diagnose_pit_stock(data.get("ts_code", ""))
+
+        elif command == "GET_FACTOR_TASKS":
+            await handle_get_factor_tasks()
+
+        elif command == "PREFLIGHT_FACTOR_RUN":
+            await handle_factor_preflight(
+                data.get("task_names") or [],
+                data.get("mode", "smart"),
+                data.get("start_date"),
+                data.get("end_date"),
+            )
+
+        elif command == "AUDIT_FACTOR_TASKS":
+            await handle_audit_factor_tasks(data.get("task_names"))
+
+        elif command == "GET_FACTOR_GAPS":
+            await handle_get_factor_gaps(data.get("task_names"))
+
+        elif command == "DIAGNOSE_FACTOR_DATE":
+            await handle_diagnose_factor_date(
+                data.get("task_name", ""), data.get("calc_date", "")
+            )
+
+        elif command == "DIAGNOSE_FACTOR_STOCK":
+            await handle_diagnose_factor_stock(data.get("ts_code", ""))
 
         elif command == "TOGGLE_COLLECTION_SELECT":
             row_index = data.get("row_index", -1)
@@ -410,6 +470,56 @@ def request_pit_coverage_matrix():
 def request_pit_stock_diagnosis(ts_code: str):
     """请求PIT单股诊断。"""
     asyncio.create_task(handle_request("DIAGNOSE_PIT_STOCK", {"ts_code": ts_code}))
+
+
+def request_factor_tasks():
+    asyncio.create_task(handle_request("GET_FACTOR_TASKS"))
+
+
+def request_factor_preflight(
+    task_names: List[str],
+    mode: str,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+):
+    asyncio.create_task(
+        handle_request(
+            "PREFLIGHT_FACTOR_RUN",
+            {
+                "task_names": task_names,
+                "mode": mode,
+                "start_date": start_date,
+                "end_date": end_date,
+            },
+        )
+    )
+
+
+def request_audit_factor_tasks(task_names: Optional[List[str]] = None):
+    asyncio.create_task(
+        handle_request("AUDIT_FACTOR_TASKS", {"task_names": task_names or []})
+    )
+
+
+def request_factor_gaps(task_names: Optional[List[str]] = None):
+    asyncio.create_task(
+        handle_request("GET_FACTOR_GAPS", {"task_names": task_names or []})
+    )
+
+
+def request_factor_date_diagnosis(task_name: str, calc_date: str):
+    asyncio.create_task(
+        handle_request(
+            "DIAGNOSE_FACTOR_DATE",
+            {"task_name": task_name, "calc_date": calc_date},
+        )
+    )
+
+
+def request_factor_stock_diagnosis(ts_code: str):
+    asyncio.create_task(
+        handle_request("DIAGNOSE_FACTOR_STOCK", {"ts_code": ts_code})
+    )
 
 
 def request_refresh_features(feature_names: List[str], strategy: str = "default"):

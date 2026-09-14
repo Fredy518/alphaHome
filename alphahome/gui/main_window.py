@@ -63,6 +63,7 @@ from ..common.task_system import UnifiedTaskFactory
 from . import controller
 from .handlers import (
     data_collection_handler,
+    factor_management_handler,
     feature_update_handler,
     pit_management_handler,
     storage_settings_handler,
@@ -214,6 +215,7 @@ class MainWindow(WindowEventsMixin, WindowDpiMixin, WindowLayoutMixin, tk.Tk):
             controller.handle_request("GET_FEATURES"),
             controller.handle_request("GET_COLLECTION_TASKS"),
             controller.handle_request("GET_PIT_TASKS"),
+            controller.handle_request("GET_FACTOR_TASKS"),
             controller.handle_request("GET_STORAGE_SETTINGS"),
         )
 
@@ -273,6 +275,34 @@ class MainWindow(WindowEventsMixin, WindowDpiMixin, WindowLayoutMixin, tk.Tk):
             ),
             "PIT_STOCK_DIAGNOSIS_UPDATE": (
                 pit_management_handler.update_pit_stock_diagnosis_ui,
+                [self.ui_elements, data],
+            ),
+            "FACTOR_TASK_LIST_UPDATE": (
+                factor_management_handler.update_factor_task_list_ui,
+                [self.ui_elements, data],
+            ),
+            "FACTOR_REFRESH_COMPLETE": (
+                factor_management_handler.handle_factor_refresh_complete,
+                [self.ui_elements, data],
+            ),
+            "FACTOR_PREFLIGHT_COMPLETE": (
+                factor_management_handler.handle_factor_preflight_complete,
+                [self.ui_elements, data],
+            ),
+            "FACTOR_AUDIT_COMPLETE": (
+                factor_management_handler.handle_factor_audit_complete,
+                [self.ui_elements, data],
+            ),
+            "FACTOR_GAPS_UPDATE": (
+                factor_management_handler.update_factor_gaps_ui,
+                [self.ui_elements, data],
+            ),
+            "FACTOR_DATE_DIAGNOSIS_UPDATE": (
+                factor_management_handler.update_factor_diagnosis_ui,
+                [self.ui_elements, data],
+            ),
+            "FACTOR_STOCK_DIAGNOSIS_UPDATE": (
+                factor_management_handler.update_factor_diagnosis_ui,
                 [self.ui_elements, data],
             ),
             # Feature Update Responses

@@ -66,6 +66,26 @@ from .pit_management_handler import (
     update_pit_stock_diagnosis_ui,
     update_pit_task_list_ui,
 )
+from .factor_management_handler import (
+    handle_audit_selected_factor,
+    handle_deselect_all_factor,
+    handle_factor_audit_complete,
+    handle_factor_date_diagnosis,
+    handle_factor_preflight_complete,
+    handle_factor_refresh_complete,
+    handle_factor_stock_diagnosis,
+    handle_factor_tree_click,
+    handle_factor_tree_select,
+    handle_full_selected_factor,
+    handle_manual_selected_factor,
+    handle_refresh_factor_tasks,
+    handle_select_all_factor,
+    handle_smart_selected_factor,
+    handle_view_factor_gaps,
+    update_factor_diagnosis_ui,
+    update_factor_gaps_ui,
+    update_factor_task_list_ui,
+)
 
 __all__ = [
     # data_collection_handler
@@ -116,4 +136,23 @@ __all__ = [
     "handle_pit_audit_complete",
     "update_pit_coverage_matrix_ui",
     "update_pit_stock_diagnosis_ui",
+    # factor_management_handler
+    "update_factor_task_list_ui",
+    "handle_refresh_factor_tasks",
+    "handle_select_all_factor",
+    "handle_deselect_all_factor",
+    "handle_factor_tree_click",
+    "handle_factor_tree_select",
+    "handle_smart_selected_factor",
+    "handle_manual_selected_factor",
+    "handle_full_selected_factor",
+    "handle_audit_selected_factor",
+    "handle_view_factor_gaps",
+    "handle_factor_date_diagnosis",
+    "handle_factor_stock_diagnosis",
+    "handle_factor_refresh_complete",
+    "handle_factor_preflight_complete",
+    "handle_factor_audit_complete",
+    "update_factor_gaps_ui",
+    "update_factor_diagnosis_ui",
 ]

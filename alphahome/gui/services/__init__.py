@@ -16,6 +16,7 @@ from . import task_registry_service
 from . import task_execution_service
 from . import configuration_service
 from . import feature_service
+from . import factor_service
 from . import pit_service
 
 __all__ = [
@@ -23,5 +24,6 @@ __all__ = [
     "task_execution_service",
     "configuration_service",
     "feature_service",
+    "factor_service",
     "pit_service",
 ]

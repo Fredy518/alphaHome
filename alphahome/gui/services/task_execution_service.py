@@ -61,6 +61,66 @@ def _is_pit_task(task_info: Dict[str, Any]) -> bool:
     return task_info.get("task_type") == "pit" or task_name.startswith("pit_")
 
 
+def _is_factor_task(task_info: Dict[str, Any]) -> bool:
+    task_name = str(task_info.get("task_name") or "")
+    return task_info.get("task_type") == "factor" or task_name.startswith("factor_")
+
+
+def _expand_factor_dependencies(
+    tasks_to_run: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Auto-add factor dependencies without pulling PIT readiness tasks into a run."""
+    requested = {
+        item.get("task_name"): dict(item)
+        for item in tasks_to_run
+        if item.get("task_name")
+    }
+    ordered: List[Dict[str, Any]] = []
+    visited: set[str] = set()
+
+    def task_info(name: str) -> Dict[str, Any]:
+        existing = requested.get(name)
+        task_class = getattr(UnifiedTaskFactory, "_task_registry", {}).get(name)
+        contract = getattr(task_class, "contract", None)
+        if existing is None:
+            existing = {
+                "task_name": name,
+                "task_type": getattr(task_class, "task_type", "factor"),
+                "description": getattr(task_class, "description", ""),
+                "data_source": "factors",
+            }
+        info = dict(existing)
+        if contract is not None:
+            info["dependencies"] = list(getattr(contract, "dependencies", ()) or ())
+        if _is_factor_task(info):
+            config = dict(info.get("task_config") or {})
+            config["factor_expand_dependencies"] = False
+            info["task_config"] = config
+        return info
+
+    def visit(name: str) -> None:
+        if name in visited:
+            return
+        info = task_info(name)
+        if _is_factor_task(info):
+            for dependency in info.get("dependencies") or ():
+                dependency_class = getattr(
+                    UnifiedTaskFactory, "_task_registry", {}
+                ).get(str(dependency))
+                if getattr(dependency_class, "task_type", None) == "factor":
+                    visit(str(dependency))
+        visited.add(name)
+        ordered.append(info)
+
+    for item in tasks_to_run:
+        name = item.get("task_name")
+        if name:
+            visit(str(name))
+        else:
+            ordered.append(dict(item))
+    return ordered
+
+
 def _is_monthly_pit_task(task_info: Dict[str, Any]) -> bool:
     if not _is_pit_task(task_info):
         return False
@@ -254,13 +314,31 @@ async def run_tasks(
         _current_running_tasks = []
         raise
 
+    tasks_to_run = _expand_factor_dependencies(tasks_to_run)
     tasks_to_run = _order_tasks_by_dependencies(tasks_to_run)
     total_tasks = len(tasks_to_run)
+    failed_task_names: set[str] = set()
     
     try:
         for i, task_info in enumerate(tasks_to_run):
             task_name = task_info.get("task_name")
             if not task_name:
+                continue
+
+            failed_dependencies = sorted(
+                set(task_info.get("dependencies") or ()) & failed_task_names
+            )
+            if failed_dependencies:
+                details = f"依赖失败，已跳过: {', '.join(failed_dependencies)}"
+                await _record_task_status(
+                    db_manager, task_name, "skipped_dependency_failed", details
+                )
+                failed_task_names.add(task_name)
+                if _send_response_callback:
+                    _send_response_callback(
+                        "LOG",
+                        {"level": "warning", "message": f"任务 {task_name} {details}"},
+                    )
                 continue
 
             # 检查是否收到停止信号
@@ -297,8 +375,10 @@ async def run_tasks(
 
             # 添加数据保存策略参数
             task_init_params['use_insert_mode'] = use_insert_mode
+            if task_info.get("task_config"):
+                task_init_params["task_config"] = dict(task_info["task_config"])
             if pit_month_end_cutoff is not None and _is_monthly_pit_task(task_info):
-                task_config = dict(task_info.get("task_config") or {})
+                task_config = dict(task_init_params.get("task_config") or {})
                 task_config[PIT_MONTH_END_CUTOFF_CONFIG_KEY] = (
                     pit_month_end_cutoff.isoformat()
                 )
@@ -314,6 +394,7 @@ async def run_tasks(
                 if _send_response_callback:
                     _send_response_callback("LOG", {"level": "error", "message": log_msg})
                 await _record_task_status(db_manager, task_name, "error", f"任务实例创建失败: {factory_e}")
+                failed_task_names.add(task_name)
                 await get_all_task_status(db_manager)
                 continue
             # --- 重构结束 ---
@@ -438,6 +519,8 @@ async def run_tasks(
                         _send_response_callback("LOG", {"level": level, "message": log_msg})
 
                     await _record_task_status(db_manager, task_name, result_status, result_details)
+                    if result_status not in {"success", "skipped", "no_op"}:
+                        failed_task_names.add(task_name)
 
 
             except Exception as e:
@@ -447,6 +530,7 @@ async def run_tasks(
                     _send_response_callback("LOG", {"level": "error", "message": log_msg})
                 # 记录任务失败状态
                 await _record_task_status(db_manager, task_name, "error", f"执行失败: {e}")
+                failed_task_names.add(task_name)
             
             finally:
                 # 无论成功失败，都从运行列表中移除

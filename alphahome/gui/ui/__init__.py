@@ -20,11 +20,13 @@ from .storage_settings_tab import create_storage_settings_tab
 from .task_execution_tab import create_task_execution_tab
 from .task_log_tab import create_task_log_tab
 from .feature_update_tab import create_feature_update_tab
+from .factor_management_tab import create_factor_management_tab
 from .pit_management_tab import create_pit_management_tab
 
 __all__ = [
     "create_data_collection_tab",
     "create_pit_management_tab",
+    "create_factor_management_tab",
     "create_storage_settings_tab",
     "create_task_execution_tab",
     "create_task_log_tab",
