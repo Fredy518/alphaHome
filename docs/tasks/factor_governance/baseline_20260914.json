@@ -1,0 +1,98 @@
+{
+  "captured_at": "2026-09-14T14:13:57.022057+08:00",
+  "effective_cutoff_date": "2026-09-11",
+  "formula_versions": {
+    "factor_p": "v2.0",
+    "factor_g": "v1.1"
+  },
+  "regression_baseline": {
+    "result": "63 passed",
+    "scope": [
+      "factor_engine",
+      "factor_stock_universe",
+      "production_dry_runs",
+      "pit_task_framework",
+      "pit_audit_service",
+      "pit_management_handler",
+      "task_execution_service",
+      "task_execution_handler",
+      "gui_startup_loading"
+    ]
+  },
+  "tables": {
+    "factors.p_factor": {
+      "row_count": 3707530,
+      "distinct_date_count": 1390,
+      "first_date": "2000-01-07",
+      "latest_date": "2026-06-12",
+      "non_friday_row_count": 149685,
+      "non_friday_date_count": 29,
+      "date_summary_checksum": "3655b863ad880bc96c9aa1cd4d9b9b56"
+    },
+    "factors.g_factor": {
+      "row_count": 3677522,
+      "distinct_date_count": 1248,
+      "first_date": "2003-01-03",
+      "latest_date": "2026-06-12",
+      "non_friday_row_count": 149681,
+      "non_friday_date_count": 29,
+      "date_summary_checksum": "a6df720b02706b12ec53a27352a93050"
+    }
+  },
+  "repair_window_missing_fridays": [
+    "2025-10-03",
+    "2025-10-10",
+    "2025-10-17",
+    "2026-03-27",
+    "2026-04-03",
+    "2026-06-19",
+    "2026-06-26",
+    "2026-07-03",
+    "2026-07-10",
+    "2026-07-17",
+    "2026-07-24",
+    "2026-07-31",
+    "2026-08-07",
+    "2026-08-14",
+    "2026-08-21",
+    "2026-08-28",
+    "2026-09-04",
+    "2026-09-11"
+  ],
+  "non_friday_snapshots": [
+    ["2025-10-02", 5143],
+    ["2025-10-09", 5143],
+    ["2026-01-31", 5162],
+    ["2026-02-01", 5162],
+    ["2026-02-02", 5162],
+    ["2026-02-03", 5162],
+    ["2026-02-04", 5162],
+    ["2026-02-05", 5163],
+    ["2026-02-07", 5163],
+    ["2026-02-08", 5163],
+    ["2026-02-09", 5163],
+    ["2026-02-10", 5163],
+    ["2026-02-11", 5163],
+    ["2026-02-12", 5163],
+    ["2026-02-14", 5163],
+    ["2026-02-15", 5163],
+    ["2026-02-16", 5163],
+    ["2026-02-17", 5163],
+    ["2026-02-18", 5163],
+    ["2026-02-19", 5163],
+    ["2026-02-21", 5163],
+    ["2026-02-22", 5163],
+    ["2026-02-23", 5163],
+    ["2026-02-24", 5163],
+    ["2026-02-25", 5163],
+    ["2026-02-26", 5163],
+    ["2026-02-28", 5163],
+    ["2026-03-01", 5163],
+    ["2026-04-04", 5166]
+  ],
+  "compatibility_views": {
+    "pgs_factors.p_factor": "view -> factors.p_factor",
+    "pgs_factors.g_factor": "view -> factors.g_factor"
+  },
+  "note": "P/G non-Friday dates are identical; G row counts differ from P by two rows on 2026-02-28 and 2026-03-01. Per-date archive checksums are recorded by repair_id during apply."
+}

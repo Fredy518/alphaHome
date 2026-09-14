@@ -2,7 +2,7 @@
 
 > 交付对象：codex（自主 goal 任务）
 > 类型：大升级 / 重构 + 废弃清理
-> 状态：待启动
+> 状态：已由 `docs/tasks/factor_governance/README.md` 的正式因子治理方案取代
 
 ---
 

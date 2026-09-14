@@ -25,8 +25,13 @@ alphahome/
 │   ├── sources/               # tushare / akshare / tinysoft / excel
 │   └── tasks/                 # 具体采集任务
 ├── factors/
-│   ├── core/                  # P/G factor calculators
-│   └── pipelines/             # FactorEngine 与兼容 CLI 调度
+│   ├── base/                  # FactorTask / FactorTaskContract
+│   ├── core/                  # P/G 只读仓库、纯计算与兼容 calculator
+│   ├── tasks/                 # task_type="factor" 的 P/G 注册入口
+│   ├── coordinator.py         # 依赖、周五日期、脏传播和唯一生产入口
+│   ├── persistence.py         # staging/COPY/锁/单事务日期替换
+│   ├── audit_service.py       # 缺口、覆盖率、日期与单股诊断
+│   └── repair.py              # repair_id 归档、修复和原子回滚
 ├── features/
 │   ├── cards/                 # feature card YAML
 │   ├── recipes/               # MV/Python recipes
@@ -50,7 +55,7 @@ flowchart LR
     Fetchers --> AlphaDB[(PostgreSQL / AlphaDB)]
     AlphaDB --> Rawdata[rawdata views]
     AlphaDB --> PIT[alphahome.pit managers]
-    PIT --> FactorPG[alphahome.factors FactorEngine]
+    PIT --> FactorPG[alphahome.factors FactorCoordinator]
     AlphaDB --> Features[features MV recipes]
     AlphaDB --> Providers[AlphaDataTool / ResearchContext]
 ```
@@ -84,6 +89,10 @@ PIT 任务也是统一任务系统的一部分，`task_type="pit"`。`PITTask` �
 | 全量更新 | `full_backfill` |
 | 手动增量 | 指定日期范围的 `full_backfill`，支持单股配置时走 `single_backfill` |
 | 只审计 | `PITAuditService.audit_task`，不写业务 PIT 表 |
+
+P/G 因子以 `task_type="factor"` 注册。选择 G 会在因子域内展开 P；选择 P
+只校验 PIT 来源就绪状态，不触发 PIT 计算或修复。P/G 业务表与 PIT 原始事实保持
+schema 隔离。
 
 ## 存储
 
@@ -120,6 +129,33 @@ PIT 任务也是统一任务系统的一部分，`task_type="pit"`。`PITTask` �
 PIT 审计结果写入 `pit.pit_audit_snapshot`。GUI 的 `PIT 管理` 页签负责刷新任务状态、执行增量/全量、只审计、查看覆盖缺口和单股诊断；常规运行状态仍复用 `任务运行与状态` 页，不引入第二套日志系统。
 
 `features` 和 `factors` 消费 PIT 输出，不直接承担 PIT 口径治理；`pgs_factors` 只保留旧查询兼容视图。
+
+## 因子管理
+
+P v2.0 与 G v1.1 的生产快照日期是自然周五，包含节假日周五。自动运行只处理
+运行日前最近一个完整周五；非周五生产写入会被应用校验和数据库约束同时拒绝。
+
+`FactorCoordinator` 是唯一生产编排入口，支持 `smart`、`manual`、`full`、`audit`。
+`smart` 计算缺失日期和来源变脏日期：P 从 PIT 水位传播，G 从变化的 P 日期向后
+传播最多 730 天。自动任务单项超过 26 个日期时返回
+`needs_manual_backfill`，不做部分写入。
+
+GUI 在 `PIT 管理` 与 `特征更新` 之间提供独立的 `因子管理` 页。选择状态不与 PIT
+共享；页面提供预检、智能增量、指定日期回补、全量回算、只审计、日期缺口、
+日期诊断和单股诊断。执行记录在 `factors.factor_run*`，审计记录在
+`factors.factor_audit_snapshot`，两类时间不混用。
+
+统一命令入口为：
+
+```powershell
+python -m alphahome.factors run --tasks p g --mode smart --dry-run
+python -m alphahome.factors audit --tasks p g
+python -m alphahome.factors diagnose --task p --date 2026-09-11
+python -m alphahome.factors repair
+```
+
+周六 08:00 的 Windows 计划任务安装器默认只预览，必须显式传入 `-Apply` 才会
+注册 `AlphaHome-Factor-Weekly`；周任务不运行 PIT。
 
 ## 已下线组件
 

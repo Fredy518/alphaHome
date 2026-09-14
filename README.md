@@ -9,11 +9,11 @@ AlphaHome 是一个面向个人和内部投研环境的量化数据与离线特�
 | `alphahome.fetchers` | 可用 | 统一任务框架，已覆盖 Tushare、AkShare、Tinysoft、Excel 等数据源任务 |
 | `alphahome.common` | 可用 | 配置、数据库、日志、任务生命周期、批处理规划等基础设施 |
 | `alphahome.features` | 可用 | 离线特征和物化视图，当前有 36 张 feature card、36 个 MV recipe、1 个 Python recipe |
-| `alphahome.factors` | 可用 | P/G 因子 calculator、统一 FactorEngine 和生产脚本调度 helper |
+| `alphahome.factors` | 可用 | P/G 因子任务契约、FactorCoordinator、审计、诊断与可回滚修复 |
 | `alphahome.pit` | 可用 | PIT 财务表 manager、财务指标 calculator 和 PIT 更新协调器 |
 | `alphahome.providers` | 部分可用 | 面向研究脚本的简化数据访问工具 `AlphaDataTool` |
 | `alphahome.integrations.fundpos` | 影子生产接入 | 维护并调用仓库内冻结的 Python 3.12 引擎，严格串联仓位估算、事务入库和数据库勾稽 |
-| `alphahome.gui` | 可用但偏内部工具 | Tkinter GUI，用于查看配置、选择并运行数据采集任务 |
+| `alphahome.gui` | 可用但偏内部工具 | Tkinter GUI，含独立 PIT 管理、因子管理和 Features 页面 |
 | `alphahome.cli` | 已下线 | 仅保留空壳包兼容导入；不再安装 `ah` / `alphahome-cli` / `refresh-materialized-view` |
 | `alphahome.processors` | 已删除 | 历史 processors 能力已迁移到 `features`、`scripts` 或 research 侧 |
 
@@ -79,6 +79,11 @@ python scripts/features_validate_pit.py --help
 # P/G 因子补算
 python scripts/production/factor_calculators/p_factor/calculate_p_factor_for_specific_dates.py --dates 2026-05-08
 python scripts/production/factor_calculators/g_factor/calculate_g_factor_for_specific_dates.py --dates 2026-05-08
+
+# P/G 统一治理入口（默认只预览可先加 --dry-run）
+python -m alphahome.factors run --tasks p g --mode smart --dry-run
+python -m alphahome.factors audit --tasks p g
+python -m alphahome.factors repair
 
 # 公募基金仓位测算：默认影子入库，不更新正式发布指针或生成文件报表
 python scripts/production/fundpos/run_fundpos_daily.py --mode check
