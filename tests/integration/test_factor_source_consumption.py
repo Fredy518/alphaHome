@@ -79,7 +79,7 @@ def test_concurrent_source_revision_is_not_lost_and_g_sees_committed_p(database,
 
     coordinator = FactorCoordinator(database)
     contracts = coordinator.contracts()
-    contracts = {"factor_p": replace(contracts["factor_p"], source_tables=(SOURCE,), calculator_class=P),
+    contracts = {"factor_p": replace(contracts["factor_p"], source_tables=(SOURCE,), readiness_dependencies=(), calculator_class=P),
                  "factor_g": replace(contracts["factor_g"], calculator_class=G)}
     monkeypatch.setattr(coordinator, "contracts", lambda: contracts)
     original_plan = coordinator.plan
@@ -105,7 +105,7 @@ def test_noop_does_not_consume_revision_arriving_after_plan(database, monkeypatc
     baseline = {SOURCE: T1, "_snapshot_xmin": FactorRepository(database).snapshot_xmin()}
     governance.finish_run(previous, "success", source_watermarks={"factor_p": baseline}, details={"watermark_contract": WATERMARK_CONTRACT})
     coordinator = FactorCoordinator(database)
-    contract = replace(coordinator.contracts()["factor_p"], source_tables=(SOURCE,))
+    contract = replace(coordinator.contracts()["factor_p"], source_tables=(SOURCE,), readiness_dependencies=())
     monkeypatch.setattr(coordinator, "contracts", lambda: {"factor_p": contract})
     original_plan = coordinator.plan
 
@@ -145,7 +145,7 @@ def test_late_commit_with_old_updated_at_is_detected_by_next_batch(database, mon
         with late_writer.cursor() as cursor:
             cursor.execute(f"UPDATE {SOURCE} SET value=2, updated_at='2026-09-10 00:00:00+00'")
         coordinator = FactorCoordinator(database)
-        contract = replace(coordinator.contracts()["factor_p"], source_tables=(SOURCE,), calculator_class=P)
+        contract = replace(coordinator.contracts()["factor_p"], source_tables=(SOURCE,), readiness_dependencies=(), calculator_class=P)
         monkeypatch.setattr(coordinator, "contracts", lambda: {"factor_p": contract})
         result = coordinator.run(["factor_p"], mode="full", batch_started_at=date(2026, 9, 14))
         assert result.status == "success"
@@ -178,7 +178,7 @@ def test_snapshot_initialization_failure_closes_session_and_finishes_run(databas
             closed.append(True)
 
     coordinator = FactorCoordinator(database)
-    contract = replace(coordinator.contracts()["factor_p"], source_tables=(SOURCE,))
+    contract = replace(coordinator.contracts()["factor_p"], source_tables=(SOURCE,), readiness_dependencies=())
     monkeypatch.setattr(coordinator, "contracts", lambda: {"factor_p": contract})
     monkeypatch.setattr(module, "DBManager", BrokenSession)
     result = coordinator.run(["factor_p"], mode="full", batch_started_at=date(2026, 9, 14))
@@ -190,7 +190,7 @@ def test_snapshot_initialization_failure_closes_session_and_finishes_run(databas
 
 def test_cancellation_finishes_run_ledger_before_propagating(database, monkeypatch):
     coordinator = FactorCoordinator(database)
-    contract = replace(coordinator.contracts()["factor_p"], source_tables=(SOURCE,))
+    contract = replace(coordinator.contracts()["factor_p"], source_tables=(SOURCE,), readiness_dependencies=())
     monkeypatch.setattr(coordinator, "contracts", lambda: {"factor_p": contract})
 
     def cancel(*args, **kwargs):

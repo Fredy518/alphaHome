@@ -286,6 +286,12 @@ class FactorRepository:
             )
             if not eligible:
                 blockers.append("pit_financial_indicators:no_eligible_rows")
+            if "pit_financial_indicators" in contract.readiness_dependencies:
+                report = self.financial_input_gaps(cutoff_date)
+                if report.get("status") != "checked":
+                    blockers.append("pit_input_eligibility:unverified")
+                elif report["eligible_missing"]:
+                    blockers.append(f"pit_input_eligibility:missing={report['eligible_missing']}")
         if contract.task_name == "factor_g":
             p_planned = set(dependency_plans.get("factor_p") or ())
             if self.relation_exists("factors.p_factor"):
@@ -299,6 +305,17 @@ class FactorRepository:
                     if not exists:
                         blockers.append(f"missing_same_date_p:{calc_date.isoformat()}")
         return blockers
+
+    def financial_input_gaps(self, cutoff_date):
+        from alphahome.pit.eligibility import INPUT_RELATIONS, financial_input_gap_sql
+
+        missing = [source for source in INPUT_RELATIONS if not self.relation_exists(source)]
+        if missing:
+            return {"status": "unverified", "missing_relations": missing}
+        row = self.db.fetch_one_sync(financial_input_gap_sql(), (cutoff_date,))
+        if not row or "eligible_missing" not in row:
+            return {"status": "unverified"}
+        return {"status": "checked", **{key: int(value or 0) for key, value in row.items()}}
 
     def changed_p_dates_since(self, watermark: Any, cutoff_date: date) -> List[date]:
         if not watermark or not self.relation_exists("factors.p_factor"):

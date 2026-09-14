@@ -1,6 +1,6 @@
 """Owned synchronous sessions for worker-local domain execution."""
 
-from contextlib import contextmanager
+from contextlib import asynccontextmanager, contextmanager
 from threading import get_ident
 
 from .run_models import target_fingerprint
@@ -43,3 +43,35 @@ def query_timeout(db, timeout_ms=30000):
         else:
             with connection.cursor() as cursor:
                 cursor.execute("SELECT set_config('statement_timeout', %s, true)", (previous,))
+
+
+class _AsyncSnapshot:
+    def __init__(self, connection):
+        self.connection = connection
+
+    async def fetch(self, query, *args):
+        return await self.connection.fetch(query, *args)
+
+    async def fetch_one(self, query, *args):
+        return await self.connection.fetchrow(query, *args)
+
+    async def fetch_val(self, query, *args):
+        return await self.connection.fetchval(query, *args)
+
+    async def execute(self, query, *args):
+        return await self.connection.execute(query, *args)
+
+
+@asynccontextmanager
+async def readonly_snapshot(db, timeout_ms=30000):
+    """Inspect through one bounded PostgreSQL snapshot; test adapters stay injectable."""
+    from .db_manager import DBManager
+
+    if not isinstance(db, DBManager):
+        yield db
+        return
+    await db.connect()
+    async with db.pool.acquire() as connection:
+        async with connection.transaction(isolation="repeatable_read", readonly=True):
+            await connection.execute("SELECT set_config('statement_timeout', $1, true)", str(int(timeout_ms)))
+            yield _AsyncSnapshot(connection)

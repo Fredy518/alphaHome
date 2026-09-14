@@ -112,12 +112,14 @@ async def test_pit_audit_task_returns_coverage_and_persists_snapshot(monkeypatch
 
     result = await service.audit_task("fake_task", persist=True)
 
-    assert result["status"] == "healthy"
+    assert result["status"] == "source_gap"
     assert result["row_count"] == 100
     assert result["coverage_rate"] == 0.8
     assert result["gap_count"] == 2
     assert result["details"]["raw_vs_pit"]["raw_missing_in_pit"] == 1
     assert any("pit.pit_audit_snapshot" in query for query, _ in db.executed)
+    assert all("CREATE " not in query for query, _ in db.executed)
+    assert result["dimensions"]["eligibility"] == "missing_eligible_output"
 
 
 @pytest.mark.asyncio
@@ -177,7 +179,7 @@ async def test_pit_audit_service_falls_back_to_registry_when_factory_uninitializ
 
     result = await service.audit_task("fake_task", persist=False)
 
-    assert result["status"] == "healthy"
+    assert result["status"] == "source_gap"
     assert result["row_count"] == 100
 
 
@@ -479,7 +481,7 @@ class _IndustryAuditTask:
         ("missing", "missing_table"),
         ("empty", "empty"),
         ("structure_only", "structure_only"),
-        ("normal", "healthy"),
+        ("normal", "stale"),
     ],
 )
 @pytest.mark.asyncio
@@ -658,7 +660,7 @@ class _IndustryFAPIAuditTask:
 
 @pytest.mark.parametrize(
     ("valued_count", "expected_status"),
-    [(0, "structure_only"), (1, "healthy")],
+    [(0, "structure_only"), (1, "consumption_unverified")],
 )
 @pytest.mark.asyncio
 async def test_industry_fapi_audit_distinguishes_structure_from_valued_rows(

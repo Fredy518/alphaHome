@@ -4,14 +4,19 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import date, datetime
+from copy import copy
+from datetime import date, datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 from alphahome.common.task_system import UnifiedTaskFactory
+from alphahome.common.audit_models import AuditDimensions
+from alphahome.common.db_session import readonly_snapshot
 
 from .base import FactorTaskContract
 from .date_policy import FactorDatePolicy, coerce_date
-from .governance import DDL_PATH, stable_config_hash
+from .governance import DDL_PATH, FactorGovernanceStore, MIGRATION_HINT, stable_config_hash
+from .source_boundary import WATERMARK_CONTRACT, SNAPSHOT_XMIN_KEY
+from .repository import _SOURCE_TIME_KEYS
 
 
 _RELATION_RE = re.compile(r"^[a-z_][a-z0-9_]*\.[a-z_][a-z0-9_]*$")
@@ -40,7 +45,6 @@ class FactorAuditService:
         return result
 
     async def list_factor_tasks(self) -> List[Dict[str, Any]]:
-        await self.ensure_schema()
         tasks: List[Dict[str, Any]] = []
         for name, (task_class, contract) in self._contracts().items():
             audit = await self.audit_task(name, persist=False)
@@ -74,7 +78,17 @@ class FactorAuditService:
     async def audit_task(
         self, task_name: str, *, persist: bool = True
     ) -> Dict[str, Any]:
-        await self.ensure_schema()
+        async with readonly_snapshot(self.db) as snapshot:
+            inspector = copy(self)
+            inspector.db = snapshot
+            result = await inspector._audit_task_live(task_name)
+        if persist and result.get("status") != "migration_required":
+            await self._persist(self._contracts()[task_name][1], result)
+            result["last_audit_time"] = result["audited_at"]
+            result["persisted"] = True
+        return result
+
+    async def _audit_task_live(self, task_name: str) -> Dict[str, Any]:
         task_info = self._contracts().get(task_name)
         if task_info is None:
             raise ValueError(f"未注册的因子任务: {task_name}")
@@ -82,6 +96,13 @@ class FactorAuditService:
         if not _RELATION_RE.fullmatch(contract.output_table):
             raise ValueError(f"非法输出表: {contract.output_table}")
         expected_latest = self.date_policy.automatic_cutoff()
+        audited_at = datetime.now(timezone.utc)
+        schema_issues = await FactorGovernanceStore.async_schema_issues(self.db)
+        if schema_issues:
+            result = self._empty_audit(contract, expected_latest, "migration_required")
+            result.update({"audited_at": audited_at, "schema_issues": schema_issues, "migration_hint": MIGRATION_HINT,
+                           "dimensions": AuditDimensions(structure="migration_required").to_dict(), "persisted": False})
+            return result
         exists = await self.db.fetch_val(
             "SELECT to_regclass($1) IS NOT NULL", contract.output_table
         )
@@ -153,18 +174,21 @@ class FactorAuditService:
                     for record in records
                     if record["ledger_status"] != "expected_no_data"
                 ]
-            denominator = await self._coverage_denominator(contract, actual_latest)
-            coverage_rate = (
-                latest_rows / denominator if denominator and latest_rows else 0.0
-            )
             dependency_status, dependency_details = await self._dependency_status(
                 contract, expected_latest
             )
+            denominator = await self._coverage_denominator(contract, actual_latest) if dependency_status == "ready" else 0
+            coverage_rate = (
+                latest_rows / denominator if denominator and latest_rows else 0.0
+            )
             last_execution = await self._last_execution(task_name)
             last_audit = await self._last_audit(task_name)
+            consumption = await self._source_consumption(contract) if dependency_status == "ready" else {"status": "unverified"}
             status = "healthy"
             if stats.get("nonstandard_date_count"):
                 status = "nonstandard_dates"
+            elif actual_latest and actual_latest > expected_latest:
+                status = "future_dates"
             elif missing_dates:
                 status = "gaps"
             elif not actual_latest or actual_latest < expected_latest:
@@ -173,6 +197,17 @@ class FactorAuditService:
                 status = "blocked_source"
             elif denominator != latest_rows:
                 status = "coverage_mismatch"
+            elif consumption["status"] != "current":
+                status = "source_unconsumed" if consumption["status"] == "changed" else "consumption_unverified"
+            dimensions = AuditDimensions(
+                structure="ready",
+                dates="complete" if not missing_dates and actual_latest == expected_latest and not stats.get("nonstandard_date_count") else "incomplete",
+                source_consumption=consumption["status"],
+                coverage="complete" if denominator == latest_rows and denominator > 0 else "incomplete",
+                eligibility="qualified" if dependency_status == "ready" and denominator > 0 else "unknown",
+            )
+            if status == "healthy" and not dimensions.healthy:
+                status = "readiness_unverified"
             result = {
                 "task_name": task_name,
                 "row_count": int(stats.get("row_count") or 0),
@@ -201,10 +236,12 @@ class FactorAuditService:
                 "audited_row_count": last_audit.get("row_count"),
                 "audited_coverage_rate": last_audit.get("coverage_rate"),
                 "audited_gap_count": last_audit.get("missing_date_count"),
+                "dimensions": dimensions.to_dict(),
+                "source_consumption": consumption,
             }
-        if persist:
-            await self._persist(contract, result)
-            result["last_audit_time"] = datetime.now().astimezone()
+        result["audited_at"] = audited_at
+        result.setdefault("dimensions", AuditDimensions(structure="missing").to_dict())
+        result["persisted"] = False
         return result
 
     async def get_date_gaps(
@@ -313,12 +350,25 @@ class FactorAuditService:
         self, contract: FactorTaskContract, expected_latest: date
     ) -> tuple[str, Dict[str, Any]]:
         details: Dict[str, Any] = {}
-        for source in contract.source_tables:
+        sources = list(contract.source_tables)
+        if contract.task_name == "factor_p":
+            sources.append("tushare.stock_basic")
+        for source in dict.fromkeys(sources):
             exists = bool(
                 await self.db.fetch_val("SELECT to_regclass($1) IS NOT NULL", source)
             )
             details[source] = {"exists": exists}
             if not exists:
+                return "blocked", details
+        if contract.task_name == "factor_p":
+            from alphahome.pit.eligibility import INPUT_RELATIONS, financial_input_gap_sql
+
+            if any([not await self.db.fetch_val("SELECT to_regclass($1) IS NOT NULL", source) for source in INPUT_RELATIONS]):
+                details["eligible_inputs"] = {"status": "unverified"}
+                return "blocked", details
+            row = dict(await self.db.fetch_one(financial_input_gap_sql("$1"), expected_latest) or {})
+            details["eligible_inputs"] = row
+            if row.get("eligible_missing") is None or row["eligible_missing"]:
                 return "blocked", details
         if contract.task_name == "factor_g":
             latest_p = await self.db.fetch_val(
@@ -328,6 +378,40 @@ class FactorAuditService:
             if not latest_p or latest_p < expected_latest:
                 return "blocked", details
         return "ready", details
+
+    async def _source_consumption(self, contract):
+        if contract.task_name == "factor_p" and "tushare.stock_basic" not in contract.source_tables:
+            return {"status": "unverified", "reason": "stock_master_not_in_consumption_contract"}
+        row = await self.db.fetch_one(
+            "SELECT run_id, source_watermarks, finished_at FROM factors.factor_run "
+            "WHERE $1=ANY(task_names) AND status IN ('success','partial_success') "
+            "AND details_json->>'watermark_contract'=$2 AND source_watermarks ? $1 "
+            "ORDER BY finished_at DESC NULLS LAST LIMIT 1", contract.task_name, WATERMARK_CONTRACT,
+        )
+        if not row:
+            return {"status": "unverified", "reason": "no_certified_consumption"}
+        payload = row["source_watermarks"]
+        if isinstance(payload, str):
+            payload = json.loads(payload)
+        watermarks = payload.get(contract.task_name) or {}
+        xmin = watermarks.get(SNAPSHOT_XMIN_KEY)
+        xmax = int(await self.db.fetch_val("SELECT pg_snapshot_xmax(pg_current_snapshot())::text"))
+        if not isinstance(xmin, int) or not 0 <= xmax - xmin < 2**31:
+            return {"status": "unverified", "reason": "invalid_or_expired_cursor"}
+        changed = []
+        for source in contract.source_tables:
+            key = _SOURCE_TIME_KEYS.get(source)
+            if not key or not _RELATION_RE.fullmatch(source):
+                return {"status": "unverified", "reason": "unsupported_source_contract"}
+            value = await self.db.fetch_val(
+                f"SELECT MIN({key}) FROM {source} WHERE updated_at > $1 OR age(xmin) <= age($2::text::xid)",
+                datetime.fromisoformat(watermarks[source]) if isinstance(watermarks.get(source), str) else watermarks.get(source),
+                str(xmin % (2**32)),
+            )
+            if value is not None:
+                changed.append(source)
+        return {"status": "changed" if changed else "current", "changed_sources": changed,
+                "consumed_run_id": str(row["run_id"]), "consumed_at": row["finished_at"]}
 
     async def _last_execution(self, task_name: str) -> Dict[str, Any]:
         exists = await self.db.fetch_val(
@@ -365,6 +449,9 @@ class FactorAuditService:
         self, contract: FactorTaskContract, result: Dict[str, Any]
     ) -> None:
         details = {
+            "audited_at": result.get("audited_at"),
+            "dimensions": result.get("dimensions"),
+            "source_consumption": result.get("source_consumption"),
             "missing_dates": result.get("missing_dates") or [],
             "expected_no_data_dates": result.get("expected_no_data_dates") or [],
             "dependency_details": result.get("dependency_details") or {},

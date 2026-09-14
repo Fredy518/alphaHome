@@ -4,11 +4,15 @@ from __future__ import annotations
 
 import asyncio
 import json
-from datetime import date, datetime
+from copy import copy
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from alphahome.common.logging_utils import get_logger
+from alphahome.common.audit_models import AuditDimensions
+from alphahome.common.db_session import readonly_snapshot
+from zoneinfo import ZoneInfo
 from alphahome.common.task_system import UnifiedTaskFactory
 from alphahome.pit.base.pit_task import PITTaskContract
 
@@ -46,12 +50,14 @@ def _jsonable(value: Any) -> Any:
 class PITAuditService:
     """Read-only PIT coverage checks plus audit snapshot persistence."""
 
-    def __init__(self, db_manager: Any):
+    def __init__(self, db_manager: Any, *, as_of: Optional[date] = None):
         self.db = db_manager
         self._listed_stock_count: Optional[int] = None
         self._listed_stock_count_lock = asyncio.Lock()
+        self.as_of = as_of or datetime.now(ZoneInfo("Asia/Shanghai")).date()
 
     async def list_pit_tasks(self) -> List[Dict[str, Any]]:
+        self._listed_stock_count = None
         task_classes = self._pit_task_classes()
         task_specs: List[Tuple[str, Any, PITTaskContract]] = []
         for task_name in sorted(task_classes):
@@ -82,7 +88,8 @@ class PITAuditService:
                         "row_count": stats.get("row_count", 0),
                         "coverage_rate": stats.get("coverage_rate"),
                         "gap_count": stats.get("gap_count"),
-                        "live_status": stats.get("status", "unknown"),
+                         "live_status": stats.get("status", "unknown"),
+                         "dimensions": stats.get("dimensions"),
                     }
                 )
             except Exception as exc:
@@ -150,6 +157,17 @@ class PITAuditService:
         return results
 
     async def audit_task(self, task_name: str, persist: bool = True) -> Dict[str, Any]:
+        async with readonly_snapshot(self.db) as snapshot:
+            inspector = copy(self)
+            inspector.db = snapshot
+            inspector._listed_stock_count = None
+            result = await inspector._audit_task_live(task_name)
+        if persist and result.get("output_table"):
+            await self._persist_audit_snapshot(result)
+            result["persisted"] = True
+        return result
+
+    async def _audit_task_live(self, task_name: str) -> Dict[str, Any]:
         task_classes = self._pit_task_classes()
         task_class = task_classes.get(task_name)
         if task_class is None:
@@ -160,10 +178,10 @@ class PITAuditService:
             return {"task_name": task_name, "status": "error", "error": "任务缺少PIT contract"}
 
         stats = await self._table_stats(contract)
-        raw_gap = await self._raw_gap_summary(contract, stats.get("coverage_period"))
-        domain_details = await self._domain_audit_details(
-            contract, stats.get("coverage_period")
-        )
+        raw_gap, domain_details = {}, {}
+        if stats.get("status") in {"available", "healthy"}:
+            raw_gap = await self._raw_gap_summary(contract, stats.get("coverage_period"))
+            domain_details = await self._domain_audit_details(contract, stats.get("coverage_period"))
         details = {
             "contract": contract.to_dict(),
             "coverage_period": stats.get("coverage_period"),
@@ -175,23 +193,39 @@ class PITAuditService:
             "domain_metrics": domain_details,
         }
         status = stats.get("status", "unknown")
-        if status == "healthy" and contract.domain == "industry_fttm":
+        if status in {"healthy", "available"} and contract.domain == "industry_fttm":
             valued_count = sum(
                 int(row.get("valued_industries") or 0)
                 for row in domain_details.get("levels", [])
             )
             if valued_count == 0:
                 status = "structure_only"
-        if status == "healthy" and contract.domain == "industry_fapi":
+        if status in {"healthy", "available"} and contract.domain == "industry_fapi":
             valued_count = sum(
                 int(row.get("valued_industries") or 0)
                 for row in domain_details.get("levels", [])
             )
             if valued_count == 0:
                 status = "structure_only"
-        if status == "healthy" and contract.domain == "index_fttm":
+        if status in {"healthy", "available"} and contract.domain == "index_fttm":
             if int(domain_details.get("valued_universes") or 0) == 0:
                 status = "structure_only"
+        source_gap = int(raw_gap.get("raw_missing_in_pit") or 0)
+        if status in {"healthy", "available"}:
+            if source_gap:
+                status = "source_gap"
+            elif (stats.get("dimensions") or {}).get("dates") == "incomplete":
+                status = "stale"
+            else:
+                status = "consumption_unverified"
+        dimensions = dict(stats.get("dimensions") or AuditDimensions(structure="ready").to_dict())
+        dimensions["source_consumption"] = "unverified"
+        dimensions["eligibility"] = "missing_eligible_output" if source_gap else (
+            "qualified" if raw_gap.get("status") == "ok" else "unknown")
+        details["dimensions"] = dimensions
+        details["source_consumption_reason"] = "PIT managers have no certified snapshot consumption ledger"
+        audited_at = datetime.now(ZoneInfo("Asia/Shanghai"))
+        details["audited_at"] = audited_at
         result = {
             "task_name": task_name,
             "output_table": contract.output_table,
@@ -201,9 +235,11 @@ class PITAuditService:
             "gap_count": stats.get("gap_count"),
             "status": status,
             "details": details,
+            "dimensions": dimensions,
+            "audited_at": audited_at,
+            "as_of": self.as_of,
+            "persisted": False,
         }
-        if persist:
-            await self._persist_audit_snapshot(result)
         return result
 
     async def get_coverage_matrix(self, limit: int = 8) -> Dict[str, Any]:
@@ -339,6 +375,7 @@ class PITAuditService:
             denominator_count = await self._denominator_count(contract, None)
             return {
                 "status": "missing_table",
+                "dimensions": AuditDimensions(structure="missing").to_dict(),
                 "row_count": 0,
                 "latest_pit_time": None,
                 "coverage_period": None,
@@ -388,9 +425,28 @@ class PITAuditService:
         gap_count = (
             max(denominator_count - coverage_count, 0) if denominator_count else None
         )
-        status = "empty" if row_count == 0 else "healthy"
+        required = set(contract.primary_keys) | {contract.pit_time_key}
+        structure = "ready" if required <= columns else "migration_required"
+        date_state = "unknown"
+        expected_latest = None
+        if contract.pit_time_key == "obs_date":
+            expected_latest = self.as_of.replace(day=1) - timedelta(days=1)
+            date_state = "complete" if latest_pit_time == expected_latest else "incomplete"
+        if latest_pit_time and latest_pit_time > self.as_of:
+            date_state = "future_violation"
+        status = "empty" if row_count == 0 else "available"
+        if structure != "ready":
+            status = "migration_required"
+        elif date_state == "future_violation":
+            status = "future_violation"
+        dimensions = AuditDimensions(
+            structure=structure, dates=date_state,
+            coverage="complete" if denominator_count and coverage_count == denominator_count else "observed_incomplete",
+        )
         return {
             "status": status,
+            "dimensions": dimensions.to_dict(),
+            "expected_latest_date": expected_latest,
             "row_count": row_count,
             "latest_pit_time": latest_pit_time,
             "coverage_period": coverage_period,
@@ -1042,7 +1098,8 @@ AND EXISTS (
         }
 
     async def _persist_audit_snapshot(self, audit_result: Dict[str, Any]) -> None:
-        await self._ensure_audit_snapshot_table()
+        if not await self._relation_exists("pit.pit_audit_snapshot"):
+            raise RuntimeError("migration_required: explicitly install pit.pit_audit_snapshot before persisting audits")
         await self.db.execute(
             """
             INSERT INTO pit.pit_audit_snapshot (

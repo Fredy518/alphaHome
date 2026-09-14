@@ -92,6 +92,21 @@ class FactorGovernanceStore:
             """,
             (list(SCHEMA_COLUMNS),),
         )
+        return self._column_issues(rows)
+
+    @staticmethod
+    async def async_schema_issues(db) -> list[str]:
+        rows = await db.fetch(
+            "SELECT n.nspname AS table_schema, c.relname AS table_name, a.attname AS column_name "
+            "FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace "
+            "JOIN pg_catalog.pg_attribute a ON a.attrelid=c.oid "
+            "WHERE c.relkind IN ('r','p') AND a.attnum>0 AND NOT a.attisdropped "
+            "AND (n.nspname || '.' || c.relname) = ANY($1::text[])", list(SCHEMA_COLUMNS),
+        )
+        return FactorGovernanceStore._column_issues(rows)
+
+    @staticmethod
+    def _column_issues(rows):
         existing: dict[str, set[str]] = {}
         for row in rows:
             table = f"{row['table_schema']}.{row['table_name']}"

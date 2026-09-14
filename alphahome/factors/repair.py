@@ -42,11 +42,14 @@ class FactorRepairService:
         self.logger = logging.getLogger("FactorRepairService")
 
     def plan(self, cutoff_date: date | str | None = None) -> Dict[str, Any]:
-        self.governance.ensure_schema()
         automatic = self.policy.automatic_cutoff()
         cutoff = FactorDatePolicy.require_valid(cutoff_date or automatic)
         if cutoff > automatic:
             raise ValueError(f"修复截止日不能晚于最近完整周五: {automatic}")
+        issues = self.governance.schema_issues()
+        if issues:
+            return {"status": "migration_required", "apply": False, "schema_issues": issues,
+                    "effective_cutoff_date": cutoff.isoformat(), "tasks": {}}
         result: Dict[str, Any] = {
             "status": "dry_run",
             "apply": False,
@@ -104,10 +107,11 @@ class FactorRepairService:
 
     def _apply_locked(self, cutoff_date: date | str | None = None) -> Dict[str, Any]:
         preflight = self.plan(cutoff_date)
+        if preflight["status"] == "migration_required":
+            raise RuntimeError("migration_required: explicitly install the factor schema before repair")
         cutoff = coerce_date(preflight["effective_cutoff_date"])
         source_cutoff_at = datetime.now(FACTOR_TIMEZONE)
         repair_id = uuid4()
-        self.governance.ensure_schema()
         self._ensure_repair_tables()
         self._insert_manifest(
             repair_id,

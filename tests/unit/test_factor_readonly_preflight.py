@@ -52,6 +52,8 @@ class ReadOnlyDB:
 
     def fetch_one_sync(self, sql, _params=()):
         self._read(sql)
+        if "eligible_pit_input_gaps" in sql:
+            return {"eligible_count": 1, "eligible_missing": 0}
         return {}
 
     def close_sync(self):
