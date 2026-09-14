@@ -131,7 +131,7 @@ class TushareStockKplMemberTask(TushareTask):
         elif update_type == UpdateTypes.FULL:
             # 全量更新：生成从开始日期到当前的所有月末交易日
             start_date = pd.to_datetime(self.default_start_date)
-            end_date = pd.Timestamp.now()
+            end_date = pd.to_datetime(kwargs.get("end_date") or pd.Timestamp.now())
 
             # 生成月份列表
             months = pd.date_range(start=start_date, end=end_date, freq='ME')
@@ -158,7 +158,7 @@ class TushareStockKplMemberTask(TushareTask):
                 start_date = pd.to_datetime(self.default_start_date)
                 self.logger.info(f"任务 {self.name}: 智能增量模式，无历史数据，使用默认起始日期 {start_date.strftime('%Y-%m-%d')}")
 
-            end_date = pd.Timestamp.now()
+            end_date = pd.to_datetime(kwargs.get("end_date") or pd.Timestamp.now())
 
             # 生成从start_date到end_date的所有月末交易日
             months = pd.date_range(start=start_date, end=end_date, freq='ME')
@@ -167,6 +167,12 @@ class TushareStockKplMemberTask(TushareTask):
             for month_end in months:
                 trade_date = month_end.strftime('%Y%m%d')
                 batch_list.append({"trade_date": trade_date})
+
+            if not batch_list:
+                self._smart_skip_reason = (
+                    f"SMART 模式截至 {end_date.date()} 没有新的完整月末批次；"
+                    f"数据库最新月末为 {latest_date.date() if latest_date else '无'}。"
+                )
 
             self.logger.info(f"任务 {self.name}: 智能增量模式，生成 {len(batch_list)} 个批次")
             return batch_list
