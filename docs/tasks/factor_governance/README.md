@@ -8,7 +8,8 @@
 - 生产日期是自然周五，节假日周五合法；自动截止日是运行日前最近一个完整周五。
 - G 自动展开 P，P 只检查 PIT 就绪状态，任何因子流程都不会自动执行 PIT。
 
-修复前证据见 [baseline_20260914.json](baseline_20260914.json)。
+修复前证据见 [baseline_20260914.json](baseline_20260914.json)，正式修复与独立验收
+见 [repair_7d10a9ac-a628-403c-a0c0-4ed6409105d8.md](repair_7d10a9ac-a628-403c-a0c0-4ed6409105d8.md)。
 
 ## 运行架构
 
