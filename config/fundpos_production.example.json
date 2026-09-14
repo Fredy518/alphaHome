@@ -1,0 +1,43 @@
+{
+  "fundpos": {
+    "project_root": "E:\\CodePrograms\\1-Work\\公募基金行业仓位测算",
+    "python_executable": "E:\\CodePrograms\\alphaHome\\.fundpos-runtime\\v0.3.2\\Scripts\\python.exe",
+    "engine_config": "config/v3.toml",
+    "release_manifest": "E:\\CodePrograms\\alphaHome\\.fundpos-runtime\\v0.3.2\\release.json",
+    "expected_revision": "b6ffc500ed165dcfbe546790eda7648de9f29d32",
+    "expected_tag": "v0.3.2",
+    "expected_package_version": "0.3.2",
+    "state_dir": "E:\\CodePrograms\\alphaHome\\logs\\fundpos",
+    "mode": "shadow",
+    "scope": "v3-pilot",
+    "families": [
+      "fixed_income_plus",
+      "enhanced_index",
+      "convertible_dominant"
+    ],
+    "minimum_count_coverage": 0.8,
+    "timeout_seconds": 7200,
+    "excel": true,
+    "expected_universe_counts": {
+      "fixed_income_plus": 90,
+      "enhanced_index": 20,
+      "convertible_dominant": 10
+    },
+    "expected_scope_versions": {
+      "fixed_income_plus": "fundpos_v3_fixed_income_plus_20260912",
+      "enhanced_index": "fundpos_v3_enhanced_index_20260912",
+      "convertible_dominant": "fundpos_v3_convertible_dominant_20260913"
+    },
+    "non_applicable_reasons": {
+      "fixed_income_plus": ["UNIVERSE_RULES_NOT_MET"],
+      "enhanced_index": [],
+      "convertible_dominant": []
+    },
+    "publication_keys": {
+      "fixed_income_plus": "fundpos:v3.1:fixed_income_plus:daily",
+      "enhanced_index": "fundpos:v3.1:enhanced_index:daily",
+      "convertible_dominant": "fundpos:v3.1:convertible_dominant:daily"
+    },
+    "publication_validations": {}
+  }
+}

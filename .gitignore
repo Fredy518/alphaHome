@@ -12,6 +12,7 @@ Thumbs.db
 # Ignore virtual environment directories
 venv/
 .venv/
+.fundpos-runtime/
 env/
 
 # Ignore sensitive configuration files

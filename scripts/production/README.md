@@ -7,6 +7,9 @@
 ```text
 scripts/production/
 ├── refresh_market_timing_dependencies.py
+├── fundpos/
+│   ├── run_fundpos_daily.py
+│   └── install_fundpos_schedule.ps1
 ├── config/
 │   └── tushare_update_config.yaml
 ├── data_updaters/
@@ -136,6 +139,26 @@ python scripts/production/refresh_market_timing_dependencies.py --profile betana
 
 - `alphasniper`
 - `betanavigator`
+
+## 公募基金仓位测算
+
+基金仓位计算使用独立、冻结的 Python 3.12 fundpos wheel。AlphaHome 负责数据更新、
+生产编排和运行状态；算法、版本化迁移及 `fundpos` schema 仍保持自己的审计身份。
+默认 `shadow` 模式依次执行版本/迁移预检、三类估算、事务入库和跨载体勾稽，任何
+一步失败即返回非零退出码，不更新正式发布指针。
+
+```powershell
+python scripts/production/fundpos/run_fundpos_daily.py --mode check
+python scripts/production/fundpos/run_fundpos_daily.py --mode shadow
+powershell -File scripts/production/fundpos/install_fundpos_schedule.ps1
+powershell -File scripts/production/fundpos/install_fundpos_schedule.ps1 -Apply
+```
+
+默认配置文件为 `~/.alphahome/fundpos_production.json`，模板在
+`config/fundpos_production.example.json`。`publish` 模式必须另外配置每个模型族的
+日更批准文件；没有批准记录时协调器会失败并保留上一发布版本。通用 Tushare 更新器
+的 80%总体成功口径不适用于本流水线。当前冻结版本与运行验收见
+[`docs/tasks/fundpos_production_integration_20260914.md`](../../docs/tasks/fundpos_production_integration_20260914.md)。
 
 ## 运行建议
 

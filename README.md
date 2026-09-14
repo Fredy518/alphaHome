@@ -12,6 +12,7 @@ AlphaHome 是一个面向个人和内部投研环境的量化数据与离线特�
 | `alphahome.factors` | 可用 | P/G 因子 calculator、统一 FactorEngine 和生产脚本调度 helper |
 | `alphahome.pit` | 可用 | PIT 财务表 manager、财务指标 calculator 和 PIT 更新协调器 |
 | `alphahome.providers` | 部分可用 | 面向研究脚本的简化数据访问工具 `AlphaDataTool` |
+| `alphahome.integrations.fundpos` | 影子生产接入 | 调用冻结 Python 3.12 引擎，严格串联仓位估算、事务入库和勾稽 |
 | `alphahome.gui` | 可用但偏内部工具 | Tkinter GUI，用于查看配置、选择并运行数据采集任务 |
 | `alphahome.cli` | 已下线 | 仅保留空壳包兼容导入；不再安装 `ah` / `alphahome-cli` / `refresh-materialized-view` |
 | `alphahome.processors` | 已删除 | 历史 processors 能力已迁移到 `features`、`scripts` 或 research 侧 |
@@ -78,7 +79,14 @@ python scripts/features_validate_pit.py --help
 # P/G 因子补算
 python scripts/production/factor_calculators/p_factor/calculate_p_factor_for_specific_dates.py --dates 2026-05-08
 python scripts/production/factor_calculators/g_factor/calculate_g_factor_for_specific_dates.py --dates 2026-05-08
+
+# 公募基金仓位测算：默认影子入库，不更新正式发布指针
+python scripts/production/fundpos/run_fundpos_daily.py --mode check
+python scripts/production/fundpos/run_fundpos_daily.py --mode shadow
 ```
+
+部署边界、冻结版本和影子运行证据见
+[公募基金仓位测算 AlphaHome 生产接入记录](docs/tasks/fundpos_production_integration_20260914.md)。
 
 ## 项目结构
 
