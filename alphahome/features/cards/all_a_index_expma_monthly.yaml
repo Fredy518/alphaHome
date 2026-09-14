@@ -1,0 +1,29 @@
+name: all_a_index_expma_monthly
+version: "1.0"
+status: deployed
+
+sources:
+  - table: features.all_a_index_daily
+    usage: 自建全A日线指数事实
+  - table: rawdata.others_calendar
+    usage: 完整月份和真实月末交易日判断
+
+outputs:
+  relation: features.all_a_expma_monthly
+  grain: series_id × signal_date
+  fields:
+    - open
+    - close
+    - ema12
+    - ema120
+    - cross_above_ema12
+    - cross_below_ema12
+    - cross_above_ema120
+    - cross_below_ema120
+    - monthly_bearish
+  boundary: 只保存完整月技术原子，不保存预热资格、红绿灯状态或ETF预算
+
+refresh:
+  type: python_table
+  strategy: full_atomic
+  dependency_order: all_a_index_daily first

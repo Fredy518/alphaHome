@@ -9,7 +9,6 @@ Features 数据库初始化模块
 """
 
 import logging
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -62,9 +61,13 @@ CREATE TABLE IF NOT EXISTS features.mv_refresh_log (
     success BOOLEAN NOT NULL DEFAULT FALSE,
     error_message TEXT,
     row_count BIGINT,
+    details JSONB,
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
     CONSTRAINT mv_refresh_log_schema_check CHECK (schema_name = 'features')
 );
+
+ALTER TABLE features.mv_refresh_log
+    ADD COLUMN IF NOT EXISTS details JSONB;
 
 CREATE INDEX IF NOT EXISTS idx_mv_refresh_log_view_name
     ON features.mv_refresh_log (view_name);
@@ -81,6 +84,7 @@ COMMENT ON COLUMN features.mv_refresh_log.duration_seconds IS '刷新耗时（�
 COMMENT ON COLUMN features.mv_refresh_log.success IS '是否成功';
 COMMENT ON COLUMN features.mv_refresh_log.error_message IS '错误信息';
 COMMENT ON COLUMN features.mv_refresh_log.row_count IS '刷新后行数';
+COMMENT ON COLUMN features.mv_refresh_log.details IS '本次构建的数据版本、水位和质量摘要';
 """
 
 
@@ -216,6 +220,9 @@ class FeaturesDatabaseInit:
             bool: 是否已初始化（或初始化成功）
         """
         if await self.check_initialized():
+            # CREATE TABLE IF NOT EXISTS 不会为旧表补列；重复执行这段兼容 DDL，
+            # 让既有数据库也能获得新增的刷新审计字段。
+            await self._create_mv_refresh_log_table()
             logger.info(f"{self._schema} schema 已初始化，跳过")
             self._initialized = True
             return True

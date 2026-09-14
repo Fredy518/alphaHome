@@ -6,9 +6,10 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +24,7 @@ async def log_mv_refresh(
     duration_seconds: float,
     row_count: int = 0,
     error_message: Optional[str] = None,
+    details: Optional[dict[str, Any]] = None,
     started_at: Optional[datetime] = None,
     finished_at: Optional[datetime] = None,
 ) -> None:
@@ -47,12 +49,13 @@ async def log_mv_refresh(
             duration_seconds,
             success,
             error_message,
-            row_count
+            row_count,
+            details
         ) VALUES (
             $1, $2, $3,
             $4 AT TIME ZONE 'Asia/Shanghai',
             $5 AT TIME ZONE 'Asia/Shanghai',
-            $6, $7, $8, $9
+            $6, $7, $8, $9, $10::jsonb
         );
         """.strip()
         params = (
@@ -65,6 +68,11 @@ async def log_mv_refresh(
             success,
             error_message,
             row_count,
+            (
+                json.dumps(details, ensure_ascii=False, default=str)
+                if details is not None
+                else None
+            ),
         )
     else:
         # 与旧实现保持一致：用数据库 NOW() 推导时间，避免依赖本地时钟/时区
@@ -78,12 +86,13 @@ async def log_mv_refresh(
             duration_seconds,
             success,
             error_message,
-            row_count
+            row_count,
+            details
         ) VALUES (
             $1, $2, $3,
             (NOW() - INTERVAL '1 second' * $4) AT TIME ZONE 'Asia/Shanghai',
             NOW() AT TIME ZONE 'Asia/Shanghai',
-            $4, $5, $6, $7
+            $4, $5, $6, $7, $8::jsonb
         );
         """.strip()
         params = (
@@ -94,6 +103,11 @@ async def log_mv_refresh(
             success,
             error_message,
             row_count,
+            (
+                json.dumps(details, ensure_ascii=False, default=str)
+                if details is not None
+                else None
+            ),
         )
 
     try:
@@ -101,4 +115,3 @@ async def log_mv_refresh(
     except Exception as e:
         # 日志写入失败不应阻断主流程
         logger.warning(f"Failed to log refresh to features.mv_refresh_log: {e}")
-

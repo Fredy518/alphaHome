@@ -1,0 +1,35 @@
+name: all_a_index_daily
+version: "1.0"
+status: deployed
+
+sources:
+  - table: rawdata.stock_daily
+    usage: 股票开收盘和交易所除权参考价
+  - table: rawdata.stock_dailybasic
+    usage: 自由流通股本和流通股本
+  - table: rawdata.stock_basic
+    usage: A股身份、上市和退市边界
+  - table: rawdata.stock_code_mapping
+    usage: 历史证券代码身份合并
+  - table: rawdata.stock_dividend
+    usage: 停牌期间分红送股状态调整
+  - table: rawdata.others_calendar
+    usage: SSE交易日和新股十交易日缓冲
+
+outputs:
+  relation: features.all_a_index_daily
+  grain: series_id × trade_date
+  variants:
+    - strict_free
+    - float_fallback
+  open_semantics: 仅每个自然月首个交易日保存指数开盘参考点位，其他交易日为空
+  boundary: 自建全收益近似指数，不是官方万得全A复刻，不包含策略状态
+
+refresh:
+  type: python_table
+  strategy: full_atomic
+  reason: 指数点位和滞后成分状态具有路径依赖
+
+pit_safety:
+  uses_future_information: false
+  limitation: 使用AlphaDB当前历史版本，不是逐日封存的供应商PIT历史
