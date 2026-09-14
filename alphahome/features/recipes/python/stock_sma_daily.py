@@ -129,21 +129,18 @@ class StockSmaDailyFeature(PythonFeatureTable):
         # 将 Decimal 转换为 float（PostgreSQL 返回的数值类型）
         df["close"] = df["close"].astype(float)
 
-        # 按股票分组计算 SMA
-        def calc_sma(group):
-            group = group.sort_values("trade_date")
-            group["sma5"] = group["close"].rolling(window=5, min_periods=5).mean()
-            group["sma10"] = group["close"].rolling(window=10, min_periods=10).mean()
-            group["sma20"] = group["close"].rolling(window=20, min_periods=20).mean()
+        # Keep the grouping column outside DataFrameGroupBy.apply.  Besides
+        # avoiding pandas' changing apply semantics, transform preserves the
+        # original row index and makes the per-security boundary explicit.
+        df = df.sort_values(["ts_code", "trade_date"])
+        closes = df.groupby("ts_code", sort=False)["close"]
+        df["sma5"] = closes.transform(lambda values: values.rolling(window=5, min_periods=5).mean())
+        df["sma10"] = closes.transform(lambda values: values.rolling(window=10, min_periods=10).mean())
+        df["sma20"] = closes.transform(lambda values: values.rolling(window=20, min_periods=20).mean())
 
-            # 计算比率
-            group["sma5_ratio"] = (group["close"] / group["sma5"] - 1).round(4)
-            group["sma10_ratio"] = (group["close"] / group["sma10"] - 1).round(4)
-            group["sma20_ratio"] = (group["close"] / group["sma20"] - 1).round(4)
-
-            return group
-
-        df = df.groupby("ts_code", group_keys=False).apply(calc_sma)
+        df["sma5_ratio"] = (df["close"] / df["sma5"] - 1).round(4)
+        df["sma10_ratio"] = (df["close"] / df["sma10"] - 1).round(4)
+        df["sma20_ratio"] = (df["close"] / df["sma20"] - 1).round(4)
 
         # 只保留目标日期范围内的数据
         df = df[df["trade_date"].astype(str).str.replace("-", "") >= start_date]
