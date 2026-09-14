@@ -23,19 +23,23 @@ AlphaDB `fundpos` schema 是结果、诊断和标准化证据的唯一维护与�
 
 | 项目 | 值 |
 |---|---|
-| AlphaHome 提交 | `3e6f8020d4a8037bd0bb9e88e6c1410fdf7cb5e0` |
-| fundpos 版本 | `0.4.0` |
-| Git 标签 | `fundpos-v0.4.0` |
-| 引擎 Git tree | `1e0dbdaa3ba6267de15d16eac27f925018b36f44` |
+| AlphaHome 提交 | `f669679fa7e98156fcf4f3b00cda2f98f511ce19` |
+| fundpos 版本 | `0.4.1` |
+| Git 标签 | `fundpos-v0.4.1` |
+| 引擎 Git tree | `9ac6d5cd4b0c8af78db3899dd839c4f291cf4e01` |
 | Python | `3.12.7` |
 | CVXPY / OSQP | `1.9.2` / `1.1.3` |
-| wheel SHA256 | `dee646330f2965dc62d1df11b4f3faade084c54445522258efe712f048ab4417` |
-| 隔离运行时 | `E:\CodePrograms\alphaHome\.fundpos-runtime\v0.4.0` |
+| wheel SHA256 | `fa9590dc67cc1259d3391889862a06341c22ae6ef5c675fce7dbb06fc4d4a78e` |
+| 隔离运行时 | `E:\CodePrograms\alphaHome\.fundpos-runtime\v0.4.1` |
 | 数据库迁移 | 6/6 已应用 |
 
 隔离环境按子包 `uv.lock` 安装，运行时不存在 `openpyxl`。编排器每次运行前核对 AlphaHome
 标签、提交、引擎 tree、受管路径工作树、包版本、Python 版本、wheel 哈希和全部迁移；
 任一项漂移即停止。
+
+v0.4.1 将证据内容身份与本地审计位置分开维护：内容身份和首次观察时间保持不变，
+重复导入时把审计位置更新为当前 AlphaHome 冻结目录；复用逻辑运行也会回填运行清单及
+标准化输入证据。同日同范围的产品成员记录同步引用当前 AlphaHome 运行证据。
 
 ## 数据库存储边界
 
@@ -58,7 +62,7 @@ writer 权限不足，事务完整回滚；权限迁移后同一运行成功提�
 
 ## 2026-09-11 冻结影子运行
 
-信息截止为 2026-09-12。
+信息截止为 2026-09-14。
 
 | 模型族 | 固定范围 | 可估算 | 适用范围覆盖率 | 正式资产行 | 融资情景行 | 入库与勾稽 |
 |---|---:|---:|---:|---:|---:|---|
@@ -68,23 +72,37 @@ writer 权限不足，事务完整回滚；权限迁移后同一运行成功提�
 
 运行号：
 
-- 固收+：`2026-09-11_fixed_income_plus_e39fa3ebdb076e31b1976c17`
-- 增强指数：`2026-09-11_personalized_614273d34e5e20847dd88c8f`
-- 转债主导：`2026-09-11_convertible_dominant_d07d116260aa28894980ff99`
+- 固收+：`2026-09-11_fixed_income_plus_43eab696fec3232a36b9c24b`
+- 增强指数：`2026-09-11_personalized_aad67787a2f8955b0baa40d0`
+- 转债主导：`2026-09-11_convertible_dominant_8bce4095cb2ea5101b05cd8f`
 
 每个模型族均完成 `fund_estimate`、`fund_exposure`、`group_estimate`、`group_exposure` 和
 `fund_scenario_exposure` 五组核对，缺行、多行和数值差异均为 0。三份正式运行目录均没有
 `report` 目录，Excel 和 HTML 文件数均为 0。
 
-迁移前后对 2026-09-11 的基金明细、群体汇总和融资情景分别按稳定键对齐。三个模型族的
-列集合、非数值字段和全部数值完全一致，最大绝对差异为 0。再次执行完整影子批次时，
-三个模型族均返回 `reused`，运行号保持不变，数据库勾稽继续通过。
+v0.4.0 与 v0.4.1 对 2026-09-11 的数据库长表按稳定键对齐，缺行、多行和状态差异均为 0。
+增强指数正式暴露完全一致；固收+和转债主导的正式暴露最大浮点差异分别为 `5.38e-13`
+和 `3.4e-13`，融资情景最大差异为 `1.253e-10`，均远低于 `1e-6` 的工程容差；群体暴露
+完全一致。再次执行完整影子批次时，三个模型族均返回 `reused`，运行号保持不变，五组
+数据库勾稽继续通过。
+
+三个当前运行各关联 27 条输入、标准化披露及运行清单证据，共 81 条；空路径、旧项目路径
+和 AlphaHome 之外路径均为 0。复用批次后再次核验结果不变。当前运行目录没有 `report`
+目录，Excel 和 HTML 文件数均为 0。
+
+迁移前已有的 120 条历史证据位置也已复制到
+`E:\CodePrograms\alphaHome\logs\fundpos-engine\legacy-standalone` 并在同一数据库事务中更新。
+共保留 212 个 Parquet、JSON/NDJSON 等机器可读文件，合计 208,940,933 字节；明确排除
+153 个 Excel、HTML、图片及其他展示文件。迁移清单 SHA256 为
+`dc266d129f60b0f8f191aa93d0be3f81ede4dd8980411ed9a04f7056d695e0da`。迁移后
+`evidence_snapshot` 的全部非空 `local_path` 均位于 AlphaHome，旧项目路径和外部路径均为 0；
+原路径只保存在证据元数据中用于来源追溯。
 
 ## 测试与运行状态
 
-- fundpos 子包：`160 passed`；
+- fundpos 子包：`161 passed`；
 - AlphaHome 编排与状态初始化：`10 passed`；
-- Ruff：子包、编排器、生产脚本和相关测试全部通过；
+- Ruff：子包、编排器和生产脚本全部通过；
 - `uv lock --check`：通过；
 - 数据库迁移：6/6 哈希一致且已应用；
 - Windows 任务 `AlphaHome-Fundpos-Shadow`：`Ready`，工作日 09:00、12:00、18:00；
