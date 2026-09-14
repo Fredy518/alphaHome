@@ -11,6 +11,10 @@ import pandas as pd
 from alphahome.common.schema_names import FACTOR_SCHEMA, PIT_SCHEMA
 
 
+class IndustryDataUnavailable(RuntimeError):
+    """Historical industry evidence is missing or violates the as-of boundary."""
+
+
 class PFactorDataRepository:
     """Own all PIT and stock-universe reads used by P v2.0."""
 
@@ -129,6 +133,8 @@ class PFactorDataRepository:
     def industry_classification(
         self, stock_codes: List[str], as_of_date: str
     ) -> pd.DataFrame:
+        if not stock_codes:
+            return pd.DataFrame()
         try:
             result = self.context.query_dataframe(
                 "SELECT * FROM get_industry_classification_batch_pit_optimized(%s, %s, 'sw')",
@@ -137,15 +143,62 @@ class PFactorDataRepository:
         except Exception as exc:
             self.logger.warning("优化PIT行业分类查询失败，使用成员表回退: %s", exc)
             result = pd.DataFrame()
-        if result is not None and not result.empty:
-            return result
-        self.logger.warning(
-            "未通过优化函数获取到行业分类，尝试回退到Tushare行业成员表查询"
+        result = self._check_industry_evidence(
+            result, stock_codes, as_of_date, "obs_date", "pit"
         )
+        if not result.empty:
+            result["source_table"] = f"{PIT_SCHEMA}.pit_industry_classification"
+            result["source_method"] = "pit_latest"
+        found = set(result["ts_code"]) if not result.empty else set()
+        remaining = [code for code in stock_codes if code not in found]
+        if not remaining:
+            return self._require_industry_coverage(result, stock_codes, as_of_date)
+        self.logger.warning("%s 有%d只股票缺少PIT行业，查询历史成员记录", as_of_date, len(remaining))
         try:
-            return self._fallback_industry(stock_codes, as_of_date)
+            fallback = self._fallback_industry(remaining, as_of_date)
+        except IndustryDataUnavailable:
+            raise
         except Exception as fallback_exc:
             raise RuntimeError(f"{as_of_date} P因子行业分类查询失败") from fallback_exc
+        combined = pd.concat([result, fallback], ignore_index=True) if not result.empty else fallback
+        return self._require_industry_coverage(combined, stock_codes, as_of_date)
+
+    @staticmethod
+    def _check_industry_evidence(
+        frame: pd.DataFrame | None, stock_codes: List[str], as_of_date: str,
+        date_column: str, source: str,
+    ) -> pd.DataFrame:
+        if frame is None or frame.empty:
+            return pd.DataFrame()
+        required = {"ts_code", "industry_level1", date_column}
+        if not required.issubset(frame.columns):
+            raise IndustryDataUnavailable(f"{as_of_date} industry_evidence_missing:{source}")
+        dates = pd.to_datetime(frame[date_column], errors="coerce")
+        if dates.isna().any() or (dates.dt.date > pd.Timestamp(as_of_date).date()).any():
+            raise IndustryDataUnavailable(f"{as_of_date} industry_date_invalid:{source}:{date_column}")
+        if not frame["ts_code"].isin(stock_codes).all():
+            raise IndustryDataUnavailable(f"{as_of_date} industry_universe_invalid:{source}")
+        if frame["industry_level1"].isna().any() or frame["industry_level1"].eq("").any():
+            raise IndustryDataUnavailable(f"{as_of_date} industry_classification_unknown:{source}")
+        return frame.copy()
+
+    @staticmethod
+    def _require_industry_coverage(
+        frame: pd.DataFrame, stock_codes: List[str], as_of_date: str,
+    ) -> pd.DataFrame:
+        found = set(frame["ts_code"]) if not frame.empty else set()
+        missing = sorted(set(stock_codes) - found)
+        if missing:
+            raise IndustryDataUnavailable(
+                f"{as_of_date} industry_history_missing:{len(missing)}:{','.join(missing[:20])}"
+            )
+        if not frame.empty:
+            if frame["ts_code"].duplicated().any():
+                raise IndustryDataUnavailable(f"{as_of_date} industry_duplicate_rows")
+            required = {"requires_special_gpa_handling", "gpa_calculation_method"}
+            if not required.issubset(frame.columns) or frame[list(required)].isna().any().any():
+                raise IndustryDataUnavailable(f"{as_of_date} industry_handling_unknown")
+        return frame
 
     def _fallback_industry(
         self, stock_codes: List[str], as_of_date: str
@@ -164,9 +217,10 @@ class PFactorDataRepository:
             (stock_codes, as_of_date, as_of_date),
         )
         collected: dict[str, dict] = {}
-        if active is not None and not active.empty:
-            for _, row in active.groupby("ts_code").first().reset_index().iterrows():
-                collected[row["ts_code"]] = row.to_dict()
+        active = self._check_industry_evidence(active, stock_codes, as_of_date, "in_date", "sw_active")
+        if not active.empty:
+            for _, row in active.drop_duplicates("ts_code").iterrows():
+                collected[row["ts_code"]] = {**row.to_dict(), "source_method": "sw_active"}
 
         remaining = [code for code in stock_codes if code not in collected]
         if remaining:
@@ -183,30 +237,13 @@ class PFactorDataRepository:
                 """,
                 (remaining, as_of_date),
             )
-            if past is not None and not past.empty:
+            past = self._check_industry_evidence(past, remaining, as_of_date, "in_date", "sw_past")
+            if not past.empty:
                 for _, row in past.iterrows():
-                    collected[row["ts_code"]] = row.to_dict()
+                    collected[row["ts_code"]] = {**row.to_dict(), "source_method": "sw_past"}
 
-        remaining = [code for code in stock_codes if code not in collected]
-        if remaining:
-            earliest = self.context.query_dataframe(
-                """
-                SELECT DISTINCT ON (ts_code)
-                       ts_code, l1_name AS industry_level1,
-                       l2_name AS industry_level2, l3_name AS industry_level3,
-                       l1_code AS industry_code1, l2_code AS industry_code2,
-                       l3_code AS industry_code3, in_date
-                FROM tushare.index_swmember
-                WHERE ts_code = ANY(%s) AND l1_name IS NOT NULL
-                ORDER BY ts_code, in_date ASC
-                """,
-                (remaining,),
-            )
-            if earliest is not None and not earliest.empty:
-                for _, row in earliest.iterrows():
-                    collected[row["ts_code"]] = row.to_dict()
         if not collected:
-            return pd.DataFrame()
+            return self._require_industry_coverage(pd.DataFrame(), stock_codes, as_of_date)
 
         result = pd.DataFrame.from_records(list(collected.values()))
         financial_keywords = (
@@ -233,10 +270,15 @@ class PFactorDataRepository:
             {True: "null", False: "standard"}
         )
         result["data_source"] = "sw"
-        result["obs_date"] = as_of_date
+        # Membership start is source evidence, not the requested calculation date.
+        result["obs_date"] = result["in_date"]
+        result["source_table"] = "tushare.index_swmember"
         columns = [
             "ts_code",
             "obs_date",
+            "in_date",
+            "source_table",
+            "source_method",
             "data_source",
             "industry_level1",
             "industry_level2",
@@ -247,7 +289,7 @@ class PFactorDataRepository:
         for column in columns:
             if column not in result:
                 result[column] = None
-        return result[columns]
+        return self._require_industry_coverage(result[columns], stock_codes, as_of_date)
 
 
 class GFactorDataRepository:
