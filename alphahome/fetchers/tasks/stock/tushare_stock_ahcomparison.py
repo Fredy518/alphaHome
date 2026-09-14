@@ -86,9 +86,9 @@ class TushareStockAHComparisonTask(TushareTask):
         (lambda df: df["trade_date"].notna(), "交易日期不能为空"),
         (lambda df: df["ts_code"].notna(), "A股代码不能为空"),
         (lambda df: df["hk_code"].notna(), "港股代码不能为空"),
-        (lambda df: df["close"].fillna(0) > 0, "A股收盘价必须大于0"),
-        (lambda df: df["hk_close"].fillna(0) > 0, "港股收盘价必须大于0"),
-        (lambda df: df["ah_comparison"].fillna(0) > 0, "A/H比价必须大于0"),
+        (lambda df: df["close"].isna() | (df["close"] > 0), "A股收盘价必须大于0或为空"),
+        (lambda df: df["hk_close"].isna() | (df["hk_close"] > 0), "港股收盘价必须大于0或为空"),
+        (lambda df: df["ah_comparison"].isna() | (df["ah_comparison"] > 0), "A/H比价必须大于0或为空"),
     ]
 
     # 8.批处理配置

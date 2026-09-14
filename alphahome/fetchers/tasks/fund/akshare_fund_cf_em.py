@@ -171,6 +171,16 @@ class AkShareFundCfEmTask(AkShareTask):
         if data is None or data.empty:
             return data
 
+        valid_ratio = data["split_ratio"].notna() & (data["split_ratio"] > 0)
+        dropped = int((~valid_ratio).sum())
+        if dropped:
+            self.logger.warning(
+                "任务 %s: 丢弃 %s 条缺少有效拆分折算比例的源记录",
+                self.name,
+                dropped,
+            )
+            data = data.loc[valid_ratio].copy()
+
         # 过滤列：只保留 schema_def 中定义的字段
         schema_columns = set(self.schema_def.keys())
         available_columns = set(data.columns)

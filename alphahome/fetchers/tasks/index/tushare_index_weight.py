@@ -129,9 +129,18 @@ class TushareIndexWeightTask(TushareTask):
         last_date = await self.get_latest_date() # type: ignore
         
         today = datetime.now().date()
+        latest_complete_month_end = today.replace(day=1) - timedelta(days=1)
 
         if last_date and last_date.year == today.year and last_date.month == today.month:
             self.logger.info(f"任务 {self.name}: 最新数据已是当前月份，跳过本次执行。")
+            return None
+
+        if last_date and last_date >= latest_complete_month_end:
+            self._smart_skip_reason = (
+                f"SMART 模式最新指数权重日期 {last_date:%Y-%m-%d} 已覆盖最近完整月末 "
+                f"{latest_complete_month_end:%Y-%m-%d}；当前月份尚未结束"
+            )
+            self.logger.info("任务 %s: %s", self.name, self._smart_skip_reason)
             return None
 
         if last_date:

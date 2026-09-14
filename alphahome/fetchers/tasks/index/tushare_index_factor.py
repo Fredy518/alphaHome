@@ -195,6 +195,23 @@ class TushareIndexFactorProTask(TushareTask):
         col: float for col in fields if col not in ["ts_code", "trade_date"]
     }
 
+    def process_data(self, data: pd.DataFrame, **kwargs) -> pd.DataFrame:
+        """Preserve the row while nulling provider KDJ.K values outside its contract."""
+        data = super().process_data(data, **kwargs)
+        if data is None or data.empty or "kdj_k_bfq" not in data.columns:
+            return data
+        invalid = data["kdj_k_bfq"].notna() & ~data["kdj_k_bfq"].between(0, 100)
+        count = int(invalid.sum())
+        if count:
+            data = data.copy()
+            data.loc[invalid, "kdj_k_bfq"] = None
+            self.logger.warning(
+                "任务 %s: %s 条 KDJ.K 源值超出 0-100，已置为 NULL",
+                self.name,
+                count,
+            )
+        return data
+
     async def get_batch_list(self, **kwargs: Any) -> List[Dict]:
         """
         生成批处理参数列表 (使用单日期批次工具)。

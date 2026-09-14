@@ -534,6 +534,9 @@ def test_stock_hsgt_hold_and_short_balance_process_codes():
     hold_raw = pd.DataFrame(
         {
             "StockID": ["SZ000001"],
+            "股票代码": [None],
+            "证券代码": [None],
+            "代码": [None],
             "StockName": ["平安银行"],
             "截止日": [20240930],
             "股数": ["123456"],
@@ -554,6 +557,9 @@ def test_stock_hsgt_hold_and_short_balance_process_codes():
     short_raw = pd.DataFrame(
         {
             "StockID": ["SH600000"],
+            "股票代码": [None],
+            "证券代码": [None],
+            "代码": [None],
             "StockName": ["浦发银行"],
             "截止日": [20260331],
             "可供卖空股数余额": ["8888"],

@@ -146,3 +146,22 @@ def test_index_weight_long_range_chunks_without_gaps_or_boundary_expansion():
         start = datetime.strptime(batch["start_date"], "%Y%m%d")
         end = datetime.strptime(batch["end_date"], "%Y%m%d")
         assert (end - start).days + 1 <= TushareIndexWeightTask.max_batch_days
+
+
+@pytest.mark.asyncio
+async def test_index_weight_smart_skips_incomplete_current_month(monkeypatch):
+    task = TushareIndexWeightTask(
+        db_connection=object(),
+        api_token="test-token",
+        api=object(),
+    )
+    latest_complete_month_end = datetime.now().date().replace(day=1) - timedelta(days=1)
+
+    async def _latest_date():
+        return latest_complete_month_end
+
+    monkeypatch.setattr(task, "get_latest_date", _latest_date)
+
+    assert await task._determine_date_range() is None
+    assert latest_complete_month_end.isoformat() in task._smart_skip_reason
+    assert "当前月份尚未结束" in task._smart_skip_reason

@@ -1291,7 +1291,11 @@ class MacroReleaseCalendarTask(FetcherTask):
         )
 
         if total_periods == 0:
-            self.logger.info(f"任务 {self.name}: 无待处理月份，数据已是最新")
+            self._smart_skip_reason = (
+                f"SMART 模式在 {start_date}-{end_date} 范围内没有待解析月份；"
+                "现有发布日历已覆盖全部源表月份"
+            )
+            self.logger.info(f"任务 {self.name}: {self._smart_skip_reason}")
             return pd.DataFrame(columns=list(self.schema_def.keys()))
 
         if stop_event and stop_event.is_set():

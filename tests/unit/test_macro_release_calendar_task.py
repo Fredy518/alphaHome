@@ -279,3 +279,4 @@ async def test_fetch_batch_no_periods_returns_empty(monkeypatch):
 
     df = await task.fetch_batch({"start_date": "20240101", "end_date": "20240228"})
     assert df.empty
+    assert "没有待解析月份" in task._smart_skip_reason

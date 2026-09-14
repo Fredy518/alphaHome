@@ -101,6 +101,21 @@ class TushareStockHolderNumberTask(TushareTask):
     # 8. 验证模式配置 - 使用过滤模式自动移除不符合验证规则的数据
     validation_mode = "filter"  # 强制执行验证规则，过滤不合格数据
 
+    def process_data(self, data: pd.DataFrame, **kwargs) -> pd.DataFrame:
+        data = super().process_data(data, **kwargs)
+        if data is None or data.empty or "holder_num" not in data.columns:
+            return data
+        valid = data["holder_num"].notna() & (data["holder_num"] >= 0)
+        dropped = int((~valid).sum())
+        if dropped:
+            self.logger.warning(
+                "任务 %s: 丢弃 %s 条缺少有效股东户数的源记录",
+                self.name,
+                dropped,
+            )
+            data = data.loc[valid].copy()
+        return data
+
     async def get_batch_list(self, **kwargs) -> List[Dict]:
         """使用 BatchPlanner 生成批处理参数列表
 

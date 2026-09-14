@@ -18,6 +18,7 @@ from alphahome.fetchers.tasks.fund.tushare_fund_etf_index import (
     TushareFundEtfIndexTask,
 )
 from alphahome.fetchers.tasks.fund.tushare_fund_nav import TushareFundNavTask
+from alphahome.fetchers.tasks.fund.akshare_fund_cf_em import AkShareFundCfEmTask
 from alphahome.fetchers.tasks.future.tushare_future_basic import (
     TushareFutureBasicTask,
 )
@@ -42,6 +43,12 @@ from alphahome.fetchers.tasks.stock.tushare_stock_dividend import (
 )
 from alphahome.fetchers.tasks.stock.tushare_stock_holdernumber import (
     TushareStockHolderNumberTask,
+)
+from alphahome.fetchers.tasks.stock.tushare_stock_ahcomparison import (
+    TushareStockAHComparisonTask,
+)
+from alphahome.fetchers.tasks.stock.tushare_stock_report_rc import (
+    TushareStockReportRcTask,
 )
 from alphahome.fetchers.tasks.stock.tushare_stock_limitprice import (
     TushareStockLimitPriceTask,
@@ -268,3 +275,105 @@ def test_holdernumber_missing_value_remains_a_filtered_source_warning():
     assert passed is False
     assert result.empty
     assert details["failed_validations"]["股东户数不能为空"] == "1行失败"
+
+
+def test_index_factor_process_nulls_invalid_kdj_before_validation():
+    task = TushareIndexFactorProTask(
+        db_connection=object(), api_token="test-token", api=object()
+    )
+    processed = task.process_data(
+        pd.DataFrame(
+            {
+                "ts_code": ["000300.SH", "000905.SH"],
+                "trade_date": [pd.Timestamp("2026-09-14")] * 2,
+                "close": [1.0, 1.0],
+                "high": [1.0, 1.0],
+                "low": [1.0, 1.0],
+                "volume": [1.0, 1.0],
+                "amount": [1.0, 1.0],
+                "rsi_bfq_12": [50.0, 50.0],
+                "kdj_k_bfq": [2123.0, 50.0],
+            }
+        )
+    )
+
+    assert pd.isna(processed.iloc[0]["kdj_k_bfq"])
+    assert processed.iloc[1]["kdj_k_bfq"] == 50.0
+    assert task._validate_data(processed)[0] is True
+
+
+def test_ahcomparison_allows_one_market_close_to_be_missing():
+    passed, _, details = _validate(
+        TushareStockAHComparisonTask,
+        {
+            "trade_date": [pd.Timestamp("2026-09-14")],
+            "ts_code": ["601238.SH"],
+            "hk_code": ["02238.HK"],
+            "close": [np.nan],
+            "hk_close": [10.0],
+            "ah_comparison": [1.2],
+        },
+    )
+
+    assert passed is True
+    assert details["failed_validations"] == {}
+
+
+def test_holdernumber_process_drops_unusable_source_rows():
+    task = TushareStockHolderNumberTask(
+        db_connection=object(), api_token="test-token", api=object()
+    )
+    processed = task.process_data(
+        pd.DataFrame(
+            {
+                "ts_code": ["000001.SZ", "000002.SZ"],
+                "ann_date": [pd.Timestamp("2026-09-14")] * 2,
+                "holder_num": [np.nan, 12345],
+            }
+        )
+    )
+
+    assert processed["ts_code"].tolist() == ["000002.SZ"]
+    assert task._validate_data(processed)[0] is True
+
+
+def test_report_rc_process_drops_incomplete_primary_keys():
+    task = TushareStockReportRcTask(
+        db_connection=object(), api_token="test-token", api=object()
+    )
+    processed = task.process_data(
+        pd.DataFrame(
+            {
+                "ts_code": ["000001.SZ", "000002.SZ"],
+                "report_date": [pd.Timestamp("2026-09-14")] * 2,
+                "org_name": ["测试机构", "测试机构"],
+                "author_name": [None, "分析师"],
+                "quarter": ["2026Q3", "2026Q3"],
+                "max_price": [10.0, 10.0],
+                "min_price": [9.0, 9.0],
+                "roe": [10.0, 10.0],
+            }
+        )
+    )
+
+    assert processed["ts_code"].tolist() == ["000002.SZ"]
+    assert task._validate_data(processed)[0] is True
+
+
+def test_fund_split_process_drops_missing_ratio():
+    task = AkShareFundCfEmTask(db_connection=object(), api=object())
+    task._fund_code_to_ts_code_cache = {"000001": "000001.OF"}
+    processed = task.process_data(
+        pd.DataFrame(
+            {
+                "fund_code": ["000001", "000002"],
+                "fund_name": ["有效基金", "异常基金"],
+                "split_date": [pd.Timestamp("2026-09-01")] * 2,
+                "split_type": ["拆分", "拆分"],
+                "split_ratio": [1.5, np.nan],
+            }
+        )
+    )
+
+    assert processed["fund_code"].tolist() == ["000001"]
+    assert task._validate_data(processed)[0] is True

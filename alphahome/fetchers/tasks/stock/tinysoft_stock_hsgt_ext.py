@@ -55,13 +55,26 @@ class _TinySoftNorthboundStockTask(TinySoftStockSymbolInfoArrayTask):
 
     def _set_stock_channel_defaults(self, df: pd.DataFrame) -> pd.DataFrame:
         df = super()._postprocess_frame(df)
+        security_code = df.apply(
+            lambda row: _first_present(
+                row,
+                (
+                    "security_code_raw",
+                    "tsl_code",
+                    "StockID",
+                    "stockid",
+                    self.request_code_column,
+                    self.code_column,
+                ),
+            ),
+            axis=1,
+        )
         if "security_code_raw" not in df.columns:
-            if "tsl_code" in df.columns:
-                df["security_code_raw"] = df["tsl_code"]
-            elif "StockID" in df.columns:
-                df["security_code_raw"] = df["StockID"]
-            elif self.request_code_column in df.columns:
-                df["security_code_raw"] = df[self.request_code_column]
+            df["security_code_raw"] = security_code
+        else:
+            df["security_code_raw"] = df["security_code_raw"].where(
+                df["security_code_raw"].notna(), security_code
+            )
 
         if "channel_code" not in df.columns:
             df["channel_code"] = df.apply(

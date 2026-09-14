@@ -115,15 +115,37 @@ class TushareStockReportRcTask(TushareTask):
 
     # 7.数据验证规则
     validations = [
-        lambda df: df['ts_code'].notna(),
-        lambda df: df['report_date'].notna(),
-        lambda df: df['org_name'].notna(),
-        lambda df: df['author_name'].notna(),
-        lambda df: df['quarter'].notna(),
-        lambda df: df['quarter'].str.match(r'^\d{4}Q[1-4]$'), # 季度格式应为 YYYYQ[1-4]
-        lambda df: (df['max_price'] >= df['min_price']) | df['min_price'].isnull() | df['max_price'].isnull(),
-        lambda df: df['roe'].between(-100, 100) | df['roe'].isnull(), # ROE应在合理范围
+        (lambda df: df['ts_code'].notna(), "股票代码不能为空"),
+        (lambda df: df['report_date'].notna(), "报告日期不能为空"),
+        (lambda df: df['org_name'].notna(), "机构名称不能为空"),
+        (lambda df: df['author_name'].notna(), "分析师姓名不能为空"),
+        (lambda df: df['quarter'].notna(), "预测季度不能为空"),
+        (lambda df: df['quarter'].str.match(r'^\d{4}Q[1-4]$'), "预测季度格式应为YYYYQ1-YYYYQ4"),
+        (lambda df: (df['max_price'] >= df['min_price']) | df['min_price'].isnull() | df['max_price'].isnull(), "最高目标价不得低于最低目标价或为空"),
+        (lambda df: df['roe'].between(-100, 100) | df['roe'].isnull(), "ROE应在-100到100或为空"),
     ]
+
+    def process_data(self, data: pd.DataFrame, **kwargs) -> pd.DataFrame:
+        data = super().process_data(data, **kwargs)
+        if data is None or data.empty:
+            return data
+        valid = pd.Series(True, index=data.index)
+        for column in self.primary_keys:
+            if column not in data.columns:
+                valid &= False
+                continue
+            valid &= data[column].notna()
+            if pd.api.types.is_object_dtype(data[column]):
+                valid &= data[column].astype(str).str.strip().ne("")
+        dropped = int((~valid).sum())
+        if dropped:
+            self.logger.warning(
+                "任务 %s: 丢弃 %s 条主键字段不完整的研报源记录",
+                self.name,
+                dropped,
+            )
+            data = data.loc[valid].copy()
+        return data
 
     async def get_batch_list(self, **kwargs) -> List[Dict]:
         """使用 BatchPlanner 生成批处理参数列表 (基于 report_date)
