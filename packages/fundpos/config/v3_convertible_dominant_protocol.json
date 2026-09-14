@@ -1,0 +1,121 @@
+{
+  "protocol_version": "fundpos_v3_convertible_dominant_20260913_v3",
+  "model_family": "convertible_dominant",
+  "scope_group": "convertible_dominant",
+  "scope_file": "resources/universe/pilot_110.parquet",
+  "scope_count": 10,
+  "state_namespace": "validation_convertible_dominant_v3",
+  "development": [
+    "2022-01-01",
+    "2024-12-31"
+  ],
+  "final": [
+    "2025-01-01",
+    "2026-06-30"
+  ],
+  "history_policy": {
+    "reason": "2024 comparison-group diagnostics were inspected before the dedicated algorithm was frozen",
+    "development_reused_history": "2022-01-01/2024-12-31",
+    "clean_selection_window": null,
+    "promotion_evidence": "single unopened 2025-01-01/2026-06-30 final holdout after strict evidence and code freeze",
+    "prospective_run_acceptance": "separate P6 requirement"
+  },
+  "final_holdout_status": "closed",
+  "window": 60,
+  "weighting": "documented",
+  "required_total_return_factors": [
+    "rate_short",
+    "rate_long",
+    "credit_short",
+    "credit_long",
+    "convertible_bond",
+    "hk",
+    "financing_cost"
+  ],
+  "dedicated_algorithm": {
+    "convertible_factor": "published constituent full-price returns plus official broad total-return residual",
+    "direct_stock_total": "latest public NAV allocation anchor because convertible option beta is not separately identifiable",
+    "direct_stock_factor": "published A-share holdings by SW2021 industry with declared fallback",
+    "convertible_exposure": "bounded daily state path; valuation-date endpoint is reported and every path change is offset against the last public ordinary-bond/cash mix",
+    "state_penalty": 1.0,
+    "point_quality_gate": "state estimate must be within 5 percentage points of the last public allocation and constituent proxy weight must not exceed 60%",
+    "no_trade_diagnostic": "last public convertible holdings marked by full-price growth divided by adjusted-NAV growth",
+    "cbond_upper": 1.4,
+    "diagnostic_stock_upper": 0.6,
+    "leverage_scenarios": [
+      "no_financing",
+      "estimated_financing",
+      "last_disclosed_total_asset_leverage_as_diagnostic",
+      "last_disclosed_repo_when_verified",
+      "contract_upper"
+    ],
+    "ordinary_bond_public_output": "unavailable unless financing is independently disclosed",
+    "long_gap_policy": "constituent weight returns to broad convertible total-return factor"
+  },
+  "candidates": [
+    {
+      "name": "prior0.1_smooth0",
+      "prior_penalty": 0.1,
+      "smooth_penalty": 0.0
+    },
+    {
+      "name": "prior0.1_smooth0.1",
+      "prior_penalty": 0.1,
+      "smooth_penalty": 0.1
+    },
+    {
+      "name": "prior0.1_smooth1",
+      "prior_penalty": 0.1,
+      "smooth_penalty": 1.0
+    },
+    {
+      "name": "prior1_smooth0",
+      "prior_penalty": 1.0,
+      "smooth_penalty": 0.0
+    },
+    {
+      "name": "prior1_smooth0.1",
+      "prior_penalty": 1.0,
+      "smooth_penalty": 0.1
+    },
+    {
+      "name": "prior1_smooth1",
+      "prior_penalty": 1.0,
+      "smooth_penalty": 1.0
+    }
+  ],
+  "structural_candidates": [
+    {
+      "name": "cbond_state_space_v1",
+      "prior_penalty": 1.0,
+      "smooth_penalty": 0.1,
+      "cbond_exposure_mode": "bounded_state_space_endpoint",
+      "cbond_state_penalty": 1.0
+    }
+  ],
+  "reference_models": [
+    "personalized_static_regression",
+    "last_public_disclosure_carry",
+    "marked_to_market_no_trade"
+  ],
+  "rejected_development_experiments": [
+    "legacy_squared_recency_weighting",
+    "35_and_45_observation_static_windows",
+    "linear_endpoint_transition",
+    "personalized_and_broad_two_sleeve_regression",
+    "fully_fixed_direct_equity_industry_vector"
+  ],
+  "acceptance": {
+    "stock_mae_max": 0.05,
+    "convertible_bond_mae_max": 0.05,
+    "industry_l1_reference": 0.2,
+    "dedicated_cbond_relative_improvement": 0.1,
+    "coverage_min": 0.95
+  },
+  "minimum_sample": {
+    "asset_labels": 20,
+    "products": 5,
+    "valuation_dates": 4,
+    "industry_labels": 5
+  }
+}

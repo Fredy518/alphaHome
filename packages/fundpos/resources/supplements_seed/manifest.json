@@ -1,0 +1,64 @@
+{
+  "files": [
+    {
+      "table": "factors",
+      "file": "legacy_dated_benchmarks.parquet",
+      "sha256": "4ed3119c9c31d55e4b740d226b788cf57c2bb00599aa0fcd9efedbc363950d9f",
+      "keys": [
+        "date",
+        "asset"
+      ],
+      "source": "E:\\GL工作文件\\体系_投研框架\\程序_研究项目\\20220504_R基金行业仓位测算\\【模拟】行业仓位测算_input.xlsx",
+      "source_sha256": "77a4ab4f4529fee1cce78f5c58c6129b4452fb9203959786f72ef03ba35327e5",
+      "verified_at": "2026-09-12T10:59:25.776749+08:00",
+      "availability": "historical_market_close_reconstruction",
+      "priority": "fill_gaps",
+      "end_date": "2024-07-19",
+      "warning": "No extrapolation after archive end; cash proxy is GC007"
+    },
+    {
+      "table": "contract_evidence",
+      "file": "contract_evidence.parquet",
+      "sha256": "55b99d71bb9cd5124178f3f52221d67ed88a35aed525663136abad4a047f8ec6",
+      "keys": [
+        "fund_code",
+        "document_sha256"
+      ],
+      "source": "Eastmoney fund announcement index and PDF mirror",
+      "source_role": "third_party_document_mirror",
+      "verified_at": "2026-09-12T22:23:38.308973+08:00",
+      "priority": "fill_gaps",
+      "cutoff": "2024-06-29"
+    },
+    {
+      "table": "constraints",
+      "file": "constraints.parquet",
+      "sha256": "14430e29368a78f34155abf601098e59433cfd98f49296bb3ed4f7ddcff7e4c3",
+      "keys": [
+        "fund_code",
+        "effective_date",
+        "document_hash"
+      ],
+      "source": "Eastmoney fund announcement index and PDF mirror",
+      "source_role": "third_party_document_mirror",
+      "verified_at": "2026-09-12T22:23:38.308973+08:00",
+      "priority": "fill_gaps",
+      "cutoff": "2024-06-29"
+    },
+    {
+      "table": "report_evidence",
+      "file": "report_evidence.parquet",
+      "sha256": "f9aa98e7250d63d9f84dd51c23755e0ddee7989839ddd770c953e16320b979ba",
+      "keys": [
+        "fund_code",
+        "report_date"
+      ],
+      "source": "Eastmoney fund announcement index and PDF mirror",
+      "verified_at": "2026-09-14T09:49:31.254201+08:00",
+      "priority": "fill_gaps",
+      "source_role": "third_party_document_mirror",
+      "period_start": "2025-03-31",
+      "period_end": "2026-06-30"
+    }
+  ]
+}

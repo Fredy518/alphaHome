@@ -1,0 +1,72 @@
+{
+  "protocol_version": "fundpos_v3_convertible_dominant_contract_ablation_20260913_v1",
+  "model_family": "convertible_dominant",
+  "scope_group": "convertible_dominant",
+  "scope_file": "resources/universe/pilot_110.parquet",
+  "scope_count": 10,
+  "state_namespace": "validation_convertible_dominant_contract_ablation_v1",
+  "development": [
+    "2022-01-01",
+    "2024-12-31"
+  ],
+  "final": [
+    "2025-01-01",
+    "2026-06-30"
+  ],
+  "history_policy": {
+    "role": "fixed_model_contract_denominator_ablation_on_reused_development_history",
+    "changed_input_only": "historical contract ratio constraints",
+    "effective_date_scenario": "announcement_date_as_conditional_lower_bound",
+    "model_selection_allowed": false,
+    "final_holdout_status": "closed"
+  },
+  "final_holdout_status": "closed",
+  "window": 60,
+  "weighting": "documented",
+  "required_total_return_factors": [
+    "rate_short",
+    "rate_long",
+    "credit_short",
+    "credit_long",
+    "convertible_bond",
+    "hk",
+    "financing_cost"
+  ],
+  "candidate_budget": {
+    "registered_now": 1,
+    "maximum_before_new_protocol": 1,
+    "registered_models": [
+      "cbond_state_space_v1"
+    ],
+    "rule": "The model and all parameters are frozen; this protocol changes contract constraints only"
+  },
+  "structural_candidates": [
+    {
+      "name": "cbond_state_space_v1",
+      "prior_penalty": 1.0,
+      "smooth_penalty": 0.1,
+      "cbond_exposure_mode": "bounded_state_space_endpoint",
+      "cbond_state_penalty": 1.0
+    }
+  ],
+  "candidates": [],
+  "reference_models": [
+    "personalized_static_regression",
+    "last_public_disclosure_carry",
+    "marked_to_market_no_trade"
+  ],
+  "acceptance": {
+    "stock_mae_max": 0.05,
+    "convertible_bond_mae_max": 0.05,
+    "industry_relative_improvement": 0.10,
+    "dedicated_cbond_relative_improvement": 0.10,
+    "group_industry_l1_reference": 0.20,
+    "coverage_min": 0.95
+  },
+  "minimum_sample": {
+    "asset_labels": 20,
+    "products": 5,
+    "valuation_dates": 4,
+    "industry_labels": 5
+  }
+}

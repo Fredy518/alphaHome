@@ -1,12 +1,12 @@
 {
   "fundpos": {
-    "project_root": "E:\\CodePrograms\\1-Work\\公募基金行业仓位测算",
-    "python_executable": "E:\\CodePrograms\\alphaHome\\.fundpos-runtime\\v0.3.2\\Scripts\\python.exe",
+    "repository_root": "E:\\CodePrograms\\alphaHome",
+    "engine_root": "E:\\CodePrograms\\alphaHome\\packages\\fundpos",
+    "python_executable": "E:\\CodePrograms\\alphaHome\\.fundpos-runtime\\v0.4.0\\Scripts\\python.exe",
     "engine_config": "config/v3.toml",
-    "release_manifest": "E:\\CodePrograms\\alphaHome\\.fundpos-runtime\\v0.3.2\\release.json",
-    "expected_revision": "b6ffc500ed165dcfbe546790eda7648de9f29d32",
-    "expected_tag": "v0.3.2",
-    "expected_package_version": "0.3.2",
+    "release_manifest": "E:\\CodePrograms\\alphaHome\\.fundpos-runtime\\v0.4.0\\release.json",
+    "expected_tag": "fundpos-v0.4.0",
+    "expected_package_version": "0.4.0",
     "state_dir": "E:\\CodePrograms\\alphaHome\\logs\\fundpos",
     "mode": "shadow",
     "scope": "v3-pilot",
@@ -17,7 +17,6 @@
     ],
     "minimum_count_coverage": 0.8,
     "timeout_seconds": 7200,
-    "excel": true,
     "expected_universe_counts": {
       "fixed_income_plus": 90,
       "enhanced_index": 20,

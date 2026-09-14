@@ -1,0 +1,65 @@
+{
+  "protocol_id": "fundpos_v3_fixed_income_plus_20260912",
+  "status": "frozen_before_v3_estimation",
+  "development": ["2022-01-01", "2023-12-31"],
+  "selection": ["2024-01-01", "2024-12-31"],
+  "final": ["2025-01-01", "2026-06-30"],
+  "final_holdout_opened": false,
+  "pilot_file": "resources/universe/pilot_110.parquet",
+  "pilot_sha256": "6363d767c4d0bfe61991525d91ae501a0ac991b4d11f4f8016bf374fbc6e7ca6",
+  "pilot_frame_hash": "18b58694b8b72f5f71ec16d95a9d7acfc281e9f38e1f5271ac06818aa0d67ef9",
+  "window": 60,
+  "max_window_calendar_days": 450,
+  "weighting": "documented",
+  "model_families": ["equity", "fixed_income_plus"],
+  "fixed_income_assets": ["cash", "rate_short", "rate_long", "credit_short", "credit_long", "convertible_bond", "hk", "SW2021_L1_31", "financing"],
+  "external_outputs": ["SW2021_L1_31", "hk", "convertible_bond", "ordinary_bond", "cash", "financing", "non_equity"],
+  "required_total_return_factors": ["rate_short", "rate_long", "credit_short", "credit_long", "convertible_bond", "hk", "financing_cost"],
+  "factor_policy": "Each series needs a frozen code, source, CNY basis, total-return definition and complete range. Missing series block real estimation and are never proxied by a price index or yield change.",
+  "conditional_research": {
+    "allowed_phases": ["development", "selection"],
+    "allowed_evidence": [
+      "DR007 historical vendor workbook cache with locked SHA256",
+      "current fund tracking-index metadata cross-checked to objective and benchmark text",
+      "next-calendar-day NAV scenario only where vendor ann_date is a delayed periodic-report date"
+    ],
+    "separate_state": true,
+    "eligible_for_formal_promotion": false,
+    "final_holdout_access": false
+  },
+  "universe_rules": {
+    "contract_pool": "verified fixed-income-primary contract; NAV-denominated stock upper <= 0.40; equity or convertible enhancement allowed",
+    "style_pool": "latest four and at least two public reports; every stock <= 0.40; median stock <= 0.30; median bond including convertibles >= 0.50; latest report age <= 200 days",
+    "membership_effective": "only after source information is public",
+    "names_are_not_classifiers": true
+  },
+  "pilot_quotas": {
+    "平衡混合": 20,
+    "增强指数型": 20,
+    "偏债混合": 20,
+    "普通债基": 20,
+    "other_style": 10,
+    "convertible_dominant": 10,
+    "pure_bond_control": 10
+  },
+  "candidates": [
+    {"name": "prior01_smooth0", "prior_penalty": 0.1, "smooth_penalty": 0.0},
+    {"name": "prior01_smooth01", "prior_penalty": 0.1, "smooth_penalty": 0.1},
+    {"name": "prior01_smooth1", "prior_penalty": 0.1, "smooth_penalty": 1.0},
+    {"name": "prior1_smooth0", "prior_penalty": 1.0, "smooth_penalty": 0.0},
+    {"name": "prior1_smooth01", "prior_penalty": 1.0, "smooth_penalty": 0.1},
+    {"name": "prior1_smooth1", "prior_penalty": 1.0, "smooth_penalty": 1.0}
+  ],
+  "acceptance": {
+    "stock_mae_max": 0.05,
+    "convertible_bond_mae_max": 0.05,
+    "industry_l1_relative_improvement": 0.10,
+    "tail_hk_stock_cbond_must_not_worsen": true,
+    "coverage_must_not_decrease": true,
+    "formal_count_coverage": 0.95,
+    "formal_aum_coverage": 0.95,
+    "constraint_error_max": 0.000001,
+    "live_observation_days": 10
+  },
+  "final_holdout_policy": "Open once only after model family, universe, factors, metrics and selection are frozen. No v3 implementation step opens it."
+}

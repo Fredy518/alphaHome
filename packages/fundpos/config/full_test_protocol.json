@@ -1,0 +1,26 @@
+{
+  "protocol_id": "report_date_full_universe_20260912_v1",
+  "purpose": "Compare fixed implemented baselines with subsequently disclosed report-date holdings and the original PPT error definitions",
+  "prediction_start": "2022-01-01",
+  "prediction_end": "2024-06-30",
+  "calendar_frequency": "quarterly",
+  "industry_labels": "complete reconciled June/December holdings; historical SW2021 membership; A-share NAV weights",
+  "stock_labels": "independent quarterly asset allocation stock NAV ratio",
+  "models": ["index", "personalized"],
+  "window": 60,
+  "weighting": "documented",
+  "tuning": "none; freeze both current baselines before expanding samples",
+  "universe": "all historically eligible products present in AlphaDB metadata, with share families merged; include every eligible product in coverage denominator",
+  "input_modes": {
+    "recorded_ann_date": "Use original verified announcement dates; historical contract defaults remain explicitly conditional",
+    "nav_date_assumption": "Sensitivity only: NAV marked available the next calendar day; remove any late-announced AUM on the changed rows; holdings announcements unchanged"
+  },
+  "primary_error": "sum_i abs(estimated_NAV_weight_i - actual_NAV_weight_i), i in 31 SW2021 A-share industries",
+  "threshold": 0.2,
+  "threshold_status": "user-suggested diagnostic reference, not a replacement for the original model promotion protocol",
+  "additional_metrics": ["mean", "median", "p90", "p95", "fraction_l1_le_20pp", "per_industry_mae", "stock_mae", "hk_mae", "equal_and_aum_group_bias", "count_and_aum_coverage", "category", "size", "turnover", "holdings_age", "proxy_ratio"],
+  "label_policy": "Missing truth or incomplete mapping is excluded explicitly, never zero filled. Later labels never enter estimation inputs.",
+  "holdout": "2025-2026H1 remains unopened because the formal selection and data gates have not passed",
+  "end_reason": "Last half-year endpoint with the existing dated bond and RMB HK benchmark supplement, which ends 2024-07-19",
+  "history_kind": "announcement_date_reconstruction; no historical vendor revision archive"
+}

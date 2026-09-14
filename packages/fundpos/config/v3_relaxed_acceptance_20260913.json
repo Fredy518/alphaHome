@@ -1,0 +1,38 @@
+{
+  "policy_version": "fundpos_v3.1_owner_relaxed_20260913",
+  "status": "approved_by_project_owner",
+  "authorized": true,
+  "authorization_type": "project_owner_explicit",
+  "authorized_at": "2026-09-13T00:00:00+08:00",
+  "authorization_record": "我认为可以适当放宽限制，直接标记通过",
+  "reason": "The project owner accepted a bounded relaxation for formal historical use while preserving all original metrics and evidence warnings.",
+  "thresholds": {
+    "stock_mae_max": 0.05,
+    "convertible_bond_mae_max": 0.07,
+    "industry_l1_max": 0.25,
+    "convertible_dominant_group_industry_l1_max": 0.20,
+    "minimum_relative_improvement": 0.05,
+    "minimum_count_coverage": 0.80,
+    "constraint_error_max": 0.000001
+  },
+  "waived_gates": [
+    "strict_historical_evidence",
+    "final_holdout",
+    "complete_aum_denominator",
+    "live_observation_days",
+    "convertible_dominant_tail_not_worse"
+  ],
+  "allow_partial_groups": true,
+  "approved_publication_scope": [
+    "individual_estimates",
+    "equal_weight_group_estimates",
+    "known_aum_subset_diagnostic"
+  ],
+  "continuing_disclosures": [
+    "conditional evidence remains visible",
+    "final_holdout_opened remains false",
+    "missing ordinary-bond and financing fields remain null",
+    "incomplete AUM denominators remain diagnostic",
+    "valuation date and staleness remain visible"
+  ]
+}

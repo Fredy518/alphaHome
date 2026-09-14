@@ -1,0 +1,94 @@
+{
+  "protocol_version": "fundpos_v3_convertible_dominant_20260913_v5",
+  "model_family": "convertible_dominant",
+  "scope_group": "convertible_dominant",
+  "scope_file": "resources/universe/pilot_110.parquet",
+  "scope_count": 10,
+  "state_namespace": "validation_convertible_dominant_v5",
+  "development": [
+    "2022-01-01",
+    "2024-12-31"
+  ],
+  "final": [
+    "2025-01-01",
+    "2026-06-30"
+  ],
+  "history_policy": {
+    "reason": "All 2022-2024 observations were inspected before this structural candidate was registered",
+    "development_reused_history": "2022-01-01/2024-12-31",
+    "clean_selection_window": null,
+    "promotion_evidence": "single unopened 2025-01-01/2026-06-30 final holdout only after strict evidence and code freeze",
+    "prospective_run_acceptance": "separate P6 requirement"
+  },
+  "final_holdout_status": "closed",
+  "window": 60,
+  "weighting": "documented",
+  "required_total_return_factors": [
+    "rate_short",
+    "rate_long",
+    "credit_short",
+    "credit_long",
+    "convertible_bond",
+    "hk",
+    "financing_cost"
+  ],
+  "candidate_budget": {
+    "registered_now": 3,
+    "maximum_before_new_protocol": 4,
+    "registered_models": [
+      "cbond_state_space_v1",
+      "cbond_nav_drift_sparse_trade_v1",
+      "cbond_style_decomposition_v1"
+    ],
+    "unregistered_reserved_structures": [
+      "hierarchical_asset_industry_v1"
+    ],
+    "rule": "Do not search window length, style thresholds or additional penalties in the same experiment"
+  },
+  "structural_candidates": [
+    {
+      "name": "cbond_state_space_v1",
+      "prior_penalty": 1.0,
+      "smooth_penalty": 0.1,
+      "cbond_exposure_mode": "bounded_state_space_endpoint",
+      "cbond_state_penalty": 1.0
+    },
+    {
+      "name": "cbond_nav_drift_sparse_trade_v1",
+      "prior_penalty": 0.0,
+      "smooth_penalty": 0.0,
+      "cbond_exposure_mode": "nav_drift_sparse_trade_endpoint",
+      "cbond_trade_penalty": 0.03,
+      "cbond_anchor_penalty": 1.0
+    },
+    {
+      "name": "cbond_style_decomposition_v1",
+      "prior_penalty": 0.0,
+      "smooth_penalty": 0.0,
+      "cbond_exposure_mode": "style_decomposed_linear_endpoint",
+      "cbond_style_equity_premium_max": 20.0,
+      "cbond_style_bond_premium_min": 50.0,
+      "cbond_style_minimum_constituents": 5
+    }
+  ],
+  "candidates": [],
+  "reference_models": [
+    "personalized_static_regression",
+    "last_public_disclosure_carry",
+    "marked_to_market_no_trade"
+  ],
+  "acceptance": {
+    "stock_mae_max": 0.05,
+    "convertible_bond_mae_max": 0.05,
+    "industry_relative_improvement": 0.10,
+    "dedicated_cbond_relative_improvement": 0.10,
+    "group_industry_l1_reference": 0.20,
+    "coverage_min": 0.95
+  },
+  "minimum_sample": {
+    "asset_labels": 20,
+    "products": 5,
+    "valuation_dates": 4,
+    "industry_labels": 5
+  }
+}

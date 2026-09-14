@@ -1,24 +1,31 @@
 from __future__ import annotations
 
+import hashlib
 import json
 
 import pytest
 
 from alphahome.integrations.fundpos.production import (
+    CommandOutput,
     FundposProductionConfig,
     FundposProductionError,
+    FundposProductionRunner,
     assess_run_manifest,
     parse_cli_json,
+)
+from alphahome.integrations.fundpos.state import (
+    FundposStateError,
+    bootstrap_fundpos_state,
 )
 
 
 def _config(tmp_path, **updates):
     values = {
-        "project_root": str(tmp_path / "engine"),
+        "repository_root": str(tmp_path),
+        "engine_root": str(tmp_path / "packages" / "fundpos"),
         "python_executable": str(tmp_path / "python.exe"),
         "engine_config": "config/v3.toml",
         "release_manifest": str(tmp_path / "release.json"),
-        "expected_revision": "a" * 40,
         "expected_tag": "v0.3.0",
         "expected_package_version": "0.3.0",
         "state_dir": str(tmp_path / "state"),
@@ -62,10 +69,29 @@ def test_config_resolves_engine_config_below_release_checkout(tmp_path):
     config = _config(tmp_path)
 
     assert (
-        config.engine_config == (tmp_path / "engine" / "config" / "v3.toml").resolve()
+        config.engine_config
+        == (tmp_path / "packages" / "fundpos" / "config" / "v3.toml").resolve()
     )
+    assert config.repository_root == tmp_path.resolve()
+    assert config.engine_root == (tmp_path / "packages" / "fundpos").resolve()
+    assert config.expected_revision is None
     assert config.minimum_count_coverage == 0.80
     assert config.mode == "shadow"
+
+
+def test_production_estimate_never_generates_file_reports(tmp_path):
+    commands = []
+
+    def command_runner(args, cwd, timeout_seconds, environment):
+        commands.append(tuple(args))
+        return CommandOutput(tuple(args), 0, json.dumps({"run": "run"}), "")
+
+    runner = FundposProductionRunner(_config(tmp_path), command_runner=command_runner)
+    result = runner._estimate("enhanced_index", "2026-09-11", "2026-09-12")
+
+    assert result["run"] == "run"
+    assert "--report" not in commands[0]
+    assert "--no-excel" not in commands[0]
 
 
 def test_assess_manifest_accepts_owner_approved_shadow_coverage():
@@ -162,3 +188,26 @@ def test_assess_manifest_reports_but_excludes_out_of_scope_controls_from_gate():
     assert result["raw_count_coverage"] == pytest.approx(68 / 90)
     assert result["count_coverage"] == pytest.approx(68 / 70)
     assert result["not_applicable_count"] == 20
+
+
+def test_state_bootstrap_is_idempotent_and_rejects_corruption(tmp_path):
+    engine = tmp_path / "engine"
+    seed = engine / "resources" / "supplements_seed"
+    seed.mkdir(parents=True)
+    content = b"evidence"
+    (seed / "evidence.bin").write_bytes(content)
+    digest = hashlib.sha256(content).hexdigest()
+    (seed / "manifest.json").write_text(
+        json.dumps({"files": [{"file": "evidence.bin", "sha256": digest}]}),
+        encoding="utf-8",
+    )
+    state = tmp_path / "state"
+
+    first = bootstrap_fundpos_state(engine, state)
+    second = bootstrap_fundpos_state(engine, state)
+
+    assert first["status"] == "initialized_from_versioned_seed"
+    assert second["status"] == "existing_valid_state"
+    (state / "supplements" / "evidence.bin").write_bytes(b"changed")
+    with pytest.raises(FundposStateError, match="hash differs"):
+        bootstrap_fundpos_state(engine, state)

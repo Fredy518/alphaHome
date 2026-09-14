@@ -1,0 +1,41 @@
+[project]
+data_dir = "data"
+output_dir = "outputs"
+timezone = "Asia/Shanghai"
+
+[data]
+provider = "alphadb"
+alphahome_config = "~/.alphahome/config.json"
+supplements_dir = "data/supplements"
+statement_timeout_seconds = 60
+fetch_stock_prices = true
+allow_wind = true
+
+[model]
+name = "personalized"
+window = 60
+max_window_calendar_days = 150
+weighting = "documented"
+prior_penalty = 0.0
+smooth_penalty = 0.0
+constraint_tolerance = 0.000001
+max_holdings_age_days = 400
+max_proxy_weight = 0.5
+max_unclassified_nav_weight = 0.001
+
+[publication]
+count_coverage = 0.95
+aum_coverage = 0.95
+max_aum_age_days = 200
+
+[universe]
+categories = ["普通股票型", "偏股混合", "灵活配置"]
+min_age_days = 180
+
+[research]
+start = "2022-01-01"
+development_end = "2023-12-31"
+selection_end = "2024-12-31"
+final_end = "2026-06-30"
+minimum_industry_improvement = 0.10
+observation_trading_days = 10

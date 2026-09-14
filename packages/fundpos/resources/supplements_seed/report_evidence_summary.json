@@ -1,0 +1,15 @@
+{
+  "status": "complete",
+  "funds_requested": 10,
+  "funds_with_index_error": 0,
+  "reports_selected": 60,
+  "reports_verified": 60,
+  "existing_rows_preserved": 538,
+  "evidence_rows_total": 598,
+  "period_start": "2025-03-31",
+  "period_end": "2026-06-30",
+  "source": "Eastmoney fund announcement index and PDF mirror",
+  "source_role": "third_party_document_mirror",
+  "index_errors": [],
+  "retrieved_at": "2026-09-14T09:49:31.254201+08:00"
+}

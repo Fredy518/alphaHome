@@ -1,0 +1,9 @@
+asset,required_role,source_code,source_table,currency,return_basis,local_start,local_end,status,blocking_reason
+rate_short,short-duration government total return,N11099,rawdata.index_performance,CNY,CSIndex official interest-reinvestment total return,2021-09-01,2026-09-11,ready,
+rate_long,long-duration government total return,N11075,rawdata.index_performance,CNY,CSIndex official interest-reinvestment total return,2021-09-01,2026-09-11,ready,
+credit_short,short-duration credit total return,N31199,rawdata.index_performance,CNY,CSIndex official interest-reinvestment total return,2021-09-01,2026-09-11,ready,
+credit_long,long-duration credit total return,N31203,rawdata.index_performance,CNY,CSIndex official interest-reinvestment total return,2021-09-01,2026-09-11,ready,
+convertible_bond,convertible-bond total return,N31078,rawdata.index_performance,CNY,CSIndex official interest-reinvestment total return,2021-09-01,2026-09-11,ready,
+hk,HK Connect composite total return,H20933,rawdata.index_performance,CNY,CSIndex official total return using HK trading observations,2021-09-01,2026-09-11,ready,
+bond,broad aggregate bond total return,N11009,rawdata.index_performance,CNY,CSIndex official interest-reinvestment total return,2021-09-01,2026-09-11,ready,
+financing_cost,financing cost,L001619493,rawdata.macro_dr007_history,CNY,prior-known ACT/365 accrued return,2014-12-15,2025-05-27,conditional_ready,historical vendor workbook cache with locked SHA256; no live API

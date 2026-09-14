@@ -37,7 +37,9 @@ class CommandOutput:
     stderr: str
 
 
-CommandRunner = Callable[[Sequence[str], Path, int], CommandOutput]
+CommandRunner = Callable[
+    [Sequence[str], Path, int, Mapping[str, str] | None], CommandOutput
+]
 
 
 def _path(value: str | os.PathLike[str]) -> Path:
@@ -84,12 +86,17 @@ def parse_cli_json(output: str) -> dict[str, Any]:
 
 
 def _default_command_runner(
-    args: Sequence[str], cwd: Path, timeout_seconds: int
+    args: Sequence[str],
+    cwd: Path,
+    timeout_seconds: int,
+    extra_environment: Mapping[str, str] | None = None,
 ) -> CommandOutput:
     environment = os.environ.copy()
     environment["PYTHONUTF8"] = "1"
     environment["PYTHONNOUSERSITE"] = "1"
     environment.pop("PYTHONPATH", None)
+    if extra_environment:
+        environment.update(extra_environment)
     completed = subprocess.run(
         list(args),
         cwd=str(cwd),
@@ -111,11 +118,12 @@ def _default_command_runner(
 
 @dataclass(frozen=True)
 class FundposProductionConfig:
-    project_root: Path
+    repository_root: Path
+    engine_root: Path
     python_executable: Path
     engine_config: Path
     release_manifest: Path
-    expected_revision: str
+    expected_revision: str | None
     expected_tag: str
     expected_package_version: str
     state_dir: Path
@@ -124,7 +132,6 @@ class FundposProductionConfig:
     families: tuple[str, ...]
     minimum_count_coverage: float
     timeout_seconds: int
-    excel: bool
     expected_universe_counts: Mapping[str, int]
     expected_scope_versions: Mapping[str, str]
     non_applicable_reasons: Mapping[str, tuple[str, ...]]
@@ -134,11 +141,9 @@ class FundposProductionConfig:
     @classmethod
     def from_mapping(cls, values: Mapping[str, Any]) -> FundposProductionConfig:
         required = {
-            "project_root",
             "python_executable",
             "engine_config",
             "release_manifest",
-            "expected_revision",
             "expected_tag",
             "expected_package_version",
             "state_dir",
@@ -148,10 +153,16 @@ class FundposProductionConfig:
             raise FundposProductionError(
                 "Missing fundpos production settings: " + ", ".join(missing)
             )
-        project_root = _path(values["project_root"])
+        engine_value = values.get("engine_root", values.get("project_root"))
+        if not engine_value:
+            raise FundposProductionError(
+                "Missing fundpos production setting: engine_root"
+            )
+        engine_root = _path(engine_value)
+        repository_root = _path(values.get("repository_root", engine_root))
         engine_config = Path(str(values["engine_config"]))
         if not engine_config.is_absolute():
-            engine_config = project_root / engine_config
+            engine_config = engine_root / engine_config
         families = tuple(values.get("families", FAMILY_TO_ENGINE))
         unknown = sorted(set(families) - FAMILY_TO_ENGINE.keys())
         if unknown:
@@ -168,13 +179,13 @@ class FundposProductionConfig:
         mode = str(values.get("mode", "shadow"))
         if mode not in {"check", "shadow", "publish"}:
             raise FundposProductionError("mode must be check, shadow, or publish")
-        revision = str(values["expected_revision"])
-        if len(revision) != 40 or any(
-            c not in "0123456789abcdef" for c in revision.lower()
+        revision_value = values.get("expected_revision")
+        revision = str(revision_value).lower() if revision_value else None
+        if revision is not None and (
+            len(revision) != 40
+            or any(c not in "0123456789abcdef" for c in revision)
         ):
-            raise FundposProductionError(
-                "expected_revision must be a full Git commit hash"
-            )
+            raise FundposProductionError("expected_revision must be a full Git commit hash")
         expected_counts = {
             str(key): int(value)
             for key, value in dict(values.get("expected_universe_counts", {})).items()
@@ -206,11 +217,12 @@ class FundposProductionConfig:
                 + ", ".join(unknown_reason_families)
             )
         return cls(
-            project_root=project_root,
+            repository_root=repository_root,
+            engine_root=engine_root,
             python_executable=_path(values["python_executable"]),
             engine_config=engine_config.resolve(),
             release_manifest=_path(values["release_manifest"]),
-            expected_revision=revision.lower(),
+            expected_revision=revision,
             expected_tag=str(values["expected_tag"]),
             expected_package_version=str(values["expected_package_version"]),
             state_dir=_path(values["state_dir"]),
@@ -219,7 +231,6 @@ class FundposProductionConfig:
             families=families,
             minimum_count_coverage=coverage,
             timeout_seconds=int(values.get("timeout_seconds", 7200)),
-            excel=bool(values.get("excel", True)),
             expected_universe_counts=expected_counts,
             expected_scope_versions=expected_scopes,
             non_applicable_reasons=non_applicable,
@@ -370,12 +381,21 @@ class FundposProductionRunner:
     ) -> None:
         self.config = config
         self.command_runner = command_runner
+        self._frozen_revision: str | None = None
 
-    def _run(self, args: Sequence[str], *, json_output: bool = False) -> Any:
+    def _run(
+        self,
+        args: Sequence[str],
+        *,
+        json_output: bool = False,
+        cwd: Path | None = None,
+        environment: Mapping[str, str] | None = None,
+    ) -> Any:
         output = self.command_runner(
             [str(value) for value in args],
-            self.config.project_root,
+            cwd or self.config.engine_root,
             self.config.timeout_seconds,
+            environment,
         )
         if output.returncode:
             detail = (output.stderr or output.stdout)[-4000:].strip()
@@ -385,6 +405,11 @@ class FundposProductionRunner:
         return parse_cli_json(output.stdout) if json_output else output.stdout.strip()
 
     def _engine(self, *args: str) -> dict[str, Any]:
+        environment = (
+            {"FUNDPOS_SOURCE_REVISION": self._frozen_revision}
+            if self._frozen_revision
+            else None
+        )
         return self._run(
             [
                 str(self.config.python_executable),
@@ -394,30 +419,71 @@ class FundposProductionRunner:
                 *args,
             ],
             json_output=True,
+            environment=environment,
         )
 
     def preflight(self) -> dict[str, Any]:
         for path, label in (
-            (self.config.project_root / ".git", "fundpos Git repository"),
+            (self.config.repository_root / ".git", "AlphaHome Git repository"),
+            (self.config.engine_root, "fundpos engine root"),
             (self.config.python_executable, "fundpos Python runtime"),
             (self.config.engine_config, "fundpos engine config"),
             (self.config.release_manifest, "fundpos release manifest"),
         ):
             if not path.exists():
                 raise FundposProductionError(f"Missing {label}: {path}")
-        head = self._run(["git", "rev-parse", "HEAD"]).strip().lower()
-        if head != self.config.expected_revision:
+        try:
+            engine_relative = self.config.engine_root.relative_to(
+                self.config.repository_root
+            ).as_posix()
+        except ValueError as exc:
             raise FundposProductionError(
-                f"Fundpos revision drift: {head} != {self.config.expected_revision}"
-            )
-        worktree = self._run(["git", "status", "--porcelain"])
+                "fundpos engine_root must be inside the AlphaHome repository"
+            ) from exc
+        managed_paths = (
+            engine_relative,
+            "alphahome/integrations/fundpos",
+            "scripts/production/fundpos",
+        )
+        worktree = self._run(
+            [
+                "git",
+                "status",
+                "--porcelain",
+                "--untracked-files=normal",
+                "--",
+                *managed_paths,
+            ],
+            cwd=self.config.repository_root,
+        )
         if worktree:
-            raise FundposProductionError("Fundpos worktree is not clean")
-        tagged = self._run(["git", "rev-list", "-n", "1", self.config.expected_tag])
-        if tagged.strip().lower() != head:
+            raise FundposProductionError("Managed fundpos paths are not clean")
+        tagged = self._run(
+            ["git", "rev-list", "-n", "1", self.config.expected_tag],
+            cwd=self.config.repository_root,
+        ).strip().lower()
+        if self.config.expected_revision and tagged != self.config.expected_revision:
             raise FundposProductionError(
                 "Fundpos release tag does not point to expected revision"
             )
+        drift = self._run(
+            ["git", "diff", "--name-only", self.config.expected_tag, "--", *managed_paths],
+            cwd=self.config.repository_root,
+        )
+        if drift:
+            raise FundposProductionError(
+                "Managed fundpos paths differ from the frozen release tag: " + drift
+            )
+        release = json.loads(self.config.release_manifest.read_text(encoding="utf-8-sig"))
+        if release.get("source_revision", "").lower() != tagged:
+            raise FundposProductionError("Release manifest source revision differs")
+        engine_tree = self._run(
+            ["git", "rev-parse", f"{self.config.expected_tag}:{engine_relative}"],
+            cwd=self.config.repository_root,
+        ).strip()
+        if release.get("engine_tree") != engine_tree:
+            raise FundposProductionError("Release manifest engine tree differs")
+        self._frozen_revision = tagged
         probe_code = (
             "import importlib.metadata,json,sys;"
             "import cvxpy,osqp,psycopg;"
@@ -432,9 +498,6 @@ class FundposProductionRunner:
             raise FundposProductionError("Fundpos runtime must use Python 3.12")
         if runtime["package"] != self.config.expected_package_version:
             raise FundposProductionError("Installed fundpos package version differs")
-        release = json.loads(self.config.release_manifest.read_text(encoding="utf-8"))
-        if release.get("source_revision", "").lower() != head:
-            raise FundposProductionError("Release manifest source revision differs")
         if release.get("package_version") != self.config.expected_package_version:
             raise FundposProductionError("Release manifest package version differs")
         if release.get("python_version") != ".".join(map(str, runtime["python"])):
@@ -451,8 +514,9 @@ class FundposProductionRunner:
                 f"Fundpos migrations are not current: {statuses}"
             )
         return {
-            "source_revision": head,
+            "source_revision": tagged,
             "source_tag": self.config.expected_tag,
+            "engine_tree": engine_tree,
             "runtime": runtime,
             "wheel_sha256": release["wheel_sha256"],
             "migration_count": len(migrations["migrations"]),
@@ -469,12 +533,9 @@ class FundposProductionRunner:
             self.config.scope,
             "--date",
             date,
-            "--report",
         ]
         if cutoff:
             arguments.extend(["--cutoff", cutoff])
-        if not self.config.excel:
-            arguments.append("--no-excel")
         return self._engine(*arguments)
 
     def _run_family(
@@ -492,7 +553,7 @@ class FundposProductionRunner:
             minimum_count_coverage=self.config.minimum_count_coverage,
             expected_universe_count=self.config.expected_universe_counts[family],
             expected_scope_version=self.config.expected_scope_versions[family],
-            expected_revision=self.config.expected_revision,
+            expected_revision=self._frozen_revision,
             non_applicable_reasons=self.config.non_applicable_reasons.get(family, ()),
         )
         ingest = self._engine(

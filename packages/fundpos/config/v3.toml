@@ -1,0 +1,81 @@
+[project]
+data_dir = "../../logs/fundpos-engine/data"
+output_dir = "../../logs/fundpos-engine/outputs"
+timezone = "Asia/Shanghai"
+
+[data]
+provider = "alphadb"
+alphahome_config = "~/.alphahome/config.json"
+supplements_dir = "../../logs/fundpos-engine/supplements"
+statement_timeout_seconds = 60
+fetch_stock_prices = true
+allow_wind = true
+
+[model]
+name = "personalized"
+window = 60
+max_window_calendar_days = 450
+weighting = "documented"
+prior_penalty = 0.0
+smooth_penalty = 0.0
+constraint_tolerance = 0.000001
+max_holdings_age_days = 400
+max_proxy_weight = 0.5
+max_unclassified_nav_weight = 0.001
+
+[fixed_income]
+enabled = true
+stock_upper = 0.40
+style_stock_median = 0.30
+style_bond_median = 0.50
+max_report_age_days = 200
+financing_upper = 0.40
+gross_assets_upper = 1.40
+sensitivity_limit = 0.05
+required_factor_assets = ["rate_short", "rate_long", "credit_short", "credit_long", "convertible_bond", "hk", "financing_cost"]
+
+[convertible_dominant]
+protocol_file = "v3_convertible_dominant_hierarchical_protocol.json"
+# The convertible asset may exceed NAV when the product uses leverage.  The
+# ordinary gross-assets and financing constraints remain binding.
+cbond_upper = 1.40
+stock_upper = 0.60
+max_broad_proxy_weight = 0.60
+max_price_age_days = 14
+agreement_threshold = 0.05
+state_penalty = 1.0
+development_error_band = 0.17
+default_model = "cbond_state_space_v1"
+constituent_return_evidence = "conditional_security_total_return_proxy"
+stock_total_mode = "last_public_asset_allocation_anchor"
+
+[database]
+schema = "fundpos"
+migrations_dir = "migrations"
+statement_timeout_seconds = 60
+lock_key = 66757110
+read_connection_env = "FUNDPOS_READ_DATABASE_URL"
+write_connection_env = "FUNDPOS_WRITE_DATABASE_URL"
+migration_connection_env = "FUNDPOS_MIGRATION_DATABASE_URL"
+
+[publication]
+count_coverage = 0.95
+aum_coverage = 0.95
+max_aum_age_days = 200
+
+[universe]
+pilot_file = "resources/universe/pilot_110.parquet"
+pilot_sha256 = "6363d767c4d0bfe61991525d91ae501a0ac991b4d11f4f8016bf374fbc6e7ca6"
+category_codes = ["TSJJ020106", "TSJJ020306", "TSJJ020303", "TSJJ020301", "TSJJ020302", "TSJJ020206", "TSJJ020202", "TSJJ020103"]
+categories = ["普通股票型", "偏股混合", "灵活配置", "平衡混合", "偏债混合", "普通债基", "可转债债基", "增强指数型"]
+min_age_days = 180
+
+[research]
+start = "2022-01-01"
+development_end = "2023-12-31"
+selection_end = "2024-12-31"
+final_end = "2026-06-30"
+minimum_industry_improvement = 0.10
+stock_mae_limit = 0.05
+cbond_mae_limit = 0.05
+observation_trading_days = 10

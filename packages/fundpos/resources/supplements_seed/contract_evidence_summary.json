@@ -1,0 +1,13 @@
+{
+  "status": "partial",
+  "funds_requested": 110,
+  "contracts_indexed": 110,
+  "documents_verified": 109,
+  "extractions_verified": 4,
+  "nav_constraints_usable": 0,
+  "cutoff": "2024-06-29",
+  "source": "Eastmoney fund announcement index and PDF mirror",
+  "source_role": "third_party_document_mirror",
+  "errors": [],
+  "retrieved_at": "2026-09-12T22:23:38.308973+08:00"
+}

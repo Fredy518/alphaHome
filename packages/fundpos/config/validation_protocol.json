@@ -1,0 +1,28 @@
+{
+  "protocol_id": "sw2021_v1_20260912",
+  "objective": "Estimate NAV-denominated industry exposure; independent later disclosures are labels only",
+  "development": ["2022-01-01", "2023-12-31"],
+  "selection": ["2024-01-01", "2024-12-31"],
+  "final": ["2025-01-01", "2026-06-30"],
+  "window": 60,
+  "weighting": "documented",
+  "baselines": ["index", "personalized"],
+  "candidates": [
+    {"name": "prior01_smooth0", "prior_penalty": 0.1, "smooth_penalty": 0.0},
+    {"name": "prior01_smooth01", "prior_penalty": 0.1, "smooth_penalty": 0.1},
+    {"name": "prior01_smooth1", "prior_penalty": 0.1, "smooth_penalty": 1.0},
+    {"name": "prior1_smooth0", "prior_penalty": 1.0, "smooth_penalty": 0.0},
+    {"name": "prior1_smooth01", "prior_penalty": 1.0, "smooth_penalty": 0.1},
+    {"name": "prior1_smooth1", "prior_penalty": 1.0, "smooth_penalty": 1.0}
+  ],
+  "selection_metric": "industry_l1_mean",
+  "promotion": {
+    "industry_l1_relative_improvement": 0.1,
+    "stock_mae_must_not_increase": true,
+    "hk_mae_must_not_increase": true,
+    "industry_l1_p90_must_not_increase": true,
+    "coverage_must_not_decrease": true
+  },
+  "final_holdout_policy": "Open once after selection is frozen; no post-opening tuning or candidate expansion",
+  "history_policy": "Announcement-date reconstruction, not contemporaneously recorded history"
+}

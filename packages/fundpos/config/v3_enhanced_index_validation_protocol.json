@@ -1,0 +1,44 @@
+{
+  "protocol_id": "fundpos_v3_enhanced_index_20260913",
+  "status": "frozen_before_enhanced_index_validation",
+  "development": ["2022-01-01", "2023-12-31"],
+  "selection": ["2024-01-01", "2024-12-31"],
+  "final": ["2025-01-01", "2026-06-30"],
+  "final_holdout_opened": false,
+  "pilot_file": "resources/universe/pilot_110.parquet",
+  "pilot_sha256": "6363d767c4d0bfe61991525d91ae501a0ac991b4d11f4f8016bf374fbc6e7ca6",
+  "pilot_frame_hash": "18b58694b8b72f5f71ec16d95a9d7acfc281e9f38e1f5271ac06818aa0d67ef9",
+  "family": "enhanced_index_equity",
+  "window": 60,
+  "max_window_calendar_days": 450,
+  "weighting": "documented",
+  "validation_smoothing_cadence": "prior_truth_label_date",
+  "production_smoothing_cadence": "daily_P6_observation",
+  "conditional_research": {
+    "allowed_phases": ["development", "selection"],
+    "allowed_evidence": [
+      "current fund tracking-index metadata cross-checked to objective and benchmark text",
+      "next-calendar-day NAV scenario only where vendor ann_date is a delayed periodic-report date"
+    ],
+    "separate_state": true,
+    "eligible_for_formal_promotion": false,
+    "final_holdout_access": false
+  },
+  "candidates": [
+    {"name": "prior01_smooth0", "prior_penalty": 0.1, "smooth_penalty": 0.0},
+    {"name": "prior01_smooth01", "prior_penalty": 0.1, "smooth_penalty": 0.1},
+    {"name": "prior01_smooth1", "prior_penalty": 0.1, "smooth_penalty": 1.0},
+    {"name": "prior1_smooth0", "prior_penalty": 1.0, "smooth_penalty": 0.0},
+    {"name": "prior1_smooth01", "prior_penalty": 1.0, "smooth_penalty": 0.1},
+    {"name": "prior1_smooth1", "prior_penalty": 1.0, "smooth_penalty": 1.0}
+  ],
+  "acceptance": {
+    "industry_l1_relative_improvement": 0.10,
+    "tail_hk_stock_must_not_worsen": true,
+    "coverage_must_not_decrease": true,
+    "industry_l1_reference": 0.20,
+    "constraint_error_max": 0.000001,
+    "live_observation_days": 10
+  },
+  "final_holdout_policy": "Open once only after strict historical tracking-index and contract evidence, model, universe, metrics and candidate are frozen. Conditional research can never open it."
+}

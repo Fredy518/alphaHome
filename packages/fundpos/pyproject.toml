@@ -1,0 +1,35 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "fund-industry-position"
+version = "0.4.0"
+description = "AlphaHome-owned auditable SW2021 mutual fund position engine"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "numpy>=2.1,<2.4", "pandas>=2.2,<3", "scipy>=1.14,<2",
+  "cvxpy>=1.6,<2", "osqp>=1.0,<2", "pyarrow>=18,<25",
+  "psycopg[binary]>=3.2,<4", "filelock>=3.16,<4", "plotly>=6,<7",
+]
+
+[project.scripts]
+fundpos = "fundpos.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8.3,<10", "ruff>=0.9"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/fundpos"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]

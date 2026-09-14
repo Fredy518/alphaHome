@@ -1,0 +1,53 @@
+{
+  "protocol_id": "report_date_full_universe_coverage_repair_v2",
+  "purpose": "Compare fixed implemented baselines with subsequently disclosed report-date holdings and the original PPT error definitions",
+  "prediction_start": "2022-01-01",
+  "prediction_end": "2024-06-30",
+  "calendar_frequency": "quarterly",
+  "industry_labels": "Independent monetary reconciliation; complete SW labels separated from partial labels",
+  "stock_labels": "independent quarterly asset allocation stock NAV ratio",
+  "models": [
+    "index",
+    "personalized"
+  ],
+  "window": 60,
+  "weighting": "documented",
+  "tuning": "none; freeze both current baselines before expanding samples",
+  "universe": "all historically eligible products present in AlphaDB metadata, with share families merged; include every eligible product in coverage denominator",
+  "input_modes": {
+    "recorded_ann_date": "Daily NAV availability inherits original vendor date; AUM has independent availability",
+    "nav_date_assumption": "NAV available next calendar day sensitivity only; original AUM availability and holding announcements unchanged"
+  },
+  "primary_error": "sum_i abs(estimated_NAV_weight_i - actual_NAV_weight_i), i in 31 SW2021 A-share industries",
+  "threshold": 0.2,
+  "threshold_status": "user-suggested diagnostic reference, not a replacement for the original model promotion protocol",
+  "additional_metrics": [
+    "mean",
+    "median",
+    "p90",
+    "p95",
+    "fraction_l1_le_20pp",
+    "per_industry_mae",
+    "stock_mae",
+    "hk_mae",
+    "equal_and_aum_group_bias",
+    "count_and_aum_coverage",
+    "category",
+    "size",
+    "turnover",
+    "holdings_age",
+    "proxy_ratio"
+  ],
+  "label_policy": "Missing truth or incomplete mapping is excluded explicitly, never zero filled. Later labels never enter estimation inputs.",
+  "holdout": "2025-2026H1 remains unopened because the formal selection and data gates have not passed",
+  "end_reason": "Last half-year endpoint with the existing dated bond and RMB HK benchmark supplement, which ends 2024-07-19",
+  "history_kind": "announcement_date_reconstruction; no historical vendor revision archive",
+  "parent_protocol_hash": "5549bc3d7d75796d2eebfca4c264412410422b3a920e29be8cc2a6cc73d24e40",
+  "repairs": [
+    "precise_security_value_NAV_weights",
+    "quarterly_financial_AUM_with_field_timing",
+    "dated_SWHY_gap_fill_primary_precedence",
+    "small_unknown_A_equity_separate_diagnostics"
+  ],
+  "max_unclassified_nav_weight": 0.001
+}
