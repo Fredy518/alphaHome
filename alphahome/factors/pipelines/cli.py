@@ -110,7 +110,7 @@ def run_year_worker(
     ]
     result = _combine_governed_results(results)
     _print_worker_summary(factor_type, worker_id, result)
-    return 0 if result.get("failed_date_count", 0) == 0 else 1
+    return 0 if result.get("status") == "success" else 1
 
 
 def run_quarter_worker(
@@ -133,7 +133,7 @@ def run_quarter_worker(
     ]
     result = _combine_governed_results(results)
     _print_worker_summary(factor_type, worker_id, result)
-    return 0 if result.get("failed_date_count", 0) == 0 else 1
+    return 0 if result.get("status") == "success" else 1
 
 
 def run_missing_factors(

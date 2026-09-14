@@ -49,7 +49,7 @@ def _coordinator(missing=None, max_dates=26):
     coordinator = FactorCoordinator(_ConstructionDB(), max_automatic_dates=max_dates)
     coordinator.governance = SimpleNamespace(
         schema_issues=lambda: [],
-        latest_source_watermarks=lambda _task: {"verified_fixture": "2026-09-01", "_snapshot_xmin": 90},
+        latest_source_watermarks=lambda task: {**{source: None for source in coordinator.contracts()[task].source_tables}, "_snapshot_xmin": 90},
     )
     coordinator.repository = _PlanRepository(missing)
     return coordinator

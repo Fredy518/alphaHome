@@ -171,6 +171,7 @@ async def handle_run_tasks(
     end_date: Optional[str],
     exec_mode: str,
     use_insert_mode: bool = False,
+    domain_plan=None,
 ):
     """
     处理运行任务的请求
@@ -187,7 +188,7 @@ async def handle_run_tasks(
     """
     if db_manager:
         await task_execution_service.run_tasks(
-            db_manager, tasks_to_run, start_date, end_date, exec_mode, use_insert_mode
+            db_manager, tasks_to_run, start_date, end_date, exec_mode, use_insert_mode, domain_plan=domain_plan
         )
     else:
         logger.error("Request to run tasks, but DB manager is not initialized.")
@@ -330,6 +331,7 @@ async def handle_request(command: str, data: Optional[Dict[str, Any]] = None):
                 data.get("end_date"),
                 data.get("exec_mode", "serial"),
                 data.get("use_insert_mode", False),
+                domain_plan=data.get("domain_plan"),
             )
 
         elif command == "STOP_TASKS":

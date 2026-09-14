@@ -8,6 +8,12 @@ from .date_policy import FACTOR_TIMEZONE
 
 WATERMARK_CONTRACT = "snapshot_consumed_v2"
 SNAPSHOT_XMIN_KEY = "_snapshot_xmin"
+STOCK_MASTER_PROJECTION = "eligibility_projection_v1:"
+STOCK_MASTER_PROJECTION_SQL = """
+    SELECT md5(COALESCE(string_agg(
+        jsonb_build_array(ts_code,list_status,list_date,delist_date)::text,
+        E'\\n' ORDER BY ts_code), '')) FROM tushare.stock_basic
+"""
 
 
 def _timestamp(value):
@@ -27,9 +33,15 @@ def consumed_watermarks(task_result: Mapping[str, Any], planned: Mapping[str, An
         return {}
     # The planner captures this ceiling before querying dirty dates. Revisions
     # arriving later may be visible to a calculator but not to all planned dates.
-    result = {
-        source: min((value, actual[source]), key=_timestamp)
-        for source, value in planned.items() if value is not None and actual.get(source) is not None
-    }
+    if set(planned) != set(actual):
+        return {}
+    result = {}
+    for source, value in planned.items():
+        if isinstance(value, str) and value.startswith(STOCK_MASTER_PROJECTION):
+            if value != actual[source]:
+                return {}  # Eligibility changed after planning; do not certify it.
+            result[source] = value
+        else:
+            result[source] = min((value, actual[source]), key=_timestamp) if value is not None and actual[source] is not None else None
     result[SNAPSHOT_XMIN_KEY] = min(planned_xmin, snapshot_xmin)
     return result

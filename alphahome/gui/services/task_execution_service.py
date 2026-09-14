@@ -272,6 +272,7 @@ async def run_tasks(
     end_date: Optional[str],
     exec_mode: str,
     use_insert_mode: bool = False,
+    domain_plan=None,
 ):
     """Runs a list of selected tasks with the given parameters."""
     global _global_stop_event, _current_running_tasks, _is_running
@@ -329,6 +330,26 @@ async def run_tasks(
             if _send_response_callback:
                 _send_response_callback("LOG", {"level": "info", "message": "PIT计划处理结束。"})
     
+    factor_tasks = [item for item in tasks_to_run if _is_factor_task(item)]
+    if factor_tasks:
+        try:
+            if len(factor_tasks) != len(tasks_to_run):
+                raise ValueError("Factors must be submitted through their own domain plan")
+            from .factor_service import run_factor_execution
+
+            mode = {"智能增量": "smart", "全量更新": "full", "手动增量": "manual"}.get(exec_mode, exec_mode)
+            _current_running_tasks.extend(item["task_name"] for item in factor_tasks)
+            result = await run_factor_execution(db_manager, [item["task_name"] for item in factor_tasks], mode,
+                                                start_date=start_date, end_date=end_date, plan=domain_plan,
+                                                stop_event=_global_stop_event)
+            if _send_response_callback:
+                _send_response_callback("LOG", {"level": "info", "message": str(result)})
+            return result
+        finally:
+            _is_running = False
+            _global_stop_event = None
+            _current_running_tasks = []
+
     # 首先确保task_status表存在
     try:
         await _ensure_task_status_table_exists(db_manager)

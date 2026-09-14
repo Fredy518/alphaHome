@@ -6,6 +6,8 @@ import asyncio
 from typing import Any, Callable, Dict, List, Optional
 
 from ...common.db_manager import DBManager
+from ...common.db_session import owned_sync_session
+from ...common.async_worker import run_owned_worker
 from ...common.logging_utils import get_logger
 from ...common.task_system import UnifiedTaskFactory
 from ...factors.audit_service import FactorAuditService
@@ -24,6 +26,16 @@ def initialize_factor_service(response_callback: Callable) -> None:
 
 def get_cached_factor_tasks() -> List[Dict[str, Any]]:
     return _factor_task_cache
+
+
+async def run_factor_execution(db_manager, tasks, mode, *, start_date=None, end_date=None, plan=None, stop_event=None):
+    def execute(cancellation):
+        with owned_sync_session(db_manager.connection_string) as db:
+            coordinator = FactorCoordinator(db)
+            return coordinator.run(tasks, mode=mode, start_date=start_date, end_date=end_date,
+                                   submitted_plan=plan,
+                                   stop_requested=lambda: cancellation.is_set() or bool(stop_event and stop_event.is_set())).to_dict()
+    return await run_owned_worker(execute)
 
 
 async def handle_get_factor_tasks() -> None:

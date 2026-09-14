@@ -44,6 +44,8 @@ class ReadOnlyDB:
         self._read(sql)
         if "pg_snapshot_xmin" in sql:
             return "100"
+        if "jsonb_build_array" in sql:
+            return "a" * 32
         if "to_regclass" in sql:
             return True
         if "COUNT(*)" in sql:

@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from .base import FactorTaskContract
 from .date_policy import FactorDatePolicy
-from .source_boundary import SNAPSHOT_XMIN_KEY
+from .source_boundary import SNAPSHOT_XMIN_KEY, STOCK_MASTER_PROJECTION, STOCK_MASTER_PROJECTION_SQL
 
 
 _RELATION_RE = re.compile(r"^[a-z_][a-z0-9_]*\.[a-z_][a-z0-9_]*$")
@@ -188,6 +188,9 @@ class FactorRepository:
             if not self.relation_exists(source):
                 watermarks[source] = None
                 continue
+            if source == "tushare.stock_basic":
+                watermarks[source] = STOCK_MASTER_PROJECTION + self.db.fetch_val_sync(STOCK_MASTER_PROJECTION_SQL)
+                continue
             schema, table = source.split(".", 1)
             has_updated_at = bool(
                 self.db.fetch_val_sync(
@@ -230,6 +233,11 @@ class FactorRepository:
                 raise FactorSourceQueryError("snapshot", "expired_or_invalid_mvcc_cursor")
         for source in contract.source_tables:
             previous = previous_watermarks.get(source)
+            if source == "tushare.stock_basic":
+                current_projection = self.source_watermarks_for_stock_master()
+                if previous != current_projection:
+                    candidates.append(date(1900, 1, 1))
+                continue
             key = _SOURCE_TIME_KEYS.get(source)
             if (not previous and checkpoint is None) or not key:
                 continue
@@ -260,6 +268,15 @@ class FactorRepository:
             elif value is not None:
                 raise FactorSourceQueryError(source, "invalid_date_result")
         return min(candidates) if candidates else None
+
+    def source_watermarks_for_stock_master(self):
+        from alphahome.common.db_session import query_timeout
+
+        try:
+            with query_timeout(self.db):
+                return STOCK_MASTER_PROJECTION + self.db.fetch_val_sync(STOCK_MASTER_PROJECTION_SQL)
+        except Exception as exc:
+            raise FactorSourceQueryError("tushare.stock_basic", type(exc).__name__) from None
 
     def readiness(
         self,

@@ -380,6 +380,7 @@ class FactorAuditService:
         return "ready", details
 
     async def _source_consumption(self, contract):
+        from .source_boundary import STOCK_MASTER_PROJECTION, STOCK_MASTER_PROJECTION_SQL
         if contract.task_name == "factor_p" and "tushare.stock_basic" not in contract.source_tables:
             return {"status": "unverified", "reason": "stock_master_not_in_consumption_contract"}
         row = await self.db.fetch_one(
@@ -394,12 +395,19 @@ class FactorAuditService:
         if isinstance(payload, str):
             payload = json.loads(payload)
         watermarks = payload.get(contract.task_name) or {}
+        if not set(contract.source_tables) <= set(watermarks):
+            return {"status": "unverified", "reason": "incomplete_source_contract"}
         xmin = watermarks.get(SNAPSHOT_XMIN_KEY)
         xmax = int(await self.db.fetch_val("SELECT pg_snapshot_xmax(pg_current_snapshot())::text"))
         if not isinstance(xmin, int) or not 0 <= xmax - xmin < 2**31:
             return {"status": "unverified", "reason": "invalid_or_expired_cursor"}
         changed = []
         for source in contract.source_tables:
+            if source == "tushare.stock_basic":
+                projection = STOCK_MASTER_PROJECTION + await self.db.fetch_val(STOCK_MASTER_PROJECTION_SQL)
+                if projection != watermarks[source]:
+                    changed.append(source)
+                continue
             key = _SOURCE_TIME_KEYS.get(source)
             if not key or not _RELATION_RE.fullmatch(source):
                 return {"status": "unverified", "reason": "unsupported_source_contract"}

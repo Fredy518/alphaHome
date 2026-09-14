@@ -142,7 +142,8 @@ class FactorTask(BaseTask):
                 self.name, persist=True
             )
             return {
-                "status": result.get("status", "success"),
+                "status": "error" if result.get("status") == "error" else "success",
+                "readiness_status": result.get("status"),
                 "task": self.name,
                 "table": self.table_name,
                 "rows": int(result.get("row_count") or 0),
@@ -161,7 +162,7 @@ class FactorTask(BaseTask):
         expand_dependencies = bool(task_config.get("factor_expand_dependencies", True))
         max_dates = int(task_config.get("max_automatic_dates", 26))
 
-        def _run() -> Dict[str, Any]:
+        def _run(cancellation) -> Dict[str, Any]:
             from alphahome.factors.coordinator import FactorCoordinator
 
             sync_db = DBManager(db_url, mode="sync")
@@ -173,14 +174,17 @@ class FactorTask(BaseTask):
                     start_date=self.start_date or task_config.get("start_date"),
                     end_date=self.end_date or task_config.get("end_date"),
                     expand_dependencies=expand_dependencies,
-                    stop_requested=(stop_event.is_set if stop_event else None),
+                    stop_requested=lambda: cancellation.is_set() or bool(stop_event and stop_event.is_set()),
+                    submitted_plan=task_config.get("domain_plan"),
+                    expected_plan_hash=task_config.get("expected_plan_hash"),
                 )
                 return result.to_dict()
             finally:
                 sync_db.close_sync()
 
         try:
-            result = await asyncio.to_thread(_run)
+            from alphahome.common.async_worker import run_owned_worker
+            result = await run_owned_worker(_run, on_cancelled_result=lambda value: setattr(self, "last_execution_result", value))
         except Exception as exc:
             self.logger.error("因子任务执行失败: %s", exc, exc_info=True)
             return {

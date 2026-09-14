@@ -6,6 +6,7 @@ import argparse
 import asyncio
 import json
 from typing import Any, Iterable, List, Optional
+from datetime import date
 
 from alphahome.common.config_manager import ConfigManager
 from alphahome.common.db_manager import DBManager
@@ -35,6 +36,8 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--end-date")
     run.add_argument("--max-automatic-dates", type=int, default=26)
     run.add_argument("--dry-run", action="store_true")
+    run.add_argument("--expected-plan-hash")
+    run.add_argument("--as-of-date", type=date.fromisoformat)
 
     audit = subparsers.add_parser("audit", help="审计因子实时表")
     audit.add_argument("--tasks", nargs="+", default=["p", "g"])
@@ -85,6 +88,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                     mode=args.mode,
                     start_date=args.start_date,
                     end_date=args.end_date,
+                    batch_started_at=args.as_of_date,
                 ).to_dict()
             else:
                 payload = coordinator.run(
@@ -92,6 +96,8 @@ def main(argv: Optional[List[str]] = None) -> int:
                     mode=args.mode,
                     start_date=args.start_date,
                     end_date=args.end_date,
+                    batch_started_at=args.as_of_date,
+                    expected_plan_hash=args.expected_plan_hash,
                 ).to_dict()
             _print_json(payload)
             return 0 if payload.get("status") in {"ready", "success"} else 2

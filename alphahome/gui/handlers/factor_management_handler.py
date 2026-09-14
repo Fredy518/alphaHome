@@ -179,7 +179,13 @@ def handle_factor_preflight_complete(
         _set_status(widgets, "已取消因子运行")
         _pending_run = None
         return
-    tasks = [_task_info_for_name(name) for name in task_names]
+    immutable_plan = plan.get("immutable_plan")
+    if not immutable_plan or not plan.get("plan_hash"):
+        _pending_run = None
+        _set_status(widgets, "预检缺少计划指纹，请重新预检。")
+        return
+    requested_names = immutable_plan["request"]["tasks"]
+    tasks = [_task_info_for_name(name) for name in requested_names]
     tasks = [task for task in tasks if task]
     mode = pending.get("mode", "smart")
     exec_modes = {
@@ -197,6 +203,7 @@ def handle_factor_preflight_complete(
                 "end_date": pending.get("end_date"),
                 "exec_mode": exec_modes[mode],
                 "use_insert_mode": False,
+                "domain_plan": immutable_plan,
             },
         )
     )

@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import copy
+from contextlib import nullcontext
+from pathlib import Path
 import logging
 import time
 from dataclasses import asdict, dataclass, field
@@ -12,7 +15,9 @@ from uuid import UUID
 
 from alphahome.common.task_system import UnifiedTaskFactory
 from alphahome.common.db_manager import DBManager
-from alphahome.common.run_models import SourceBoundary, fingerprint, target_fingerprint
+from alphahome.common.run_models import SourceBoundary, RunPlan, RunRequest, RunUnit, canonical_json, fingerprint, target_fingerprint
+from alphahome.common.db_session import owned_sync_session, query_timeout
+from alphahome.common.plan_inspection import inspect_relation, package_fingerprint
 
 from .base import FactorTaskContract
 from .date_policy import FACTOR_TIMEZONE, FactorDatePolicy, coerce_date
@@ -46,6 +51,11 @@ class FactorRunPlan:
     task_plans: List[FactorTaskPlan]
     status: str = "ready"
     message: str = ""
+    immutable_plan: Optional[RunPlan] = None
+
+    @property
+    def plan_hash(self):
+        return self.immutable_plan.plan_hash if self.immutable_plan else None
 
     @property
     def total_dates(self) -> int:
@@ -56,6 +66,8 @@ class FactorRunPlan:
         payload["effective_cutoff_date"] = self.effective_cutoff_date.isoformat()
         payload["task_plans"] = [item.to_dict() for item in self.task_plans]
         payload["total_dates"] = self.total_dates
+        payload["immutable_plan"] = self.immutable_plan.to_dict() if self.immutable_plan else None
+        payload["plan_hash"] = self.plan_hash
         return payload
 
 
@@ -129,7 +141,46 @@ class FactorCoordinator:
             visit(name)
         return ordered
 
-    def plan(
+    def plan(self, task_names, **kwargs):
+        self._validate_request(task_names, **kwargs)
+        if not isinstance(self.db, DBManager):
+            # Injectable in-memory repositories remain available to pure tests.
+            return self._plan(task_names, **kwargs)
+        with owned_sync_session(self.db.connection_string, readonly=True) as db, query_timeout(db):
+            planner = copy.copy(self)
+            planner.db = db
+            planner.repository = copy.copy(self.repository)
+            planner.repository.db = db
+            planner.governance = copy.copy(self.governance)
+            planner.governance.db = db
+            snapshot = db.fetch_val_sync("SELECT pg_current_snapshot()::text")
+            plan = planner._plan(task_names, **kwargs)
+            contracts = planner.contracts()
+            start, end = kwargs.get("start_date"), kwargs.get("end_date")
+            if kwargs.get("date_range") is not None:
+                start, end = kwargs["date_range"]
+            reference = kwargs.get("batch_started_at") or datetime.now(FACTOR_TIMEZONE)
+            as_of = reference.astimezone(FACTOR_TIMEZONE).date() if isinstance(reference, datetime) and reference.tzinfo else coerce_date(reference)
+            request = RunRequest("factors", tuple(task_names), plan.mode, target_fingerprint(self.db.connection_string),
+                                 coerce_date(start) if start else None, coerce_date(end) if end else None, as_of_date=as_of)
+            relations = {relation for name in plan.task_names for relation in (contracts[name].output_table, *contracts[name].source_tables)}
+            structures = {relation: inspect_relation(db, relation) for relation in sorted(relations)}
+            names = set(plan.task_names)
+            units = [RunUnit(item.task_name, tuple(item.dates), tuple(dep for dep in item.dependencies if dep in names),
+                             item.estimated_output_rows, item.existing_rows_to_replace,
+                             parameters_json=canonical_json({"readiness_dependencies": item.readiness_dependencies,
+                                                             "source_watermarks": json_ready(item.source_watermarks),
+                                                             "source_xmin": item.source_xmin})) for item in plan.task_plans]
+            plan.immutable_plan = RunPlan.build(request, units, plan.effective_cutoff_date,
+                schema={"relations": structures, "governance_issues": planner.governance.schema_issues()},
+                sources={"planning_snapshot": snapshot, "task_boundaries": [json_ready(item.source_watermarks) for item in plan.task_plans]},
+                config={"contracts": {name: contracts[name].to_dict() for name in plan.task_names},
+                        "max_automatic_dates": self.max_automatic_dates, "expand_dependencies": kwargs.get("expand_dependencies", True),
+                        "implementation": package_fingerprint(Path(__file__).parent)},
+                blockers=([plan.status + ": " + plan.message] if plan.status != "ready" else []))
+            return plan
+
+    def _validate_request(
         self,
         task_names: Sequence[str],
         *,
@@ -140,7 +191,7 @@ class FactorCoordinator:
         date_range: Optional[Sequence[date | str]] = None,
         source_cutoff: datetime | None = None,
         expand_dependencies: bool = True,
-    ) -> FactorRunPlan:
+    ):
         if date_range is not None:
             if len(date_range) != 2:
                 raise ValueError("date_range必须是(start_date, end_date)")
@@ -177,6 +228,25 @@ class FactorCoordinator:
         if unknown:
             raise ValueError(f"未注册的因子任务: {unknown}")
 
+        return names, mode, effective_end, requested_start, contracts
+
+    def _plan(
+        self,
+        task_names: Sequence[str],
+        *,
+        mode: str = "smart",
+        start_date: date | str | None = None,
+        end_date: date | str | None = None,
+        batch_started_at: datetime | date | None = None,
+        date_range: Optional[Sequence[date | str]] = None,
+        source_cutoff: datetime | None = None,
+        expand_dependencies: bool = True,
+    ) -> FactorRunPlan:
+        names, mode, effective_end, requested_start, contracts = self._validate_request(
+            task_names, mode=mode, start_date=start_date, end_date=end_date,
+            batch_started_at=batch_started_at, date_range=date_range,
+            source_cutoff=source_cutoff, expand_dependencies=expand_dependencies,
+        )
         schema_issues = self.governance.schema_issues()
         if schema_issues:
             return FactorRunPlan(
@@ -295,7 +365,7 @@ class FactorCoordinator:
 
         previous = self.governance.latest_source_watermarks(contract.task_name)
         previous_for_task = previous.get(contract.task_name, previous)
-        if SNAPSHOT_XMIN_KEY not in previous_for_task and first_existing:
+        if (SNAPSHOT_XMIN_KEY not in previous_for_task or not set(contract.source_tables) <= set(previous_for_task)) and first_existing:
             # Legacy successful runs did not certify consumption. Revalidate
             # the declared smart window, subject to the existing manual-size gate.
             return FactorDatePolicy.fridays(start, effective_end)
@@ -315,7 +385,14 @@ class FactorCoordinator:
             propagated.update(FactorDatePolicy.fridays(changed, end))
         return sorted(propagated)
 
-    def run(
+    def run(self, task_names, **kwargs):
+        from .locks import compute_session
+
+        lock = compute_session(self.db) if isinstance(self.db, DBManager) else nullcontext()
+        with lock:
+            return self._run_locked(task_names, **kwargs)
+
+    def _run_locked(
         self,
         task_names: Sequence[str],
         *,
@@ -327,7 +404,25 @@ class FactorCoordinator:
         source_cutoff: datetime | None = None,
         expand_dependencies: bool = True,
         stop_requested: Optional[Callable[[], bool]] = None,
+        submitted_plan=None,
+        expected_plan_hash=None,
     ) -> FactorRunResult:
+        if isinstance(submitted_plan, dict):
+            submitted_plan = RunPlan.from_dict(submitted_plan.get("immutable_plan") or submitted_plan)
+        if submitted_plan is not None:
+            if submitted_plan.request.domain != "factors" or tuple(sorted(set(task_names))) != submitted_plan.request.tasks:
+                raise ValueError("Factor execution request differs from the submitted plan")
+            submitted_plan.require_matching(expected_plan_hash or submitted_plan.plan_hash)
+            normalized_mode = {"incremental": "smart", "backfill": "manual"}.get(mode, mode)
+            if normalized_mode != submitted_plan.request.mode:
+                raise ValueError("Factor execution mode differs from the submitted plan")
+            if start_date is not None and coerce_date(start_date) != submitted_plan.request.start_date:
+                raise ValueError("Factor execution start date differs from the submitted plan")
+            if end_date is not None and coerce_date(end_date) != submitted_plan.request.end_date:
+                raise ValueError("Factor execution end date differs from the submitted plan")
+            start_date, end_date = submitted_plan.request.start_date, submitted_plan.request.end_date
+            batch_started_at = submitted_plan.request.as_of_date
+            expected_plan_hash = submitted_plan.plan_hash
         started = batch_started_at or datetime.now(FACTOR_TIMEZONE)
         requested_start = start_date
         requested_end = end_date
@@ -347,6 +442,10 @@ class FactorCoordinator:
             source_cutoff=source_cutoff,
             expand_dependencies=expand_dependencies,
         )
+        if expected_plan_hash is not None:
+            if plan.immutable_plan is None:
+                raise RuntimeError("A database-backed immutable factor plan is required")
+            plan.immutable_plan.require_matching(expected_plan_hash)
         if plan.status == "migration_required":
             return FactorRunResult(
                 run_id=None,

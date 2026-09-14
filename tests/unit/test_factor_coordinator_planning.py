@@ -28,6 +28,7 @@ class _Repository:
 
 def test_plan_propagates_changed_p_dates_into_g_dates(monkeypatch):
     coordinator = FactorCoordinator.__new__(FactorCoordinator)
+    coordinator.db = None
     coordinator.governance = _Governance()
     coordinator.repository = _Repository()
     coordinator.date_policy = FactorDatePolicy()

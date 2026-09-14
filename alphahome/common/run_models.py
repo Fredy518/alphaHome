@@ -49,6 +49,7 @@ class RunRequest:
     start_date: date | None = None
     end_date: date | None = None
     timezone: str = "Asia/Shanghai"
+    as_of_date: date | None = None
 
     def __post_init__(self):
         if self.domain not in {"fetchers", "pit", "factors", "features"}:
@@ -126,7 +127,7 @@ class RunPlan:
         data = dict(payload)
         expected_hash = data.pop("plan_hash", None)
         request = dict(data.pop("request"))
-        for key in ("start_date", "end_date"):
+        for key in ("start_date", "end_date", "as_of_date"):
             if request.get(key):
                 request[key] = date.fromisoformat(request[key])
         units = []

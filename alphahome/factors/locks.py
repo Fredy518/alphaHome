@@ -27,3 +27,29 @@ def repair_session(db):
             with connection.cursor() as cursor:
                 cursor.execute("SELECT pg_advisory_unlock(hashtext(%s), hashtext(%s))", ("alphahome.factors", "snapshots"))
             connection.commit()
+
+
+@contextmanager
+def compute_session(db):
+    """Serialize whole P/G pipelines before reading any compute snapshot.
+
+    Lock order: shared repair gate, exclusive pipeline lock, date transaction lock.
+    Both session locks span all date commits and are released on cancellation.
+    """
+    connection = db._get_sync_connection()
+    acquired = []
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("SET LOCAL lock_timeout = '30s'")
+            for key, shared in (("snapshots", True), ("compute_pipeline", False)):
+                suffix = "_shared" if shared else ""
+                cursor.execute(f"SELECT pg_advisory_lock{suffix}(hashtext(%s),hashtext(%s))", ("alphahome.factors", key))
+                acquired.append((key, suffix))
+        connection.commit()
+        yield
+    finally:
+        connection.rollback()
+        with connection.cursor() as cursor:
+            for key, suffix in reversed(acquired):
+                cursor.execute(f"SELECT pg_advisory_unlock{suffix}(hashtext(%s),hashtext(%s))", ("alphahome.factors", key))
+        connection.commit()

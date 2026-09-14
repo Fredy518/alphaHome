@@ -67,6 +67,16 @@ def test_no_mvcc_snapshot_cannot_be_certified():
     assert consumed_watermarks(task_result(), {SOURCE: T1}) == {}
 
 
+def test_projection_change_during_compute_prevents_consumption_promotion():
+    from alphahome.factors.source_boundary import STOCK_MASTER_PROJECTION
+
+    result = task_result()
+    before = {SOURCE: T1, "tushare.stock_basic": STOCK_MASTER_PROJECTION + "a"*32}
+    result["source_snapshot"]["watermarks"] = {**before, "tushare.stock_basic": STOCK_MASTER_PROJECTION + "b"*32}
+    result["source_snapshot"]["xmin"] = 100
+    assert consumed_watermarks(result, before, planned_xmin=90) == {}
+
+
 def test_uncertified_short_source_history_revalidates_only_available_dates():
     from test_factor_coordinator import _coordinator
 
