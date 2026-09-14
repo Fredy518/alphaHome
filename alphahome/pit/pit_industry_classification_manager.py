@@ -455,6 +455,7 @@ class PITIndustryClassificationManager(PITTableManager):
 
     def _get_month_end_date(self, month_start: date) -> date:
         """获取月末日期"""
+        month_start = month_start.replace(day=1)
         if month_start.month == 12:
             next_month = month_start.replace(year=month_start.year + 1, month=1)
         else:

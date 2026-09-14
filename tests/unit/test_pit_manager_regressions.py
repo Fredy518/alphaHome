@@ -1,5 +1,6 @@
 from datetime import date, datetime
 import logging
+import threading
 from unittest.mock import Mock
 
 import pandas as pd
@@ -23,6 +24,46 @@ def _patch_common_incremental_manager(monkeypatch, manager, upsert_result):
     monkeypatch.setattr(manager, "_preprocess_data", lambda data: data)
     monkeypatch.setattr(manager, "_batch_upsert_to_pit", lambda data, batch_size: upsert_result)
     monkeypatch.setattr(manager, "ensure_indexes", lambda: None)
+
+
+def test_industry_month_end_accepts_month_start_or_month_end():
+    manager = PITIndustryClassificationManager()
+
+    assert manager._get_month_end_date(date(2026, 8, 1)) == date(2026, 8, 31)
+    assert manager._get_month_end_date(date(2026, 8, 31)) == date(2026, 8, 31)
+    assert manager._get_month_end_date(date(2026, 12, 31)) == date(2026, 12, 31)
+
+
+def test_income_upsert_batches_stay_on_context_owner_thread(monkeypatch):
+    manager = PITIncomeQuarterlyManager()
+    manager.logger = logging.getLogger("test_income_upsert_thread")
+    owner_thread = threading.get_ident()
+    observed_threads = []
+    data = pd.DataFrame(
+        {
+            "ts_code": ["000001.SZ", "000002.SZ"],
+            "end_date": [date(2026, 6, 30)] * 2,
+            "ann_date": [date(2026, 8, 24)] * 2,
+            "data_source": ["report", "report"],
+            **{field: [None, None] for field in manager.data_fields},
+        }
+    )
+    monkeypatch.setattr(
+        manager,
+        "_get_table_columns",
+        lambda schema, table: set(manager.key_fields + manager.data_fields + ["data_source"]),
+    )
+
+    def fake_upsert(sql, batch, fields):
+        observed_threads.append(threading.get_ident())
+        return {"inserted": len(batch), "updated": 0, "errors": 0}
+
+    monkeypatch.setattr(manager, "_upsert_batch", fake_upsert)
+
+    result = manager._batch_upsert_to_pit(data, batch_size=1)
+
+    assert result == {"inserted": 2, "updated": 0, "errors": 0}
+    assert observed_threads == [owner_thread, owner_thread]
 
 
 def test_income_incremental_counts_inserted_records(monkeypatch):

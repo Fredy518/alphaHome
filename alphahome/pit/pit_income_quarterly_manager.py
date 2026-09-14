@@ -22,7 +22,6 @@ import argparse
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any
 import pandas as pd
-import concurrent.futures
 from functools import lru_cache
 
 from .base.pit_table_manager import PITTableManager
@@ -2259,7 +2258,9 @@ class PITIncomeQuarterlyManager(PITTableManager):
             # 回退逻辑：保底，避免中断
             planned_batches = [data.iloc[i:i + 10000] for i in range(0, len(data), 10000)]
 
-        # 【优化】并行处理批次
+        # PITContext and its synchronous DB connection are worker-thread owned.
+        # Keep every planned batch on that same thread; nested executors would
+        # violate the session boundary and turn every row into an upsert error.
         def process_single_batch(batch_idx_and_data):
             """处理单个批次的函数（用于并行执行）"""
             b_idx, batch_data = batch_idx_and_data
@@ -2322,28 +2323,11 @@ class PITIncomeQuarterlyManager(PITTableManager):
                 'errors': batch_errors
             }
 
-        # 并行执行所有批次
-        max_workers = min(4, len(planned_batches))  # 最多4个并行工作线程
-        if max_workers > 1:
-            self.logger.info(f"启用并行处理：{max_workers} 个工作线程")
-
-            with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-                # 准备批次数据（包含索引）
-                batch_tasks = [(i+1, batch_data) for i, batch_data in enumerate(planned_batches)]
-                batch_results = list(executor.map(process_single_batch, batch_tasks))
-
-            # 汇总结果
-            for result in batch_results:
-                inserted_count += result['inserted']
-                updated_count += result['updated']
-                error_count += result['errors']
-        else:
-            # 串行处理（批次较少时）
-            for b_idx, batch_data in enumerate(planned_batches, start=1):
-                result = process_single_batch((b_idx, batch_data))
-                inserted_count += result['inserted']
-                updated_count += result['updated']
-                error_count += result['errors']
+        for b_idx, batch_data in enumerate(planned_batches, start=1):
+            result = process_single_batch((b_idx, batch_data))
+            inserted_count += result['inserted']
+            updated_count += result['updated']
+            error_count += result['errors']
 
         self.logger.info(f"批量UPSERT完成: 新增 {inserted_count}, 更新 {updated_count}, 错误 {error_count}")
         return {
