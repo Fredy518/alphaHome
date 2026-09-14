@@ -1,4 +1,5 @@
 from datetime import date, datetime, timezone
+from unittest.mock import Mock, call
 
 import pandas as pd
 import pytest
@@ -6,6 +7,7 @@ import pytest
 from alphahome.common.task_system import UnifiedTaskFactory
 from alphahome.factors.base import FactorTaskContract
 from alphahome.factors.date_policy import FactorDatePolicy
+from alphahome.factors.repair import FactorRepairService
 from alphahome.factors.tasks import discover_tasks
 from alphahome.factors.validation import FactorValidationError, validate_factor_frame
 
@@ -84,3 +86,29 @@ def test_factor_contract_round_trip_preserves_calculator_path():
     restored = FactorTaskContract.from_dict(contract.to_dict())
     assert restored.task_name == "factor_g"
     assert restored.resolve_calculator_class().__name__ == "GFactorCalculator"
+
+
+def test_factor_repair_records_both_tasks_in_public_status():
+    db = Mock()
+    db._get_sync_connection = Mock()
+    service = FactorRepairService(db)
+    service.governance = Mock()
+
+    service._record_repair_public_status("repair-1", "success", "cutoff=2026-09-11")
+
+    assert service.governance.record_public_status.call_args_list == [
+        call("factor_p", "success", "repair_id=repair-1; cutoff=2026-09-11"),
+        call("factor_g", "success", "repair_id=repair-1; cutoff=2026-09-11"),
+    ]
+
+
+def test_factor_repair_status_failure_can_be_suppressed_after_rollback():
+    db = Mock()
+    db._get_sync_connection = Mock()
+    service = FactorRepairService(db)
+    service.governance = Mock()
+    service.governance.record_public_status.side_effect = RuntimeError("status down")
+
+    service._record_repair_public_status(
+        "repair-1", "rolled_back", "test", suppress_errors=True
+    )

@@ -112,6 +112,11 @@ class FactorRepairService:
             cutoff,
             details={"preflight": preflight},
         )
+        self._record_repair_public_status(
+            repair_id,
+            "running",
+            f"cutoff={cutoff.isoformat()}",
+        )
         run_id: Optional[UUID] = None
         try:
             # Install the NOT VALID constraints inside the guarded section so a
@@ -199,6 +204,15 @@ class FactorRepairService:
                 source_watermarks=final_watermarks,
             )
             self._finish_manifest(repair_id, "success", summary)
+            self._record_repair_public_status(
+                repair_id,
+                "success",
+                (
+                    f"cutoff={cutoff.isoformat()}; "
+                    f"p_dates={len(summary['p_replaced_dates'])}; "
+                    f"g_dates={len(summary['g_rebuilt_dates'])}"
+                ),
+            )
             return {"status": "success", **summary}
         except Exception as exc:
             self.logger.error(
@@ -211,6 +225,12 @@ class FactorRepairService:
                     "rolled_back_failed",
                     details={"error": str(exc), "rollback": rollback},
                 )
+            self._record_repair_public_status(
+                repair_id,
+                "rolled_back_failed",
+                str(exc),
+                suppress_errors=True,
+            )
             raise
 
     def rollback(
@@ -358,7 +378,35 @@ class FactorRepairService:
         except Exception:
             connection.rollback()
             raise
+        self._record_repair_public_status(
+            repair_uuid,
+            "rolled_back",
+            reason,
+            suppress_errors=True,
+        )
         return {"status": "rolled_back", "repair_id": repair_uuid, "restored": restored}
+
+    def _record_repair_public_status(
+        self,
+        repair_id: UUID | str,
+        status: str,
+        details: str,
+        *,
+        suppress_errors: bool = False,
+    ) -> None:
+        """Keep repair execution visible in the shared task status stream."""
+
+        message = f"repair_id={repair_id}; {details}"[:4000]
+        try:
+            for task_name in ("factor_p", "factor_g"):
+                self.governance.record_public_status(task_name, status, message)
+        except Exception:
+            if not suppress_errors:
+                raise
+            self.logger.exception(
+                "修复已完成数据回滚，但公共task_status写入失败: repair_id=%s",
+                repair_id,
+            )
 
     def acceptance(self, cutoff_date: date | str) -> Dict[str, Any]:
         cutoff = coerce_date(cutoff_date)
