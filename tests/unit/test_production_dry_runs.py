@@ -6,33 +6,25 @@ from scripts.production.data_updaters.tushare.data_collection_smart_update_produ
 )
 
 
-class _FakeDBManager:
-    def __init__(self):
-        self.closed = False
-
-    def close_sync(self):
-        self.closed = True
-
-
-class _FakeFactorContext:
-    def __init__(self):
-        self.db_manager = _FakeDBManager()
-
-
-def test_factor_missing_dry_run_uses_default_context(monkeypatch, capsys):
-    context = _FakeFactorContext()
+def test_factor_missing_dry_run_uses_governed_coordinator(monkeypatch, capsys):
     seen = {}
 
-    class FakeFactorEngine:
-        def __init__(self, config, context=None):
-            seen["config"] = config
-            seen["context"] = context
+    def governed_operation(factor_types, mode, start_date, end_date, **kwargs):
+        seen.update(
+            {
+                "factor_types": factor_types,
+                "mode": mode,
+                "start_date": start_date,
+                "end_date": end_date,
+                **kwargs,
+            }
+        )
+        return {
+            "status": "ready",
+            "task_plans": [{"dates": ["2026-06-05"]}],
+        }
 
-        def resolve_dates(self):
-            return ["2026-06-05"]
-
-    monkeypatch.setattr(factor_cli, "ensure_factor_context", lambda: context)
-    monkeypatch.setattr(factor_cli, "FactorEngine", FakeFactorEngine)
+    monkeypatch.setattr(factor_cli, "_governed_operation", governed_operation)
 
     exit_code = factor_cli.run_missing_factors(
         "2026-06-01",
@@ -42,10 +34,10 @@ def test_factor_missing_dry_run_uses_default_context(monkeypatch, capsys):
 
     output = capsys.readouterr().out
     assert exit_code == 0
-    assert seen["context"] is context
-    assert seen["config"].missing_mode == "batch_missing"
+    assert seen["factor_types"] == ("p", "g")
+    assert seen["mode"] == "smart"
+    assert seen["dry_run"] is True
     assert "这是预览模式" in output
-    assert context.db_manager.closed is True
 
 
 @pytest.mark.asyncio

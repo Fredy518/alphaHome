@@ -1,3 +1,4 @@
+-- ARCHIVED / DISABLED: destructive legacy DDL; never execute in production.
 -- P/G/S因子数据库表结构
 -- 创建schema
 CREATE SCHEMA IF NOT EXISTS pgs_factors;

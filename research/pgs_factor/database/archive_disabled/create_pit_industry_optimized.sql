@@ -1,3 +1,4 @@
+-- ARCHIVED / DISABLED: destructive legacy DDL; never execute in production.
 -- PIT行业分类表 (优化版) - 月度快照机制
 -- 基于obs_date观察日期的月末快照，支持申万和中信双重分类
 

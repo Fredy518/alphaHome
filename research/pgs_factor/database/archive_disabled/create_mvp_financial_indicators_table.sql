@@ -1,3 +1,4 @@
+-- ARCHIVED / DISABLED: legacy pgs_factors DDL; never execute in production.
 -- =====================================================
 -- MVP版本财务指标预计算表
 -- =====================================================

@@ -1,3 +1,4 @@
+-- ARCHIVED / DISABLED: destructive legacy DDL; never execute in production.
 -- PIT行业分类表 (Point-in-Time Industry Classification)
 -- 支持行业变更的历史追踪，严格遵循PIT原则
 

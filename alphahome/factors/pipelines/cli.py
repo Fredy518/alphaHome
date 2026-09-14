@@ -7,21 +7,62 @@ import os
 import subprocess
 import sys
 import time
+from datetime import timedelta
 from pathlib import Path
-from typing import Any, Iterable, List, Optional, Sequence
+from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from alphahome.factors.core import GFactorCalculator, PFactorCalculator
-from alphahome.factors.core.context import ensure_factor_context
+from alphahome.common.config_manager import ConfigManager
+from alphahome.common.db_manager import DBManager
+from alphahome.factors.coordinator import FactorCoordinator
+from alphahome.factors.date_policy import FactorDatePolicy
 from alphahome.factors.pipelines.factor_engine import (
-    FactorEngine,
-    FactorEngineConfig,
     Quarter,
     allocate_contiguous_balanced,
     generate_quarter_range,
     generate_quarters_for_years,
     parse_quarter,
+    shard_items,
     validate_date,
 )
+
+
+def _governed_operation(
+    factor_types: Sequence[str],
+    mode: str,
+    start_date: str,
+    end_date: str,
+    *,
+    dry_run: bool = False,
+    max_automatic_dates: int = 26,
+) -> Dict[str, Any]:
+    """Compatibility bridge: every production write goes through one coordinator."""
+    task_names = [f"factor_{value.lower()}" for value in factor_types]
+    db_url = ConfigManager().get_database_url()
+    if not db_url:
+        raise RuntimeError("数据库连接未配置")
+    db = DBManager(db_url, mode="sync")
+    try:
+        coordinator = FactorCoordinator(db, max_automatic_dates=max_automatic_dates)
+        operation = coordinator.plan if dry_run else coordinator.run
+        return operation(
+            task_names,
+            mode=mode,
+            date_range=(start_date, end_date),
+            expand_dependencies=True,
+        ).to_dict()
+    finally:
+        db.close_sync()
+
+
+def _planned_dates(payload: Mapping[str, Any]) -> List[str]:
+    return sorted(
+        {
+            value
+            for task_plan in payload.get("task_plans", [])
+            for value in task_plan.get("dates", [])
+        }
+    )
 
 
 def calculator_for_factor(factor_type: str):
@@ -33,33 +74,43 @@ def calculator_for_factor(factor_type: str):
     raise ValueError(f"unsupported factor_type: {factor_type}")
 
 
-def run_specific_dates(factor_type: str, dates: Sequence[str], log_level: str = "INFO") -> int:
+def run_specific_dates(
+    factor_type: str, dates: Sequence[str], log_level: str = "INFO"
+) -> int:
     logging.basicConfig(level=getattr(logging, log_level))
-    config = FactorEngineConfig(
-        factor_types=(factor_type,),
-        dates=list(dates),
-        mode="backfill",
-        log_level=log_level,
+    normalized = FactorDatePolicy.normalize_many(dates)
+    results = [
+        _governed_operation(
+            (factor_type,),
+            "manual",
+            value.isoformat(),
+            value.isoformat(),
+        )
+        for value in normalized
+    ]
+    output_count = sum(int(item.get("output_count") or 0) for item in results)
+    failed_dates = sum(int(item.get("failed_date_count") or 0) for item in results)
+    print(f"\n计算完成: 输出 {output_count} 行，失败日期 {failed_dates} 个")
+    return (
+        0 if results and all(item.get("status") == "success" for item in results) else 1
     )
-    result = FactorEngine(config).run()
-    success_count = result.get("success_count", 0)
-    failed_count = result.get("failed_count", 0)
-    print(f"\n计算完成: 成功 {success_count} 只股票，失败 {failed_count} 只股票")
-    return 0 if success_count > 0 else 1
 
 
-def run_year_worker(factor_type: str, start_year: int, end_year: int, worker_id: int, total_workers: int) -> int:
-    config = FactorEngineConfig(
-        factor_types=(factor_type,),
-        start_year=start_year,
-        end_year=end_year,
-        worker_id=worker_id,
-        total_workers=total_workers,
-        mode="backfill",
+def run_year_worker(
+    factor_type: str, start_year: int, end_year: int, worker_id: int, total_workers: int
+) -> int:
+    years = allocate_contiguous_balanced(
+        list(range(start_year, end_year + 1)), total_workers
     )
-    result = FactorEngine(config).run()
+    if worker_id < 0 or worker_id >= len(years):
+        raise ValueError("worker_id must be in [0, total_workers)")
+    results = [
+        _governed_operation((factor_type,), "manual", f"{year}-01-01", f"{year}-12-31")
+        for year in years[worker_id]
+    ]
+    result = _combine_governed_results(results)
     _print_worker_summary(factor_type, worker_id, result)
-    return 0
+    return 0 if result.get("failed_date_count", 0) == 0 else 1
 
 
 def run_quarter_worker(
@@ -74,16 +125,15 @@ def run_quarter_worker(
         raise ValueError("total_workers must be > 0")
     if worker_id < 0 or worker_id >= total_workers:
         raise ValueError("worker_id must be in [0, total_workers)")
-    config = FactorEngineConfig(
-        factor_types=(factor_type,),
-        quarter=list(quarter) if quarter else None,
-        start_quarter=start_quarter,
-        end_quarter=end_quarter,
-        mode="backfill",
-    )
-    result = FactorEngine(config).run()
+    quarters = resolve_quarter_args(quarter, start_quarter, end_quarter)
+    worker_quarters = shard_items(quarters, worker_id, total_workers)
+    results = [
+        _governed_operation((factor_type,), "manual", *item.date_range)
+        for item in worker_quarters
+    ]
+    result = _combine_governed_results(results)
     _print_worker_summary(factor_type, worker_id, result)
-    return 0
+    return 0 if result.get("failed_date_count", 0) == 0 else 1
 
 
 def run_missing_factors(
@@ -94,21 +144,18 @@ def run_missing_factors(
     factor_types: Sequence[str] = ("p", "g"),
 ) -> int:
     logging.basicConfig(level=getattr(logging, log_level))
-    config = FactorEngineConfig(
-        factor_types=factor_types,
-        start_date=start_date,
-        end_date=end_date,
-        missing_mode="batch_missing",
-        mode="backfill",
-        dry_run=dry_run,
-        log_level=log_level,
+    preview = _governed_operation(
+        factor_types,
+        "smart",
+        start_date,
+        end_date,
+        dry_run=True,
+        max_automatic_dates=10000,
     )
-    context = ensure_factor_context()
-    try:
-        engine = FactorEngine(config, context=context)
-        missing_dates = engine.resolve_dates()
-    finally:
-        _close_factor_context(context)
+    if preview.get("status") != "ready":
+        print(f"因子预检未通过: {preview.get('status')} {preview.get('message', '')}")
+        return 2
+    missing_dates = _planned_dates(preview)
 
     if not missing_dates:
         print("没有发现缺失的因子数据")
@@ -127,26 +174,37 @@ def run_missing_factors(
         print("已取消")
         return 0
 
-    result = _run_dates_p_then_g(missing_dates, factor_types, log_level)
-    _print_missing_summary(result)
-    return 0
-
-
-def run_recent_missing_factors(months: int, log_level: str = "INFO", factor_types: Sequence[str] = ("p", "g")) -> int:
-    logging.basicConfig(level=getattr(logging, log_level))
-    config = FactorEngineConfig(
-        factor_types=factor_types,
-        missing_mode="recent_missing",
-        months_back=months,
-        mode="backfill",
-        log_level=log_level,
+    result = _governed_operation(
+        factor_types,
+        "smart",
+        start_date,
+        end_date,
+        max_automatic_dates=10000,
     )
-    context = ensure_factor_context()
-    try:
-        engine = FactorEngine(config, context=context)
-        missing_dates = engine.resolve_dates()
-    finally:
-        _close_factor_context(context)
+    _print_governed_summary(result)
+    return 0 if result.get("status") == "success" else 1
+
+
+def run_recent_missing_factors(
+    months: int, log_level: str = "INFO", factor_types: Sequence[str] = ("p", "g")
+) -> int:
+    logging.basicConfig(level=getattr(logging, log_level))
+    if months <= 0:
+        raise ValueError("months must be > 0")
+    cutoff = FactorDatePolicy().automatic_cutoff()
+    start_date = cutoff - timedelta(days=months * 31)
+    preview = _governed_operation(
+        factor_types,
+        "smart",
+        start_date.isoformat(),
+        cutoff.isoformat(),
+        dry_run=True,
+        max_automatic_dates=10000,
+    )
+    if preview.get("status") != "ready":
+        print(f"因子预检未通过: {preview.get('status')} {preview.get('message', '')}")
+        return 2
+    missing_dates = _planned_dates(preview)
 
     if not missing_dates:
         print("没有发现缺失的因子数据")
@@ -161,9 +219,15 @@ def run_recent_missing_factors(months: int, log_level: str = "INFO", factor_type
         print("已取消")
         return 0
 
-    result = _run_dates_p_then_g(missing_dates, factor_types, log_level)
-    _print_missing_summary(result)
-    return 0
+    result = _governed_operation(
+        factor_types,
+        "smart",
+        start_date.isoformat(),
+        cutoff.isoformat(),
+        max_automatic_dates=10000,
+    )
+    _print_governed_summary(result)
+    return 0 if result.get("status") == "success" else 1
 
 
 def run_range(
@@ -180,16 +244,26 @@ def run_range(
     logging.basicConfig(level=getattr(logging, log_level))
     validate_date(start_date)
     validate_date(end_date)
-    calculator = calculator_for_factor(factor_type)
-    force_mode = None if mode == "auto" else mode
-
-    detected_mode = force_mode or calculator.detect_execution_mode(start_date, end_date)
-    calc_dates = calculator.generate_calculation_dates(start_date, end_date, detected_mode)
+    governed_mode = {
+        "auto": "smart",
+        "incremental": "smart",
+        "backfill": "manual",
+    }[mode]
 
     if dry_run:
+        result = _governed_operation(
+            (factor_type,),
+            governed_mode,
+            start_date,
+            end_date,
+            dry_run=True,
+            max_automatic_dates=10000,
+        )
+        calc_dates = _planned_dates(result)
         print("试运行模式")
         print(f"计算范围: {start_date} ~ {end_date}")
-        print(f"检测到执行模式: {detected_mode}")
+        print(f"治理执行模式: {governed_mode}")
+        print(f"预检状态: {result.get('status')}")
         print(f"需要计算的日期数: {len(calc_dates)}")
         if calc_dates:
             print(f"日期范围: {calc_dates[0]} ~ {calc_dates[-1]}")
@@ -197,18 +271,31 @@ def run_range(
         return 0
 
     if validate_only:
+        calculator = calculator_for_factor(factor_type)
+        calc_dates = calculator.generate_calculation_dates(
+            start_date, end_date, "backfill"
+        )
         calculator._validate_calculation_results(calc_dates)
-        if validate_express_forecast_ratio and hasattr(calculator, "_validate_express_forecast_ratio"):
+        if validate_express_forecast_ratio and hasattr(
+            calculator, "_validate_express_forecast_ratio"
+        ):
             calculator._validate_express_forecast_ratio(calc_dates)
         return 0
 
-    method_name = "calculate_p_factors_batch_pit" if factor_type.lower() == "p" else "calculate_g_factors_batch_pit"
-    result = getattr(calculator, method_name)(start_date=start_date, end_date=end_date, mode=force_mode)
+    result = _governed_operation(
+        (factor_type,),
+        governed_mode,
+        start_date,
+        end_date,
+        max_automatic_dates=10000,
+    )
     _print_range_summary(factor_type, result, log_file)
-    return 0 if result.get("success_count", 0) > 0 else 1
+    return 0 if result.get("status") == "success" else 1
 
 
-def launch_year_workers(factor_type: str, start_year: int, end_year: int, workers: int, delay: int = 2) -> int:
+def launch_year_workers(
+    factor_type: str, start_year: int, end_year: int, workers: int, delay: int = 2
+) -> int:
     if start_year > end_year:
         raise ValueError("start_year must be <= end_year")
     if workers <= 0:
@@ -247,7 +334,9 @@ def launch_quarter_workers(
 ) -> int:
     if workers <= 0:
         raise ValueError("workers must be > 0")
-    if (start_quarter or end_quarter) and (start_year is not None or end_year is not None):
+    if (start_quarter or end_quarter) and (
+        start_year is not None or end_year is not None
+    ):
         raise ValueError("quarter range and year range are mutually exclusive")
     if bool(start_quarter) != bool(end_quarter):
         raise ValueError("start_quarter and end_quarter must be provided together")
@@ -277,8 +366,15 @@ def launch_quarter_workers(
         quarter_args: List[str] = []
         for quarter in worker_quarters:
             quarter_args.extend(["--quarter", quarter.label])
-        args = ["--worker_id", str(worker_id), "--total_workers", str(workers)] + quarter_args
-        _start_worker(script, args, f"{factor_type.upper()}-Factor-Q-Worker-{worker_id}")
+        args = [
+            "--worker_id",
+            str(worker_id),
+            "--total_workers",
+            str(workers),
+        ] + quarter_args
+        _start_worker(
+            script, args, f"{factor_type.upper()}-Factor-Q-Worker-{worker_id}"
+        )
         if worker_id < workers - 1:
             time.sleep(delay)
     return 0
@@ -298,63 +394,42 @@ def resolve_quarter_args(
     raise ValueError("must provide quarter or start_quarter/end_quarter")
 
 
-def _run_dates_p_then_g(dates: Sequence[str], factor_types: Sequence[str], log_level: str) -> dict:
+def _run_dates_p_then_g(
+    dates: Sequence[str], factor_types: Sequence[str], log_level: str
+) -> dict:
     started_at = time.time()
-    details = {}
-    p_calculator = PFactorCalculator() if "p" in [value.lower() for value in factor_types] else None
-    g_calculator = GFactorCalculator() if "g" in [value.lower() for value in factor_types] else None
-    totals = {
-        "successful_dates": 0,
-        "failed_dates": 0,
-        "total_p_success": 0,
-        "total_p_failed": 0,
-        "total_g_success": 0,
-        "total_g_failed": 0,
-    }
-
-    for calc_date in dates:
-        date_details = {}
-        date_success = True
-        for factor_type in factor_types:
-            result = FactorEngine(
-                FactorEngineConfig(
-                    factor_types=(factor_type,),
-                    dates=[calc_date],
-                    mode="backfill",
-                    log_level=log_level,
-                ),
-                p_calculator=p_calculator,
-                g_calculator=g_calculator,
-            ).run()
-            success = int(result.get("success_count", 0))
-            failed = int(result.get("failed_count", 0))
-            date_details[factor_type] = result
-            if factor_type.lower() == "p":
-                totals["total_p_success"] += success
-                totals["total_p_failed"] += failed
-            elif factor_type.lower() == "g":
-                totals["total_g_success"] += success
-                totals["total_g_failed"] += failed
-            if success <= 0:
-                date_success = False
-
-        details[calc_date] = date_details
-        if date_success:
-            totals["successful_dates"] += 1
-        else:
-            totals["failed_dates"] += 1
-
-    totals["total_dates"] = len(dates)
+    results = [
+        _governed_operation(factor_types, "manual", calc_date, calc_date)
+        for calc_date in FactorDatePolicy.normalize_many(dates)
+    ]
+    totals = _combine_governed_results(results)
     totals["total_time"] = time.time() - started_at
-    totals["details"] = details
     return totals
 
 
-def _close_factor_context(context: Any) -> None:
-    db_manager = getattr(context, "db_manager", None)
-    close_sync = getattr(db_manager, "close_sync", None)
-    if callable(close_sync):
-        close_sync()
+def _combine_governed_results(results: Sequence[Mapping[str, Any]]) -> Dict[str, Any]:
+    return {
+        "work_item_count": len(results),
+        "planned_date_count": sum(
+            int(item.get("planned_date_count") or 0) for item in results
+        ),
+        "successful_date_count": sum(
+            int(item.get("successful_date_count") or 0) for item in results
+        ),
+        "failed_date_count": sum(
+            int(item.get("failed_date_count") or 0) for item in results
+        ),
+        "skipped_date_count": sum(
+            int(item.get("skipped_date_count") or 0) for item in results
+        ),
+        "output_count": sum(int(item.get("output_count") or 0) for item in results),
+        "status": (
+            "success"
+            if results and all(item.get("status") == "success" for item in results)
+            else "error"
+        ),
+        "details": list(results),
+    }
 
 
 def _print_grouped_dates(dates: Sequence[str], key_length: int) -> None:
@@ -367,32 +442,36 @@ def _print_grouped_dates(dates: Sequence[str], key_length: int) -> None:
 
 
 def _print_missing_summary(result: dict) -> None:
-    print("\n计算结果摘要:")
-    print(f"   成功计算日期: {result['successful_dates']}")
-    print(f"   失败日期: {result['failed_dates']}")
-    print(f"   P因子成功: {result['total_p_success']}")
-    print(f"   P因子失败: {result['total_p_failed']}")
-    print(f"   G因子成功: {result['total_g_success']}")
-    print(f"   G因子失败: {result['total_g_failed']}")
-    print(f"   总耗时: {result['total_time']:.2f} 秒")
+    _print_governed_summary(result)
+
+
+def _print_governed_summary(result: Mapping[str, Any]) -> None:
+    print("\n治理运行结果摘要:")
+    print(f"   状态: {result.get('status')}")
+    print(f"   计划任务日期: {result.get('planned_date_count', 0)}")
+    print(f"   成功日期: {result.get('successful_date_count', 0)}")
+    print(f"   失败日期: {result.get('failed_date_count', 0)}")
+    print(f"   跳过日期: {result.get('skipped_date_count', 0)}")
+    print(f"   输出行数: {result.get('output_count', 0)}")
 
 
 def _print_worker_summary(factor_type: str, worker_id: int, result: dict) -> None:
     print(f"{factor_type.upper()}因子 Worker {worker_id} 完成")
     print(f"  工作项: {result.get('work_item_count', 0)}")
-    print(f"  成功: {result.get('success_count', 0):,}")
-    print(f"  失败: {result.get('failed_count', 0):,}")
-    print(f"  耗时: {result.get('total_time', 0):.2f} 秒")
+    print(f"  成功日期: {result.get('successful_date_count', 0):,}")
+    print(f"  失败日期: {result.get('failed_date_count', 0):,}")
+    print(f"  输出行数: {result.get('output_count', 0):,}")
 
 
-def _print_range_summary(factor_type: str, result: dict, log_file: Optional[str] = None) -> None:
+def _print_range_summary(
+    factor_type: str, result: dict, log_file: Optional[str] = None
+) -> None:
     print(f"{factor_type.upper()}因子计算完成")
-    print(f"  总日期: {result.get('total_dates', 0)}")
-    print(f"  成功日期: {result.get('successful_dates', 0)}")
-    print(f"  失败日期: {result.get('failed_dates', 0)}")
-    print(f"  成功: {result.get('success_count', 0):,}")
-    print(f"  失败: {result.get('failed_count', 0):,}")
-    print(f"  耗时: {result.get('total_time', 0):.2f} 秒")
+    print(f"  状态: {result.get('status')}")
+    print(f"  总任务日期: {result.get('planned_date_count', 0)}")
+    print(f"  成功日期: {result.get('successful_date_count', 0)}")
+    print(f"  失败日期: {result.get('failed_date_count', 0)}")
+    print(f"  输出行数: {result.get('output_count', 0):,}")
     if log_file:
         print(f"  日志文件: {log_file}")
 
@@ -406,7 +485,14 @@ def _script_path(factor_type: str, mode: str) -> Path:
         filename = f"{factor_type}_factor_parallel_by_quarter.py"
     else:
         raise ValueError(f"unknown script mode: {mode}")
-    return root / "scripts" / "production" / "factor_calculators" / f"{factor_type}_factor" / filename
+    return (
+        root
+        / "scripts"
+        / "production"
+        / "factor_calculators"
+        / f"{factor_type}_factor"
+        / filename
+    )
 
 
 def _start_worker(script: Path, args: Sequence[str], title: str) -> None:

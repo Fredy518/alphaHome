@@ -1,3 +1,4 @@
+-- ARCHIVED / DISABLED: destructive legacy DDL; never execute in production.
 -- PIT行业分类表 (简化版)
 DROP TABLE IF EXISTS pgs_factors.pit_industry_classification CASCADE;
 

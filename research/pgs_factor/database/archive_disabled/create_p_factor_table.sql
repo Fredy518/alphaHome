@@ -1,3 +1,4 @@
+-- ARCHIVED / DISABLED: historical pgs_factors DDL; never execute in production.
 -- P因子表 (遵循PIT原则)
 -- 基于MVP财务指标预计算表的P因子计算结果
 
