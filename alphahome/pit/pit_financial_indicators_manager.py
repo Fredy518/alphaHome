@@ -127,6 +127,8 @@ class PITFinancialIndicatorsManager(PITTableManager):
 
             # 2. 为每个利润表记录单独计算财务指标
             total_processed = 0
+            total_failed = 0
+            total_skipped = 0
             processed_stocks = set()
 
             # 增量更新：按公告日期分组，严格正序（PIT）处理
@@ -164,6 +166,8 @@ class PITFinancialIndicatorsManager(PITTableManager):
                             )
 
                             success_count = int(res.get('success_count', 0))
+                            total_failed += int(res.get('failed_count', 0))
+                            total_skipped += int(res.get('skipped_count', 0))
                             total_processed += success_count
 
                             if success_count > 0:
@@ -172,6 +176,7 @@ class PITFinancialIndicatorsManager(PITTableManager):
                             self.logger.debug(f"    报告期 {end_date} 增量更新完成: {success_count} 条财务指标记录")
 
                         except Exception as e:
+                            total_failed += len(period_records)
                             self.logger.warning(f"公告日期 {ann_date} 报告期 {end_date} 增量更新失败: {e}")
                             continue
 
@@ -181,6 +186,7 @@ class PITFinancialIndicatorsManager(PITTableManager):
                         self.logger.info(f"增量更新进度: 已处理 {progress}/{len(unique_ann_dates_list)} 个公告日期，{len(processed_stocks)} 只股票，生成 {total_processed} 条财务指标记录")
 
                 except Exception as e:
+                    total_failed += len(df[df['ann_date'] == ann_date])
                     self.logger.warning(f"公告日期 {ann_date} 增量更新失败: {e}")
                     continue
 
@@ -188,6 +194,8 @@ class PITFinancialIndicatorsManager(PITTableManager):
 
             return {
                 'updated_records': total_processed,
+                'error_records': total_failed,
+                'skipped_records': total_skipped,
                 'removed_forecast_records': removed_forecast_records,
                 'processed_stocks': len(processed_stocks),
                 'total_stocks': unique_stocks,
@@ -259,6 +267,8 @@ class PITFinancialIndicatorsManager(PITTableManager):
 
             # 2. 为每个利润表记录单独计算财务指标
             total_processed = 0
+            total_failed = 0
+            total_skipped = 0
             processed_stocks = set()
             failed_stocks = set()
 
@@ -299,6 +309,8 @@ class PITFinancialIndicatorsManager(PITTableManager):
                             )
 
                             success_count = int(res.get('success_count', 0))
+                            total_failed += int(res.get('failed_count', 0))
+                            total_skipped += int(res.get('skipped_count', 0))
                             total_processed += success_count
 
                             if success_count > 0:
@@ -307,6 +319,7 @@ class PITFinancialIndicatorsManager(PITTableManager):
                             self.logger.debug(f"    报告期 {end_date} 处理完成: {success_count} 条财务指标记录")
 
                         except Exception as e:
+                            total_failed += len(period_records)
                             self.logger.warning(f"公告日期 {ann_date} 报告期 {end_date} 计算失败: {e}")
                             continue
 
@@ -316,6 +329,7 @@ class PITFinancialIndicatorsManager(PITTableManager):
                         self.logger.info(f"进度: 已处理 {progress}/{len(unique_ann_dates_list)} 个公告日期，{len(processed_stocks)} 只股票，生成 {total_processed} 条财务指标记录")
 
                 except Exception as e:
+                    total_failed += len(df[df['ann_date'] == ann_date])
                     self.logger.warning(f"公告日期 {ann_date} 计算失败: {e}")
                     continue
 
@@ -330,6 +344,8 @@ class PITFinancialIndicatorsManager(PITTableManager):
 
             return {
                 'backfilled_records': total_processed,
+                'error_records': total_failed,
+                'skipped_records': total_skipped,
                 'removed_forecast_records': removed_forecast_records,
                 'processed_stocks': len(processed_stocks),
                 'total_stocks': unique_stocks,
@@ -402,6 +418,8 @@ class PITFinancialIndicatorsManager(PITTableManager):
 
             # 2. 为每个历史时间点计算财务指标
             total_processed = 0
+            total_failed = 0
+            total_skipped = 0
             processed_dates = []
 
             # 按公告日期分组，每次计算一批
@@ -422,6 +440,7 @@ class PITFinancialIndicatorsManager(PITTableManager):
                     self.logger.debug(f"处理股票 {ts_code} 公告日期 {ann_date}: 发现 {len(report_periods)} 个报告期")
 
                     for end_date, period_records in report_periods:
+                        period_error_count = max(len(period_records), 1)
                         try:
                             # 确保该股票在该报告期有记录
                             stock_period_records = period_records[period_records['ts_code'] == ts_code]
@@ -443,6 +462,8 @@ class PITFinancialIndicatorsManager(PITTableManager):
                             )
 
                             success_count = int(res.get('success_count', 0))
+                            total_failed += int(res.get('failed_count', 0))
+                            total_skipped += int(res.get('skipped_count', 0))
                             total_processed += success_count
 
                             if success_count > 0:
@@ -450,10 +471,12 @@ class PITFinancialIndicatorsManager(PITTableManager):
                                 self.logger.debug(f"股票 {ts_code} 公告日期 {ann_date} 报告期 {end_date} 计算成功: {success_count} 条记录")
 
                         except Exception as e:
+                            total_failed += period_error_count
                             self.logger.warning(f"股票 {ts_code} 公告日期 {ann_date} 报告期 {end_date} 计算失败: {e}")
                             continue
 
                 except Exception as e:
+                    total_failed += len(df[df['ann_date'] == ann_date])
                     self.logger.warning(f"股票 {ts_code} 公告日期 {ann_date} 计算失败: {e}")
                     continue
 
@@ -462,6 +485,8 @@ class PITFinancialIndicatorsManager(PITTableManager):
             out = {
                 'ts_code': ts_code,
                 'backfilled_records': total_processed,
+                'error_records': total_failed,
+                'skipped_records': total_skipped,
                 'removed_forecast_records': removed_forecast_records,
                 'processed_dates': len(processed_dates),
                 'message': f"单股财务指标历史回填完成，共处理 {len(processed_dates)} 个公告日期，生成 {total_processed} 条记录"

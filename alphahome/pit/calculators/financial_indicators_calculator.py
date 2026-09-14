@@ -13,7 +13,6 @@ from typing import List, Optional, Dict, Any, Tuple
 import time
 import random
 from functools import lru_cache
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from decimal import Decimal
 
 from alphahome.pit.base.pit_config import PITConfig
@@ -30,7 +29,6 @@ class FinancialIndicatorsCalculator:
         self.logger = self._setup_logger()
 
         # 优化配置
-        self.max_workers = 4  # 并发线程数
         self.enable_cache = True  # 启用缓存
         self.cache_size = 1000  # 缓存大小
 
@@ -208,7 +206,7 @@ class FinancialIndicatorsCalculator:
         stock_codes: Optional[List[str]] = None,
         batch_size: int = 1000,  # 增大批次大小
         target_data_sources: Optional[List[str]] = None,
-        use_parallel: bool = True  # 是否使用并行处理
+        use_parallel: bool = False,
     ) -> Dict[str, Any]:
         self.stats['start_time'] = time.time()
 
@@ -221,13 +219,14 @@ class FinancialIndicatorsCalculator:
             if target_data_sources:
                 self.logger.info(f"数据源筛选: {target_data_sources}")
 
-        # 优化策略：根据数据量选择处理方式
-        if len(stock_codes) < 100 or not use_parallel:
-            # 小批量使用串行处理
-            result = self._calculate_serial(as_of_date, stock_codes, batch_size, target_data_sources)
-        else:
-            # 大批量使用并行处理
-            result = self._calculate_parallel(as_of_date, stock_codes, batch_size, target_data_sources)
+        # The calculator borrows the manager's PITContext and synchronous DB
+        # connection.  Both are owned by the current worker thread, so nested
+        # worker threads cannot safely query or write through them.  Keep the
+        # argument for compatibility while executing every batch on the owner
+        # thread.
+        if use_parallel:
+            self.logger.info("PITContext 为线程绑定会话，财务指标按当前线程串行计算")
+        result = self._calculate_serial(as_of_date, stock_codes, batch_size, target_data_sources)
 
         # 只在最终汇总时输出详细性能统计，避免每个日期都输出
         # 注释掉这里，避免每个日期都输出详细统计
@@ -239,78 +238,24 @@ class FinancialIndicatorsCalculator:
         """串行计算模式"""
         total_success = 0
         total_failed = 0
+        total_skipped = 0
 
         for i in range(0, len(stock_codes), batch_size):
             batch_stocks = stock_codes[i:i + batch_size]
             try:
-                success_count = self._calculate_batch_indicators(as_of_date, batch_stocks, target_data_sources)
-                total_success += success_count
-                total_failed += len(batch_stocks) - success_count
+                counts = self._calculate_batch_indicators(as_of_date, batch_stocks, target_data_sources)
+                total_success += counts['success']
+                total_failed += counts['failed']
+                total_skipped += counts['skipped']
                 # 移除冗余的批次日志输出
                 pass
             except Exception as e:
                 self.logger.error(f"批次计算失败: {e}")
                 total_failed += len(batch_stocks)
 
-        return self._finalize_calculation(total_success, total_failed)
-
-    def _calculate_parallel(self, as_of_date: str, stock_codes: List[str], batch_size: int,
-                           target_data_sources: Optional[List[str]] = None) -> Dict[str, Any]:
-        """并行计算模式"""
-        # 预加载数据到缓存
-        self._preload_data_cache(as_of_date, stock_codes, target_data_sources)
-
-        # 分批创建任务
-        futures = []
-        results = []
-
-        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-            # 将股票列表分成多个批次
-            for i in range(0, len(stock_codes), batch_size):
-                batch_stocks = stock_codes[i:i + batch_size]
-                future = executor.submit(
-                    self._calculate_batch_indicators_parallel,
-                    as_of_date, batch_stocks, target_data_sources
-                )
-                futures.append((future, i//batch_size + 1, len(batch_stocks)))
-
-            # 收集结果
-            for future, batch_num, batch_size_count in futures:
-                try:
-                    result = future.result(timeout=300)  # 5分钟超时
-                    results.append(result)
-                    # 移除冗余的并行批次日志输出
-                    pass
-                except Exception as e:
-                    self.logger.error(f"并行批次 {batch_num} 失败: {e}")
-                    results.append({'success': 0, 'failed': batch_size_count})
-
-        total_success = sum(r['success'] for r in results)
-        total_failed = sum(r['failed'] for r in results)
-
-        return self._finalize_calculation(total_success, total_failed)
-
-    def _preload_data_cache(
-        self,
-        as_of_date: str,
-        stock_codes: List[str],
-        target_data_sources: Optional[List[str]] = None,
-    ):
-        """预加载数据到缓存"""
-        if not self.enable_cache:
-            return
-
-        cache_key = self._get_cache_key(as_of_date, stock_codes[:1000], target_data_sources)  # 只缓存前1000只股票的数据
-        if cache_key not in self._data_cache:
-            self.logger.info("预加载数据到缓存...")
-            self._data_cache[cache_key] = self._get_pit_data_for_calculation(
-                as_of_date,
-                stock_codes[:1000],
-                target_data_sources,
-            )
-            self.stats['cache_misses'] += 1
-        else:
-            self.stats['cache_hits'] += 1
+        result = self._finalize_calculation(total_success, total_failed)
+        result['skipped_count'] = total_skipped
+        return result
 
     def _finalize_calculation(self, total_success: int, total_failed: int) -> Dict[str, Any]:
         """完成计算并返回结果"""
@@ -328,7 +273,7 @@ class FinancialIndicatorsCalculator:
             }
         }
 
-    def _calculate_batch_indicators(self, as_of_date: str, stock_codes: List[str], target_data_sources: List[str] = None) -> int:
+    def _calculate_batch_indicators(self, as_of_date: str, stock_codes: List[str], target_data_sources: List[str] = None) -> Dict[str, int]:
         # 尝试从缓存获取数据
         target_sources = self._normalize_target_data_sources(target_data_sources)
         cache_key = self._get_cache_key(as_of_date, stock_codes, list(target_sources))
@@ -342,10 +287,12 @@ class FinancialIndicatorsCalculator:
                 self.stats['cache_misses'] += 1
 
         if pit_data.empty:
-            return 0
+            return {'success': 0, 'failed': 0, 'skipped': 0}
 
         indicators_list = []
         processed_records = 0  # 记录成功处理的记录数量
+        failed_records = 0
+        skipped_records = 0
 
         # 按股票分组：使用完整的历史数据作为同比/TTM的计算上下文
         # 仅对“当前公告日等于 as_of_date”的记录进行计算与入库，历史记录仅作为参考不保存
@@ -394,37 +341,29 @@ class FinancialIndicatorsCalculator:
                             # 检查是否是因为PRT_ORIG数据而跳过
                             conversion_status = row.get('conversion_status')
                             if conversion_status == 'RPT_ORIG':
-                                # 静默跳过PRT_ORIG数据，不输出警告
-                                pass
+                                skipped_records += 1
                             else:
+                                failed_records += 1
                                 self.logger.warning(f"计算失败: 股票 {ts_code} 公告日期 {row['ann_date']} 报告期 {row['end_date']} (数据源: {row['data_source']})")
 
                     except Exception as e:
+                        failed_records += 1
                         self.logger.error(f"计算股票 {ts_code} 行 {idx} 失败: {e}")
                         continue
 
             except Exception as e:
+                failed_records += 1
                 self.logger.error(f"处理股票 {ts_code} 失败: {e}")
                 continue
 
         if indicators_list:
             self._save_indicators_batch(indicators_list)
 
-        # 返回成功处理的记录数量
-        return processed_records
-
-    def _calculate_batch_indicators_parallel(self, as_of_date: str, stock_codes: List[str],
-                                            target_data_sources: List[str] = None) -> Dict[str, int]:
-        """并行处理的批次计算"""
-        try:
-            success_count = self._calculate_batch_indicators(as_of_date, stock_codes, target_data_sources)
-            # success_count 现在是成功处理的财务记录数量
-            # 由于我们现在按记录分组，返回的是记录数量而不是股票数量
-            # 所以我们无法准确计算失败数量，这里设为0表示无失败
-            return {'success': success_count, 'failed': 0}
-        except Exception as e:
-            self.logger.error(f"并行批次计算失败: {e}")
-            return {'success': 0, 'failed': 0}
+        return {
+            'success': processed_records,
+            'failed': failed_records,
+            'skipped': skipped_records,
+        }
 
     def _calculate_single_stock_indicators(
         self,

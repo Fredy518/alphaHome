@@ -434,6 +434,75 @@ def test_financial_indicators_incremental_preserves_original_error(monkeypatch):
     assert result["error"] == "indicator source failed"
 
 
+def test_financial_indicator_batches_stay_on_context_owner_thread(monkeypatch):
+    calculator = FinancialIndicatorsCalculator.__new__(FinancialIndicatorsCalculator)
+    calculator.logger = Mock()
+    calculator.enable_cache = False
+    calculator.stats = {
+        "start_time": None,
+        "end_time": None,
+        "successful_calculations": 0,
+        "failed_calculations": 0,
+        "cache_hits": 0,
+        "cache_misses": 0,
+    }
+    owner_thread = threading.get_ident()
+    observed_threads = []
+
+    def calculate_batch(as_of_date, stock_codes, target_data_sources):
+        observed_threads.append(threading.get_ident())
+        return {"success": len(stock_codes), "failed": 0, "skipped": 0}
+
+    monkeypatch.setattr(calculator, "_calculate_batch_indicators", calculate_batch)
+    monkeypatch.setattr(calculator, "_log_performance_stats", lambda detailed=False: None)
+
+    result = calculator.calculate_indicators_for_date(
+        "2026-08-31",
+        [f"{idx:06d}.SZ" for idx in range(205)],
+        batch_size=100,
+        use_parallel=True,
+    )
+
+    assert result["success_count"] == 205
+    assert result["failed_count"] == 0
+    assert observed_threads == [owner_thread, owner_thread, owner_thread]
+
+
+def test_financial_indicators_incremental_reports_calculation_failures(monkeypatch):
+    manager = PITFinancialIndicatorsManager()
+    manager.logger = Mock()
+    manager.context = Mock()
+    manager.context.query_dataframe.return_value = pd.DataFrame(
+        {
+            "ts_code": ["000001.SZ"],
+            "end_date": [date(2026, 6, 30)],
+            "ann_date": [date(2026, 8, 26)],
+            "data_source": ["report"],
+        }
+    )
+    manager.calculator = Mock()
+    manager.calculator.calculate_indicators_for_date.return_value = {
+        "success_count": 0,
+        "failed_count": 1,
+        "skipped_count": 0,
+    }
+    monkeypatch.setattr(
+        manager,
+        "resolve_incremental_date_range",
+        lambda days, source_specs: ("2026-07-01", "2026-08-26"),
+    )
+    monkeypatch.setattr(manager, "_ensure_table_exists", lambda: None)
+    monkeypatch.setattr(manager, "ensure_table_exists", lambda: None)
+    monkeypatch.setattr(manager, "_initialize_calculator", lambda: None)
+    monkeypatch.setattr(manager, "_remove_forecast_indicator_rows", lambda: 0)
+
+    result = manager.incremental_update(days=7, batch_size=100)
+
+    assert result["updated_records"] == 0
+    assert result["error_records"] == 1
+    assert result["skipped_records"] == 0
+
+
 def test_balance_preprocess_validates_including_minority_and_keeps_sources(monkeypatch):
     manager = PITBalanceQuarterlyManager()
     manager.logger = Mock()
