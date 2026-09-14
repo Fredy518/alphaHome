@@ -42,6 +42,7 @@ class StockDailyEnrichedMV(IncrementalTableView):
     """
 
     # 命名三件套
+    primary_keys = ('ts_code', 'trade_date')
     name = "stock_daily_enriched"
     description = "每日行情增强物化视图 (OHLCV + 估值指标)"
     

@@ -135,7 +135,8 @@ class MaterializedViewRefresh:
         self,
         view_name: str,
         strategy: str = "full",
-        triggered_by: str = "script"
+        triggered_by: str = "script",
+        *, allow_blocking_fallback: bool = False,
     ) -> Dict[str, Any]:
         """
         刷新物化视图
@@ -184,6 +185,7 @@ class MaterializedViewRefresh:
 
         full_name = f"{schema}.{view_name}"
         start_time = datetime.now()
+        execution = {"requested_strategy": strategy, "effective_strategy": None, "fallback_reason": None}
 
         try:
             self.logger.info(
@@ -205,8 +207,9 @@ class MaterializedViewRefresh:
                     'duration_seconds': 0,
                     'row_count': 0,
                     'error_message': error_msg,
-                    'refresh_strategy': strategy,
-                    'strategy': strategy,
+                    'refresh_strategy': execution['effective_strategy'] or strategy,
+                    **execution,
+                    'strategy': execution['effective_strategy'] or strategy,
                 }
                 # 写入失败日志
                 await self._log_refresh(
@@ -216,7 +219,7 @@ class MaterializedViewRefresh:
                 return result
 
             # 2. 执行 REFRESH 命令
-            await self._execute_refresh(view_name, schema, strategy)
+            await self._execute_refresh(view_name, schema, strategy, allow_blocking_fallback=allow_blocking_fallback, outcome=execution)
 
             # 3. 获取刷新后的行数
             row_count = await self._get_row_count(view_name, schema)
@@ -233,8 +236,9 @@ class MaterializedViewRefresh:
                 'refresh_time': end_time,
                 'duration_seconds': duration_seconds,
                 'row_count': row_count,
-                'refresh_strategy': strategy,
-                'strategy': strategy,
+                'refresh_strategy': execution['effective_strategy'] or strategy,
+                    **execution,
+                'strategy': execution['effective_strategy'] or strategy,
             }
             
             self.logger.info(
@@ -245,7 +249,7 @@ class MaterializedViewRefresh:
             # 5. 写入刷新日志到 features.mv_refresh_log
             await self._log_refresh(
                 view_name, schema, start_time, end_time,
-                True, row_count, duration_seconds, None, triggered_by, strategy
+                True, row_count, duration_seconds, None, triggered_by, execution["effective_strategy"], details=execution
             )
             
             # 更新内部状态
@@ -272,14 +276,15 @@ class MaterializedViewRefresh:
                 'duration_seconds': duration_seconds,
                 'row_count': 0,
                 'error_message': error_msg,
-                'refresh_strategy': strategy,
-                'strategy': strategy,
+                'refresh_strategy': execution['effective_strategy'] or strategy,
+                    **execution,
+                'strategy': execution['effective_strategy'] or strategy,
             }
             
             # 写入失败日志
             await self._log_refresh(
                 view_name, schema, start_time, end_time,
-                False, 0, duration_seconds, error_msg, triggered_by, strategy
+                False, 0, duration_seconds, error_msg, triggered_by, execution["effective_strategy"] or strategy, details=execution
             )
             
             # 更新内部状态
@@ -329,6 +334,7 @@ class MaterializedViewRefresh:
         error_message: Optional[str],
         triggered_by: str,
         refresh_strategy: str,
+        details=None,
     ) -> None:
         """将刷新结果写入 features.mv_refresh_log。"""
         if not self._db_manager:
@@ -346,6 +352,7 @@ class MaterializedViewRefresh:
             duration_seconds=duration_seconds,
             row_count=row_count,
             error_message=error_message,
+            details=details,
         )
 
     async def _check_matview_exists(
@@ -392,58 +399,50 @@ class MaterializedViewRefresh:
         val = await self._fetch_val(query, schema, view_name)
         return bool(val)
     
-    async def _execute_refresh(
-        self,
-        view_name: str,
-        schema: str,
-        strategy: str
-    ) -> None:
+    async def _concurrent_capability(self, view_name, schema):
+        query = """
+            SELECT CASE WHEN NOT c.relispopulated THEN 'unpopulated'
+                        WHEN NOT EXISTS (
+                            SELECT 1 FROM pg_index i WHERE i.indrelid=c.oid
+                            AND i.indisunique AND i.indisvalid AND i.indimmediate
+                            AND i.indpred IS NULL AND i.indexprs IS NULL
+                        ) THEN 'missing_qualifying_unique_index' ELSE NULL END AS reason
+            FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+            WHERE n.nspname=$1 AND c.relname=$2 AND c.relkind='m'
         """
-        执行刷新命令（根据表类型选择REFRESH MATERIALIZED VIEW或全量重建）
-        """
-        full_name = f"{schema}.{view_name}"
-        
-        # 检查是否为物化视图
-        is_matview = await self._is_materialized_view(view_name, schema)
-        
-        if is_matview:
-            # 物化视图：使用REFRESH MATERIALIZED VIEW
-            if strategy == 'concurrent':
-                # CONCURRENT 刷新不阻塞查询
-                query = f"REFRESH MATERIALIZED VIEW CONCURRENTLY {full_name}"
-            else:
-                # FULL 刷新会阻塞查询
-                query = f"REFRESH MATERIALIZED VIEW {full_name}"
-            
-            self.logger.debug(f"Executing: {query}")
+        rows = await self._db_manager.fetch(query, schema, view_name)
+        if not rows:
+            raise RuntimeError("Materialized view disappeared during capability check")
+        return rows[0]["reason"]
 
-            try:
-                await self._execute(query, timeout=self._refresh_timeout_seconds)
-            except Exception as e:
-                # 如果 CONCURRENT 刷新失败（例如没有唯一索引），回退到 FULL 刷新
-                if strategy == 'concurrent':
-                    self.logger.warning(
-                        f"CONCURRENT refresh failed for {full_name}, "
-                        f"falling back to FULL refresh: {e}"
-                    )
-                    query = f"REFRESH MATERIALIZED VIEW {full_name}"
-                    await self._execute(query, timeout=self._refresh_timeout_seconds)
-                else:
-                    raise
-        else:
-            # 普通表（IncrementalTableView）：不能使用REFRESH命令
-            # 这里应该由recipe的refresh方法处理，不应该走到这个路径
-            # 如果走到这里，说明调用方式有问题
-            raise NotImplementedError(
-                f"{full_name} is a regular table, not a materialized view. "
-                f"Please use the recipe class's refresh() method instead of MaterializedViewRefresh.refresh()"
-            )
-    
+    async def _execute_refresh(self, view_name, schema, strategy, *, allow_blocking_fallback=False, outcome=None):
+        """Resolve known capabilities first; execution errors never trigger a fallback."""
+        self._validate_identifier(schema, "schema")
+        self._validate_identifier(view_name, "view_name")
+        if strategy not in {"full", "concurrent"}:
+            raise ValueError("Unsupported materialized-view refresh strategy")
+        if not await self._is_materialized_view(view_name, schema):
+            raise NotImplementedError("Ordinary tables must use their recipe refresh contract")
+        result = outcome if outcome is not None else {}
+        result.update(requested_strategy=strategy, effective_strategy=None, fallback_reason=None)
+        effective = strategy
+        if strategy == "concurrent":
+            reason = await self._concurrent_capability(view_name, schema)
+            if reason:
+                result["fallback_reason"] = reason
+                if not allow_blocking_fallback:
+                    raise RuntimeError(f"Concurrent refresh unavailable: {reason}; blocking fallback was not authorized")
+                effective = "full"
+        result["effective_strategy"] = effective
+        modifier = "CONCURRENTLY " if effective == "concurrent" else ""
+        await self._execute(f'REFRESH MATERIALIZED VIEW {modifier}"{schema}"."{view_name}"', timeout=self._refresh_timeout_seconds)
+        return result
+
     async def _get_row_count(
         self,
         view_name: str,
         schema: str
-    ) -> int:
+    ) -> Optional[int]:
         """
         获取物化视图的行数
         """
@@ -457,7 +456,7 @@ class MaterializedViewRefresh:
             self.logger.warning(
                 f"Failed to get row count for {schema}.{view_name}: {e}"
             )
-            return 0
+            return None
 
     async def _execute(self, query: str, *args, **kwargs) -> Any:
         if not self._db_manager:

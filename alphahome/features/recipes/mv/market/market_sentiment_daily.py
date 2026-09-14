@@ -39,6 +39,7 @@ from alphahome.features.registry import feature_register
 class MarketSentimentDailyMV(IncrementalTableView):
     """市场情绪综合特征物化视图（宽度 + 涨跌停 + 新高新低 + 融资融券）"""
 
+    primary_keys = ('trade_date',)
     name = "market_sentiment_daily"
     description = "市场情绪综合特征：MA 占比、涨跌停、新高新低、融资融券（日频）"
     source_tables = [

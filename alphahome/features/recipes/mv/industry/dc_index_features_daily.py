@@ -12,6 +12,7 @@ from alphahome.features.registry import feature_register
 class DCIndexFeaturesDailyMV(IncrementalTableView):
     """打板指数特征"""
 
+    primary_keys = ('ts_code', 'trade_date')
     name = "dc_index_features_daily"
     description = "打板指数、连板指数、高度板特征"
     source_tables = ["rawdata.stock_dcindex", "rawdata.stock_dcdaily"]

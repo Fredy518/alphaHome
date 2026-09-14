@@ -17,6 +17,7 @@ from alphahome.features.storage.incremental_view import IncrementalTableView
 class IndustryToplistSignalDailyMV(IncrementalTableView):
     """行业龙虎榜聚合信号（日频，申万一级/二级）。"""
 
+    primary_keys = ('industry_level', 'industry_code', 'trade_date')
     name = "industry_toplist_signal_daily"
     description = "申万一级/二级行业龙虎榜聚合信号（日频）"
     source_tables = [

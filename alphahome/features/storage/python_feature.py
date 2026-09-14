@@ -43,6 +43,7 @@ class PythonFeatureTable(BaseFeatureView):
     """
 
     # 增量刷新配置
+    supported_strategies = ("full", "incremental")
     incremental_days: int = 30  # 默认刷新最近 30 天
     date_column: str = "trade_date"  # 日期列名
     refresh_strategy: str = "incremental"  # 默认使用增量刷新

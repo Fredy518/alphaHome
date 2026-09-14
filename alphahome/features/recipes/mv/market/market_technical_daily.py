@@ -40,6 +40,7 @@ from alphahome.features.registry import feature_register
 class MarketTechnicalDailyMV(IncrementalTableView):
     """市场技术特征物化视图（动量 + 波动 + 量价 + 换手 + RSI/MACD + ATR）"""
 
+    primary_keys = ('trade_date',)
     name = "market_technical_daily"
     description = "全市场技术面特征：动量/波动/量价/换手/RSI/MACD/ATR 分布（日频）"
     source_tables = [

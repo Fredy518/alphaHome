@@ -1,31 +1,14 @@
-"""
-增量刷新物化视图基类
-
-设计思路：
-PostgreSQL 原生不支持增量刷新物化视图，但对于按日期分区的数据，
-可以通过以下方式实现"伪增量"刷新：
-
-1. 删除最近 N 天的数据
-2. 重新计算并插入这 N 天的数据
-
-这样可以将刷新时间从全量的 10+ 分钟降低到增量的几秒钟。
-
-使用场景：
-- 数据按 trade_date 分区
-- 只需要更新最近若干天的数据
-- 历史数据稳定不变
-
-刷新策略：
-- incremental: 增量刷新（默认最近 30 天）
-- full: 全量刷新（清空重建）
-"""
+"""Atomic SQL feature-table refresh, with stable target object identity."""
 
 import logging
 from abc import abstractmethod
 from datetime import datetime, timedelta
+from time import monotonic
+from zoneinfo import ZoneInfo
 from typing import Any, Dict, Optional
 
 from .base_view import BaseFeatureView
+from .atomic import identifier, table_refresh_transaction
 from .refresh_log import log_mv_refresh
 
 logger = logging.getLogger(__name__)
@@ -47,7 +30,10 @@ class IncrementalFeatureView(BaseFeatureView):
     # 增量刷新配置
     incremental_days: int = 30  # 默认刷新最近 30 天
     date_column: str = "trade_date"  # 日期列名
-    refresh_strategy: str = "incremental"  # 默认使用增量刷新
+    refresh_strategy: str = "incremental"
+    primary_keys: tuple[str, ...] = ()
+    supported_strategies = ("full", "incremental")
+    allow_expected_no_data = False
 
     async def _is_materialized_view(self) -> bool:
         """检查当前对象是否为物化视图（而非普通表）。"""
@@ -107,131 +93,91 @@ class IncrementalFeatureView(BaseFeatureView):
             return await super().refresh(strategy=actual_strategy)
 
     async def _incremental_refresh(self) -> Dict[str, Any]:
-        """
-        执行增量刷新。
+        end = datetime.now(ZoneInfo("Asia/Shanghai")).date()
+        start = end - timedelta(days=self.incremental_days)
+        return await self._refresh_table_window("incremental", start.strftime("%Y%m%d"), end.strftime("%Y%m%d"))
 
-        流程：
-        1. 检查是否为物化视图（物化视图不支持 DELETE，需回退到全量刷新）
-        2. 计算日期范围
-        3. 删除范围内的旧数据
-        4. 插入新计算的数据
-        5. 更新元数据
-        """
-        # 检查是否为物化视图 - 物化视图无法 DELETE，需回退到全量刷新
-        is_matview = await self._is_materialized_view()
-        if is_matview:
-            self.logger.warning(
-                f"{self.full_name} 是物化视图，不支持增量刷新，回退到全量刷新。"
-                f"如需真正的增量刷新，请使用 IncrementalTableView (CREATE TABLE) 而非物化视图。"
-            )
-            return await super().refresh(strategy="full")
+    async def expected_no_data_reason(self, connection, start, end) -> Optional[str]:
+        """A recipe must explicitly prove an empty eligible universe before clearing it."""
+        return None
 
+    async def _refresh_table_window(self, strategy, start_date, end_date):
         import asyncpg
 
-        start_time = datetime.now()
-
-        # 计算日期范围（自然日）
-        end_date = datetime.now()
-        start_date = end_date - timedelta(days=self.incremental_days)
-
-        start_date_str = start_date.strftime("%Y%m%d")
-        end_date_str = end_date.strftime("%Y%m%d")
-
-        self.logger.info(
-            f"开始增量刷新 {self.full_name}, "
-            f"日期范围: {start_date_str} ~ {end_date_str}"
-        )
-
+        start = datetime.strptime(start_date, "%Y%m%d").date()
+        end = datetime.strptime(end_date, "%Y%m%d").date()
+        if strategy not in self.supported_strategies or start > end:
+            raise ValueError("Unsupported SQL feature replacement request")
+        if not self.primary_keys or self.date_column not in self.primary_keys:
+            raise ValueError("SQL feature requires dated business keys")
+        target = f"{identifier(self._schema)}.{identifier(self.view_name)}"
+        date_column = identifier(self.date_column)
+        keys = ", ".join(identifier(key) for key in self.primary_keys)
+        null_keys = " OR ".join(f"{identifier(key)} IS NULL" for key in self.primary_keys)
+        started = monotonic()
+        connection = None
+        date_range = "all" if strategy == "full" else f"{start_date}-{end_date}"
         try:
-            # 重要：使用单连接 + 单事务执行 delete+insert，避免刷新中间态（空表/半成品）被读到
-            conn_str = self._db_manager.connection_string
-            conn = await asyncpg.connect(conn_str, command_timeout=7200)
-            try:
-                async with conn.transaction():
-                    # Step 1: 删除旧数据
-                    delete_sql = f"""
-                    DELETE FROM {self.full_name}
-                    WHERE {self.date_column} >= '{start_date_str}'
-                      AND {self.date_column} <= '{end_date_str}';
-                    """
-                    await conn.execute(delete_sql)
-
-                    # Step 2: 插入新数据
-                    incremental_sql = self.get_incremental_sql(start_date_str, end_date_str)
-
-                    # 显式列名插入，避免“表列顺序”与“SELECT 列顺序”不一致导致的类型错位
-                    columns_sql = """
-                    SELECT column_name
-                    FROM information_schema.columns
-                    WHERE table_schema = $1 AND table_name = $2
-                    ORDER BY ordinal_position
-                    """
-                    cols = await conn.fetch(columns_sql, self._schema, self.view_name)
-                    col_names = [r["column_name"] for r in (cols or [])]
-                    if not col_names:
-                        raise RuntimeError(f"无法获取表列信息: {self.full_name}")
-
-                    insert_cols = ", ".join([f'"{c}"' for c in col_names])
-                    select_cols = ", ".join([f'd."{c}"' for c in col_names])
-
-                    insert_sql = f"""
-                    INSERT INTO {self.full_name} ({insert_cols})
-                    SELECT {select_cols}
-                    FROM (
-                    {incremental_sql}
-                    ) AS d;
-                    """
-                    await conn.execute(insert_sql)
-
-                    # Step 3: 获取影响范围内行数（便于 UI 展示“本次刷新覆盖量”）
-                    count_sql = f"""
-                    SELECT COUNT(*) AS cnt FROM {self.full_name}
-                    WHERE {self.date_column} >= '{start_date_str}'
-                      AND {self.date_column} <= '{end_date_str}';
-                    """
-                    row = await conn.fetchrow(count_sql)
-                    rows_affected = row["cnt"] if row else 0
-            finally:
-                await conn.close()
-
-            # Step 4: 记录刷新日志
-            duration = (datetime.now() - start_time).total_seconds()
-            await self._log_refresh(
-                strategy="incremental",
-                success=True,
-                duration=duration,
-                rows_affected=rows_affected,
-                date_range=f"{start_date_str}~{end_date_str}"
-            )
-
-            self.logger.info(
-                f"增量刷新 {self.full_name} 完成, "
-                f"影响行数: {rows_affected}, 耗时: {duration:.2f}s"
-            )
-
-            return {
-                "status": "success",
-                "view_name": self.view_name,
-                "view_schema": self._schema,
-                "full_name": self.full_name,
-                "refresh_time": datetime.now(),
-                "duration_seconds": duration,
-                "row_count": rows_affected,
-                "refresh_strategy": "incremental",
-                "strategy": "incremental",
-                "date_range": f"{start_date_str}~{end_date_str}"
-            }
-
-        except Exception as e:
-            duration = (datetime.now() - start_time).total_seconds()
-            await self._log_refresh(
-                strategy="incremental",
-                success=False,
-                duration=duration,
-                error=str(e)
-            )
-            self.logger.error(f"增量刷新 {self.full_name} 失败: {e}")
+            connection = await asyncpg.connect(self._db_manager.connection_string, command_timeout=7200)
+            lock_started = monotonic()
+            # Same whole-table lock as PythonFeatureTable, held BEFORE computing.
+            async with table_refresh_transaction(connection, self._schema, self.view_name):
+                lock_wait = monotonic() - lock_started
+                kind = await connection.fetchval("SELECT relkind::text FROM pg_class WHERE oid=$1::regclass", self.full_name)
+                if kind != "r":
+                    raise RuntimeError("migration_required: SQL feature target must be an ordinary table")
+                columns = await connection.fetch(
+                    "SELECT attname FROM pg_attribute WHERE attrelid=$1::regclass "
+                    "AND attnum>0 AND NOT attisdropped AND attgenerated='' ORDER BY attnum", self.full_name,
+                )
+                names = [row["attname"] for row in columns]
+                if not set(self.primary_keys).issubset(names):
+                    raise RuntimeError("migration_required: feature business-key columns missing")
+                insert_columns = ", ".join(identifier(name) for name in names)
+                select_columns = ", ".join(f"d.{identifier(name)}" for name in names)
+                await connection.execute(f"CREATE TEMP TABLE feature_sql_stage (LIKE {target} INCLUDING DEFAULTS INCLUDING CONSTRAINTS) ON COMMIT DROP")
+                # No client-side materialization; type/check failures happen in staging.
+                select = self.get_incremental_sql(start_date, end_date).strip().rstrip(";")
+                await connection.execute(
+                    f"INSERT INTO pg_temp.feature_sql_stage ({insert_columns}) "
+                    f"SELECT {select_columns} FROM ({select}) AS d"
+                )
+                count = await connection.fetchval("SELECT COUNT(*) FROM pg_temp.feature_sql_stage")
+                status, empty_reason = "success", None
+                if count == 0:
+                    if self.allow_expected_no_data:
+                        empty_reason = await self.expected_no_data_reason(connection, start, end)
+                    if not empty_reason:
+                        raise ValueError("Empty feature result lacks an expected_no_data contract")
+                    status = "expected_no_data"
+                if await connection.fetchval(
+                    f"SELECT EXISTS (SELECT 1 FROM pg_temp.feature_sql_stage WHERE {null_keys} "
+                    f"OR {date_column} NOT BETWEEN $1 AND $2)", start, end,
+                ):
+                    raise ValueError("Feature contains null keys or dates outside the replacement window")
+                await connection.execute(f"CREATE UNIQUE INDEX ON pg_temp.feature_sql_stage ({keys})")
+                if strategy == "full":
+                    await connection.execute(f"DELETE FROM {target}")
+                else:
+                    await connection.execute(f"DELETE FROM {target} WHERE {date_column} BETWEEN $1 AND $2", start, end)
+                await connection.execute(f"INSERT INTO {target} ({insert_columns}) SELECT {insert_columns} FROM pg_temp.feature_sql_stage")
+                # Commit remains inside the try; deferred failures are never success.
+        except Exception as exc:
+            await self._log_refresh(strategy, False, monotonic()-started, date_range=date_range, error=f"{type(exc).__name__}: {exc}")
             raise
+        finally:
+            if connection is not None:
+                await connection.close()
+        duration = monotonic()-started
+        await self._log_refresh(strategy, True, duration, rows_affected=count, date_range=date_range)
+        return {
+            "status": status, "view_name": self.view_name, "view_schema": self._schema,
+            "full_name": self.full_name, "row_count": count, "committed_rows": count,
+            "duration_seconds": duration, "lock_wait_seconds": lock_wait,
+            "refresh_strategy": strategy, "strategy": strategy,
+            "requested_strategy": strategy, "effective_strategy": strategy,
+            "fallback_reason": None, "date_range": date_range, "empty_reason": empty_reason,
+        }
 
     async def _log_refresh(
         self,
@@ -266,7 +212,7 @@ class IncrementalTableView(IncrementalFeatureView):
     适用场景：
     - 需要频繁增量更新
     - 数据量大，全量刷新太慢
-    - 不需要 REFRESH MATERIALIZED VIEW 的原子性
+    - 使用单事务暂存校验与原表替换，保留依赖关系
 
     注意：
     - 使用 CREATE TABLE 而非 CREATE MATERIALIZED VIEW
@@ -275,223 +221,17 @@ class IncrementalTableView(IncrementalFeatureView):
     storage_type: str = "数据表"
 
     async def refresh(self, strategy: Optional[str] = None) -> Dict[str, Any]:
-        """
-        刷新表数据。
-
-        Args:
-            strategy: 刷新策略
-                - "incremental": 增量刷新（删除旧数据 + 插入新数据）
-                - "full": 全量刷新（TRUNCATE + 全量INSERT）
-                - "default": 使用类定义的默认策略
-
-        Returns:
-            Dict[str, Any]: 刷新结果
-        """
         if self._db_manager is None:
             raise RuntimeError("db_manager 未设置")
-
-        # 显式 guardrail：该类仅用于普通表（CREATE TABLE），如果数据库中仍是物化视图，
-        # 说明发生了配方/存储类型迁移，需要先 DROP 再 CREATE。
-        if await self._is_materialized_view():
-            raise RuntimeError(
-                f"{self.full_name} 当前为物化视图（pg_matviews），但配方为数据表类型。"
-                f"请先执行: DROP MATERIALIZED VIEW IF EXISTS {self.full_name}; 然后重新创建特征。"
-            )
-
-        # GUI 层使用 "default" 表示“使用配方默认策略”
-        if strategy == "default":
-            strategy = None
-
-        actual_strategy = strategy or self.refresh_strategy
-
-        if actual_strategy == "incremental":
-            return await self._incremental_refresh()
-        elif actual_strategy == "full":
+        actual = self.refresh_strategy if strategy in (None, "default") else strategy
+        if actual not in self.supported_strategies:
+            raise ValueError(f"Unsupported ordinary-table refresh strategy: {actual}")
+        if actual == "full":
             return await self._full_refresh_table()
-        else:
-            # 对于其他策略，仍然调用增量刷新
-            return await self._incremental_refresh()
+        return await self._incremental_refresh()
 
     async def _full_refresh_table(self) -> Dict[str, Any]:
-        """
-        执行普通表的全量刷新。
-
-        流程：
-        1. 构建临时表并全量写入（避免刷新中间空表）
-        2. 快速 rename swap 切换新表
-        3. 更新元数据
-        
-        注意：使用独立的长超时连接，避免连接池的180秒超时限制
-        """
-        import asyncpg
-        import uuid
-        
-        start_time = datetime.now()
-
-        self.logger.info(f"开始全量刷新表 {self.full_name}")
-
-        try:
-            # 获取连接字符串并创建长超时连接（2小时）
-            conn_str = self._db_manager.connection_string
-            conn = await asyncpg.connect(conn_str, command_timeout=7200)
-
-            tmp_full_name: Optional[str] = None
-            
-            try:
-                # Step 0: 确认目标是普通表（不是物化视图）
-                exists_sql = """
-                SELECT EXISTS (
-                    SELECT 1
-                    FROM information_schema.tables
-                    WHERE table_schema = $1 AND table_name = $2 AND table_type = 'BASE TABLE'
-                ) AS is_table;
-                """
-                is_table_row = await conn.fetchrow(exists_sql, self._schema, self.view_name)
-                if not is_table_row or not is_table_row["is_table"]:
-                    raise RuntimeError(f"{self.full_name} 不存在或不是普通表，请先创建表或检查是否仍为物化视图。")
-
-                # Step 1: 创建临时表（复制结构）
-                suffix = uuid.uuid4().hex[:8]
-                tmp_suffix = f"__tmp_{suffix}"
-                bak_suffix = f"__bak_{suffix}"
-
-                max_ident_len = 63
-                base_name = self.view_name
-                tmp_base = base_name[: max_ident_len - len(tmp_suffix)] if len(base_name) + len(tmp_suffix) > max_ident_len else base_name
-                bak_base = base_name[: max_ident_len - len(bak_suffix)] if len(base_name) + len(bak_suffix) > max_ident_len else base_name
-
-                tmp_table = f"{tmp_base}{tmp_suffix}"
-                bak_table = f"{bak_base}{bak_suffix}"
-
-                tmp_full_name = f"{self._schema}.{tmp_table}"
-
-                await conn.execute(
-                    f"CREATE TABLE {tmp_full_name} (LIKE {self.full_name} INCLUDING ALL);"
-                )
-
-                # Step 2: 全量插入数据（写入临时表）
-                far_past = "19000101"
-                far_future = "20991231"
-                full_select_sql = self.get_incremental_sql(far_past, far_future)
-
-                # 获取列信息
-                columns_sql = """
-                SELECT column_name
-                FROM information_schema.columns
-                WHERE table_schema = $1 AND table_name = $2
-                ORDER BY ordinal_position
-                """
-                cols = await conn.fetch(columns_sql, self._schema, self.view_name)
-                col_names = [r["column_name"] for r in (cols or [])]
-                if not col_names:
-                    raise RuntimeError(f"无法获取表列信息: {self.full_name}")
-
-                insert_cols = ", ".join([f'"{c}"' for c in col_names])
-                select_cols = ", ".join([f'd."{c}"' for c in col_names])
-
-                insert_sql = f"""
-                INSERT INTO {tmp_full_name} ({insert_cols})
-                SELECT {select_cols}
-                FROM (
-                {full_select_sql}
-                ) AS d;
-                """
-                
-                self.logger.info(f"执行全量INSERT（可能需要较长时间）...")
-                await conn.execute(insert_sql)
-
-                # Step 3: 获取新表总行数
-                count_sql = f"SELECT COUNT(*) AS cnt FROM {tmp_full_name};"
-                result = await conn.fetchrow(count_sql)
-                row_count = result["cnt"] if result else 0
-
-                # Step 4: rename swap（短时间锁切换，避免中间空表/半成品）
-                async with conn.transaction():
-                    await conn.execute(
-                        f"ALTER TABLE {self.full_name} RENAME TO {bak_table};"
-                    )
-                    await conn.execute(
-                        f"ALTER TABLE {tmp_full_name} RENAME TO {self.view_name};"
-                    )
-
-                # Step 5: 清理备份表（避免长事务阻塞，设置 lock_timeout）
-                try:
-                    await conn.execute("SET lock_timeout = '1s';")
-                    await conn.execute(f"DROP TABLE {self._schema}.{bak_table};")
-                except Exception as drop_err:
-                    self.logger.warning(
-                        f"全量刷新完成但未能删除备份表 {self._schema}.{bak_table}: {drop_err}"
-                    )
-                finally:
-                    try:
-                        await conn.execute("RESET lock_timeout;")
-                    except Exception:
-                        pass
-
-            except Exception:
-                # 尽力清理临时表，避免失败后遗留脏对象（不影响主错误抛出）
-                if tmp_full_name:
-                    try:
-                        await conn.execute(f"DROP TABLE IF EXISTS {tmp_full_name};")
-                    except Exception:
-                        pass
-                raise
-                
-            finally:
-                await conn.close()
-
-            # Step 4: 记录刷新日志
-            duration = (datetime.now() - start_time).total_seconds()
-            await self._log_refresh(
-                strategy="full",
-                success=True,
-                duration=duration,
-                rows_affected=row_count,
-                date_range="all"
-            )
-
-            self.logger.info(
-                f"全量刷新表 {self.full_name} 完成, "
-                f"总行数: {row_count}, 耗时: {duration:.2f}s"
-            )
-
-            return {
-                "status": "success",
-                "view_name": self.view_name,
-                "view_schema": self._schema,
-                "full_name": self.full_name,
-                "row_count": row_count,
-                "duration_seconds": duration,
-                "refresh_strategy": "full",
-                "strategy": "full",
-            }
-
-        except Exception as e:
-            duration = (datetime.now() - start_time).total_seconds()
-            error_msg = f"{type(e).__name__}: {str(e)}"
-
-            await self._log_refresh(
-                strategy="full",
-                success=False,
-                duration=duration,
-                rows_affected=0,
-                date_range="all",
-                error=error_msg
-            )
-
-            self.logger.error(f"全量刷新表 {self.full_name} 失败: {error_msg}")
-
-            return {
-                "status": "failed",
-                "view_name": self.view_name,
-                "view_schema": self._schema,
-                "full_name": self.full_name,
-                "row_count": 0,
-                "duration_seconds": duration,
-                "error_message": error_msg,
-                "refresh_strategy": "full",
-                "strategy": "full",
-            }
+        return await self._refresh_table_window("full", "19000101", "20991231")
 
     async def create(self, if_not_exists: bool = True) -> bool:
         """
@@ -504,7 +244,7 @@ class IncrementalTableView(IncrementalFeatureView):
             if await self._is_materialized_view():
                 raise RuntimeError(
                     f"{self.full_name} 当前为物化视图（pg_matviews），但配方为数据表类型。"
-                    f"请先执行: DROP MATERIALIZED VIEW IF EXISTS {self.full_name}; 然后重新创建特征。"
+                    "migration_required: 请使用经过依赖检查和备份审阅的显式存储迁移。"
                 )
 
             # 检查表是否已存在

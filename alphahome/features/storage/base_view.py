@@ -38,6 +38,7 @@ class BaseFeatureView(ABC):
     materialized_view_name: str = ""
     refresh_strategy: str = "full"  # 刷新策略: full / concurrent
     source_tables: List[str] = []  # 数据来源表
+    supported_strategies = ("full", "concurrent")
     quality_checks: Dict[str, Any] = {}  # 质量检查配置
 
     # 强制约定
@@ -233,7 +234,7 @@ class BaseFeatureView(ABC):
             self.logger.error(f"删除物化视图 {self.full_name} 失败: {e}")
             raise
 
-    async def refresh(self, strategy: Optional[str] = None) -> Dict[str, Any]:
+    async def refresh(self, strategy: Optional[str] = None, *, allow_blocking_fallback: bool = False) -> Dict[str, Any]:
         """
         刷新物化视图。
 
@@ -259,7 +260,8 @@ class BaseFeatureView(ABC):
 
         return await refresher.refresh(
             view_name=self.view_name,
-            strategy=actual_strategy
+            strategy=actual_strategy,
+            allow_blocking_fallback=allow_blocking_fallback,
         )
 
     async def get_row_count(self) -> int:
