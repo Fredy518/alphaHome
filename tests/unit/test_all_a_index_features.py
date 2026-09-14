@@ -29,6 +29,7 @@ def test_daily_object_uses_plain_features_table_name():
         in feature.get_create_sql()
     )
     assert feature.refresh_strategy == "full"
+    assert feature.supported_strategies == ("full",)
 
 
 def test_expma_object_excludes_strategy_state():
@@ -38,6 +39,7 @@ def test_expma_object_excludes_strategy_state():
     assert "ema12" in ddl and "ema120" in ddl
     assert "target_budget" not in ddl
     assert "state_after" not in ddl
+    assert feature.supported_strategies == ("full",)
 
 
 def test_day_step_uses_lagged_cap_weights():

@@ -255,6 +255,7 @@ class _AuditedAtomicFullRefreshFeature(PythonFeatureTable):
     """Compute first, then replace the visible table in one transaction."""
 
     refresh_strategy = "full"
+    supported_strategies = ("full",)
     _build_details: dict[str, Any]
 
     async def refresh(self, strategy: str | None = None) -> dict[str, Any]:
