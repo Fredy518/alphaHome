@@ -161,7 +161,7 @@ def test_every_monthly_pit_manager_accepts_frozen_cutoff():
     missing = []
     for task_name, task_class in UnifiedTaskFactory._task_registry.items():
         contract = getattr(task_class, "contract", None)
-        if contract is None or contract.pit_time_key != "obs_date":
+        if contract is None or getattr(contract, "pit_time_key", None) != "obs_date":
             continue
         parameters = inspect.signature(
             contract.manager_class.incremental_update
