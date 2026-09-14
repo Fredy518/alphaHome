@@ -10,6 +10,9 @@ class _Governance:
 
 
 class _Repository:
+    def snapshot_xmin(self):
+        return 100
+
     def source_watermarks(self, contract):
         return {}
 

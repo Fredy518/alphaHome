@@ -6,7 +6,8 @@ from typing import Any, Mapping
 from .date_policy import FACTOR_TIMEZONE
 
 
-WATERMARK_CONTRACT = "snapshot_consumed_v1"
+WATERMARK_CONTRACT = "snapshot_consumed_v2"
+SNAPSHOT_XMIN_KEY = "_snapshot_xmin"
 
 
 def _timestamp(value):
@@ -14,16 +15,21 @@ def _timestamp(value):
     return result if result.tzinfo is not None else result.replace(tzinfo=FACTOR_TIMEZONE)
 
 
-def consumed_watermarks(task_result: Mapping[str, Any], planned: Mapping[str, Any]) -> dict:
+def consumed_watermarks(task_result: Mapping[str, Any], planned: Mapping[str, Any], planned_xmin=None) -> dict:
     snapshot = task_result.get("source_snapshot") or {}
     outcomes = task_result.get("dates") or {}
     if (task_result.get("status") != "success" or not snapshot.get("consistent") or not outcomes
             or any(item.get("status") not in {"success", "expected_no_data"} for item in outcomes.values())):
         return {}
     actual = snapshot.get("watermarks") or {}
+    snapshot_xmin = snapshot.get("xmin")
+    if not isinstance(planned_xmin, int) or not isinstance(snapshot_xmin, int):
+        return {}
     # The planner captures this ceiling before querying dirty dates. Revisions
     # arriving later may be visible to a calculator but not to all planned dates.
-    return {
+    result = {
         source: min((value, actual[source]), key=_timestamp)
         for source, value in planned.items() if value is not None and actual.get(source) is not None
     }
+    result[SNAPSHOT_XMIN_KEY] = min(planned_xmin, snapshot_xmin)
+    return result

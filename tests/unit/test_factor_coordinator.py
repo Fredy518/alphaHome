@@ -14,6 +14,9 @@ class _ConstructionDB:
 
 
 class _PlanRepository:
+    def snapshot_xmin(self):
+        return 100
+
     def __init__(self, missing=None):
         self.missing = missing or {}
 
@@ -46,7 +49,7 @@ def _coordinator(missing=None, max_dates=26):
     coordinator = FactorCoordinator(_ConstructionDB(), max_automatic_dates=max_dates)
     coordinator.governance = SimpleNamespace(
         schema_issues=lambda: [],
-        latest_source_watermarks=lambda _task: {"verified_fixture": "2026-09-01"},
+        latest_source_watermarks=lambda _task: {"verified_fixture": "2026-09-01", "_snapshot_xmin": 90},
     )
     coordinator.repository = _PlanRepository(missing)
     return coordinator

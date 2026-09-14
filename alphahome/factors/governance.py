@@ -308,6 +308,14 @@ class FactorGovernanceStore:
             ),
         )
 
+    def current_dates_for_run(self, run_id, task_name):
+        rows = self.db_manager.fetch_sync(
+            "SELECT calc_date FROM factors.factor_run_date WHERE run_id = %s "
+            "AND task_name = %s AND is_current AND status IN ('success', 'expected_no_data')",
+            (str(run_id), task_name),
+        )
+        return {row["calc_date"] for row in rows}
+
     def latest_source_watermarks(self, task_name: str) -> Dict[str, Any]:
         row = self.db_manager.fetch_one_sync(
             """
@@ -315,7 +323,7 @@ class FactorGovernanceStore:
             FROM factors.factor_run
             WHERE %s = ANY(task_names)
               AND status IN ('success', 'partial_success')
-              AND details_json->>'watermark_contract' = 'snapshot_consumed_v1'
+              AND details_json->>'watermark_contract' = 'snapshot_consumed_v2'
               AND source_watermarks ? %s
             ORDER BY finished_at DESC NULLS LAST, started_at DESC
             LIMIT 1

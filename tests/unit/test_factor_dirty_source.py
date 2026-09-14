@@ -80,11 +80,13 @@ def test_plan_failure_never_starts_run_or_persists_watermarks(monkeypatch, contr
     governance = SimpleNamespace(
         ensure_schema=Mock(),
         schema_issues=lambda: [],
-        latest_source_watermarks=lambda name: {name: {SOURCE: WATERMARK}},
+        latest_source_watermarks=lambda name: {name: {SOURCE: WATERMARK, "_snapshot_xmin": 1}},
         start_run=Mock(),
         finish_run=Mock(),
     )
     coordinator.governance = governance
+    monkeypatch.setattr(coordinator.repository, "snapshot_xmin", lambda: 2)
+    monkeypatch.setattr(coordinator.repository, "first_source_date", lambda _: date(2025, 1, 3))
     monkeypatch.setattr(coordinator, "contracts", lambda: {"factor_p": contract})
     monkeypatch.setattr(coordinator.repository, "table_date_stats", lambda _: {"first_calc_date": date(2025, 1, 3)})
     monkeypatch.setattr(coordinator.repository, "missing_dates", lambda *args: [])

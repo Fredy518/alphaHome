@@ -12,13 +12,14 @@ from uuid import UUID
 
 from alphahome.common.task_system import UnifiedTaskFactory
 from alphahome.common.db_manager import DBManager
+from alphahome.common.run_models import SourceBoundary, fingerprint, target_fingerprint
 
 from .base import FactorTaskContract
 from .date_policy import FACTOR_TIMEZONE, FactorDatePolicy, coerce_date
 from .governance import FactorGovernanceStore, MIGRATION_HINT, json_ready
 from .persistence import FactorSnapshotWriter
 from .repository import FactorRepository
-from .source_boundary import WATERMARK_CONTRACT, consumed_watermarks
+from .source_boundary import WATERMARK_CONTRACT, SNAPSHOT_XMIN_KEY, consumed_watermarks
 
 
 @dataclass
@@ -31,6 +32,7 @@ class FactorTaskPlan:
     source_watermarks: Dict[str, Any] = field(default_factory=dict)
     existing_rows_to_replace: int = 0
     estimated_output_rows: int = 0
+    source_xmin: Optional[int] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return json_ready(asdict(self))
@@ -145,8 +147,8 @@ class FactorCoordinator:
             if start_date is not None or end_date is not None:
                 raise ValueError("date_range不能与start_date/end_date同时提供")
             start_date, end_date = date_range
-        if source_cutoff is not None and source_cutoff.tzinfo is None:
-            raise ValueError("source_cutoff必须包含时区")
+        if source_cutoff is not None:
+            raise ValueError("source_cutoff不支持历史快照重建；实际边界由本次数据库快照记录")
         mode = {"incremental": "smart", "backfill": "manual"}.get(mode, mode)
         if mode not in {"smart", "manual", "full", "audit"}:
             raise ValueError(f"不支持的因子运行模式: {mode}")
@@ -187,6 +189,7 @@ class FactorCoordinator:
         for name in names:
             contract = contracts[name]
             # Capture the consumption ceiling before querying missing/dirty dates.
+            source_xmin = self.repository.snapshot_xmin()
             watermarks = self.repository.source_watermarks(contract)
             dates = self._plan_dates(
                 contract,
@@ -222,6 +225,7 @@ class FactorCoordinator:
                     readiness_dependencies=list(contract.readiness_dependencies),
                     blockers=blockers,
                     source_watermarks=watermarks,
+                    source_xmin=source_xmin,
                     existing_rows_to_replace=sum(existing_counts.values()),
                     estimated_output_rows=latest_rows * len(dates),
                 )
@@ -284,15 +288,14 @@ class FactorCoordinator:
         if isinstance(first_existing, datetime):
             first_existing = first_existing.date()
         start = requested_start or recent_start
-        if not first_existing:
-            source_start = self.repository.first_source_date(contract)
-            if source_start:
-                start = max(start, source_start)
+        source_start = self.repository.first_source_date(contract)
+        if source_start:
+            start = max(start, source_start)
         missing = self.repository.missing_dates(contract, start, effective_end)
 
         previous = self.governance.latest_source_watermarks(contract.task_name)
         previous_for_task = previous.get(contract.task_name, previous)
-        if not previous_for_task and first_existing:
+        if SNAPSHOT_XMIN_KEY not in previous_for_task and first_existing:
             # Legacy successful runs did not certify consumption. Revalidate
             # the declared smart window, subject to the existing manual-size gate.
             return FactorDatePolicy.fridays(start, effective_end)
@@ -380,7 +383,7 @@ class FactorCoordinator:
             details={
                 "plan": plan.to_dict(),
                 "batch_started_at": started,
-                "source_cutoff": source_cutoff or started,
+                "requested_source_cutoff": source_cutoff,
                 "planned_source_watermarks": source_watermarks,
             },
         )
@@ -394,6 +397,24 @@ class FactorCoordinator:
             message=plan.message,
             details={"plan": plan.to_dict(), "tasks": {}},
         )
+        try:
+            return self._execute_plan(plan, run_id, result, contracts, started, requested_start, stop_requested)
+        except BaseException as exc:
+            result.status = (
+                "cancelled" if isinstance(exc, (KeyboardInterrupt, asyncio.CancelledError))
+                else "partial_success" if result.successful_date_count else "error"
+            )
+            result.details["lifecycle_error"] = type(exc).__name__
+            try:
+                self.governance.finish_run(run_id, result.status, details=result.to_dict())
+            except Exception as finalize_error:
+                self.logger.critical(
+                    "Run finalization unavailable: run_id=%s, error_code=%s",
+                    run_id, type(finalize_error).__name__,
+                )
+            raise
+
+    def _execute_plan(self, plan, run_id, result, contracts, started, requested_start, stop_requested):
         if plan.status != "ready":
             self.governance.finish_run(run_id, plan.status, details=result.to_dict())
             for name in plan.task_names:
@@ -477,8 +498,7 @@ class FactorCoordinator:
         certified = {}
         current_cutoff = self.date_policy.automatic_cutoff(started)
         complete_scope = plan.effective_cutoff_date == current_cutoff and (
-            plan.mode == "smart" or
-            (plan.mode == "full" and not requested_start) or
+            (plan.mode in {"smart", "full"} and not requested_start) or
             (requested_start and coerce_date(requested_start) <= current_cutoff - timedelta(days=730))
         )
         if complete_scope:
@@ -486,7 +506,10 @@ class FactorCoordinator:
                 task_result = result.details["tasks"].get(task_plan.task_name) or {}
                 if len(task_result.get("dates") or {}) != len(task_plan.dates):
                     continue
-                watermarks = consumed_watermarks(task_result, task_plan.source_watermarks)
+                committed_dates = self.governance.current_dates_for_run(run_id, task_plan.task_name)
+                if set(task_plan.dates) != committed_dates:
+                    continue
+                watermarks = consumed_watermarks(task_result, task_plan.source_watermarks, task_plan.source_xmin)
                 if watermarks:
                     certified[task_plan.task_name] = watermarks
         result.details["watermark_contract"] = WATERMARK_CONTRACT
@@ -526,6 +549,7 @@ class FactorCoordinator:
             }
         source_db = self.db
         source_connection = None
+        source_snapshot = {"consistent": False}
         owns_source_db = False
         details: Dict[str, Any] = {}
         success = failed = skipped = output = 0
@@ -543,7 +567,8 @@ class FactorCoordinator:
                     cursor.execute(
                         """
                         SELECT transaction_timestamp() AS snapshot_started_at,
-                               pg_current_wal_lsn()::text AS snapshot_wal_lsn
+                               pg_current_wal_lsn()::text AS snapshot_wal_lsn,
+                               pg_snapshot_xmin(pg_current_snapshot())::text AS snapshot_xmin
                         """
                     )
                     snapshot_row = cursor.fetchone()
@@ -551,10 +576,15 @@ class FactorCoordinator:
                     "consistent": True,
                     "started_at": snapshot_row[0],
                     "wal_lsn": snapshot_row[1],
+                    "xmin": int(snapshot_row[2]),
                     "watermarks": FactorRepository(source_db).source_watermarks(
                         contract
                     ),
                 }
+                source_snapshot["boundary"] = asdict(SourceBoundary(
+                    target_fingerprint(db_url), snapshot_row[0], int(snapshot_row[2]),
+                    fingerprint(json_ready(source_snapshot["watermarks"])), "repeatable_read",
+                ))
             else:
                 source_snapshot = {
                     "consistent": False,
@@ -704,6 +734,11 @@ class FactorCoordinator:
                         exc_info=True,
                     )
                     break
+        except Exception as exc:
+            # Setup/ledger failures must still terminate the run and prevent
+            # dependent tasks and source-consumption promotion.
+            failed += max(1, len(dates) - success - failed - skipped)
+            details["execution_error"] = {"status": "error", "error_code": type(exc).__name__}
         finally:
             if owns_source_db:
                 try:

@@ -42,6 +42,8 @@ class ReadOnlyDB:
 
     def fetch_val_sync(self, sql, _params=()):
         self._read(sql)
+        if "pg_snapshot_xmin" in sql:
+            return "100"
         if "to_regclass" in sql:
             return True
         if "COUNT(*)" in sql:

@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from .base import FactorTaskContract
 from .date_policy import FactorDatePolicy
+from .source_boundary import SNAPSHOT_XMIN_KEY
 
 
 _RELATION_RE = re.compile(r"^[a-z_][a-z0-9_]*\.[a-z_][a-z0-9_]*$")
@@ -208,25 +209,45 @@ class FactorRepository:
             )
         return watermarks
 
+    def snapshot_xmin(self) -> int:
+        return int(self.db.fetch_val_sync("SELECT pg_snapshot_xmin(pg_current_snapshot())::text"))
+
     def dirty_start_date(
         self,
         contract: FactorTaskContract,
         previous_watermarks: Mapping[str, Any],
     ) -> Optional[date]:
         candidates: List[date] = []
+        checkpoint = previous_watermarks.get(SNAPSHOT_XMIN_KEY)
+        if checkpoint is not None:
+            from alphahome.common.db_session import query_timeout
+
+            try:
+                current = int(self.db.fetch_val_sync("SELECT pg_snapshot_xmax(pg_current_snapshot())::text"))
+            except Exception as exc:
+                raise FactorSourceQueryError("snapshot", type(exc).__name__) from None
+            if not isinstance(checkpoint, int) or not 0 <= current - checkpoint < 2**31:
+                raise FactorSourceQueryError("snapshot", "expired_or_invalid_mvcc_cursor")
         for source in contract.source_tables:
             previous = previous_watermarks.get(source)
             key = _SOURCE_TIME_KEYS.get(source)
-            if not previous or not key:
+            if (not previous and checkpoint is None) or not key:
                 continue
             relation = self._relation(source)
             try:
                 if not self.relation_exists(source):
                     raise FactorSourceQueryError(source, "missing_relation")
-                value = self.db.fetch_val_sync(
-                    f"SELECT MIN({key}) FROM {relation} WHERE updated_at > %s",
-                    (previous,),
-                )
+                if checkpoint is None:
+                    value = self.db.fetch_val_sync(
+                        f"SELECT MIN({key}) FROM {relation} WHERE updated_at > %s", (previous,),
+                    )
+                else:
+                    with query_timeout(self.db):
+                        value = self.db.fetch_val_sync(
+                            f"SELECT MIN({key}) FROM {relation} WHERE updated_at > %s "
+                            "OR age(xmin) <= age(%s::text::xid)",
+                            (previous, str(checkpoint % (2**32))),
+                        )
             except FactorSourceQueryError:
                 raise
             except Exception as exc:
