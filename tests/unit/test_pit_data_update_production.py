@@ -197,7 +197,9 @@ async def test_serial_and_parallel_execute_only_within_topological_layer(
 
 
 @pytest.mark.asyncio
-async def test_upstream_failure_marks_industry_skipped(monkeypatch):
+@pytest.mark.parametrize("failure_status", ["error", "partial_success"])
+@pytest.mark.parametrize("parallel", [False, True])
+async def test_upstream_failure_marks_industry_skipped(monkeypatch, failure_status, parallel):
     coordinator = PITDataUpdateCoordinator()
     contracts = _fttm_contracts()
     calls = []
@@ -205,13 +207,13 @@ async def test_upstream_failure_marks_industry_skipped(monkeypatch):
 
     async def _run_task(task_name, target, update_type, task_config=None):
         calls.append(task_name)
-        status = "error" if task_name == "pit_stock_fttm_monthly" else "success"
+        status = failure_status if task_name == "pit_stock_fttm_monthly" else "success"
         return {"status": status, "task": task_name, "target": target}
 
     monkeypatch.setattr(coordinator, "_run_task", _run_task)
 
     results = await coordinator.run_updates(
-        ["industry_fttm"], mode="incremental", parallel=True
+        ["industry_fttm"], mode="incremental", parallel=parallel
     )
     industry = next(
         result for result in results if result["task"] == "pit_industry_fttm_monthly"

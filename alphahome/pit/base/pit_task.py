@@ -245,14 +245,43 @@ class PITTask(BaseTask):
             return {"status": "success", "task": self.name, "table": self.table_name, "rows": 0, "result": result}
 
         rows = self._extract_row_count(result)
+        committed_rows = self._extract_committed_rows(result)
+        error_records = self._extract_error_count(result)
         status = "error" if result.get("error") else result.get("status", "success")
-        return {
+        if error_records and status != "cancelled":
+            status = "partial_success" if committed_rows else "error"
+            # A processed count is not evidence that any rows were committed.
+            rows = committed_rows or 0
+        normalized = {
             "status": status,
             "task": self.name,
             "table": self.table_name,
             "rows": rows,
+            "committed_rows": committed_rows,
+            "attempted_rows": (
+                self._coerce_count(result["processed_records"])
+                if result.get("processed_records") is not None
+                else (committed_rows + error_records if committed_rows is not None else None)
+            ),
+            "error_records": error_records,
             "result": result,
         }
+        if result.get("error") or error_records:
+            normalized["error"] = result.get("error") or (
+                f"PIT manager reported {error_records} failed records"
+            )
+        return normalized
+
+    @classmethod
+    def _extract_error_count(cls, result: Dict[str, Any]) -> int:
+        counts = []
+        for key in ("error_records", "errors", "error_count"):
+            value = result.get(key)
+            if isinstance(value, (list, tuple, dict, set)):
+                counts.append(len(value))
+            else:
+                counts.append(cls._coerce_count(value))
+        return max(counts)
 
     @classmethod
     def _sync_manager_stats_from_result(cls, manager: Any, result: Any) -> None:
@@ -270,10 +299,8 @@ class PITTask(BaseTask):
         if any(cls._coerce_count(stats.get(key)) for key in counter_keys):
             return
 
-        success_records = cls._coerce_count(cls._extract_row_count(result))
-        error_records = cls._coerce_count(result.get("error_records"))
-        if error_records == 0:
-            error_records = cls._coerce_count(result.get("errors"))
+        success_records = cls._extract_committed_rows(result) or 0
+        error_records = cls._extract_error_count(result)
         if error_records == 0 and (result.get("error") or result.get("status") == "error"):
             error_records = 1
 
@@ -293,12 +320,17 @@ class PITTask(BaseTask):
         except (TypeError, ValueError):
             return 0
 
+    @classmethod
+    def _extract_row_count(cls, result: Dict[str, Any]) -> int:
+        committed = cls._extract_committed_rows(result)
+        return committed if committed is not None else cls._coerce_count(result.get("processed_records"))
+
     @staticmethod
-    def _extract_row_count(result: Dict[str, Any]) -> int:
+    def _extract_committed_rows(result: Dict[str, Any]) -> Optional[int]:
         candidates: Iterable[str] = (
+            "committed_rows",
             "backfilled_records",
             "updated_records",
-            "processed_records",
             "success_records",
             "inserted_records",
             "row_count",
@@ -309,7 +341,7 @@ class PITTask(BaseTask):
             if value is None:
                 continue
             try:
-                return int(value)
+                return max(int(value), 0)
             except (TypeError, ValueError):
                 continue
-        return 0
+        return None

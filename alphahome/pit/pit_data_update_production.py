@@ -384,6 +384,7 @@ class PITDataUpdateCoordinator:
         return result.get("status") in {
             "error",
             "failed",
+            "partial_success",
             "cancelled",
             "skipped_dependency_failed",
         }

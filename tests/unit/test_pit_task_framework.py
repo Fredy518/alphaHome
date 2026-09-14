@@ -82,6 +82,51 @@ class _FakeMonthlyPITTask(PITTask):
     )
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "raw, status, committed, attempted, errors",
+    [
+        ({"updated_records": 0, "error_records": 12}, "error", 0, 12, 12),
+        ({"updated_records": 3, "error_records": "2", "status": "success"}, "partial_success", 3, 5, 2),
+        ({"processed_records": 12, "errors": 12}, "error", None, 12, 12),
+        ({"processed_records": 10, "success_records": 4, "errors": 6}, "partial_success", 4, 10, 6),
+        ({"updated_records": 0, "errors": ["batch failed"]}, "error", 0, 1, 1),
+        ({"updated_records": 0, "error_records": 0}, "success", 0, 0, 0),
+        ({"rows": 0, "status": "expected_no_data"}, "expected_no_data", 0, 0, 0),
+        ({"updated_records": 0, "error": "write failed"}, "error", 0, 0, 0),
+    ],
+)
+async def test_manager_errors_never_become_success(
+    monkeypatch, raw, status, committed, attempted, errors
+):
+    monkeypatch.setattr(_FakeManager, "incremental_update", lambda self, **kwargs: raw)
+    task = _FakePITTask(object(), update_type=UpdateTypes.SMART)
+
+    result = await task.execute()
+
+    assert result["status"] == status
+    assert result["committed_rows"] == committed
+    assert result["attempted_rows"] == attempted
+    assert result["error_records"] == errors
+    assert result["rows"] == (committed or 0)
+    assert result["result"] == raw
+    if errors:
+        assert str(errors) in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_manager_exception_returns_failure(monkeypatch):
+    def fail(self, **kwargs):
+        raise RuntimeError("test batch failure")
+
+    monkeypatch.setattr(_FakeManager, "incremental_update", fail)
+
+    result = await _FakePITTask(object(), update_type=UpdateTypes.SMART).execute()
+
+    assert result["status"] == "error"
+    assert result["error"] == "test batch failure"
+
+
 def test_pit_task_contract_serializes_manager_class_path():
     contract = _FakePITTask.contract
 

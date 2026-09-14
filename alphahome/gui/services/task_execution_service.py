@@ -500,7 +500,12 @@ async def run_tasks(
                         elif result_status == "no_data":
                             result_details = "没有获取到数据"
                         elif result_status == "partial_success":
-                            result_details = "部分数据保存，存在验证警告"
+                            reason = result.get("error") or result.get("message")
+                            result_details = (
+                                f"部分数据保存: {reason}"
+                                if reason
+                                else "部分数据保存，存在验证警告"
+                            )
                         else:
                             result_details = f"处理完成 (行数: {rows})"
                         if result_status == "skipped":
