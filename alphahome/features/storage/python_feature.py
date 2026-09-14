@@ -17,13 +17,14 @@ Python 计算特征基类
 import logging
 from abc import abstractmethod
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 import numpy as np
 import pandas as pd
 
 from .base_view import BaseFeatureView
 from .refresh_log import log_mv_refresh
+from .atomic import identifier, table_refresh_transaction
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +46,8 @@ class PythonFeatureTable(BaseFeatureView):
     incremental_days: int = 30  # 默认刷新最近 30 天
     date_column: str = "trade_date"  # 日期列名
     refresh_strategy: str = "incremental"  # 默认使用增量刷新
+    primary_keys: tuple[str, ...] = ()
+    allow_expected_no_data: bool = False
 
     # 标记这是 Python 计算的特征
     is_python_feature: bool = True
@@ -151,217 +154,108 @@ class PythonFeatureTable(BaseFeatureView):
 
         if actual_strategy == "full":
             return await self._full_refresh()
-        else:
+        if actual_strategy == "incremental":
             return await self._incremental_refresh()
+        raise ValueError(f"Unsupported Python feature refresh strategy: {actual_strategy}")
 
     async def _incremental_refresh(self) -> Dict[str, Any]:
-        """执行增量刷新。"""
-        import asyncpg
-
-        start_time = datetime.now()
-
-        # 计算日期范围
-        end_date = datetime.now().strftime("%Y%m%d")
-        start_date = (
-            datetime.now() - timedelta(days=self.incremental_days)
-        ).strftime("%Y%m%d")
-
-        self.logger.info(
-            f"开始增量刷新 {self.full_name}, 日期范围: {start_date} - {end_date}"
+        now = datetime.now()
+        return await self._refresh_window(
+            "incremental", (now - timedelta(days=self.incremental_days)).strftime("%Y%m%d"),
+            now.strftime("%Y%m%d"),
         )
 
-        try:
-            # 获取长超时连接
-            conn_str = self._db_manager.connection_string
-            conn = await asyncpg.connect(conn_str, command_timeout=7200)
-
-            try:
-                # Step 1: 删除旧数据
-                delete_sql = f"""
-                DELETE FROM {self.full_name}
-                WHERE {self.date_column} >= '{start_date}'
-                  AND {self.date_column} <= '{end_date}';
-                """
-                await conn.execute(delete_sql)
-
-                # Step 2: 计算新数据
-                df = await self.compute(start_date, end_date)
-
-                if df is not None and not df.empty:
-                    # Step 3: 插入新数据
-                    await self._insert_dataframe(conn, df)
-                    row_count = len(df)
-                else:
-                    row_count = 0
-
-            finally:
-                await conn.close()
-
-            # 记录刷新日志
-            duration = (datetime.now() - start_time).total_seconds()
-            await self._log_refresh(
-                strategy="incremental",
-                success=True,
-                duration=duration,
-                rows_affected=row_count,
-                date_range=f"{start_date}-{end_date}"
-            )
-
-            self.logger.info(
-                f"增量刷新 {self.full_name} 完成, "
-                f"新增: {row_count} 行, 耗时: {duration:.2f}s"
-            )
-
-            return {
-                "status": "success",
-                "view_name": self.view_name,
-                "view_schema": self._schema,
-                "full_name": self.full_name,
-                "row_count": row_count,
-                "duration_seconds": duration,
-                "refresh_strategy": "incremental",
-                "strategy": "incremental",
-                "date_range": f"{start_date}-{end_date}",
-            }
-
-        except Exception as e:
-            duration = (datetime.now() - start_time).total_seconds()
-            error_msg = f"{type(e).__name__}: {str(e)}"
-
-            await self._log_refresh(
-                strategy="incremental",
-                success=False,
-                duration=duration,
-                rows_affected=0,
-                date_range=f"{start_date}-{end_date}",
-                error=error_msg
-            )
-
-            self.logger.error(f"增量刷新 {self.full_name} 失败: {error_msg}")
-            raise
-
     async def _full_refresh(self) -> Dict[str, Any]:
-        """执行全量刷新。"""
+        return await self._refresh_window("full", "19000101", "20991231")
+
+    def _validate_frame(self, frame, start_date, end_date):
+        if not isinstance(frame, pd.DataFrame):
+            raise ValueError("Feature computation must return a DataFrame")
+        if frame.empty:
+            if not (self.allow_expected_no_data and frame.attrs.get("expected_no_data") is True
+                    and frame.attrs.get("reason")):
+                raise ValueError("Empty feature result lacks an expected_no_data contract")
+            return frame.copy(), "expected_no_data"
+        if frame.columns.duplicated().any():
+            raise ValueError("Duplicate feature output columns")
+        for column in frame.columns:
+            identifier(column)
+        if self.date_column not in frame:
+            raise ValueError("Feature date column missing")
+        frame = frame.copy()
+        dates = pd.to_datetime(frame[self.date_column], errors="coerce")
+        if dates.isna().any() or not dates.between(pd.Timestamp(start_date), pd.Timestamp(end_date)).all():
+            raise ValueError("Feature dates outside the replacement window")
+        frame[self.date_column] = dates.dt.date
+        keys = list(self.primary_keys)
+        if keys and (not set(keys).issubset(frame) or frame[keys].isna().any().any()
+                     or frame.duplicated(keys).any()):
+            raise ValueError("Invalid or duplicate feature business keys")
+        return frame, "success"
+
+    async def _refresh_window(self, strategy, start_date, end_date):
         import asyncpg
 
-        start_time = datetime.now()
-
-        self.logger.info(f"开始全量刷新 {self.full_name}")
-
+        started = datetime.now()
+        start = datetime.strptime(start_date, "%Y%m%d").date()
+        end = datetime.strptime(end_date, "%Y%m%d").date()
+        if strategy not in {"full", "incremental"} or start > end:
+            raise ValueError("Invalid feature replacement request")
+        target = f"{identifier(self._schema)}.{identifier(self.view_name)}"
+        date_column = identifier(self.date_column)
+        date_range = "all" if strategy == "full" else f"{start_date}-{end_date}"
+        connection = None
         try:
-            # 获取长超时连接
-            conn_str = self._db_manager.connection_string
-            conn = await asyncpg.connect(conn_str, command_timeout=7200)
-
-            try:
-                # Step 1: 清空表
-                truncate_sql = f"TRUNCATE TABLE {self.full_name};"
-                await conn.execute(truncate_sql)
-
-                # Step 2: 计算全量数据（使用一个很大的日期范围）
-                df = await self.compute("19000101", "20991231")
-
-                if df is not None and not df.empty:
-                    # Step 3: 插入数据
-                    await self._insert_dataframe(conn, df)
-                    row_count = len(df)
+            connection = await asyncpg.connect(self._db_manager.connection_string, command_timeout=7200)
+            # Hold the same target lock before computing: a slower earlier run
+            # must not overwrite a later run's already committed snapshot.
+            async with table_refresh_transaction(connection, self._schema, self.view_name):
+                frame, status = self._validate_frame(await self.compute(start_date, end_date), start, end)
+                if not frame.empty:
+                    await connection.execute(
+                        f"CREATE TEMP TABLE feature_stage (LIKE {target} INCLUDING DEFAULTS INCLUDING CONSTRAINTS) ON COMMIT DROP"
+                    )
+                    await self._insert_dataframe(connection, frame, table_name="feature_stage", schema_name="pg_temp")
+                    staged = await connection.fetchval("SELECT COUNT(*) FROM pg_temp.feature_stage")
+                    if staged != len(frame):
+                        raise ValueError("Feature staging row count differs from computed result")
+                if strategy == "full":
+                    await connection.execute(f"DELETE FROM {target}")
                 else:
-                    row_count = 0
-
-            finally:
-                await conn.close()
-
-            # 记录刷新日志
-            duration = (datetime.now() - start_time).total_seconds()
-            await self._log_refresh(
-                strategy="full",
-                success=True,
-                duration=duration,
-                rows_affected=row_count,
-                date_range="all"
-            )
-
-            self.logger.info(
-                f"全量刷新 {self.full_name} 完成, "
-                f"总行数: {row_count}, 耗时: {duration:.2f}s"
-            )
-
-            return {
-                "status": "success",
-                "view_name": self.view_name,
-                "view_schema": self._schema,
-                "full_name": self.full_name,
-                "row_count": row_count,
-                "duration_seconds": duration,
-                "refresh_strategy": "full",
-                "strategy": "full",
-            }
-
-        except Exception as e:
-            duration = (datetime.now() - start_time).total_seconds()
-            error_msg = f"{type(e).__name__}: {str(e)}"
-
-            await self._log_refresh(
-                strategy="full",
-                success=False,
-                duration=duration,
-                rows_affected=0,
-                date_range="all",
-                error=error_msg
-            )
-
-            self.logger.error(f"全量刷新 {self.full_name} 失败: {error_msg}")
+                    await connection.execute(f"DELETE FROM {target} WHERE {date_column} BETWEEN $1 AND $2", start, end)
+                if not frame.empty:
+                    columns = ", ".join(identifier(column) for column in frame.columns)
+                    await connection.execute(f"INSERT INTO {target} ({columns}) SELECT {columns} FROM pg_temp.feature_stage")
+            row_count = len(frame)
+        except Exception as exc:
+            await self._log_refresh(strategy, False, (datetime.now()-started).total_seconds(), date_range=date_range, error=f"{type(exc).__name__}: {exc}")
             raise
+        finally:
+            if connection is not None:
+                await connection.close()
+        duration = (datetime.now()-started).total_seconds()
+        await self._log_refresh(strategy, True, duration, rows_affected=row_count, date_range=date_range)
+        return {
+            "status": status, "view_name": self.view_name, "view_schema": self._schema,
+            "full_name": self.full_name, "row_count": row_count, "committed_rows": row_count,
+            "duration_seconds": duration, "refresh_strategy": strategy, "strategy": strategy,
+            "date_range": date_range,
+        }
 
-    async def _insert_dataframe(self, conn, df: pd.DataFrame) -> None:
-        """
-        将 DataFrame 插入到表中。
-
-        Args:
-            conn: asyncpg 连接
-            df: 要插入的数据
-        """
-        if df.empty:
-            return
-
-        # 转换类型以兼容 asyncpg
-        df = df.copy()
-        for col in df.columns:
-            # 将 numpy datetime64 转换为 Python datetime
-            if df[col].dtype == 'datetime64[ns]':
-                df[col] = df[col].dt.to_pydatetime()
-            # 将 numpy 类型转换为 Python 原生类型
-            elif hasattr(df[col].dtype, 'name') and 'int' in df[col].dtype.name:
-                df[col] = df[col].astype(object).where(df[col].notna(), None)
-            elif hasattr(df[col].dtype, 'name') and 'float' in df[col].dtype.name:
-                df[col] = df[col].astype(object).where(df[col].notna(), None)
-
-        # 获取列名
-        columns = list(df.columns)
-        col_str = ", ".join([f'"{c}"' for c in columns])
-        placeholders = ", ".join([f"${i+1}" for i in range(len(columns))])
-
-        insert_sql = f"""
-        INSERT INTO {self.full_name} ({col_str})
-        VALUES ({placeholders})
-        """
-
-        # 转换为 records 列表
-        data = []
-        for _, row in df.iterrows():
-            # 将每行转换为 tuple，确保类型正确
-            row_data = []
-            for val in row:
-                if pd.isna(val):
-                    row_data.append(None)
-                elif isinstance(val, np.generic):
-                    row_data.append(val.item())
-                else:
-                    row_data.append(val)
-            data.append(tuple(row_data))
-
-        # 批量插入
-        await conn.executemany(insert_sql, data)
+    async def _insert_dataframe(self, conn, df, *, table_name=None, schema_name=None):
+        # Bound conversion memory; COPY also performs PostgreSQL type validation
+        # before the live snapshot is touched.
+        for offset in range(0, len(df), 10000):
+            records = []
+            for row in df.iloc[offset:offset+10000].itertuples(index=False, name=None):
+                records.append(tuple(
+                    None if pd.isna(value) else value.item() if isinstance(value, np.generic) else value
+                    for value in row
+                ))
+            await conn.copy_records_to_table(
+                table_name or self.view_name, schema_name=schema_name or self._schema,
+                columns=list(df.columns), records=records,
+            )
 
     async def _log_refresh(
         self,

@@ -28,6 +28,7 @@ class StockSmaDailyFeature(PythonFeatureTable):
     refresh_strategy = "incremental"
     incremental_days = 30
     date_column = "trade_date"
+    primary_keys = ("ts_code", "trade_date")
 
     def get_create_sql(self) -> str:
         """返回创建表的 SQL。"""
