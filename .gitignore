@@ -38,6 +38,8 @@ import_dump.txt
 # Additional rules
 logs/
 dist/ 
+build/
+*.egg-info/
 research/
 .hypothesis/
 .kiro/

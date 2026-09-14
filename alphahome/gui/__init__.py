@@ -70,9 +70,16 @@ run_gui()
 ```
 
 ## 依赖要求
-- Python 3.8+
+- Python 3.10+
 - tkinter (Python标准库)
 - async-tkinter-loop (异步事件循环支持)
 """
 
-from . import controller, main_window
+def __getattr__(name):
+    """Keep service imports usable without loading the Tk application."""
+    if name in {"controller", "main_window"}:
+        from importlib import import_module
+        module = import_module(f"{__name__}.{name}")
+        globals()[name] = module
+        return module
+    raise AttributeError(name)

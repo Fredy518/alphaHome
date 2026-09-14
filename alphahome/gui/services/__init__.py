@@ -11,14 +11,6 @@ GUI服务模块
 - pit_service: PIT任务、审计、覆盖率和单股诊断
 """
 
-# 导入重组后的服务模块
-from . import task_registry_service
-from . import task_execution_service
-from . import configuration_service
-from . import feature_service
-from . import factor_service
-from . import pit_service
-
 __all__ = [
     "task_registry_service",
     "task_execution_service",
@@ -27,3 +19,12 @@ __all__ = [
     "factor_service",
     "pit_service",
 ]
+
+
+def __getattr__(name):
+    if name in __all__:
+        from importlib import import_module
+        module = import_module(f"{__name__}.{name}")
+        globals()[name] = module
+        return module
+    raise AttributeError(name)

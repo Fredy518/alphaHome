@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=61.0"]
+requires = ["setuptools==80.9.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -26,15 +26,14 @@ dependencies = [
     "beautifulsoup4>=4.9.1",
     "psycopg2-binary>=2.9.9",
     "matplotlib>=3.9.0",
-    "numpy>=1.26.0",
+    "numpy>=1.26.0,<2.4",
     "openpyxl>=3.1.0",
-    "pandas>=2.2.0",
+    "pandas>=2.2.0,<3",
     "python-dotenv>=1.0.0",
     "requests>=2.22.0",
     "tkcalendar>=1.6.0",
     "tqdm>=4.66.0",
     "appdirs>=1.4.4",
-    "zipline-reloaded>=3.0.0",
     "tushare>=1.4.0",  # 启用 Tushare 依赖
     "pytdx>=1.72",     # 启用 pytdx 依赖
     "python-dateutil>=2.8.0",  # 用于日期计算
@@ -53,6 +52,9 @@ alphahome = "alphahome.gui.main_window:run_gui" # 当用户安装后，可以运
 # refresh-materialized-view, ah, alphahome-cli
 
 [project.optional-dependencies]
+backtest = [
+    "zipline-reloaded>=3.0.0",
+]
 akshare = [
     "akshare>=1.15.0",
 ]
@@ -60,16 +62,18 @@ tinysoft = [
     "tspytsl>=1.9",  # 安装包名为 tspytsl，导入名为 pyTSL；仅 pytsl 后端需要
 ]
 research = [
+    "PyYAML>=6.0.2",
     "jupyterlab>=4.0.0",
     "papermill>=2.4.0",
     "nbconvert>=7.16.0",
 ]
 test = [
+    "PyYAML>=6.0.2",
     "black>=24.10.0",
     "hypothesis>=6.0.0",
     "isort>=5.13.2",
     "pytest>=7.0.0",
-    "pytest-asyncio>=0.21.0",
+    "pytest-asyncio>=0.26.0",
     "time-machine>=3.5.0",
 ]
 
@@ -122,6 +126,7 @@ markers = [
     "requires_api: Tests that require external API access"
 ]
 asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 
 [tool.coverage.run]
 source = ["alphahome"]
