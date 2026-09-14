@@ -602,6 +602,144 @@ async def test_index_fttm_denominator_counts_configured_indices_and_all_a():
     assert count == 14
 
 
+def _etf_audit_contract(domain, denominator, output_table, entity_keys):
+    return PITTaskContract(
+        task_name=f"pit_{domain}",
+        domain=domain,
+        source_tables=("rawdata.index_weight",),
+        output_table=output_table,
+        pit_time_key="obs_date",
+        primary_keys=("obs_date", *entity_keys),
+        dependencies=(),
+        supported_modes=("audit_only",),
+        manager_class=_FakeManager,
+        audit_entity_keys=entity_keys,
+        audit_denominator=denominator,
+    )
+
+
+@pytest.mark.asyncio
+async def test_etf_member_denominator_uses_selected_source_member_counts():
+    class CaptureDB:
+        def __init__(self):
+            self.query = ""
+            self.args = ()
+
+        async def fetch_one(self, query, *args):
+            self.query, self.args = query, args
+            if "information_schema.tables" in query:
+                return {"exists": True}
+            return {"cnt": 321}
+
+    contract = _etf_audit_contract(
+        "etf_index_members",
+        "etf_index_member_source_pairs",
+        "pit.pit_etf_index_members_monthly",
+        ("index_code", "ts_code", "method_version"),
+    )
+    db = CaptureDB()
+
+    count = await PITAuditService(db)._denominator_count(contract, date(2026, 8, 31))
+
+    assert count == 321
+    assert "MAX(source_member_count)" in db.query
+    assert db.args[0] == date(2026, 8, 31)
+    assert db.args[1] == "official_then_disclosed_etf_holdings_v1"
+
+
+@pytest.mark.asyncio
+async def test_etf_fapi_denominator_uses_matching_member_universes():
+    class CaptureDB:
+        def __init__(self):
+            self.query = ""
+
+        async def fetch_one(self, query, *args):
+            self.query = query
+            return {"cnt": 87}
+
+    contract = _etf_audit_contract(
+        "etf_index_fapi",
+        "etf_index_member_source_pairs",
+        "pit.pit_etf_index_fapi_monthly",
+        ("index_code", "benchmark_code", "method_version"),
+    )
+    db = CaptureDB()
+
+    count = await PITAuditService(db)._denominator_count(contract, date(2026, 8, 31))
+
+    assert count == 87
+    assert "COUNT(DISTINCT index_code)" in db.query
+
+
+@pytest.mark.asyncio
+async def test_proxy_denominators_use_registry_and_valid_official_a_share_members():
+    class CaptureDB:
+        def __init__(self):
+            self.query = ""
+            self.args = ()
+
+        async def fetch_one(self, query, *args):
+            self.query, self.args = query, args
+            if "information_schema.tables" in query:
+                return {"exists": True}
+            return {"cnt": 269}
+
+    index_contract = _etf_audit_contract(
+        "etf_index_a_share_proxy_fapi",
+        "registered_cross_market_a_share_proxy_indices",
+        "pit.pit_etf_index_fapi_monthly",
+        ("index_code", "benchmark_code", "method_version"),
+    )
+    member_contract = _etf_audit_contract(
+        "etf_index_a_share_proxy_members",
+        "registered_cross_market_a_share_proxy_members",
+        "pit.pit_etf_index_members_monthly",
+        ("index_code", "ts_code", "method_version"),
+    )
+    db = CaptureDB()
+    service = PITAuditService(db)
+
+    assert await service._denominator_count(index_contract, date(2026, 8, 31)) == 1
+    assert await service._denominator_count(member_contract, date(2026, 8, 31)) == 269
+    assert "valid_snapshots" in db.query
+    assert "rawdata.index_weight" in db.query
+    assert db.args[1] == ["931238.CSI"]
+
+
+def test_shared_etf_tables_are_filtered_by_task_method_version():
+    contracts = (
+        _etf_audit_contract(
+            "etf_index_members",
+            "etf_index_member_source_pairs",
+            "pit.pit_etf_index_members_monthly",
+            ("index_code", "ts_code", "method_version"),
+        ),
+        _etf_audit_contract(
+            "etf_index_a_share_proxy_members",
+            "registered_cross_market_a_share_proxy_members",
+            "pit.pit_etf_index_members_monthly",
+            ("index_code", "ts_code", "method_version"),
+        ),
+        _etf_audit_contract(
+            "etf_index_fapi",
+            "etf_index_member_source_pairs",
+            "pit.pit_etf_index_fapi_monthly",
+            ("index_code", "benchmark_code", "method_version"),
+        ),
+        _etf_audit_contract(
+            "etf_index_a_share_proxy_fapi",
+            "registered_cross_market_a_share_proxy_indices",
+            "pit.pit_etf_index_fapi_monthly",
+            ("index_code", "benchmark_code", "method_version"),
+        ),
+    )
+
+    filters = [PITAuditService._task_scope_filter(contract, "t") for contract in contracts]
+
+    assert len(set(filters)) == 4
+    assert all("t.method_version" in value for value in filters)
+
+
 class _IndustryFAPIAuditDB:
     def __init__(self, valued_count: int):
         self.valued_count = valued_count

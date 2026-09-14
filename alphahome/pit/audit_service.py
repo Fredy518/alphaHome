@@ -391,11 +391,14 @@ class PITAuditService:
         columns = await self._get_columns(contract.output_table)
         time_key = contract.pit_time_key if contract.pit_time_key in columns else None
         latest_expr = f"MAX({_quote_identifier(time_key)})::date" if time_key else "NULL::date"
+        scope_filter = self._task_scope_filter(contract, "t")
         row = await self.db.fetch_one(
             f"""
             SELECT COUNT(*)::bigint AS row_count,
                    {latest_expr} AS latest_pit_time
-            FROM {relation}
+            FROM {relation} t
+            WHERE TRUE
+              {scope_filter}
             """
         )
         row_count = int(row["row_count"] or 0) if row else 0
@@ -486,6 +489,7 @@ class PITAuditService:
             f"t.{_quote_identifier(value)} IS NOT NULL" for value in available_entity_keys
         )
         listed_join = ""
+        scope_filter = self._task_scope_filter(contract, "t")
         extra_filter = ""
         if contract.audit_denominator == "current_listed_stocks" and "ts_code" in available_entity_keys:
             listed_join = await self._listed_join_sql("t")
@@ -517,6 +521,7 @@ class PITAuditService:
                        MAX(t.{key})::date AS coverage_period
                 FROM {relation} t
                 WHERE t.{key} IS NOT NULL
+                  {scope_filter}
                   {period_filter}
                 """,
                 *period_args,
@@ -533,6 +538,7 @@ class PITAuditService:
                 {listed_join}
                 WHERE t.{key} = $1
                   AND {entity_not_null}
+                  {scope_filter}
                   {extra_filter}
                 """,
                 coverage_period,
@@ -633,8 +639,147 @@ class PITAuditService:
                 coverage_period,
             )
             return int(row["cnt"] or 0) if row else 0
+        if denominator == "etf_index_member_source_pairs":
+            if not coverage_period:
+                return 0
+            from alphahome.pit.calculators.etf_index_members_calculator import (
+                ETFIndexMembersCalculator,
+            )
+
+            if contract.domain == "etf_index_members":
+                if not await self._relation_exists("pit.pit_etf_index_members_monthly"):
+                    return 0
+                row = await self.db.fetch_one(
+                    """
+                    WITH selected_sources AS (
+                        SELECT index_code,
+                               MAX(source_member_count)::bigint AS member_count
+                        FROM pit.pit_etf_index_members_monthly
+                        WHERE obs_date = $1
+                          AND method_version = $2
+                        GROUP BY index_code
+                    )
+                    SELECT COALESCE(SUM(member_count), 0)::bigint AS cnt
+                    FROM selected_sources
+                    """,
+                    coverage_period,
+                    ETFIndexMembersCalculator.METHOD_VERSION,
+                )
+            else:
+                row = await self.db.fetch_one(
+                    """
+                    SELECT COUNT(DISTINCT index_code)::bigint AS cnt
+                    FROM pit.pit_etf_index_members_monthly
+                    WHERE obs_date = $1
+                      AND method_version = $2
+                    """,
+                    coverage_period,
+                    ETFIndexMembersCalculator.METHOD_VERSION,
+                )
+            return int(row["cnt"] or 0) if row else 0
+        if denominator == "registered_cross_market_a_share_proxy_indices":
+            from alphahome.pit.pit_etf_index_a_share_proxy_members_manager import (
+                PITETFIndexAShareProxyMembersMonthlyManager,
+            )
+
+            return len(PITETFIndexAShareProxyMembersMonthlyManager.DEFAULT_PROXY_INDEX_CODES)
+        if denominator == "registered_cross_market_a_share_proxy_members":
+            if not coverage_period or not await self._relation_exists("rawdata.index_weight"):
+                return 0
+            from alphahome.pit.calculators.etf_index_a_share_proxy_members_calculator import (
+                ETFIndexAShareProxyMembersCalculator,
+            )
+            from alphahome.pit.pit_etf_index_a_share_proxy_members_manager import (
+                PITETFIndexAShareProxyMembersMonthlyManager,
+            )
+
+            threshold = ETFIndexAShareProxyMembersCalculator().threshold
+            row = await self.db.fetch_one(
+                """
+                WITH normalized AS (
+                    SELECT index_code,
+                           trade_date::date AS trade_date,
+                           CASE
+                               WHEN upper(btrim(con_code)) ~ '^[0-9]+\\.HK$'
+                                   THEN lpad(ltrim(split_part(upper(btrim(con_code)), '.', 1), '0'), 5, '0') || '.HK'
+                               WHEN upper(btrim(con_code)) ~ '^[0-9]+\\.(SH|SZ)$'
+                                   THEN lpad(ltrim(split_part(upper(btrim(con_code)), '.', 1), '0'), 6, '0') || '.' || split_part(upper(btrim(con_code)), '.', 2)
+                               ELSE upper(btrim(con_code))
+                           END AS ts_code,
+                           MAX(weight)::double precision AS raw_weight
+                    FROM rawdata.index_weight
+                    WHERE index_code = ANY($2::text[])
+                      AND trade_date <= $1
+                      AND trade_date >= $1 - $3::integer
+                      AND con_code IS NOT NULL
+                      AND weight IS NOT NULL
+                      AND weight > 0
+                    GROUP BY index_code, trade_date, 3
+                ),
+                valid_snapshots AS (
+                    SELECT index_code, trade_date
+                    FROM normalized
+                    GROUP BY index_code, trade_date
+                    HAVING COUNT(*) >= $4
+                       AND SUM(raw_weight) BETWEEN $5 AND $6
+                ),
+                selected AS (
+                    SELECT index_code, MAX(trade_date) AS trade_date
+                    FROM valid_snapshots
+                    GROUP BY index_code
+                )
+                SELECT COUNT(DISTINCT (n.index_code, n.ts_code))::bigint AS cnt
+                FROM normalized n
+                JOIN selected s USING (index_code, trade_date)
+                WHERE n.ts_code ~ '\\.(SH|SZ)$'
+                """,
+                coverage_period,
+                list(PITETFIndexAShareProxyMembersMonthlyManager.DEFAULT_PROXY_INDEX_CODES),
+                threshold.official_max_staleness_days,
+                threshold.official_min_members,
+                threshold.official_min_weight_sum,
+                threshold.official_max_weight_sum,
+            )
+            return int(row["cnt"] or 0) if row else 0
         logger.warning("未知PIT审计分母: %s", denominator)
         return 0
+
+    @staticmethod
+    def _task_method_version(contract: PITTaskContract) -> Optional[str]:
+        if contract.domain == "etf_index_members":
+            from alphahome.pit.calculators.etf_index_members_calculator import (
+                ETFIndexMembersCalculator,
+            )
+
+            return ETFIndexMembersCalculator.METHOD_VERSION
+        if contract.domain == "etf_index_a_share_proxy_members":
+            from alphahome.pit.calculators.etf_index_a_share_proxy_members_calculator import (
+                ETFIndexAShareProxyMembersCalculator,
+            )
+
+            return ETFIndexAShareProxyMembersCalculator.METHOD_VERSION
+        if contract.domain == "etf_index_fapi":
+            from alphahome.pit.calculators.etf_index_fapi_calculator import (
+                ETFIndexFAPICalculator,
+            )
+
+            return ETFIndexFAPICalculator.METHOD_VERSION
+        if contract.domain == "etf_index_a_share_proxy_fapi":
+            from alphahome.pit.calculators.etf_index_a_share_proxy_fapi_calculator import (
+                ETFIndexAShareProxyFAPICalculator,
+            )
+
+            return ETFIndexAShareProxyFAPICalculator.METHOD_VERSION
+        return None
+
+    @classmethod
+    def _task_scope_filter(cls, contract: PITTaskContract, alias: str) -> str:
+        method_version = cls._task_method_version(contract)
+        if method_version is None:
+            return ""
+        trusted_literal = method_version.replace("'", "''")
+        prefix = f"{alias}." if alias else ""
+        return f"AND {prefix}method_version = '{trusted_literal}'"
 
     async def _domain_audit_details(
         self, contract: PITTaskContract, coverage_period: Any
