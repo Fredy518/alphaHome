@@ -45,4 +45,4 @@
 - 源站全历史与现有库重叠 4,287 行，点位与涨跌幅的最大绝对误差均小于 0.0001（库字段为四位小数）。新版全历史共 4,289 行，覆盖 2009-01-09 至 2026-09-04。
 - 对 HTTP/非 JSON/非成功响应、日期与点位错位、非法数值及缺少基期的截断历史报错，避免将接口异常当作成功空数据。
 - 验证：`python -X utf8 -m pytest tests/unit/test_akshare_cci_source.py tests/unit/test_akshare_macro_tasks.py tests/unit/test_smart_refresh_interval_tasks.py -q` 退出码 0，45 passed。
-- 正式复跑：2026-09-05 08:26（Asia/Shanghai），通过 GUI 使用的 `run_tasks` 服务以“智能增量”执行本任务，状态 `success`，回写 13 行（净新增 2 行）。库内共 4,289 行，最新日期 2026-09-04，CCI 373.4566、涨跌幅 0.6477%，日期/点位/涨跌幅无空值。执行摘要保存于 `tmp/cci_smart_verification_20260905.json`。
+- 正式复跑：2026-09-05 08:26（Asia/Shanghai），通过 GUI 使用的 `run_tasks` 服务以“智能增量”执行本任务，状态 `success`，回写 13 行（净新增 2 行）。库内共 4,289 行，最新日期 2026-09-04，CCI 373.4566、涨跌幅 0.6477%，日期/点位/涨跌幅无空值。执行摘要保存于 `docs/tasks/evidence/cci_smart_verification_20260905.json`。

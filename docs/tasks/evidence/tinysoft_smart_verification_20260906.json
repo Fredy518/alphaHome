@@ -1,0 +1,55 @@
+{
+  "started_at": "2026-09-06 09:38:20.602389+08:00",
+  "checked_at": "2026-09-06 09:57:49.579148+08:00",
+  "results": [
+    {
+      "status": {
+        "task_name": "tinysoft_stock_hsgt_top10",
+        "status": "success",
+        "update_time": "2026-09-06 01:38:22.390204+00:00",
+        "details": "处理完成 (行数: 880)"
+      },
+      "coverage": [
+        {
+          "channel_code": "HG000002",
+          "rows": 940,
+          "latest_date": "2026-09-04",
+          "last_write": "2026-09-04 23:03:03.727301"
+        },
+        {
+          "channel_code": "HG000001",
+          "rows": 27050,
+          "latest_date": "2026-09-04",
+          "last_write": "2026-09-04 23:03:03.727301"
+        },
+        {
+          "channel_code": "HG000004",
+          "rows": 940,
+          "latest_date": "2026-09-04",
+          "last_write": "2026-09-04 23:03:03.727301"
+        },
+        {
+          "channel_code": "HG000003",
+          "rows": 940,
+          "latest_date": "2026-09-04",
+          "last_write": "2026-09-04 23:03:03.727301"
+        }
+      ]
+    },
+    {
+      "status": {
+        "task_name": "tinysoft_fund_stock_holding_detail",
+        "status": "success",
+        "update_time": "2026-09-06 01:57:42.050924+00:00",
+        "details": "处理完成 (行数: 796876)"
+      },
+      "coverage": [
+        {
+          "rows": 9449995,
+          "latest_report_date": "2026-06-30",
+          "last_write": "2026-09-06 09:48:34.846019"
+        }
+      ]
+    }
+  ]
+}
