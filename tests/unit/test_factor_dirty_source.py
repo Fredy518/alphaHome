@@ -79,6 +79,7 @@ def test_plan_failure_never_starts_run_or_persists_watermarks(monkeypatch, contr
     coordinator = FactorCoordinator(DirtyDB(error=TimeoutError("test timeout")))
     governance = SimpleNamespace(
         ensure_schema=Mock(),
+        schema_issues=lambda: [],
         latest_source_watermarks=lambda name: {name: {SOURCE: WATERMARK}},
         start_run=Mock(),
         finish_run=Mock(),

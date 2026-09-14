@@ -14,6 +14,37 @@ from psycopg2.extras import Json
 
 DDL_PATH = Path(__file__).parent / "database" / "create_factor_governance_tables.sql"
 
+# Existing installations have no migration-version ledger. Check the columns
+# consumed by this store without inventing or writing a version on a preview.
+SCHEMA_COLUMNS = {
+    "public.task_status": "id task_name status update_time details created_at".split(),
+    "factors.factor_run": (
+        "run_id task_names run_mode status requested_start_date requested_end_date "
+        "effective_cutoff_date formula_versions config_hash source_watermarks "
+        "details_json started_at finished_at"
+    ).split(),
+    "factors.factor_run_date": (
+        "run_id task_name calc_date status input_count output_count coverage_rate "
+        "output_checksum duration_ms is_current details_json created_at"
+    ).split(),
+    "factors.factor_audit_snapshot": (
+        "snapshot_id snapshot_time task_name output_table expected_latest_date "
+        "actual_latest_date first_calc_date row_count distinct_date_count "
+        "latest_date_row_count coverage_rate missing_date_count nonstandard_date_count "
+        "dependency_status formula_version config_hash status details_json"
+    ).split(),
+    "factors.factor_repair_manifest": (
+        "repair_id status source_cutoff_at effective_cutoff_date apply_requested "
+        "details_json started_at finished_at"
+    ).split(),
+    "factors.factor_repair_date": (
+        "repair_id task_name calc_date action old_row_count old_checksum new_row_count "
+        "new_checksum status details_json updated_at"
+    ).split(),
+}
+
+MIGRATION_HINT = "请由维护者显式执行 python -m alphahome.factors schema --apply"
+
 
 def json_ready(value: Any) -> Any:
     if isinstance(value, (date, datetime)):
@@ -47,7 +78,37 @@ class FactorGovernanceStore:
             raise TypeError("FactorGovernanceStore需要同步DBManager")
         self.db_manager = db_manager
 
+    def schema_issues(self) -> list[str]:
+        """Read the catalog only; this is a column contract, not a full DDL audit."""
+        rows = self.db_manager.fetch_sync(
+            """
+            SELECT n.nspname AS table_schema, c.relname AS table_name,
+                   a.attname AS column_name
+            FROM pg_catalog.pg_class c
+            JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+            JOIN pg_catalog.pg_attribute a ON a.attrelid = c.oid
+            WHERE c.relkind IN ('r', 'p') AND a.attnum > 0 AND NOT a.attisdropped
+              AND (n.nspname || '.' || c.relname) = ANY(%s)
+            """,
+            (list(SCHEMA_COLUMNS),),
+        )
+        existing: dict[str, set[str]] = {}
+        for row in rows:
+            table = f"{row['table_schema']}.{row['table_name']}"
+            existing.setdefault(table, set()).add(row["column_name"])
+        issues = []
+        for table, columns in SCHEMA_COLUMNS.items():
+            if table not in existing:
+                issues.append(f"missing_relation:{table}")
+            else:
+                issues.extend(
+                    f"missing_column:{table}.{column}"
+                    for column in columns if column not in existing[table]
+                )
+        return issues
+
     def ensure_schema(self) -> None:
+        """Explicit maintenance operation; never called by plan or start_run."""
         sql = DDL_PATH.read_text(encoding="utf-8")
         connection = self.db_manager._get_sync_connection()
         try:
@@ -71,7 +132,6 @@ class FactorGovernanceStore:
         source_watermarks: Optional[Mapping[str, Any]] = None,
         details: Optional[Mapping[str, Any]] = None,
     ) -> UUID:
-        self.ensure_schema()
         run_id = uuid4()
         task_list = list(task_names)
         config_payload = dict(config or {})

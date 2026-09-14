@@ -36,8 +36,19 @@ lock 内 COPY 到临时 staging 表，并在一个事务中替换正式日期快
 
 ## CLI
 
+`run --dry-run`、`FactorCoordinator.plan` 和 GUI 因子预检仅执行读取；参数校验在
+数据库 I/O 前完成。治理表或所需列缺失时返回 `migration_required`，普通 `run`
+也不会自动建表或写入运行账本。现有库没有迁移版本账本，此处只检查治理表列契约，
+不替代列类型、约束、索引的完整结构审计。
+
 ```powershell
-# 智能预检；不写业务表
+# 只读检查治理表结构
+python -m alphahome.factors schema
+
+# 显式维护操作：执行已有治理表 DDL；不会自动修复已有表的结构漂移
+python -m alphahome.factors schema --apply
+
+# 智能预检；不执行 DDL，也不写业务表或治理表
 python -m alphahome.factors run --tasks p g --mode smart --dry-run
 
 # 指定日期回补（G 会自动先运行 P）

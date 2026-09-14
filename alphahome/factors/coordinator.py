@@ -15,7 +15,7 @@ from alphahome.common.db_manager import DBManager
 
 from .base import FactorTaskContract
 from .date_policy import FACTOR_TIMEZONE, FactorDatePolicy, coerce_date
-from .governance import FactorGovernanceStore, json_ready
+from .governance import FactorGovernanceStore, MIGRATION_HINT, json_ready
 from .persistence import FactorSnapshotWriter
 from .repository import FactorRepository
 
@@ -138,7 +138,6 @@ class FactorCoordinator:
         source_cutoff: datetime | None = None,
         expand_dependencies: bool = True,
     ) -> FactorRunPlan:
-        self.governance.ensure_schema()
         if date_range is not None:
             if len(date_range) != 2:
                 raise ValueError("date_range必须是(start_date, end_date)")
@@ -160,6 +159,8 @@ class FactorCoordinator:
         requested_start = coerce_date(start_date) if start_date else None
         if requested_start and requested_start > effective_end:
             raise ValueError("start_date must be <= end_date")
+        if mode == "manual" and requested_start is None:
+            raise ValueError("manual模式必须提供start_date")
 
         names = (
             self.expand_dependencies(task_names)
@@ -167,6 +168,18 @@ class FactorCoordinator:
             else list(dict.fromkeys(task_names))
         )
         contracts = self.contracts()
+        if not names:
+            raise ValueError("至少需要一个因子任务")
+        unknown = sorted(set(names) - set(contracts))
+        if unknown:
+            raise ValueError(f"未注册的因子任务: {unknown}")
+
+        schema_issues = self.governance.schema_issues()
+        if schema_issues:
+            return FactorRunPlan(
+                names, mode, effective_end, [], status="migration_required",
+                message="; ".join(schema_issues) + "; " + MIGRATION_HINT,
+            )
         task_plans: List[FactorTaskPlan] = []
         dates_by_task: Dict[str, List[date]] = {}
 
@@ -325,6 +338,17 @@ class FactorCoordinator:
             source_cutoff=source_cutoff,
             expand_dependencies=expand_dependencies,
         )
+        if plan.status == "migration_required":
+            return FactorRunResult(
+                run_id=None,
+                status=plan.status,
+                mode=plan.mode,
+                task_names=plan.task_names,
+                effective_cutoff_date=plan.effective_cutoff_date.isoformat(),
+                planned_date_count=0,
+                message=plan.message,
+                details={"plan": plan.to_dict(), "tasks": {}},
+            )
         contracts = self.contracts()
         formula_versions = {
             name: contracts[name].formula_version for name in plan.task_names

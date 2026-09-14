@@ -5,8 +5,8 @@ from alphahome.factors.date_policy import FactorDatePolicy
 
 
 class _Governance:
-    def ensure_schema(self):
-        return None
+    def schema_issues(self):
+        return []
 
 
 class _Repository:

@@ -12,6 +12,7 @@ from alphahome.common.db_manager import DBManager
 
 from .audit_service import FactorAuditService
 from .coordinator import FactorCoordinator
+from .governance import FactorGovernanceStore, MIGRATION_HINT
 from .repair import FactorRepairService
 
 
@@ -23,6 +24,9 @@ def _task_names(values: Iterable[str]) -> List[str]:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="python -m alphahome.factors")
     subparsers = parser.add_subparsers(dest="command", required=True)
+
+    schema = subparsers.add_parser("schema", help="只读检查因子治理结构；显式--apply建表")
+    schema.add_argument("--apply", action="store_true", help="执行治理表DDL（维护操作）")
 
     run = subparsers.add_parser("run", help="运行或预览P/G因子任务")
     run.add_argument("--tasks", nargs="+", default=["p", "g"])
@@ -53,6 +57,22 @@ def main(argv: Optional[List[str]] = None) -> int:
     db_url = ConfigManager().get_database_url()
     if not db_url:
         raise SystemExit("数据库连接未配置")
+    if args.command == "schema":
+        db = DBManager(db_url, mode="sync")
+        try:
+            store = FactorGovernanceStore(db)
+            if args.apply:
+                store.ensure_schema()
+            issues = store.schema_issues()
+            _print_json({
+                "status": "migration_required" if issues else "ready",
+                "applied": args.apply,
+                "issues": issues,
+                "message": MIGRATION_HINT if issues else "治理表列契约检查通过",
+            })
+            return 2 if issues else 0
+        finally:
+            db.close_sync()
     if args.command == "run":
         db = DBManager(db_url, mode="sync")
         try:

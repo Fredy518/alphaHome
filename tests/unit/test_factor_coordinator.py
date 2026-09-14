@@ -45,7 +45,7 @@ class _PlanRepository:
 def _coordinator(missing=None, max_dates=26):
     coordinator = FactorCoordinator(_ConstructionDB(), max_automatic_dates=max_dates)
     coordinator.governance = SimpleNamespace(
-        ensure_schema=lambda: None,
+        schema_issues=lambda: [],
         latest_source_watermarks=lambda _task: {},
     )
     coordinator.repository = _PlanRepository(missing)
