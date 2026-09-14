@@ -444,7 +444,7 @@ class FactorEngine:
 
     def _query_missing_dates(self, start_date: str, end_date: str) -> List[str]:
         if self.existing_date_provider is not None:
-            all_dates = pd.date_range(start=start_date, end=end_date, freq="D").strftime("%Y-%m-%d").tolist()
+            all_dates = generate_friday_dates(start_date, end_date)
             missing: set[str] = set()
             for factor_type in self.normalized_factor_types():
                 missing.update(self.filter_missing_dates(factor_type, all_dates))
@@ -455,7 +455,9 @@ class FactorEngine:
 
         query = f"""
         WITH date_range AS (
-            SELECT generate_series(%s::date, %s::date, interval '1 day')::date AS calc_date
+            SELECT value::date AS calc_date
+            FROM generate_series(%s::date, %s::date, interval '1 day') AS value
+            WHERE EXTRACT(ISODOW FROM value) = 5
         ),
         p_factor_dates AS (
             SELECT DISTINCT calc_date FROM {FACTOR_SCHEMA}.p_factor

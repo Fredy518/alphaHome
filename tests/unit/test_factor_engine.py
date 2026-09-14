@@ -119,8 +119,8 @@ def test_filter_missing_dates_uses_provider():
 
 def test_batch_missing_dates_use_provider_union_by_factor():
     existing = {
-        "p": {"2024-01-01"},
-        "g": {"2024-01-01", "2024-01-02"},
+        "p": {"2024-01-05"},
+        "g": {"2024-01-05", "2024-01-12"},
     }
 
     def existing_provider(factor_type, dates):
@@ -130,14 +130,14 @@ def test_batch_missing_dates_use_provider_union_by_factor():
         FactorEngineConfig(
             factor_types=("p", "g"),
             start_date="2024-01-01",
-            end_date="2024-01-03",
+            end_date="2024-01-19",
             missing_mode="batch_missing",
         ),
         p_calculator=MockFactorCalculator(),
         g_calculator=MockFactorCalculator(),
         existing_date_provider=existing_provider,
     )
-    assert engine.resolve_dates() == ["2024-01-02", "2024-01-03"]
+    assert engine.resolve_dates() == ["2024-01-12", "2024-01-19"]
 
 
 def test_recent_missing_dates_are_deterministic_with_today():
@@ -154,7 +154,7 @@ def test_recent_missing_dates_are_deterministic_with_today():
         p_calculator=MockFactorCalculator(),
         existing_date_provider=existing_provider,
     )
-    assert engine.resolve_dates() == ["2024-02-01"]
+    assert engine.resolve_dates() == ["2024-01-26"]
 
 
 def test_run_executes_specific_dates_with_mock_calculators():
