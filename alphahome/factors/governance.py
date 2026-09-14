@@ -261,6 +261,13 @@ class FactorGovernanceStore:
         details: Optional[Mapping[str, Any]] = None,
     ) -> None:
         if is_current:
+            from .locks import snapshot_gate
+
+            snapshot_gate(cursor)
+            cursor.execute(
+                "SELECT pg_advisory_xact_lock(hashtext(%s), hashtext(%s))",
+                (task_name, str(calc_date)),
+            )
             cursor.execute(
                 """
                 UPDATE factors.factor_run_date

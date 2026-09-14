@@ -3,7 +3,7 @@ from datetime import date
 import pandas as pd
 import pytest
 
-from alphahome.factors.persistence import FactorSnapshotWriter, P_FACTOR_COLUMNS
+from alphahome.factors.persistence import FactorSnapshotWriter, P_FACTOR_COLUMNS, factor_frame_checksum
 
 
 def _frame():
@@ -121,3 +121,12 @@ def test_expected_no_data_clear_is_locked_and_recorded_atomically():
     assert "INSERT INTO factors.factor_run_date" in sql
     assert db.connection.committed is True
     assert db.connection.rolled_back is False
+
+
+def test_checksum_is_stable_across_integer_and_database_numeric_representations():
+    from decimal import Decimal
+
+    integer, decimal = _frame(), _frame()
+    integer["p_score"] = [50]
+    decimal["p_score"] = [Decimal("50.000000")]
+    assert factor_frame_checksum(integer, P_FACTOR_COLUMNS) == factor_frame_checksum(decimal, P_FACTOR_COLUMNS)

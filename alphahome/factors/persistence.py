@@ -13,6 +13,7 @@ import pandas as pd
 
 from .date_policy import FactorDatePolicy
 from .governance import FactorGovernanceStore
+from .locks import snapshot_gate
 from .validation import FactorValidationResult, validate_factor_frame
 
 
@@ -93,11 +94,11 @@ def factor_frame_checksum(
         if pd.api.types.is_datetime64_any_dtype(canonical[column]):
             canonical[column] = canonical[column].dt.strftime("%Y-%m-%d")
         elif column in _P_SIX_DECIMAL or column in _G_SIX_DECIMAL:
-            canonical[column] = pd.to_numeric(canonical[column], errors="coerce").round(
+            canonical[column] = pd.to_numeric(canonical[column], errors="coerce").astype("float64").round(
                 6
             )
         elif column in _P_FOUR_DECIMAL:
-            canonical[column] = pd.to_numeric(canonical[column], errors="coerce").round(
+            canonical[column] = pd.to_numeric(canonical[column], errors="coerce").astype("float64").round(
                 4
             )
         elif column == "p_rank":
@@ -157,6 +158,7 @@ class FactorSnapshotWriter:
         connection = self.db_manager._get_sync_connection()
         try:
             with connection.cursor() as cursor:
+                snapshot_gate(cursor)
                 cursor.execute(
                     "SELECT pg_advisory_xact_lock(hashtext(%s), hashtext(%s))",
                     (task_name or f"factor_{factor_type}", target_date.isoformat()),
@@ -231,6 +233,7 @@ class FactorSnapshotWriter:
         connection = self.db_manager._get_sync_connection()
         try:
             with connection.cursor() as cursor:
+                snapshot_gate(cursor)
                 cursor.execute(
                     "SELECT pg_advisory_xact_lock(hashtext(%s), hashtext(%s))",
                     (task_name, target_date.isoformat()),

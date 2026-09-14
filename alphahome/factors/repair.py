@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Mapping, Optional, Sequence
@@ -18,6 +17,7 @@ from .core.context import FactorDBContext
 from .coordinator import FactorCoordinator
 from .date_policy import FACTOR_TIMEZONE, FactorDatePolicy, coerce_date
 from .governance import FactorGovernanceStore, json_ready
+from .locks import repair_session, snapshot_gate
 from .persistence import (
     G_FACTOR_COLUMNS,
     P_FACTOR_COLUMNS,
@@ -99,6 +99,10 @@ class FactorRepairService:
         return result
 
     def apply(self, cutoff_date: date | str | None = None) -> Dict[str, Any]:
+        with repair_session(self.db):
+            return self._apply_locked(cutoff_date)
+
+    def _apply_locked(self, cutoff_date: date | str | None = None) -> Dict[str, Any]:
         preflight = self.plan(cutoff_date)
         cutoff = coerce_date(preflight["effective_cutoff_date"])
         source_cutoff_at = datetime.now(FACTOR_TIMEZONE)
@@ -110,7 +114,11 @@ class FactorRepairService:
             "running",
             source_cutoff_at,
             cutoff,
-            details={"preflight": preflight},
+            details={
+                "preflight": preflight,
+                "rollback_contract": "repair_owner_v1",
+                "original_weekday_constraints": self._weekday_constraints(),
+            },
         )
         self._record_repair_public_status(
             repair_id,
@@ -121,7 +129,7 @@ class FactorRepairService:
         try:
             # Install the NOT VALID constraints inside the guarded section so a
             # partial startup failure is recoverable through the same repair_id.
-            self._install_weekday_constraints(validate=False)
+            self._install_weekday_constraints(validate=False, repair_id=repair_id)
             run_id = self.governance.start_run(
                 ["factor_p", "factor_g"],
                 "repair",
@@ -170,7 +178,7 @@ class FactorRepairService:
                         calc_date_value,
                         "delete_non_friday",
                     )
-                    self._delete_date(factor_type, calc_date_value)
+                    self._delete_date(factor_type, calc_date_value, run_id=run_id)
                     self._complete_date(
                         repair_id, factor_type, calc_date_value, 0, None
                     )
@@ -237,155 +245,135 @@ class FactorRepairService:
     def rollback(
         self, repair_id: UUID | str, *, reason: str = "manual_rollback"
     ) -> Dict[str, Any]:
+        """Restore only a still-owned repair, with data and ledger in one commit."""
         repair_uuid = str(repair_id)
-        self.governance.ensure_schema()
-        self._ensure_repair_tables()
-        manifest = self.db.fetch_one_sync(
-            """
-            SELECT status, details_json
-            FROM factors.factor_repair_manifest
-            WHERE repair_id = %s
-            """,
-            (repair_uuid,),
-        )
-        if not manifest:
-            raise ValueError(f"未知repair_id，拒绝修改生产约束: {repair_uuid}")
-        if manifest.get("status") == "rolled_back":
-            return {
-                "status": "already_rolled_back",
-                "repair_id": repair_uuid,
-                "restored": {"p": 0, "g": 0},
-            }
-        manifest_details = manifest.get("details_json") or {}
-        factor_run_id = (
-            manifest_details.get("factor_run_id")
-            if isinstance(manifest_details, Mapping)
-            else None
-        )
-        rows = self.db.fetch_sync(
-            """
-            SELECT task_name, calc_date
-            FROM factors.factor_repair_date
-            WHERE repair_id = %s
-            ORDER BY CASE task_name WHEN 'factor_g' THEN 1 ELSE 2 END,
-                     calc_date DESC
-            """,
-            (repair_uuid,),
-        )
-        restored: Dict[str, int] = {"p": 0, "g": 0}
         connection = self.db._get_sync_connection()
+        restored = {"p": 0, "g": 0}
         try:
             with connection.cursor() as cursor:
-                for factor_type in ("p", "g"):
-                    table = f"{factor_type}_factor"
-                    cursor.execute(
-                        f"""
-                        ALTER TABLE factors.{table}
-                        DROP CONSTRAINT IF EXISTS ck_{table}_calc_date_friday
-                        """
-                    )
+                snapshot_gate(cursor, exclusive=True)
+                manifest = self.db.fetch_one_sync(
+                    "SELECT status, details_json FROM factors.factor_repair_manifest "
+                    "WHERE repair_id = %s FOR UPDATE", (repair_uuid,),
+                )
+                if not manifest:
+                    raise ValueError(f"Unknown repair_id: {repair_uuid}")
+                if manifest["status"] == "rolled_back":
+                    connection.rollback()
+                    return {"status": "already_rolled_back", "repair_id": repair_uuid, "restored": restored}
+                details = manifest.get("details_json") or {}
+                if details.get("rollback_contract") != "repair_owner_v1":
+                    raise RuntimeError("Legacy repair lacks ownership evidence; explicit recovery review required")
+                run_id = details.get("factor_run_id")
+                rows = self.db.fetch_sync(
+                    "SELECT * FROM factors.factor_repair_date WHERE repair_id = %s "
+                    "ORDER BY task_name, calc_date FOR UPDATE", (repair_uuid,),
+                )
+                # Validate every date before changing constraints, data or ledgers.
                 for row in rows:
-                    factor_type = "p" if row["task_name"] == "factor_p" else "g"
-                    table = f"{factor_type}_factor"
-                    archive = f"{table}_repair_archive"
+                    self._assert_rollback_owner(cursor, row, run_id)
+                current_constraints = self._weekday_constraint_oids()
+                for kind, existed in details["original_weekday_constraints"].items():
+                    if kind not in ("p", "g"):
+                        raise ValueError("Invalid constraint metadata")
+                    if not existed:
+                        installed = details.get("repair_constraint_oids", {}).get(kind)
+                        if current_constraints.get(kind) != installed:
+                            raise RuntimeError("Constraint ownership changed; rollback rejected")
+                for kind, existed in details["original_weekday_constraints"].items():
+                    if not existed:
+                        cursor.execute(
+                            f"ALTER TABLE factors.{kind}_factor "
+                            f"DROP CONSTRAINT IF EXISTS ck_{kind}_factor_calc_date_friday"
+                        )
+                for row in reversed(rows):
+                    kind = "p" if row["task_name"] == "factor_p" else "g"
+                    table = f"{kind}_factor"
                     columns = self._business_columns(table)
                     quoted = ", ".join(f'"{column}"' for column in columns)
+                    cursor.execute(f"DELETE FROM factors.{table} WHERE calc_date = %s", (row["calc_date"],))
                     cursor.execute(
-                        f"DELETE FROM factors.{table} WHERE calc_date = %s",
-                        (row["calc_date"],),
-                    )
-                    cursor.execute(
-                        f"""
-                        INSERT INTO factors.{table} ({quoted})
-                        SELECT {quoted}
-                        FROM factors.{archive}
-                        WHERE repair_id = %s AND calc_date = %s
-                        """,
+                        f"INSERT INTO factors.{table} ({quoted}) SELECT {quoted} "
+                        f"FROM factors.{table}_repair_archive WHERE repair_id = %s AND calc_date = %s",
                         (repair_uuid, row["calc_date"]),
                     )
-                    restored[factor_type] += cursor.rowcount
+                    restored[kind] += cursor.rowcount
                     cursor.execute(
-                        """
-                        UPDATE factors.factor_repair_date
-                        SET status = 'rolled_back', updated_at = CURRENT_TIMESTAMP
-                        WHERE repair_id = %s AND task_name = %s AND calc_date = %s
-                        """,
+                        "UPDATE factors.factor_run_date SET is_current = FALSE "
+                        "WHERE task_name = %s AND calc_date = %s AND is_current",
+                        (row["task_name"], row["calc_date"]),
+                    )
+                    previous = (row.get("details_json") or {}).get("previous_run_id")
+                    if previous:
+                        cursor.execute(
+                            "UPDATE factors.factor_run_date SET is_current = TRUE "
+                            "WHERE run_id = %s AND task_name = %s AND calc_date = %s",
+                            (previous, row["task_name"], row["calc_date"]),
+                        )
+                        if cursor.rowcount != 1:
+                            raise RuntimeError("Archived ledger owner no longer exists")
+                    cursor.execute(
+                        "UPDATE factors.factor_repair_date SET status = 'rolled_back', updated_at = CURRENT_TIMESTAMP "
+                        "WHERE repair_id = %s AND task_name = %s AND calc_date = %s",
                         (repair_uuid, row["task_name"], row["calc_date"]),
                     )
-                cursor.execute(
-                    """
-                    UPDATE factors.factor_run_date
-                    SET is_current = FALSE
-                    WHERE run_id = (
-                        SELECT (details_json->>'factor_run_id')::uuid
-                        FROM factors.factor_repair_manifest
-                        WHERE repair_id = %s
-                    )
-                    """,
-                    (repair_uuid,),
-                )
-                if factor_run_id:
+                if run_id:
                     cursor.execute(
-                        """
-                        WITH previous AS (
-                            SELECT DISTINCT ON (task_name, calc_date)
-                                   run_id, task_name, calc_date
-                            FROM factors.factor_run_date
-                            WHERE run_id <> %s
-                              AND (task_name, calc_date) IN (
-                                  SELECT task_name, calc_date
-                                  FROM factors.factor_run_date
-                                  WHERE run_id = %s
-                              )
-                              AND status IN ('success', 'shadow_unchanged')
-                            ORDER BY task_name, calc_date, created_at DESC, run_id DESC
-                        )
-                        UPDATE factors.factor_run_date ledger
-                        SET is_current = TRUE
-                        FROM previous
-                        WHERE ledger.run_id = previous.run_id
-                          AND ledger.task_name = previous.task_name
-                          AND ledger.calc_date = previous.calc_date
-                        """,
-                        (str(factor_run_id), str(factor_run_id)),
-                    )
-                    cursor.execute(
-                        """
-                        UPDATE factors.factor_run
-                        SET status = 'rolled_back',
-                            details_json = details_json || %s::jsonb,
-                            finished_at = CURRENT_TIMESTAMP
-                        WHERE run_id = %s
-                        """,
-                        (
-                            json.dumps({"rollback_reason": reason}, ensure_ascii=False),
-                            str(factor_run_id),
-                        ),
+                        "UPDATE factors.factor_run SET status = 'rolled_back', finished_at = CURRENT_TIMESTAMP, "
+                        "details_json = details_json || %s WHERE run_id = %s",
+                        (Json({"rollback_reason": reason}), str(run_id)),
                     )
                 cursor.execute(
-                    """
-                    UPDATE factors.factor_repair_manifest
-                    SET status = 'rolled_back',
-                        details_json = details_json || %s::jsonb,
-                        finished_at = CURRENT_TIMESTAMP
-                    WHERE repair_id = %s
-                    """,
-                    (
-                        json.dumps({"rollback_reason": reason}, ensure_ascii=False),
-                        repair_uuid,
-                    ),
+                    "UPDATE factors.factor_repair_manifest SET status = 'rolled_back', "
+                    "details_json = details_json || %s, finished_at = CURRENT_TIMESTAMP WHERE repair_id = %s",
+                    (Json({"rollback_reason": reason}), repair_uuid),
                 )
             connection.commit()
-        except Exception:
+        except BaseException:
             connection.rollback()
             raise
-        self._record_repair_public_status(
-            repair_uuid,
-            "rolled_back",
-            reason,
-            suppress_errors=True,
-        )
+        self._record_repair_public_status(repair_uuid, "rolled_back", reason, suppress_errors=True)
         return {"status": "rolled_back", "repair_id": repair_uuid, "restored": restored}
+
+    def _assert_rollback_owner(self, cursor, row, run_id):
+        task_name, calc_date_value = row["task_name"], row["calc_date"]
+        if task_name not in ("factor_p", "factor_g"):
+            raise ValueError("Invalid archived task")
+        cursor.execute(
+            "SELECT pg_advisory_xact_lock(hashtext(%s), hashtext(%s))",
+            (task_name, calc_date_value.isoformat()),
+        )
+        current = self.db.fetch_one_sync(
+            "SELECT run_id::text, output_checksum, output_count FROM factors.factor_run_date "
+            "WHERE task_name = %s AND calc_date = %s AND is_current FOR UPDATE",
+            (task_name, calc_date_value),
+        )
+        owner = current["run_id"] if current else None
+        metadata = row.get("details_json") or {}
+        previous = metadata.get("previous_run_id")
+        kind = "p" if task_name == "factor_p" else "g"
+        frame = self._fetch_frame(kind, calc_date_value)
+        columns = P_FACTOR_COLUMNS if kind == "p" else G_FACTOR_COLUMNS
+        checksum = factor_frame_checksum(frame, columns) if not frame.empty else None
+        if row["status"] == "completed":
+            valid = owner == str(run_id) and len(frame) == row["new_row_count"] and checksum == row["new_checksum"]
+            valid = valid and "new_row_version" in metadata and metadata["new_row_version"] == self._row_version(kind, calc_date_value)
+        elif owner == str(run_id) and current:
+            # Crash after the atomic writer committed, before completion metadata.
+            valid = checksum == current["output_checksum"] and len(frame) == current["output_count"]
+        else:
+            # Prepared archive, no write committed yet.
+            valid = owner == previous and checksum == row["old_checksum"] and len(frame) == row["old_row_count"]
+            valid = valid and "old_row_version" in metadata and metadata["old_row_version"] == self._row_version(kind, calc_date_value)
+        archive_rows = self.db.fetch_sync(
+            f"SELECT {', '.join(columns)} FROM factors.{kind}_factor_repair_archive "
+            "WHERE repair_id = %s AND calc_date = %s", (str(row["repair_id"]), calc_date_value),
+        )
+        archive = pd.DataFrame(archive_rows, columns=list(columns))
+        archived_checksum = factor_frame_checksum(archive, columns) if not archive.empty else None
+        valid = valid and len(archive) == row["old_row_count"] and archived_checksum == row["old_checksum"]
+        if not valid:
+            raise RuntimeError(f"Stale or unverifiable repair rollback rejected: {task_name} {calc_date_value}")
 
     def _record_repair_public_status(
         self,
@@ -612,15 +600,12 @@ class FactorRepairService:
                             "P影子计算资格集合非空但结果为空: "
                             f"{calc_date_value.isoformat()}, eligible={len(eligible_codes)}"
                         )
+                    self._prepare_date(
+                        repair_id, "p", calc_date_value, "remove_ineligible_p_snapshot",
+                    )
+                    self._delete_date("p", calc_date_value, run_id=run_id)
+                    self._complete_date(repair_id, "p", calc_date_value, 0, None)
                     if not old.empty:
-                        self._prepare_date(
-                            repair_id,
-                            "p",
-                            calc_date_value,
-                            "remove_ineligible_p_snapshot",
-                        )
-                        self._delete_date("p", calc_date_value)
-                        self._complete_date(repair_id, "p", calc_date_value, 0, None)
                         summary["p_removed_no_data_dates"].append(
                             calc_date_value.isoformat()
                         )
@@ -633,6 +618,7 @@ class FactorRepairService:
                         calc_date_value,
                         "expected_no_data",
                         input_count=len(codes),
+                        is_current=True,
                         details={"reason": "no_eligible_pit_input"},
                     )
                     continue
@@ -649,6 +635,7 @@ class FactorRepairService:
                     else None
                 )
                 if old_checksum == new_checksum:
+                    self._prepare_date(repair_id, "p", calc_date_value, "shadow_unchanged")
                     summary["p_unchanged_dates"].append(calc_date_value.isoformat())
                     self.governance.record_date(
                         run_id,
@@ -662,6 +649,7 @@ class FactorRepairService:
                         is_current=True,
                         details={"formula_version": "v2.0"},
                     )
+                    self._complete_date(repair_id, "p", calc_date_value, len(frame), new_checksum)
                     continue
                 self._prepare_date(
                     repair_id, "p", calc_date_value, "replace_p_shadow_diff"
@@ -786,7 +774,7 @@ class FactorRepairService:
             connection.rollback()
             raise
 
-    def _install_weekday_constraints(self, *, validate: bool) -> None:
+    def _install_weekday_constraints(self, *, validate: bool, repair_id=None) -> None:
         connection = self.db._get_sync_connection()
         try:
             with connection.cursor() as cursor:
@@ -815,6 +803,12 @@ class FactorRepairService:
                         cursor.execute(
                             f"ALTER TABLE factors.{table} VALIDATE CONSTRAINT {constraint}"
                         )
+                if repair_id:
+                    cursor.execute(
+                        "UPDATE factors.factor_repair_manifest SET details_json = details_json || %s "
+                        "WHERE repair_id = %s",
+                        (Json({"repair_constraint_oids": self._weekday_constraint_oids()}), str(repair_id)),
+                    )
             connection.commit()
         except Exception:
             connection.rollback()
@@ -857,6 +851,14 @@ class FactorRepairService:
         connection = self.db._get_sync_connection()
         try:
             with connection.cursor() as cursor:
+                snapshot_gate(cursor, exclusive=True)
+                cursor.execute(
+                    "SELECT run_id::text FROM factors.factor_run_date "
+                    "WHERE task_name = %s AND calc_date = %s AND is_current",
+                    (task_name, calc_date_value),
+                )
+                previous = cursor.fetchone()
+                prior_owner = previous[0] if previous else None
                 cursor.execute(
                     f"""
                     INSERT INTO factors.{archive}
@@ -872,14 +874,9 @@ class FactorRepairService:
                     """
                     INSERT INTO factors.factor_repair_date (
                         repair_id, task_name, calc_date, action,
-                        old_row_count, old_checksum, status
-                    ) VALUES (%s, %s, %s, %s, %s, %s, 'prepared')
-                    ON CONFLICT (repair_id, task_name, calc_date) DO UPDATE SET
-                        action = EXCLUDED.action,
-                        old_row_count = EXCLUDED.old_row_count,
-                        old_checksum = EXCLUDED.old_checksum,
-                        status = 'prepared',
-                        updated_at = CURRENT_TIMESTAMP
+                        old_row_count, old_checksum, status, details_json
+                    ) VALUES (%s, %s, %s, %s, %s, %s, 'prepared', %s)
+                    ON CONFLICT (repair_id, task_name, calc_date) DO NOTHING
                     """,
                     (
                         str(repair_id),
@@ -888,6 +885,7 @@ class FactorRepairService:
                         action,
                         len(old),
                         old_checksum,
+                        Json({"previous_run_id": prior_owner, "old_row_version": self._row_version(factor_type, calc_date_value)}),
                     ),
                 )
             connection.commit()
@@ -909,23 +907,56 @@ class FactorRepairService:
             SET new_row_count = %s,
                 new_checksum = %s,
                 status = 'completed',
+                details_json = details_json || %s,
                 updated_at = CURRENT_TIMESTAMP
             WHERE repair_id = %s AND task_name = %s AND calc_date = %s
             """,
             (
                 row_count,
                 checksum,
+                Json({"new_row_version": self._row_version(factor_type, calc_date_value)}),
                 str(repair_id),
                 f"factor_{factor_type}",
                 calc_date_value,
             ),
         )
 
-    def _delete_date(self, factor_type: str, calc_date_value: date) -> None:
-        self.db.execute_sync(
-            f"DELETE FROM factors.{factor_type}_factor WHERE calc_date = %s",
-            (calc_date_value,),
+    def _delete_date(self, factor_type: str, calc_date_value: date, *, run_id) -> None:
+        connection = self.db._get_sync_connection()
+        try:
+            with connection.cursor() as cursor:
+                snapshot_gate(cursor, exclusive=True)
+                cursor.execute(
+                    f"DELETE FROM factors.{factor_type}_factor WHERE calc_date = %s",
+                    (calc_date_value,),
+                )
+                self.governance.record_date_cursor(
+                    cursor, run_id, f"factor_{factor_type}", calc_date_value,
+                    "expected_no_data", is_current=True,
+                    details={"repair_delete": True},
+                )
+            connection.commit()
+        except BaseException:
+            connection.rollback()
+            raise
+
+    def _row_version(self, factor_type: str, calc_date_value: date):
+        return self.db.fetch_one_sync(
+            f"SELECT md5(string_agg(ts_code || ':' || xmin::text, ',' ORDER BY ts_code)) AS version "
+            f"FROM factors.{factor_type}_factor WHERE calc_date = %s", (calc_date_value,),
+        )["version"]
+
+    def _weekday_constraints(self):
+        names = self._weekday_constraint_oids()
+        return {kind: kind in names for kind in ("p", "g")}
+
+    def _weekday_constraint_oids(self):
+        rows = self.db.fetch_sync(
+            "SELECT conname, oid FROM pg_constraint WHERE conrelid IN "
+            "('factors.p_factor'::regclass, 'factors.g_factor'::regclass) "
+            "AND conname IN ('ck_p_factor_calc_date_friday', 'ck_g_factor_calc_date_friday')"
         )
+        return {row["conname"].split("_")[1]: row["oid"] for row in rows}
 
     def _fetch_frame(self, factor_type: str, calc_date_value: date) -> pd.DataFrame:
         columns = P_FACTOR_COLUMNS if factor_type == "p" else G_FACTOR_COLUMNS
