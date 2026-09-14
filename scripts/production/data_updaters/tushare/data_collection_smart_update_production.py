@@ -31,8 +31,6 @@ from datetime import datetime
 from typing import List, Dict, Any, Optional
 from concurrent.futures import ThreadPoolExecutor
 
-import pandas as pd
-
 # 添加项目根目录到 Python 路径
 sys.path.insert(0, '.')
 
@@ -53,11 +51,14 @@ class DataCollectionProductionUpdater:
     自动识别数据源特性，优化并发控制策略，确保高效稳定的数据更新。
     """
 
-    def __init__(self, max_workers: int = 3, max_retries: int = 3, retry_delay: int = 5, dry_run: bool = False):
+    def __init__(self, max_workers: int = 3, max_retries: int = 3, retry_delay: int = 5, dry_run: bool = False,
+                 optional_tasks: Optional[List[str]] = None):
         self.max_workers = max_workers
         self.max_retries = max_retries
         self.retry_delay = retry_delay
         self.dry_run = dry_run
+        self.optional_tasks = frozenset(optional_tasks or ())
+        self.batch_outcome = {"status": "not_started"}
         self.db_manager = None
         self.executor = ThreadPoolExecutor(max_workers=max_workers)
 
@@ -172,8 +173,7 @@ class DataCollectionProductionUpdater:
                         logger.debug(f"发现 fetch 任务: {task_name} (数据源: {data_source})")
 
                 except Exception as e:
-                    logger.warning(f"获取任务信息失败 {task_name}: {e}")
-                    continue
+                    raise RuntimeError(f"获取任务信息失败: {task_name}") from e
 
             # 记录数据源统计信息
             if data_source_stats:
@@ -293,7 +293,6 @@ class DataCollectionProductionUpdater:
         tasks_by_source = {}
         for task_name in task_names:
             try:
-                task_info = UnifiedTaskFactory.get_task_info(task_name)
                 task_class = UnifiedTaskFactory._task_registry[task_name]
                 data_source = getattr(task_class, 'data_source', 'unknown')
 
@@ -411,10 +410,46 @@ class DataCollectionProductionUpdater:
             print("   - 查看详细日志了解具体错误原因")
         if self.dry_run and self.stats['failed_tasks'] == 0:
             print("   - 干运行完成，任务发现和调度链路正常")
-        elif self.stats['successful_tasks'] / max(self.stats['total_tasks'], 1) < 0.8:
-            print("   - 成功率较低，建议降低并发数或增加重试次数")
+        elif self.batch_outcome.get('blocking_tasks'):
+            print(f"   - 必需输入未全部成功: {', '.join(self.batch_outcome['blocking_tasks'])}")
+        elif self.batch_outcome.get('optional_failures'):
+            print(f"   - 可选任务未成功: {', '.join(self.batch_outcome['optional_failures'])}")
         else:
-            print("   - 更新执行成功，数据已保持最新状态")
+            print("   - 本批必需任务执行成功；数据新鲜度由下游 readiness 检查确认")
+
+    def evaluate_batch(self, task_names, results):
+        """Every selected task is required unless explicitly declared optional."""
+        expected = set(task_names)
+        unknown_optional = self.optional_tasks - expected
+        if unknown_optional:
+            raise ValueError(f"未知可选任务: {sorted(unknown_optional)}")
+        by_name = {}
+        for result in results:
+            if not isinstance(result, dict) or result.get('task_name') not in expected:
+                raise ValueError("任务结果格式错误或包含未选择的任务")
+            name = result['task_name']
+            if name in by_name:
+                raise ValueError(f"任务返回重复结果: {name}")
+            by_name[name] = result
+        failures = set(expected - set(by_name))
+        accepted = {'skipped_dry_run'} if self.dry_run else {'success', 'expected_no_data'}
+        for name, result in by_name.items():
+            payload = result.get('result') if isinstance(result.get('result'), dict) else result
+            has_errors = any(payload.get(key) for key in ('error', 'error_records', 'failed_batches', 'errors'))
+            if result.get('status') not in accepted or has_errors:
+                failures.add(name)
+            elif result.get('status') == 'expected_no_data' and not payload.get('reason'):
+                failures.add(name)
+        # Missing results are a protocol failure even for optional tasks.
+        blocking = (failures - self.optional_tasks) | (expected - set(by_name))
+        self.batch_outcome = {
+            'status': 'failed' if blocking else ('dry_run' if self.dry_run else (
+                'completed_with_optional_failures' if failures else 'success')),
+            'required_tasks': sorted(expected - self.optional_tasks),
+            'blocking_tasks': sorted(blocking),
+            'optional_failures': sorted(failures & self.optional_tasks),
+        }
+        return not blocking
 
     async def run_production_update(self) -> bool:
         """运行生产级更新"""
@@ -432,10 +467,13 @@ class DataCollectionProductionUpdater:
                 return False
 
             self.stats['total_tasks'] = len(fetch_tasks)
+            if self.optional_tasks - set(fetch_tasks):
+                raise ValueError(f"未知可选任务: {sorted(self.optional_tasks - set(fetch_tasks))}")
 
             # 执行任务
             logger.info("[PRODUCTION] 开始生产级数据采集更新...")
             results = await self.execute_tasks_parallel(fetch_tasks)
+            batch_success = self.evaluate_batch(fetch_tasks, results)
 
             # 统计结果
             for result in results:
@@ -443,15 +481,12 @@ class DataCollectionProductionUpdater:
                 task_name = result.get('task_name', 'unknown')
 
                 # 更新全局统计
-                if status in ['success', 'partial_success']:
+                if status in ['success', 'expected_no_data']:
                     self.stats['successful_tasks'] += 1
-                elif status in ['failed', 'error']:
+                elif status in ['failed', 'error', 'partial_success', 'completed_with_warnings']:
                     self.stats['failed_tasks'] += 1
                 elif status in ['skipped', 'skipped_dry_run']:
                     self.stats['skipped_tasks'] += 1
-                elif status == 'completed_with_warnings':
-                    # 兼容旧的状态，归类为部分成功
-                    self.stats['successful_tasks'] += 1
                 else:
                     # 处理其他未知状态
                     logger.warning(f"未知任务状态: {status} for task {task_name}")
@@ -459,7 +494,6 @@ class DataCollectionProductionUpdater:
 
                 # 更新数据源级别统计
                 try:
-                    task_info = UnifiedTaskFactory.get_task_info(task_name)
                     task_class = UnifiedTaskFactory._task_registry[task_name]
                     data_source = getattr(task_class, 'data_source', 'unknown')
 
@@ -472,9 +506,9 @@ class DataCollectionProductionUpdater:
                     ds_stats = self.stats['data_source_stats'][data_source]
                     ds_stats['total'] += 1
 
-                    if status in ['success', 'partial_success', 'completed_with_warnings']:
+                    if status in ['success', 'expected_no_data']:
                         ds_stats['success'] += 1
-                    elif status in ['failed', 'error']:
+                    elif status in ['failed', 'error', 'partial_success', 'completed_with_warnings']:
                         ds_stats['failed'] += 1
                     elif status in ['skipped', 'skipped_dry_run']:
                         ds_stats['skipped'] += 1
@@ -493,12 +527,7 @@ class DataCollectionProductionUpdater:
             self.stats['end_time'] = datetime.now()
             self.print_execution_summary(results)
 
-            # 返回成功状态
-            if self.dry_run:
-                return self.stats['failed_tasks'] == 0
-
-            success_rate = self.stats['successful_tasks'] / max(self.stats['total_tasks'], 1)
-            return success_rate >= 0.8  # 80% 成功率视为整体成功
+            return batch_success
 
         except Exception as e:
             logger.error(f"[ERROR] 生产级更新执行失败: {e}")
@@ -524,6 +553,8 @@ async def main():
                        default='INFO', help='日志级别 (默认: INFO)')
     parser.add_argument('--dry-run', action='store_true',
                        help='启用干运行模式，只显示将要执行的任务，不实际执行')
+    parser.add_argument('--optional-task', action='append', default=[],
+                       help='明确声明可选任务，可重复；未列出的任务全部必需')
 
     args = parser.parse_args()
 
@@ -545,7 +576,8 @@ async def main():
         max_workers=args.workers,
         max_retries=args.max_retries,
         retry_delay=args.retry_delay,
-        dry_run=args.dry_run
+        dry_run=args.dry_run,
+        optional_tasks=args.optional_task,
     )
     print(updater.api_concurrency_note)
     print()
