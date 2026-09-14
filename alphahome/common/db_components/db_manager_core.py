@@ -425,23 +425,21 @@ class DBManagerCore:
                 return
             
             async with self.pool.acquire() as conn:
-                # 创建 rawdata schema（如果不存在）
-                await conn.execute('CREATE SCHEMA IF NOT EXISTS "rawdata"')
-                
-                # 添加 schema 级别的文档说明
-                comment_sql = """
-                COMMENT ON SCHEMA rawdata IS 
-                '自动管理的统一数据视图层。
-                
-                规则：
-                1. 本 schema 仅包含自动生成的映射视图（通过 COMMENT 标记）
-                2. 禁止手动创建表或视图
-                3. 数据源优先级：tushare > akshare > 其他
-                4. 删除源表时，对应视图自动删除（CASCADE）
-                
-                查询示例：SELECT * FROM rawdata.stock_basic;'
-                """
-                await conn.execute(comment_sql)
+                schema_oid = await conn.fetchval("SELECT to_regnamespace('rawdata')")
+                if schema_oid is None:
+                    await conn.execute('CREATE SCHEMA "rawdata"')
+                    await conn.execute("""
+                        COMMENT ON SCHEMA rawdata IS
+                        '自动管理的统一数据视图层。
+
+                        规则：
+                        1. 本 schema 仅包含自动生成的映射视图（通过 COMMENT 标记）
+                        2. 禁止手动创建表或视图
+                        3. 数据源优先级：tushare > akshare > 其他
+                        4. 删除源表时，对应视图自动删除（CASCADE）
+
+                        查询示例：SELECT * FROM rawdata.stock_basic;'
+                    """)
             
             self.logger.info("rawdata schema 初始化完成")
         except Exception as e:
