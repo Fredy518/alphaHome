@@ -27,11 +27,11 @@ logger = logging.getLogger(__name__)
 
 class PGSFactorDBManager:
     """P/G/S因子数据库管理器"""
-    
+
     def __init__(self, context):
         """
         初始化数据库管理器
-        
+
         Args:
             context: ResearchContext实例
         """
@@ -41,7 +41,7 @@ class PGSFactorDBManager:
         self.context = context
         self.schema = 'pgs_factors'
         logger.info("PGSFactorDBManager initialized")
-    
+
     @contextmanager
     def transaction(self):
         """事务管理器（同步模式，复用统一DBManager的连接）"""
@@ -60,7 +60,7 @@ class PGSFactorDBManager:
                     pass
             logger.error(f"Transaction failed: {e}")
             raise
-    
+
     def init_schema(self):
         """初始化数据库schema"""
         # 使用相对本文件的路径，避免工作目录影响
@@ -70,7 +70,7 @@ class PGSFactorDBManager:
         try:
             with open(sql_file, 'r', encoding='utf-8') as f:
                 sql_content = f.read()
-            
+
             with self.transaction() as conn:
                 cursor = conn.cursor()
                 cursor.execute(sql_content)
@@ -78,15 +78,15 @@ class PGSFactorDBManager:
         except Exception as e:
             logger.error(f"Failed to initialize schema: {e}")
             raise
-    
+
     # ========================================
     # P因子相关操作
     # ========================================
-    
+
     def save_p_factor(self, factors: pd.DataFrame, ann_date: date, data_source: str):
         """
         保存P因子数据
-        
+
         Args:
             factors: 包含P因子数据的DataFrame
             ann_date: 公告日期
@@ -95,9 +95,9 @@ class PGSFactorDBManager:
         if factors.empty:
             logger.warning("No P factor data to save")
             return
-        
+
         insert_sql = """
-            INSERT INTO pgs_factors.p_factor 
+            INSERT INTO pgs_factors.p_factor
             (ts_code, calc_date, ann_date, data_source,
              gpa, roa_excl, roe_excl,
              rank_gpa, rank_roa, rank_roe,
@@ -108,7 +108,7 @@ class PGSFactorDBManager:
                     %s, %s, %s,
                     %s,
                     %s, %s)
-            ON CONFLICT (ts_code, calc_date, data_source) 
+            ON CONFLICT (ts_code, calc_date, data_source)
             DO UPDATE SET
                 ann_date = EXCLUDED.ann_date,
                 gpa = EXCLUDED.gpa,
@@ -122,11 +122,11 @@ class PGSFactorDBManager:
                 data_quality = EXCLUDED.data_quality,
                 updated_at = CURRENT_TIMESTAMP
         """
-        
+
         try:
             with self.transaction() as conn:
                 cursor = conn.cursor()
-                
+
                 for _, row in factors.iterrows():
                     # 确定数据质量
                     data_quality = self._determine_data_quality(row, data_source)
@@ -134,7 +134,7 @@ class PGSFactorDBManager:
                     row_ann_date = row.get('ann_date', ann_date)
                     # calc_date 优先取行内；没有则与 ann_date 对齐
                     row_calc_date = row.get('calc_date', row_ann_date)
-                    
+
                     # 统一数值精度：入库前按两位小数四舍五入，避免混合精度
                     def r2(v):
                         try:
@@ -158,9 +158,9 @@ class PGSFactorDBManager:
                         data_quality
                     )
                     cursor.execute(insert_sql, values)
-                
+
                 logger.info(f"Saved {len(factors)} P factor records for {ann_date}")
-                
+
         except Exception as e:
             logger.error(f"Failed to save P factors: {e}")
             raise
@@ -193,57 +193,57 @@ class PGSFactorDBManager:
         except Exception as e:
             logger.error(f"Failed to get existing P factors: {e}")
             return []
-    
+
     def get_latest_p_factors(self, stocks: List[str], as_of_date: date) -> pd.DataFrame:
         """
         获取最新的P因子数据
-        
+
         Args:
             stocks: 股票列表
             as_of_date: 截止日期
-            
+
         Returns:
             P因子DataFrame
         """
         query = """
             WITH ranked AS (
-                SELECT *, 
+                SELECT *,
                     ROW_NUMBER() OVER (
-                        PARTITION BY ts_code 
+                        PARTITION BY ts_code
                         ORDER BY calc_date DESC,
-                            CASE data_source 
-                                WHEN 'report' THEN 1 
-                                WHEN 'express' THEN 2 
-                                WHEN 'forecast' THEN 3 
+                            CASE data_source
+                                WHEN 'report' THEN 1
+                                WHEN 'express' THEN 2
+                                WHEN 'forecast' THEN 3
                             END
                     ) as rn
                 FROM pgs_factors.p_factor
-                WHERE ts_code = ANY(%s) 
+                WHERE ts_code = ANY(%s)
                     AND calc_date <= %s
             )
             SELECT * FROM ranked WHERE rn = 1
         """
-        
+
         try:
             df = self.context.query_dataframe(
-                query, 
+                query,
                 (stocks, as_of_date)
             )
             return df
         except Exception as e:
             logger.error(f"Failed to get P factors: {e}")
             return pd.DataFrame()
-    
-    def get_historical_p_scores(self, stocks: List[str], 
+
+    def get_historical_p_scores(self, stocks: List[str],
                                start_date: date, end_date: date) -> Dict[str, pd.DataFrame]:
         """
         获取历史P_score数据（用于G因子计算）
-        
+
         Args:
             stocks: 股票列表
             start_date: 开始日期
             end_date: 结束日期
-            
+
         Returns:
             按日期分组的P_score数据字典
         """
@@ -255,30 +255,30 @@ class PGSFactorDBManager:
                 WHERE ts_code = ANY(%s)
                     AND calc_date BETWEEN %s AND %s
                 ORDER BY ts_code, calc_date,
-                    CASE data_source 
-                        WHEN 'report' THEN 1 
-                        WHEN 'express' THEN 2 
-                        WHEN 'forecast' THEN 3 
+                    CASE data_source
+                        WHEN 'report' THEN 1
+                        WHEN 'express' THEN 2
+                        WHEN 'forecast' THEN 3
                     END
             )
             SELECT * FROM latest_per_date
             ORDER BY calc_date, ts_code
         """
-        
+
         try:
             df = self.context.query_dataframe(
                 query,
                 (stocks, start_date, end_date)
             )
-            
+
             # 按日期分组
             result = {}
             for calc_date, group in df.groupby('calc_date'):
                 date_str = calc_date.strftime('%Y%m%d')
                 result[date_str] = group[['ts_code', 'p_score']].reset_index(drop=True)
-            
+
             return result
-            
+
         except Exception as e:
             logger.error(f"Failed to get historical P scores: {e}")
             return {}
@@ -331,15 +331,15 @@ class PGSFactorDBManager:
         except Exception as e:
             logger.error(f"Failed to get latest stored P ann dates: {e}")
             return pd.DataFrame(columns=['ts_code', 'stored_ann_date'])
-    
+
     # ========================================
     # G因子相关操作
     # ========================================
-    
+
     def save_g_factors(self, factors: pd.DataFrame, calc_date: date):
         """
         保存G因子数据
-        
+
         Args:
             factors: G因子DataFrame
             calc_date: 计算日期
@@ -347,7 +347,7 @@ class PGSFactorDBManager:
         if factors.empty:
             logger.warning("No G factor data to save")
             return
-        
+
         insert_sql = """
             INSERT INTO pgs_factors.g_factor
             (ts_code, calc_date, g_score, factor_a, factor_b,
@@ -366,16 +366,16 @@ class PGSFactorDBManager:
                 data_periods = EXCLUDED.data_periods,
                 data_quality = EXCLUDED.data_quality
         """
-        
+
         try:
             with self.transaction() as conn:
                 cursor = conn.cursor()
-                
+
                 for _, row in factors.iterrows():
                     # 确定数据期数和质量
                     data_periods = row.get('data_periods', 0)
                     data_quality = 'high' if data_periods >= 20 else 'medium' if data_periods >= 12 else 'low'
-                    
+
                     values = (
                         row['ts_code'],
                         calc_date,
@@ -390,21 +390,21 @@ class PGSFactorDBManager:
                         data_quality
                     )
                     cursor.execute(insert_sql, values)
-                
+
                 logger.info(f"Saved {len(factors)} G factor records for {calc_date}")
-                
+
         except Exception as e:
             logger.error(f"Failed to save G factors: {e}")
             raise
-    
+
     # ========================================
     # S因子相关操作
     # ========================================
-    
+
     def save_s_factors(self, factors: pd.DataFrame, calc_date: date):
         """
         保存S因子数据
-        
+
         Args:
             factors: S因子DataFrame
             calc_date: 计算日期
@@ -412,10 +412,10 @@ class PGSFactorDBManager:
         if factors.empty:
             logger.warning("No S factor data to save")
             return
-        
+
         insert_sql = """
             INSERT INTO pgs_factors.s_factor
-            (ts_code, calc_date, s_score, debt_ratio, beta, 
+            (ts_code, calc_date, s_score, debt_ratio, beta,
              roe_volatility, data_quality)
             VALUES (%s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (ts_code, calc_date)
@@ -426,15 +426,15 @@ class PGSFactorDBManager:
                 roe_volatility = EXCLUDED.roe_volatility,
                 data_quality = EXCLUDED.data_quality
         """
-        
+
         try:
             with self.transaction() as conn:
                 cursor = conn.cursor()
-                
+
                 for _, row in factors.iterrows():
                     # 确定数据质量
                     data_quality = self._determine_s_factor_quality(row)
-                    
+
                     values = (
                         row['ts_code'],
                         calc_date,
@@ -445,9 +445,9 @@ class PGSFactorDBManager:
                         data_quality
                     )
                     cursor.execute(insert_sql, values)
-                
+
                 logger.info(f"Saved {len(factors)} S factor records for {calc_date}")
-                
+
         except Exception as e:
             logger.error(f"Failed to save S factors: {e}")
             raise
@@ -458,7 +458,7 @@ class PGSFactorDBManager:
 
     def save_g_subfactors(self, subfactors: pd.DataFrame, calc_date: date):
         """保存G因子子因子明细数据（需要表 pgs_factors.g_subfactors）
-        
+
         Args:
             subfactors: 包含子因子明细的DataFrame，需含列：
                         ['ts_code','factor_name','factor_value','update_time']
@@ -610,19 +610,19 @@ class PGSFactorDBManager:
                 logger.info(f"Processing progress updated for {process_type}")
         except Exception as e:
             logger.error(f"Failed to update processing progress: {e}")
-    
+
     # ========================================
     # 处理日志相关操作
     # ========================================
-    
-    def update_processing_log(self, process_type: str, 
+
+    def update_processing_log(self, process_type: str,
                              last_date: datetime,
                              records: int,
                              status: str = 'success',
                              error: str = None):
         """
         更新处理日志
-        
+
         Args:
             process_type: 处理类型
             last_date: 最后处理时间
@@ -632,7 +632,7 @@ class PGSFactorDBManager:
         """
         upsert_sql = """
             INSERT INTO pgs_factors.processing_log
-            (process_type, last_processed_date, records_processed, 
+            (process_type, last_processed_date, records_processed,
              status, error_message)
             VALUES (%s, %s, %s, %s, %s)
             ON CONFLICT (process_type)
@@ -643,7 +643,7 @@ class PGSFactorDBManager:
                 error_message = EXCLUDED.error_message,
                 updated_at = CURRENT_TIMESTAMP
         """
-        
+
         try:
             with self.transaction() as conn:
                 cursor = conn.cursor()
@@ -653,23 +653,23 @@ class PGSFactorDBManager:
                 logger.info(f"Processing log updated for {process_type}")
         except Exception as e:
             logger.error(f"Failed to update processing log: {e}")
-    
+
     def get_last_processed_date(self, process_type: str) -> Optional[datetime]:
         """
         获取最后处理时间
-        
+
         Args:
             process_type: 处理类型
-            
+
         Returns:
             最后处理时间
         """
         query = """
-            SELECT last_processed_date 
+            SELECT last_processed_date
             FROM pgs_factors.processing_log
             WHERE process_type = %s AND status = 'success'
         """
-        
+
         try:
             result = self.context.query_dataframe(query, (process_type,))
             if not result.empty:
@@ -678,15 +678,15 @@ class PGSFactorDBManager:
         except Exception as e:
             logger.error(f"Failed to get last processed date: {e}")
             return None
-    
+
     # ========================================
     # 数据质量监控
     # ========================================
-    
+
     def save_quality_metrics(self, metric_date: date, metrics: Dict[str, Any]):
         """
         保存数据质量指标
-        
+
         Args:
             metric_date: 指标日期
             metrics: 指标字典
@@ -696,11 +696,11 @@ class PGSFactorDBManager:
             (metric_date, metric_type, metric_value, details)
             VALUES (%s, %s, %s, %s)
         """
-        
+
         try:
             with self.transaction() as conn:
                 cursor = conn.cursor()
-                
+
                 for metric_type, value in metrics.items():
                     if isinstance(value, dict):
                         metric_value = value.get('value', 0)
@@ -708,13 +708,13 @@ class PGSFactorDBManager:
                     else:
                         metric_value = value
                         details = None
-                    
+
                     cursor.execute(insert_sql, (
                         metric_date, metric_type, metric_value, details
                     ))
-                
+
                 logger.info(f"Saved {len(metrics)} quality metrics for {metric_date}")
-                
+
         except Exception as e:
             logger.error(f"Failed to save quality metrics: {e}")
             raise
@@ -931,38 +931,38 @@ class PGSFactorDBManager:
         except Exception as e:
             logger.error(f"Failed to save PIT balance quarterly: {e}")
             raise
-    
-    def get_factor_summary(self, stocks: List[str] = None, 
+
+    def get_factor_summary(self, stocks: List[str] = None,
                           calc_date: date = None) -> pd.DataFrame:
         """
         获取因子汇总数据
-        
+
         Args:
             stocks: 股票列表（可选）
             calc_date: 计算日期（可选）
-            
+
         Returns:
             因子汇总DataFrame
         """
         conditions = []
         params = []
-        
+
         if stocks:
             conditions.append("ts_code = ANY(%s)")
             params.append(stocks)
-        
+
         if calc_date:
             conditions.append("calc_date = %s")
             params.append(calc_date)
-        
+
         where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
-        
+
         query = f"""
             SELECT * FROM pgs_factors.factor_summary
             {where_clause}
             ORDER BY calc_date DESC, total_score DESC
         """
-        
+
         try:
             df = self.context.query_dataframe(query, params)
             if df is None or df.empty:
@@ -999,11 +999,11 @@ class PGSFactorDBManager:
         except Exception as e:
             logger.error(f"Failed to get factor summary: {e}")
             return pd.DataFrame()
-    
+
     # ========================================
     # 辅助方法
     # ========================================
-    
+
     def _determine_data_quality(self, row: pd.Series, data_source: str) -> str:
         """确定P因子数据质量"""
         if data_source == 'report':
@@ -1012,7 +1012,7 @@ class PGSFactorDBManager:
             return 'medium'
         else:
             return 'low'
-    
+
     def _determine_s_factor_quality(self, row: pd.Series) -> str:
         """确定S因子数据质量"""
         # 基于数据完整性判断
@@ -1021,18 +1021,18 @@ class PGSFactorDBManager:
             not pd.isna(row.get('beta')),
             not pd.isna(row.get('roe_volatility'))
         ])
-        
+
         if non_null_count == 3:
             return 'high'
         elif non_null_count >= 2:
             return 'medium'
         else:
             return 'low'
-    
+
     def cleanup_old_data(self, days_to_keep: int = 365):
         """
         清理旧数据
-        
+
         Args:
             days_to_keep: 保留天数
         """
@@ -1040,17 +1040,17 @@ class PGSFactorDBManager:
             DELETE FROM pgs_factors.{table}
             WHERE created_at < CURRENT_DATE - INTERVAL '%s days'
         """
-        
+
         tables = ['p_factor', 'g_factor', 's_factor', 'quality_metrics']
-        
+
         try:
             with self.transaction() as conn:
                 cursor = conn.cursor()
-                
+
                 for table in tables:
                     cursor.execute(delete_sql.format(table=table), (days_to_keep,))
                     logger.info(f"Cleaned old data from {table}")
-                    
+
         except Exception as e:
             logger.error(f"Failed to cleanup old data: {e}")
             raise
