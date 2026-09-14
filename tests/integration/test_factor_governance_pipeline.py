@@ -1,15 +1,13 @@
 """Opt-in PostgreSQL integration tests for governed factor persistence.
 
-Set ``ALPHAHOME_FACTOR_TEST_DATABASE_URL`` to a disposable database whose name
-contains ``test``. The test refuses to touch a database with existing ``factors``
+Set ``ALPHAHOME_TEST_DATABASE_URL`` to an isolated loopback database with a
+non-default port and an ``alphahome_test_*`` name. Refuse existing ``factors``
 or ``pgs_factors`` schemas.
 """
 
 from __future__ import annotations
 
-import os
 from datetime import date
-from urllib.parse import urlparse
 
 import pandas as pd
 import psycopg2
@@ -18,7 +16,6 @@ import pytest
 from alphahome.factors.governance import FactorGovernanceStore
 from alphahome.factors.persistence import FactorSnapshotWriter, P_FACTOR_COLUMNS
 from alphahome.factors.repair import FactorRepairService
-from alphahome.common.config_manager import ConfigManager
 from alphahome.common.db_manager import DBManager
 
 
@@ -69,12 +66,22 @@ def _p_frame(data_source="report", score=50.0):
     return pd.DataFrame([row])
 
 
-def test_live_factor_relations_obey_schema_ownership_contract():
-    database_url = ConfigManager().get_database_url()
-    if not database_url:
-        pytest.skip("AlphaDB is not configured")
+def test_factor_relations_obey_schema_ownership_contract(isolated_database_url):
+    database_url = isolated_database_url
     db = DBManager(database_url, mode="sync")
+    created = False
     try:
+        existing = db.fetch_one_sync("SELECT to_regnamespace('factors') AS factors, to_regnamespace('pgs_factors') AS legacy")
+        if existing["factors"] or existing["legacy"]:
+            pytest.skip("disposable database already has factor schemas")
+        db.execute_sync("""
+            CREATE SCHEMA factors; CREATE SCHEMA pgs_factors;
+            CREATE TABLE factors.p_factor (ts_code text, calc_date date);
+            CREATE TABLE factors.g_factor (ts_code text, calc_date date);
+            CREATE VIEW pgs_factors.p_factor AS SELECT * FROM factors.p_factor;
+            CREATE VIEW pgs_factors.g_factor AS SELECT * FROM factors.g_factor;
+        """)
+        created = True
         relations = db.fetch_sync(
             """
             SELECT n.nspname AS schema_name, c.relname, c.relkind,
@@ -107,17 +114,13 @@ def test_live_factor_relations_obey_schema_ownership_contract():
             == {"p_equal": True, "g_equal": True}
         )
     finally:
+        if created:
+            db.execute_sync("DROP SCHEMA pgs_factors CASCADE; DROP SCHEMA factors CASCADE")
         db.close_sync()
 
 
-def test_postgresql_staging_governance_views_and_friday_constraint():
-    database_url = os.environ.get("ALPHAHOME_FACTOR_TEST_DATABASE_URL")
-    if not database_url:
-        pytest.skip("ALPHAHOME_FACTOR_TEST_DATABASE_URL is not configured")
-    database_name = urlparse(database_url).path.lstrip("/").lower()
-    if "test" not in database_name:
-        pytest.skip("factor integration database name must contain 'test'")
-
+def test_postgresql_staging_governance_views_and_friday_constraint(isolated_database_url):
+    database_url = isolated_database_url
     connection = psycopg2.connect(database_url)
     connection.autocommit = True
     with connection.cursor() as cursor:

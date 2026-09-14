@@ -14,7 +14,7 @@ import os
 # 添加项目根目录到路径
 import sys
 import tempfile
-from datetime import date, datetime
+from datetime import date
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
@@ -23,6 +23,9 @@ import pytest
 
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
+sys.path.insert(0, str(Path(__file__).parent))
+
+from db_safety import TEST_DATABASE_ENV, install_database_guard, test_target  # noqa: E402
 
 
 # ===== 测试配置 =====
@@ -165,6 +168,32 @@ def pytest_configure(config):
         "markers", "requires_api: mark test as requiring external API"
     )
     config.addinivalue_line("markers", "slow: mark test as slow running")
+    guard = pytest.MonkeyPatch()
+    install_database_guard(guard)
+    config._alphahome_database_guard = guard
+
+
+def pytest_unconfigure(config):
+    guard = getattr(config, "_alphahome_database_guard", None)
+    if guard is not None:
+        guard.undo()
+
+
+def pytest_collection_modifyitems(config, items):
+    for item in items:
+        if item.get_closest_marker("requires_db") and not os.environ.get(TEST_DATABASE_ENV):
+            item.add_marker(pytest.mark.skip(reason=f"{TEST_DATABASE_ENV} not configured"))
+        if item.get_closest_marker("requires_api") and os.environ.get("ALPHAHOME_TEST_ALLOW_API") != "1":
+            item.add_marker(pytest.mark.skip(reason="External API tests require explicit opt-in"))
+
+
+@pytest.fixture
+def isolated_database_url():
+    value = os.environ.get(TEST_DATABASE_ENV)
+    if not value:
+        pytest.skip(f"{TEST_DATABASE_ENV} not configured")
+    test_target(value)
+    return value
 
 
 @pytest.fixture
