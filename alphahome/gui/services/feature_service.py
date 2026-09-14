@@ -106,116 +106,37 @@ async def handle_get_features():
             _send_response_callback("FEATURE_REFRESH_COMPLETE", {"success": success})
 
 
-async def handle_refresh_features(feature_names: List[str], strategy: str = "default"):
-    """
-    处理刷新指定特征视图的请求。
-    
-    Args:
-        feature_names: 要刷新的特征名称列表
-        strategy: 刷新策略 ("default", "full", "incremental")
-    """
-    success_count = 0
-    fail_count = 0
-    
-    db_manager = UnifiedTaskFactory.get_db_manager()
-    if not db_manager:
-        logger.error("数据库管理器未初始化，无法刷新特征视图。")
-        if _send_response_callback:
-            _send_response_callback("ERROR", "数据库未连接，无法刷新特征视图。")
-        return
-    
-    for name in feature_names:
-        try:
-            # 从缓存获取 recipe_class
-            feature = next((f for f in _feature_cache if f["name"] == name), None)
-            if not feature or "recipe_class" not in feature:
-                logger.warning(f"未找到特征 '{name}' 的配方类。")
-                fail_count += 1
-                continue
-            
-            recipe_cls = feature["recipe_class"]
-            actual_strategy = (
-                getattr(recipe_cls, "refresh_strategy", "full")
-                if strategy == "default"
-                else strategy
-            )
-            
-            # 创建实例并刷新
-            instance = recipe_cls(db_manager=db_manager)
-            logger.info(f"正在刷新物化视图: {instance.full_name} (策略: {actual_strategy})")
-            
-            result = await instance.refresh(strategy=actual_strategy)
-            
-            if result.get("status") == "success":
-                success_count += 1
-                logger.info(f"物化视图 {name} 刷新成功")
-            else:
-                fail_count += 1
-                logger.error(f"物化视图 {name} 刷新失败: {result.get('error_message')}")
-                
-        except Exception as e:
-            fail_count += 1
-            logger.error(f"刷新特征 '{name}' 时发生错误: {e}")
-    
-    if _send_response_callback:
-        _send_response_callback("FEATURE_OPERATION_COMPLETE", {
-            "operation": "刷新",
-            "success_count": success_count,
-            "fail_count": fail_count
-        })
+async def plan_feature_execution(feature_names, strategy="default", *, operation="refresh", as_of_date=None):
+    from ...features.coordinator import FeatureCoordinator
+    db = UnifiedTaskFactory.get_db_manager()
+    return await FeatureCoordinator(db).plan(feature_names, strategy, operation=operation, as_of_date=as_of_date)
 
 
-async def handle_create_features(feature_names: List[str]):
-    """
-    处理创建指定特征视图的请求。
-    
-    Args:
-        feature_names: 要创建的特征名称列表
-    """
-    success_count = 0
-    fail_count = 0
-    
-    db_manager = UnifiedTaskFactory.get_db_manager()
-    if not db_manager:
-        logger.error("数据库管理器未初始化，无法创建特征视图。")
-        if _send_response_callback:
-            _send_response_callback("ERROR", "数据库未连接，无法创建特征视图。")
-        return
-    
-    for name in feature_names:
-        try:
-            # 从缓存获取 recipe_class
-            feature = next((f for f in _feature_cache if f["name"] == name), None)
-            if not feature or "recipe_class" not in feature:
-                logger.warning(f"未找到特征 '{name}' 的配方类。")
-                fail_count += 1
-                continue
-            
-            recipe_cls = feature["recipe_class"]
-            
-            # 创建实例并创建视图
-            instance = recipe_cls(db_manager=db_manager)
-            logger.info(f"正在创建物化视图: {instance.full_name}")
-            
-            result = await instance.create(if_not_exists=True)
-            
-            if result:
-                success_count += 1
-                logger.info(f"物化视图 {name} 创建成功")
-            else:
-                fail_count += 1
-                logger.error(f"物化视图 {name} 创建失败")
-                
-        except Exception as e:
-            fail_count += 1
-            logger.error(f"创建特征 '{name}' 时发生错误: {e}")
-    
-    if _send_response_callback:
-        _send_response_callback("FEATURE_OPERATION_COMPLETE", {
-            "operation": "创建",
-            "success_count": success_count,
-            "fail_count": fail_count
-        })
+async def _execute_features(feature_names, strategy="default", *, operation="refresh", submitted_plan=None):
+    from ...features.coordinator import execute_feature_request
+    result = None
+    try:
+        db = UnifiedTaskFactory.get_db_manager()
+        result = await execute_feature_request(db, feature_names, strategy, operation=operation,
+                                               submitted_plan=submitted_plan)
+        return result
+    except Exception as error:
+        logger.exception("Features operation failed")
+        result = {"status": "error", "success_count": 0, "fail_count": len(feature_names), "error_message": str(error)}
+        return result
+    finally:
+        if _send_response_callback and result is not None:
+            _send_response_callback("FEATURE_OPERATION_COMPLETE", {
+                **result, "operation": "刷新" if operation == "refresh" else "创建",
+            })
+
+
+async def handle_refresh_features(feature_names: List[str], strategy: str = "default", *, submitted_plan=None):
+    return await _execute_features(feature_names, strategy, submitted_plan=submitted_plan)
+
+
+async def handle_create_features(feature_names: List[str], *, submitted_plan=None):
+    return await _execute_features(feature_names, operation="create", submitted_plan=submitted_plan)
 
 
 def _infer_category(recipe_cls) -> str:
