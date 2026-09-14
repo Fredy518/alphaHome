@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "fund-industry-position"
-version = "0.4.0"
+version = "0.4.1"
 description = "AlphaHome-owned auditable SW2021 mutual fund position engine"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"

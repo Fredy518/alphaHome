@@ -411,22 +411,19 @@ class FundposDatabase:
         for table, digest in snapshot_manifest["files"].items():
             evidence_id = f"input:{table}:{digest}"
             evidence_ids[table] = evidence_id
-            cursor.execute(
-                """INSERT INTO fundpos.evidence_snapshot
-                (evidence_id,evidence_type,source_name,source_uri,content_sha256,
-                 first_observed_at,normalization_version,local_path,metadata)
-                VALUES(%s,%s,%s,%s,%s,%s,'v3',%s,%s::jsonb)
-                ON CONFLICT DO NOTHING""",
-                (
-                    evidence_id,
-                    f"normalized_{table}",
-                    manifest.get("provenance", {}).get("provider", "local_snapshot"),
-                    manifest.get("provenance", {}).get("provider"),
-                    digest,
-                    manifest.get("provenance", {}).get("loaded_at"),
-                    str((snapshot / f"{table}.parquet").resolve()),
-                    _json({"snapshot_fingerprint": bundle.fingerprint}),
+            self._upsert_evidence_snapshot(
+                cursor,
+                evidence_id=evidence_id,
+                evidence_type=f"normalized_{table}",
+                source_name=manifest.get("provenance", {}).get(
+                    "provider", "local_snapshot"
                 ),
+                source_uri=manifest.get("provenance", {}).get("provider"),
+                content_sha256=digest,
+                first_observed_at=manifest.get("provenance", {}).get("loaded_at"),
+                normalization_version="v3",
+                local_path=str((snapshot / f"{table}.parquet").resolve()),
+                metadata={"snapshot_fingerprint": bundle.fingerprint},
             )
             cursor.execute(
                 """INSERT INTO fundpos.run_evidence(run_id,evidence_id,evidence_role)
@@ -452,7 +449,13 @@ class FundposDatabase:
                     (scope_version,product_id,representative_share,category,pool_kind,
                      valid_from,available_at,evidence_id,quality_status,reasons)
                     VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb)
-                    ON CONFLICT DO NOTHING""",
+                    ON CONFLICT (scope_version,product_id,pool_kind,valid_from)
+                    DO UPDATE SET
+                        representative_share=EXCLUDED.representative_share,
+                        category=EXCLUDED.category,
+                        evidence_id=EXCLUDED.evidence_id,
+                        quality_status=EXCLUDED.quality_status,
+                        reasons=EXCLUDED.reasons""",
                     (
                         scope_version,
                         row["master_code"],
@@ -681,19 +684,17 @@ class FundposDatabase:
                 ]
             )
             evidence_id = f"normalized_holdings:{digest}"
-            cursor.execute(
-                """INSERT INTO fundpos.evidence_snapshot
-                (evidence_id,evidence_type,source_name,content_sha256,first_observed_at,
-                 normalization_version,local_path,metadata)
-                VALUES(%s,'standardized_disclosure_holdings','fundpos',%s,%s,'v3',%s,%s::jsonb)
-                ON CONFLICT DO NOTHING""",
-                (
-                    evidence_id,
-                    digest,
-                    manifest.get("provenance", {}).get("loaded_at"),
-                    str(snapshot.resolve()),
-                    _json({"dedup_rule": "bond_detail_precedes_cbond_duplicate"}),
-                ),
+            self._upsert_evidence_snapshot(
+                cursor,
+                evidence_id=evidence_id,
+                evidence_type="standardized_disclosure_holdings",
+                source_name="fundpos",
+                source_uri=None,
+                content_sha256=digest,
+                first_observed_at=manifest.get("provenance", {}).get("loaded_at"),
+                normalization_version="v3",
+                local_path=str(snapshot.resolve()),
+                metadata={"dedup_rule": "bond_detail_precedes_cbond_duplicate"},
             )
             cursor.execute(
                 """INSERT INTO fundpos.run_evidence(run_id,evidence_id,evidence_role)
@@ -764,6 +765,81 @@ class FundposDatabase:
             "holdings": holding_count,
             "contracts": contract_count,
         }
+
+    @staticmethod
+    def _upsert_evidence_snapshot(
+        cursor,
+        *,
+        evidence_id: str,
+        evidence_type: str,
+        source_name: str,
+        source_uri: str | None,
+        content_sha256: str,
+        first_observed_at,
+        normalization_version: str,
+        local_path: str | None,
+        metadata: dict,
+    ) -> None:
+        """Keep evidence identity immutable while refreshing its audit location.
+
+        Evidence is deduplicated by deterministic identity and content hash.  A
+        repository migration does not change that content, but it does change
+        where the frozen artifact is maintained.  Preserve the first observed
+        timestamp while allowing a current AlphaHome path and metadata to replace
+        stale standalone-project locations.
+        """
+
+        cursor.execute(
+            """INSERT INTO fundpos.evidence_snapshot AS current
+            (evidence_id,evidence_type,source_name,source_uri,content_sha256,
+             first_observed_at,normalization_version,local_path,metadata)
+            VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb)
+            ON CONFLICT (evidence_id) DO UPDATE SET
+                source_name=EXCLUDED.source_name,
+                source_uri=COALESCE(EXCLUDED.source_uri,current.source_uri),
+                first_observed_at=COALESCE(current.first_observed_at,EXCLUDED.first_observed_at),
+                normalization_version=EXCLUDED.normalization_version,
+                local_path=COALESCE(EXCLUDED.local_path,current.local_path),
+                metadata=current.metadata || EXCLUDED.metadata""",
+            (
+                evidence_id,
+                evidence_type,
+                source_name,
+                source_uri,
+                content_sha256,
+                first_observed_at,
+                normalization_version,
+                local_path,
+                _json(metadata),
+            ),
+        )
+
+    def _upsert_run_manifest_evidence(
+        self, cursor, *, run_id: str, requested_run_id: str, run: Path, data, manifest
+    ) -> str:
+        evidence_id = "run:" + data["manifest_sha256"]
+        self._upsert_evidence_snapshot(
+            cursor,
+            evidence_id=evidence_id,
+            evidence_type="run_manifest",
+            source_name="fundpos",
+            source_uri=str(run.resolve()),
+            content_sha256=data["manifest_sha256"],
+            first_observed_at=None,
+            normalization_version="v3",
+            local_path=str(run.resolve()),
+            metadata={
+                "input_hash": manifest["input_hash"],
+                "run_id": run_id,
+                "requested_run_id": requested_run_id,
+            },
+        )
+        cursor.execute(
+            """INSERT INTO fundpos.run_evidence(run_id,evidence_id,evidence_role)
+            VALUES(%s,%s,'run_manifest') ON CONFLICT DO NOTHING""",
+            (run_id, evidence_id),
+        )
+        return evidence_id
 
     @staticmethod
     def _insert_scenario_exposures(cursor, run_id: str, records: list[dict]) -> None:
@@ -844,8 +920,20 @@ class FundposDatabase:
                     )
                     existing = cursor.fetchone()
                     if existing:
+                        existing_run_id = existing[0]
                         self._insert_scenario_exposures(
-                            cursor, existing[0], scenario_exposures
+                            cursor, existing_run_id, scenario_exposures
+                        )
+                        evidence_id = self._upsert_run_manifest_evidence(
+                            cursor,
+                            run_id=existing_run_id,
+                            requested_run_id=run_id,
+                            run=run,
+                            data=data,
+                            manifest=m,
+                        )
+                        evidence_stats = self._ingest_snapshot_evidence(
+                            cursor, existing_run_id, m, estimates, evidence_id
                         )
                         cursor.execute(
                             """INSERT INTO fundpos.estimation_attempt
@@ -853,16 +941,17 @@ class FundposDatabase:
                             VALUES(%s,%s,'reused',%s::jsonb)""",
                             (
                                 data["logical_run_key"],
-                                existing[0],
+                                existing_run_id,
                                 _json({"requested_run_id": run_id}),
                             ),
                         )
                         return {
                             "status": "reused",
-                            "run_id": existing[0],
+                            "run_id": existing_run_id,
                             "logical_run_key": data["logical_run_key"],
                             "estimate_rows": len(estimates),
                             "scenario_exposure_rows": len(scenario_exposures),
+                            **evidence_stats,
                         }
                     cursor.execute("INSERT INTO fundpos.estimation_attempt(logical_run_key,run_id,status) VALUES(%s,%s,'started')",
                                    (data["logical_run_key"], run_id))
@@ -939,15 +1028,13 @@ class FundposDatabase:
                                     asset_status != "complete",
                                 ),
                             )
-                    evidence_id = "run:" + data["manifest_sha256"]
-                    cursor.execute("""INSERT INTO fundpos.evidence_snapshot(evidence_id,evidence_type,source_name,source_uri,
-                        content_sha256,normalization_version,local_path,metadata) VALUES(%s,'run_manifest','fundpos',%s,%s,'v3',%s,%s::jsonb)
-                        ON CONFLICT DO NOTHING""", (evidence_id, str(run), data["manifest_sha256"], str(run.resolve()),
-                        _json({"input_hash": m["input_hash"], "run_id": run_id})))
-                    cursor.execute(
-                        """INSERT INTO fundpos.run_evidence(run_id,evidence_id,evidence_role)
-                        VALUES(%s,%s,'run_manifest') ON CONFLICT DO NOTHING""",
-                        (run_id, evidence_id),
+                    evidence_id = self._upsert_run_manifest_evidence(
+                        cursor,
+                        run_id=run_id,
+                        requested_run_id=run_id,
+                        run=run,
+                        data=data,
+                        manifest=m,
                     )
                     evidence_stats = self._ingest_snapshot_evidence(
                         cursor, run_id, m, estimates, evidence_id

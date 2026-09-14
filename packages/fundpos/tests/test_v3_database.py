@@ -185,6 +185,35 @@ def test_database_json_serializes_numpy_array_diagnostics():
     }
 
 
+def test_evidence_upsert_refreshes_location_without_replacing_content_identity():
+    class Cursor:
+        def execute(self, query, parameters):
+            self.query = query
+            self.parameters = parameters
+
+    cursor = Cursor()
+    FundposDatabase._upsert_evidence_snapshot(
+        cursor,
+        evidence_id="input:nav:abc",
+        evidence_type="normalized_nav",
+        source_name="alphadb",
+        source_uri="alphadb",
+        content_sha256="abc",
+        first_observed_at="2026-09-14T09:00:00+08:00",
+        normalization_version="v3",
+        local_path=r"E:\CodePrograms\alphaHome\logs\fundpos-engine\snapshot\nav.parquet",
+        metadata={"snapshot_fingerprint": "snapshot"},
+    )
+
+    sql = " ".join(cursor.query.split())
+    assert "ON CONFLICT (evidence_id) DO UPDATE" in sql
+    assert "local_path=COALESCE(EXCLUDED.local_path,current.local_path)" in sql
+    assert "content_sha256=EXCLUDED.content_sha256" not in sql
+    assert "evidence_type=EXCLUDED.evidence_type" not in sql
+    assert cursor.parameters[0] == "input:nav:abc"
+    assert "alphaHome" in cursor.parameters[7]
+
+
 def test_convertible_exposure_quality_matches_ingestion_and_reconciliation():
     row = {
         "cbond_quality": "estimated",
