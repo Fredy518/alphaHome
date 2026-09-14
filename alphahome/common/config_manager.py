@@ -21,11 +21,10 @@ def redact_url(url: Optional[str]) -> str:
         parts = urlsplit(url)
         if not parts.netloc:
             return "***REDACTED***"
-        host_part = parts.hostname or ""
-        if parts.port:
-            host_part = f"{host_part}:{parts.port}"
-        user_part = f"{parts.username}:***@" if parts.username else ""
-        return urlunsplit((parts.scheme, f"{user_part}{host_part}", parts.path, parts.query, parts.fragment))
+        # Usernames can themselves be tokens. Query/fragment fields may also
+        # contain credentials, so none of them belong in a diagnostic URL.
+        host_part = parts.netloc.rsplit("@", 1)[-1]
+        return urlunsplit((parts.scheme, host_part, parts.path, "", ""))
     except Exception:
         return "***REDACTED***"
 
@@ -45,6 +44,8 @@ def redact_sensitive_config(value: Any) -> Any:
         return redacted
     if isinstance(value, list):
         return [redact_sensitive_config(item) for item in value]
+    if isinstance(value, str) and "://" in value:
+        return redact_url(value)
     return value
 
 

@@ -23,7 +23,7 @@ class ExplodingDB:
 def test_redacts_database_url_and_nested_secrets():
     url = "postgresql://alice:p%40ss@localhost:5432/alphadb"
 
-    assert redact_url(url) == "postgresql://alice:***@localhost:5432/alphadb"
+    assert redact_url(url) == "postgresql://localhost:5432/alphadb"
     assert redact_sensitive_config(
         {
             "database": {"url": url},
@@ -32,8 +32,8 @@ def test_redacts_database_url_and_nested_secrets():
             "tinysoft": {"password": "pw", "session_password": "spw"},
         }
     ) == {
-        "database": {"url": "postgresql://alice:***@localhost:5432/alphadb"},
-        "db_url": "postgresql://alice:***@localhost:5432/alphadb",
+        "database": {"url": "postgresql://localhost:5432/alphadb"},
+        "db_url": "postgresql://localhost:5432/alphadb",
         "api": {"tushare_token": "***REDACTED***"},
         "tinysoft": {"password": "***REDACTED***", "session_password": "***REDACTED***"},
     }

@@ -60,7 +60,7 @@ class ResearchContext:
                 logger.info(f"Config loaded from {self.config_path}")
                 return config
         except Exception as e:
-            logger.error(f"Error loading config: {e}")
+            logger.error("Error loading config (%s)", type(e).__name__)
             return self._get_default_config()
 
     def _get_default_config(self) -> Dict[str, Any]:
@@ -71,7 +71,7 @@ class ResearchContext:
                 'host': os.getenv('DB_HOST', 'localhost'),
                 'port': int(os.getenv('DB_PORT', '5432')),
                 'user': os.getenv('DB_USER', 'postgres'),
-                'password': os.getenv('DB_PASSWORD', 'password'),
+                'password': os.getenv('DB_PASSWORD'),
                 'db_name': os.getenv('DB_NAME', 'alphadb')
             },
             'planner': {
@@ -105,10 +105,12 @@ class ResearchContext:
         """创建数据库管理器实例
 
         配置优先级：
-        1. AlphaHome主配置文件
-        2. 研究项目配置文件
-        3. 默认值
+        1. 研究项目配置文件
+        2. AlphaHome主配置文件
+        3. 环境变量及非敏感默认值；密码必须显式配置
         """
+        # 在创建连接前拒绝缺少凭据的配置，不能回退到内置密码。
+        db_config = self._get_merged_db_config()
         try:
             # 动态导入以避免循环依赖
             import sys
@@ -118,14 +120,11 @@ class ResearchContext:
 
             from alphahome.common.db_manager import create_sync_manager
 
-            # 获取合并后的数据库配置
-            db_config = self._get_merged_db_config()
-
             # 获取连接参数并进行URL编码处理
             import urllib.parse
 
             user = urllib.parse.quote_plus(str(db_config.get('user', 'postgres')))
-            password = urllib.parse.quote_plus(str(db_config.get('password', 'password')))
+            password = urllib.parse.quote(str(db_config['password']), safe='')
             host = str(db_config.get('host', 'localhost'))
             port = str(db_config.get('port', 5432))
             db_name = urllib.parse.quote_plus(str(db_config.get('db_name', 'alphadb')))
@@ -140,8 +139,10 @@ class ResearchContext:
             return db_manager
 
         except Exception as e:
-            logger.error(f"Failed to create DBManager: {e}")
-            raise
+            # 驱动异常可能包含完整连接串；日志和对外异常均不携带原文。
+            message = f"Failed to create DBManager ({type(e).__name__})"
+            logger.error(message)
+            raise RuntimeError(message) from None
 
     def _get_merged_db_config(self):
         """获取合并后的数据库配置
@@ -149,20 +150,12 @@ class ResearchContext:
         配置优先级（从高到低）：
         1. 研究项目配置文件（如果存在config.yml且有明确配置）
         2. AlphaHome主配置文件（如果存在）  
-        3. 默认值（兜底）
+        3. 环境变量及非敏感默认值（没有默认密码）
 
         Returns:
             合并后的数据库配置字典
         """
-        # 默认配置
-        config = {
-            'db_type': 'postgresql',
-            'host': 'localhost',
-            'port': 5432,
-            'user': 'postgres',
-            'password': 'wuhao123',
-            'db_name': 'alphadb'
-        }
+        config = self._get_default_config()['db_manager'].copy()
 
         # 先加载主配置
         main_config = self._load_alphahome_config()
@@ -180,6 +173,12 @@ class ResearchContext:
                     if value is not None and value != '':
                         config[key] = value
                 logger.info("研究项目配置覆盖了部分参数")
+
+        if not config.get('password'):
+            raise ValueError(
+                "Database password is not configured; set DB_PASSWORD, DATABASE_URL, "
+                "or an explicit database configuration."
+            )
 
         logger.debug(f"最终数据库配置: {self._mask_sensitive_config(config)}")
         return config
@@ -212,7 +211,7 @@ class ResearchContext:
             return None
             
         except Exception as e:
-            logger.warning(f"通过ConfigManager加载配置失败: {e}")
+            logger.warning("通过ConfigManager加载配置失败 (%s)", type(e).__name__)
             return None
 
     def _parse_database_url(self, database_url):
@@ -260,15 +259,14 @@ class ResearchContext:
                 'db_name': parsed.path.lstrip('/') if parsed.path else 'alphadb'
             }
         except Exception as e:
-            logger.warning(f"解析数据库URL失败: {e}")
+            logger.warning("解析数据库URL失败 (%s)", type(e).__name__)
             return {}
 
     def _mask_sensitive_config(self, config):
         """屏蔽敏感配置信息用于日志输出"""
-        masked = config.copy()
-        if 'password' in masked:
-            masked['password'] = '*' * len(str(masked['password']))
-        return masked
+        from alphahome.common.config_manager import redact_sensitive_config
+
+        return redact_sensitive_config(config)
 
     def store_analysis_result(self, key: str, result: Any):
         """存储分析结果

@@ -104,7 +104,7 @@ ${EDITOR:-vi} ~/.alphahome/config.json
 ## 验证
 
 ```bash
-python -c "from alphahome.common.config_manager import load_config; print(load_config()['database']['url'])"
+python -c "from alphahome.common.config_manager import load_config, redact_url; print(redact_url(load_config()['database']['url']))"
 python -c "from alphahome.common.db_manager import create_sync_manager; db=create_sync_manager(); print(db.test_connection())"
 pytest tests/unit/ -v -m "not requires_db and not requires_api"
 ```
