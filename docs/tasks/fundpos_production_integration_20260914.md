@@ -4,97 +4,105 @@
 
 ## 结论
 
-AlphaHome 已成为公募基金仓位测算的生产编排入口，负责冻结版本核验、日更调度、
-事务入库、跨载体勾稽和运行观察。算法实现继续以带 Git 标签和 SHA256 的 Python 3.12
-wheel 运行；这是当前正式部署边界，因为 AlphaHome 主环境与求解器环境的 Python 和
-pandas 主版本尚未收敛。待 10 个不同估值日观察完成并解决依赖兼容后，再评估把包源码
-迁入同一仓库，避免在生产观察期同时改变算法位置和运行依赖。
+公募基金仓位测算的生产代码、配置、固定范围、版本化证据种子、数据库迁移和测试已迁入
+AlphaHome。旧“公募基金行业仓位测算”仓库不再参与运行、安装、调度或入库。
 
-当前状态分开表达：
+AlphaDB `fundpos` schema 是结果、诊断和标准化证据的唯一维护与消费层。定时生产链固定为：
 
-- 工程计算与诊断入库：通过；
-- 同输入幂等复用与报表勾稽：通过；
-- Windows 影子日更调度：已安装，状态 `Ready`；
-- 正式发布视图切换：未启用，影子观察为 1/10 个不同估值日；
-- 算法质量：沿用 v3.1 放宽验收结论，单基金继续保留 `degraded` 原因。
+1. 从 AlphaDB 只读获取源数据并冻结输入快照；
+2. 在隔离的 Python 3.12 wheel 中计算；
+3. 将结果、诊断、融资情景和标准化证据事务写入 `fundpos`；
+4. 从数据库读回，与冻结 Parquet 逐行勾稽；
+5. 影子模式记录观察日，发布模式另行检查批准验证记录。
+
+定时任务不生成 Excel、HTML 或 JSON 业务报表。Parquet 只作为入库前的不可变事务证据、
+幂等指纹和故障恢复输入，不是下游接口。人工显式调用的临时 HTML 检视产物可随时删除，
+不参与生产验收。
 
 ## 冻结发布
 
 | 项目 | 值 |
 |---|---|
-| fundpos 版本 | `0.3.2` |
-| Git 标签 | `v0.3.2` |
-| Git 修订 | `b6ffc500ed165dcfbe546790eda7648de9f29d32` |
+| AlphaHome 提交 | `3e6f8020d4a8037bd0bb9e88e6c1410fdf7cb5e0` |
+| fundpos 版本 | `0.4.0` |
+| Git 标签 | `fundpos-v0.4.0` |
+| 引擎 Git tree | `1e0dbdaa3ba6267de15d16eac27f925018b36f44` |
 | Python | `3.12.7` |
 | CVXPY / OSQP | `1.9.2` / `1.1.3` |
-| wheel SHA256 | `f6e9e5397e61c919c24284a0ea4adfe3343627786995788b336efadf0b4d239f` |
-| 隔离运行时 | `E:\CodePrograms\alphaHome\.fundpos-runtime\v0.3.2` |
-| 数据库迁移 | 4/4 已应用 |
+| wheel SHA256 | `dee646330f2965dc62d1df11b4f3faade084c54445522258efe712f048ab4417` |
+| 隔离运行时 | `E:\CodePrograms\alphaHome\.fundpos-runtime\v0.4.0` |
+| 数据库迁移 | 6/6 已应用 |
 
-编排器每次运行前核对源仓库无未提交修改、HEAD、标签、包版本、Python 版本、求解器
-版本、wheel 哈希和迁移状态。任一项不一致即终止，不进入估算和入库。
+隔离环境按子包 `uv.lock` 安装，运行时不存在 `openpyxl`。编排器每次运行前核对 AlphaHome
+标签、提交、引擎 tree、受管路径工作树、包版本、Python 版本、wheel 哈希和全部迁移；
+任一项漂移即停止。
 
-## 生产缺口修复
+## 数据库存储边界
 
-日更试运行发现并修复两项会造成系统性不可估算的数据问题：
+正式结果及诊断位于：
 
-1. 带哈希的 DR007 历史文件截止 2025-05-27。0.3.1 在历史区间继续优先使用该文件，
-   后续缺口使用 AlphaDB 的 FR007；利率延迟到下一基金估值日生效，避免同日穿越。
-2. 转债持仓来源表把部分 118 开头证券同时记录为深交所和上交所，造成披露持仓重复、
-   超过独立转债资产控制值。0.3.2 以 `rawdata.cbond_basic` 为正式代码主表，规范化后
-   删除经济字段相同的重复行。2026-09-11 快照共处理 6,723 行，改写并删除 166 行，
-   未解析代码为 0，转债主导组由 1/10 恢复为 10/10 条件可估算。
+- `fundpos.estimation_run`、`fundpos.estimation_attempt`：逻辑运行、版本和执行尝试；
+- `fundpos.fund_estimate`、`fundpos.fund_exposure`：单基金诊断和正式资产长表；
+- `fundpos.group_estimate`、`fundpos.group_exposure`：群体覆盖与资产长表；
+- `fundpos.fund_scenario_exposure`：固收+逐基金、逐融资情景、逐资产诊断长表；
+- `fundpos.evidence_snapshot`、`fundpos.run_evidence`：输入和运行证据；
+- 产品范围、份额、分类、合同及披露标准化表；
+- 验证、发布和撤回审计表。
 
-## 2026-09-11 影子运行
+迁移 `005_fund_scenario_exposure.sql` 补齐原先只在 `scenarios.parquet` 中存在的逐情景结果；
+迁移 `006_fund_scenario_privileges.sql` 显式授予 reader、writer 和 migrator 权限。真实测试曾触发
+writer 权限不足，事务完整回滚；权限迁移后同一运行成功提交，证明失败不会留下半套结果。
 
-信息截止为 2026-09-12。完整批次运行号如下：
+下游使用 `fundpos.latest_available`、`fundpos.published_current`、
+`fundpos.published_group_current` 或带 `run_id` 的明细查询，不读取本地项目目录。
 
-| 模型族 | 固定范围 | 可估算 | 适用范围覆盖率 | 原始范围覆盖率 | 入库明细 |
-|---|---:|---:|---:|---:|---:|
-| 固收+ | 90 | 70 | 100% | 77.78% | 90 基金 / 3,240 资产 |
-| 增强指数 | 20 | 19 | 95% | 95% | 20 基金 / 680 资产 |
-| 转债主导 | 10 | 10 | 100% | 100% | 10 基金 / 360 资产 |
+## 2026-09-11 冻结影子运行
+
+信息截止为 2026-09-12。
+
+| 模型族 | 固定范围 | 可估算 | 适用范围覆盖率 | 正式资产行 | 融资情景行 | 入库与勾稽 |
+|---|---:|---:|---:|---:|---:|---|
+| 固收+ | 90 | 70 | 100% | 3,240 | 9,856 | 通过 |
+| 增强指数 | 20 | 19 | 95% | 680 | 0 | 通过 |
+| 转债主导 | 10 | 10 | 100% | 360 | 1,628 | 通过 |
 
 运行号：
 
-- 固收+：`2026-09-11_fixed_income_plus_a67a5f3abdfb77460019d5ce`
-- 增强指数：`2026-09-11_personalized_0822aa939b686ba4bd70f5eb`
-- 转债主导：`2026-09-11_convertible_dominant_ae43cda690969b0d06b4ed3e`
+- 固收+：`2026-09-11_fixed_income_plus_e39fa3ebdb076e31b1976c17`
+- 增强指数：`2026-09-11_personalized_614273d34e5e20847dd88c8f`
+- 转债主导：`2026-09-11_convertible_dominant_d07d116260aa28894980ff99`
 
-固收+固定范围中的 20 只对照产品明确标记为 `UNIVERSE_RULES_NOT_MET`，仍在原始覆盖率
-和数据库结果中保留。增强指数 1 只因 `DUPLICATE_KEYS` 不可估算。其余结果保留合同
-未核实、融资代理、持仓代理、融资敏感性等原因，不用零值替代。
+每个模型族均完成 `fund_estimate`、`fund_exposure`、`group_estimate`、`group_exposure` 和
+`fund_scenario_exposure` 五组核对，缺行、多行和数值差异均为 0。三份正式运行目录均没有
+`report` 目录，Excel 和 HTML 文件数均为 0。
 
-首次运行对三个模型族分别完成事务提交。随后以相同估值日、信息截止、范围、模型、
-配置、输入指纹和代码版本复跑，三个模型族均返回 `reused`，运行号保持不变。数据库、
-Parquet、JSON、HTML 和 Excel 的基金及群体结果均无缺行、无多行、无数值差异。
+迁移前后对 2026-09-11 的基金明细、群体汇总和融资情景分别按稳定键对齐。三个模型族的
+列集合、非数值字段和全部数值完全一致，最大绝对差异为 0。再次执行完整影子批次时，
+三个模型族均返回 `reused`，运行号保持不变，数据库勾稽继续通过。
 
-## 调度与发布边界
+## 测试与运行状态
 
-Windows 计划任务 `AlphaHome-Fundpos-Shadow` 已安装，使用 AlphaHome 主环境启动编排器，
-再由编排器调用冻结的 3.12 wheel。任务在主机本地时间的工作日 09:00、12:00、18:00
-运行；启用错过后补跑、两小时上限和 `IgnoreNew` 互斥策略。配置保存在用户目录，仓库只
-提交无凭据模板。
+- fundpos 子包：`160 passed`；
+- AlphaHome 编排与状态初始化：`10 passed`；
+- Ruff：子包、编排器、生产脚本和相关测试全部通过；
+- `uv lock --check`：通过；
+- 数据库迁移：6/6 哈希一致且已应用；
+- Windows 任务 `AlphaHome-Fundpos-Shadow`：`Ready`，工作日 09:00、12:00、18:00；
+- 影子观察：1/10 个不同估值日。
 
-调度当前固定为 `shadow`，因此会写入证据、运行、诊断和结果表，但不会更新
-`fundpos.published_current`。只有同时满足以下条件后才配置日更批准文件并切换发布：
-
-1. 累积 10 个不同估值日的三模型族完整成功记录；
-2. 对迟到数据恢复、失败重跑和周末/休市日期完成运行复核；
-3. 对本期质量原因和增强指数重复键完成运营审阅；
-4. 每个模型族明确绑定批准验证记录和发布键。
-
-影子批次重复运行只更新同一估值日记录，不会增加观察天数。部分模型族单独试算也不
-计入观察日。任何估算、入库或勾稽失败都会返回非零退出码并保留上一份正式发布结果。
+当前仍为影子入库，不更新 `fundpos.published_current`。这是运行观察状态，不影响数据库作为
+唯一事实层；完成 10 个不同估值日以及迟到恢复、失败重跑和周报检查后，再按已批准的验证
+记录切换发布指针。
 
 ## 维护入口
 
+- 引擎源码与锁文件：`packages/fundpos`
 - 配置模板：`config/fundpos_production.example.json`
 - 日更入口：`scripts/production/fundpos/run_fundpos_daily.py`
+- 状态种子初始化：`scripts/production/fundpos/bootstrap_fundpos_state.py`
 - 计划任务安装：`scripts/production/fundpos/install_fundpos_schedule.ps1`
 - 编排实现：`alphahome/integrations/fundpos/production.py`
 - 运行账本：`E:\CodePrograms\alphaHome\logs\fundpos`
+- 不可变事务证据：`E:\CodePrograms\alphaHome\logs\fundpos-engine`
 
-算法源码仍由原 fundpos 仓库维护和发布。AlphaHome 只接受冻结 wheel，不从开发工作树
-直接导入算法。后续若迁移源码，应保留 `fundpos` schema、逻辑运行幂等键、证据哈希和
-历史发布版本，迁移不能重写已有结果身份。
+旧项目只保留历史研究、R 对照和迁移审计，不得再次作为生产代码源或调度工作目录。
