@@ -27,36 +27,23 @@ class PITIndustryFTTMManager(PITMonthlySnapshotManager):
 
     def _ensure_table_exists(self) -> None:
         super()._ensure_table_exists()
-        self._apply_idempotent_table_ddl()
-        # Early handoff drafts used varchar(32), while the fixed V1 aggregation
-        # identifier itself is 34 characters. Upgrade only affected deployments.
-        column = self.context.query_dataframe(
-            """
-            SELECT character_maximum_length
-            FROM information_schema.columns
-            WHERE table_schema = 'pit'
-              AND table_name = 'pit_industry_fttm_monthly'
-              AND column_name = 'aggregation_version'
-            """
-        )
-        if (
-            not column.empty
-            and column.iloc[0]["character_maximum_length"] is not None
-            and int(column.iloc[0]["character_maximum_length"]) < 64
-        ):
-            self.context.db_manager.execute_sync(
-                """
-                ALTER TABLE pit.pit_industry_fttm_monthly
-                ALTER COLUMN aggregation_version TYPE varchar(64)
-                """
-            )
+        column = self.context.query_dataframe("""
+            SELECT character_maximum_length FROM information_schema.columns
+            WHERE table_schema='pit' AND table_name='pit_industry_fttm_monthly'
+            AND column_name='aggregation_version'
+        """)
+        if column.empty or (column.iloc[0]["character_maximum_length"] is not None
+                            and int(column.iloc[0]["character_maximum_length"]) < 64):
+            raise RuntimeError("migration_required: aggregation_version must hold 64 characters")
 
-    def incremental_update(
+    def plan_incremental_months(
         self,
         months: int = DEFAULT_INCREMENTAL_MONTHS,
         batch_size: int | None = None,
         cutoff_date: date | str | pd.Timestamp | None = None,
     ) -> Dict[str, Any]:
+        if getattr(self, "_planned_months", None) is not None:
+            return list(self._planned_months)
         latest = self._latest_available_month(cutoff_date=cutoff_date)
         if latest is None:
             raise RuntimeError("pit_industry_classification 没有可用的申万月末快照")
@@ -65,16 +52,27 @@ class PITIndustryFTTMManager(PITMonthlySnapshotManager):
             self.DEFAULT_INCREMENTAL_MONTHS,
         )
         target_months = self.incremental_months(requested, end_date=latest)
+        return target_months
+
+    def incremental_update(
+        self,
+        months: int = DEFAULT_INCREMENTAL_MONTHS,
+        batch_size: int | None = None,
+        cutoff_date: date | str | pd.Timestamp | None = None,
+    ) -> Dict[str, Any]:
+        target_months = self.plan_incremental_months(months=months, batch_size=batch_size, cutoff_date=cutoff_date)
         return self._run_months(
             target_months, batch_size=batch_size, result_key="updated_records"
         )
 
-    def full_backfill(
+    def plan_backfill_months(
         self,
         start_date: str | date | None = None,
         end_date: str | date | None = None,
         batch_size: int = DEFAULT_BACKFILL_BATCH_MONTHS,
     ) -> Dict[str, Any]:
+        if getattr(self, "_planned_months", None) is not None:
+            return list(self._planned_months)
         latest = self._latest_available_month()
         if latest is None:
             raise RuntimeError("pit_industry_classification 没有可用的申万月末快照")
@@ -89,6 +87,15 @@ class PITIndustryFTTMManager(PITMonthlySnapshotManager):
             propagated = self.next_month_end(target_months[-1])
             if propagated <= latest and propagated not in target_months:
                 target_months.append(propagated)
+        return target_months
+
+    def full_backfill(
+        self,
+        start_date: str | date | None = None,
+        end_date: str | date | None = None,
+        batch_size: int = DEFAULT_BACKFILL_BATCH_MONTHS,
+    ) -> Dict[str, Any]:
+        target_months = self.plan_backfill_months(start_date=start_date, end_date=end_date, batch_size=batch_size)
         return self._run_months(
             target_months,
             batch_size=batch_size,

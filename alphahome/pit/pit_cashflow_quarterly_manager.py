@@ -64,15 +64,8 @@ class PITCashflowQuarterlyManager(PITTableManager):
             self.logger.error("现金流量表历史回填失败: %s", exc, exc_info=True)
             return {"backfilled_records": 0, "error": str(exc), "message": "历史回填失败"}
 
-    def incremental_update(
-        self,
-        days: Optional[int] = None,
-        batch_size: Optional[int] = None,
-    ) -> Dict[str, Any]:
-        self.logger.info("开始PIT现金流量表增量更新")
-        days = days or PITConfig.DEFAULT_DATE_RANGES["incremental_days"]
-        batch_size = batch_size or self.batch_size
-        start_date, end_date = self.resolve_incremental_date_range(
+    def plan_incremental_range(self, days=None):
+        return self.resolve_incremental_date_range(
             days,
             (
                 (
@@ -82,6 +75,16 @@ class PITCashflowQuarterlyManager(PITTableManager):
                 ),
             ),
         )
+
+    def incremental_update(
+        self,
+        days: Optional[int] = None,
+        batch_size: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        self.logger.info("开始PIT现金流量表增量更新")
+        days = days or PITConfig.DEFAULT_DATE_RANGES["incremental_days"]
+        batch_size = batch_size or self.batch_size
+        start_date, end_date = self.plan_incremental_range(days)
 
         try:
             self._ensure_table_exists()

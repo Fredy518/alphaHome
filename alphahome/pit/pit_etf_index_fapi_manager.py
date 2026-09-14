@@ -36,16 +36,16 @@ class PITETFIndexFAPIMonthlyManager(PITMonthlySnapshotManager):
 
     def _ensure_table_exists(self) -> None:
         super()._ensure_table_exists()
-        self._apply_idempotent_table_ddl()
-        self._ensure_updated_at_triggers()
 
-    def incremental_update(
+    def plan_incremental_months(
         self,
         months: int = DEFAULT_INCREMENTAL_MONTHS,
         batch_size: int | None = None,
         index_codes: Sequence[str] | None = None,
         cutoff_date: date | str | pd.Timestamp | None = None,
     ) -> dict[str, Any]:
+        if getattr(self, "_planned_months", None) is not None:
+            return list(self._planned_months)
         latest = self._latest_available_month(cutoff_date=cutoff_date)
         if latest is None:
             raise RuntimeError("ETF指数FAPI上游没有共同可用的完整月份")
@@ -57,6 +57,16 @@ class PITETFIndexFAPIMonthlyManager(PITMonthlySnapshotManager):
         target_months = [
             value for value in target_months if value >= self.DEFAULT_FULL_START
         ]
+        return target_months
+
+    def incremental_update(
+        self,
+        months: int = DEFAULT_INCREMENTAL_MONTHS,
+        batch_size: int | None = None,
+        index_codes: Sequence[str] | None = None,
+        cutoff_date: date | str | pd.Timestamp | None = None,
+    ) -> dict[str, Any]:
+        target_months = self.plan_incremental_months(months=months, batch_size=batch_size, index_codes=index_codes, cutoff_date=cutoff_date)
         return self._run_months(
             target_months,
             batch_size=batch_size,
@@ -64,13 +74,15 @@ class PITETFIndexFAPIMonthlyManager(PITMonthlySnapshotManager):
             result_key="updated_records",
         )
 
-    def full_backfill(
+    def plan_backfill_months(
         self,
         start_date: str | date | None = None,
         end_date: str | date | None = None,
         batch_size: int = DEFAULT_BACKFILL_BATCH_MONTHS,
         index_codes: Sequence[str] | None = None,
     ) -> dict[str, Any]:
+        if getattr(self, "_planned_months", None) is not None:
+            return list(self._planned_months)
         latest = self._latest_available_month()
         if latest is None:
             raise RuntimeError("ETF指数FAPI上游没有共同可用的完整月份")
@@ -80,6 +92,16 @@ class PITETFIndexFAPIMonthlyManager(PITMonthlySnapshotManager):
         )
         end = min(self.as_month_end(end_date or latest), latest)
         target_months = self.month_ends(start, end)
+        return target_months
+
+    def full_backfill(
+        self,
+        start_date: str | date | None = None,
+        end_date: str | date | None = None,
+        batch_size: int = DEFAULT_BACKFILL_BATCH_MONTHS,
+        index_codes: Sequence[str] | None = None,
+    ) -> dict[str, Any]:
+        target_months = self.plan_backfill_months(start_date=start_date, end_date=end_date, batch_size=batch_size, index_codes=index_codes)
         return self._run_months(
             target_months,
             batch_size=batch_size,

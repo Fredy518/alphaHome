@@ -24,14 +24,15 @@ class PITIndustryFAPIManager(PITMonthlySnapshotManager):
 
     def _ensure_table_exists(self) -> None:
         super()._ensure_table_exists()
-        self._apply_idempotent_table_ddl()
 
-    def incremental_update(
+    def plan_incremental_months(
         self,
         months: int = DEFAULT_INCREMENTAL_MONTHS,
         batch_size: int | None = None,
         cutoff_date: date | str | pd.Timestamp | None = None,
     ) -> Dict[str, Any]:
+        if getattr(self, "_planned_months", None) is not None:
+            return list(self._planned_months)
         latest = self._latest_available_month(cutoff_date=cutoff_date)
         if latest is None:
             raise RuntimeError("行业FAPI上游没有共同可用的完整月份")
@@ -43,16 +44,27 @@ class PITIndustryFAPIManager(PITMonthlySnapshotManager):
         target_months = [
             value for value in target_months if value >= self.DEFAULT_FULL_START
         ]
+        return target_months
+
+    def incremental_update(
+        self,
+        months: int = DEFAULT_INCREMENTAL_MONTHS,
+        batch_size: int | None = None,
+        cutoff_date: date | str | pd.Timestamp | None = None,
+    ) -> Dict[str, Any]:
+        target_months = self.plan_incremental_months(months=months, batch_size=batch_size, cutoff_date=cutoff_date)
         return self._run_months(
             target_months, batch_size=batch_size, result_key="updated_records"
         )
 
-    def full_backfill(
+    def plan_backfill_months(
         self,
         start_date: str | date | None = None,
         end_date: str | date | None = None,
         batch_size: int = DEFAULT_BACKFILL_BATCH_MONTHS,
     ) -> Dict[str, Any]:
+        if getattr(self, "_planned_months", None) is not None:
+            return list(self._planned_months)
         latest = self._latest_available_month()
         if latest is None:
             raise RuntimeError("行业FAPI上游没有共同可用的完整月份")
@@ -68,6 +80,15 @@ class PITIndustryFAPIManager(PITMonthlySnapshotManager):
             propagated = self.next_month_end(target_months[-1])
             if propagated <= latest and propagated not in target_months:
                 target_months.append(propagated)
+        return target_months
+
+    def full_backfill(
+        self,
+        start_date: str | date | None = None,
+        end_date: str | date | None = None,
+        batch_size: int = DEFAULT_BACKFILL_BATCH_MONTHS,
+    ) -> Dict[str, Any]:
+        target_months = self.plan_backfill_months(start_date=start_date, end_date=end_date, batch_size=batch_size)
         return self._run_months(
             target_months,
             batch_size=batch_size,

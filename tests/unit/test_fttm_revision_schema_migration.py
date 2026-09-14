@@ -26,11 +26,11 @@ class _SnapshotManager(PITMonthlySnapshotManager):
         raise NotImplementedError
 
 
-def test_idempotent_table_ddl_runs_alter_statements_for_existing_tables():
+def test_explicit_table_install_runs_alter_statements_for_existing_tables():
     manager = _SnapshotManager("pit_index_fttm_monthly")
     manager.context = _Context()
 
-    manager._apply_idempotent_table_ddl()
+    manager.install_table_ddl()
 
     assert len(manager.context.db_manager.statements) == 1
     ddl = manager.context.db_manager.statements[0]

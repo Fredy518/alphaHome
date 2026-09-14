@@ -97,6 +97,7 @@ class PITIndustryClassificationManager(PITTableManager):
                     
                 except Exception as e:
                     self.logger.error(f"批次处理失败: {e}")
+                    self.stats["error_records"] += len(batch_months)
                     continue
             
             return {
@@ -169,9 +170,6 @@ class PITIndustryClassificationManager(PITTableManager):
                 self.logger.info(f"重新生成快照: {month_date}")
                 
                 try:
-                    # 删除现有快照
-                    self._delete_existing_snapshot(month_date)
-                    
                     # 生成新快照
                     month_records = self._generate_monthly_snapshot(month_date)
                     total_records += month_records
@@ -180,6 +178,7 @@ class PITIndustryClassificationManager(PITTableManager):
                     
                 except Exception as e:
                     self.logger.error(f"重新生成快照 {month_date} 失败: {e}")
+                    self.stats["error_records"] += 1
                     continue
             
             return {
@@ -198,6 +197,8 @@ class PITIndustryClassificationManager(PITTableManager):
     
     def _find_missing_months(self, start_date: str, end_date: str) -> List[date]:
         """查找缺失的月份"""
+        if getattr(self, "_planned_months", None) is not None:
+            return list(self._planned_months)
         
         start_dt = datetime.strptime(start_date, '%Y-%m-%d').date().replace(day=1)
         end_dt = datetime.strptime(end_date, '%Y-%m-%d').date().replace(day=1)
@@ -233,53 +234,40 @@ class PITIndustryClassificationManager(PITTableManager):
         return missing_months
     
     def _process_month_batch(self, months: List[date]) -> int:
-        """处理月份批次"""
-        
-        total_records = 0
-        
-        for month_date in months:
-            month_end = self._get_month_end_date(month_date)
-            
-            self.logger.info(f"生成快照: {month_end}")
-            
-            # 生成申万快照
-            sw_records = self._generate_industry_snapshot('sw', month_end)
-            total_records += len(sw_records)
-            
-            # 生成中信快照
-            ci_records = self._generate_industry_snapshot('ci', month_end)
-            total_records += len(ci_records)
-            
-            # 批量插入
-            all_records = sw_records + ci_records
-            if all_records:
-                self._insert_industry_snapshot_batch(all_records)
-                self.logger.info(f"快照 {month_end}: SW {len(sw_records)}, CI {len(ci_records)}")
-        
-        return total_records
+        return sum(self._generate_monthly_snapshot(month) for month in months)
     
     def _generate_monthly_snapshot(self, month_date: date) -> int:
-        """生成指定月份的行业分类快照"""
-        
-        # 计算月末日期
+        """Compute, validate and replace one month on the same transaction."""
+        from psycopg2.extras import execute_values
+
         month_end = self._get_month_end_date(month_date)
-        
-        total_records = 0
-        
-        # 生成申万快照
-        sw_records = self._generate_industry_snapshot('sw', month_end)
-        total_records += len(sw_records)
-        
-        # 生成中信快照
-        ci_records = self._generate_industry_snapshot('ci', month_end)
-        total_records += len(ci_records)
-        
-        # 批量插入
-        all_records = sw_records + ci_records
-        if all_records:
-            self._insert_industry_snapshot_batch(all_records)
-        
-        return total_records
+        connection = self.context.db_manager._get_sync_connection()
+        with connection:
+            with connection.cursor() as cursor:
+                cursor.execute("SET LOCAL lock_timeout = '30s'")
+                cursor.execute("SELECT pg_advisory_xact_lock(hashtext(%s),hashtext(%s))",
+                               ("alphahome.pit", f"pit_industry_classification:{month_end}"))
+                sw = self._generate_industry_snapshot("sw", month_end)
+                ci = self._generate_industry_snapshot("ci", month_end)
+                if not sw or not ci:
+                    raise ValueError("Empty industry source has no expected_no_data proof")
+                records = sw + ci
+                keys = [(item["ts_code"], item["obs_date"], item["data_source"]) for item in records]
+                if len(set(keys)) != len(keys) or any(key[0] is None or key[1] != month_end or key[2] is None for key in keys):
+                    raise ValueError("Invalid industry snapshot business keys")
+                cursor.execute("CREATE TEMP TABLE pit_industry_stage (LIKE pit.pit_industry_classification INCLUDING DEFAULTS INCLUDING CONSTRAINTS) ON COMMIT DROP")
+                columns = tuple(records[0])
+                if any(set(item) != set(columns) for item in records):
+                    raise ValueError("Inconsistent industry snapshot fields")
+                from psycopg2 import sql
+                statement = sql.SQL("INSERT INTO pg_temp.pit_industry_stage ({}) VALUES %s").format(
+                    sql.SQL(",").join(sql.Identifier(column) for column in columns))
+                execute_values(cursor, statement, [tuple(item[column] for column in columns) for item in records], page_size=1000)
+                cursor.execute("DELETE FROM pit.pit_industry_classification WHERE obs_date=%s", (month_end,))
+                names = sql.SQL(",").join(sql.Identifier(column) for column in columns)
+                cursor.execute(sql.SQL("INSERT INTO pit.pit_industry_classification ({}) SELECT {} FROM pg_temp.pit_industry_stage").format(names, names))
+        self._verified_committed_rows = getattr(self, "_verified_committed_rows", 0) + len(records)
+        return len(records)
     
     def _generate_industry_snapshot(self, data_source: str, snapshot_date: date) -> List[Dict]:
         """生成指定数据源的行业分类快照"""
@@ -347,20 +335,7 @@ class PITIndustryClassificationManager(PITTableManager):
         return pit_records
 
     def ensure_table_exists(self) -> None:
-        """确保行业分类表存在（支持本地DDL）"""
-        import os
-        try:
-            sql_path = os.path.join(os.path.dirname(__file__), 'database', 'create_pit_industry_classification_table.sql')
-            sql_path = os.path.normpath(sql_path)
-            if not os.path.exists(sql_path):
-                self.logger.warning(f"未找到行业分类建表SQL: {sql_path}")
-                return
-            with open(sql_path, 'r', encoding='utf-8') as f:
-                ddl = f.read()
-            self.context.db_manager.execute_sync(ddl)
-            self.logger.info("行业分类表创建/验证完成")
-        except Exception as e:
-            self.logger.error(f"创建行业分类表失败: {e}")
+        self._ensure_table_exists()
 
     def _insert_industry_snapshot_batch(self, records: List[Dict]):
         """批量插入行业分类快照"""
@@ -411,6 +386,8 @@ class PITIndustryClassificationManager(PITTableManager):
     ) -> Dict:
         """检测行业变更"""
 
+        if getattr(self, "_planned_months", None) is not None:
+            return {"has_changes": bool(self._planned_months), "sw_changes": None, "ci_changes": None}
         since_dt = datetime.strptime(since_date, '%Y-%m-%d').date()
         until_dt = end_date or datetime.now().date()
 
@@ -445,6 +422,8 @@ class PITIndustryClassificationManager(PITTableManager):
         cutoff_date: date | str | pd.Timestamp | None = None,
     ) -> List[date]:
         """获取受行业变更影响的月份"""
+        if getattr(self, "_planned_months", None) is not None:
+            return list(self._planned_months)
 
         since_dt = datetime.strptime(since_date, '%Y-%m-%d').date()
 

@@ -157,8 +157,6 @@ class UnifiedTaskFactory:
     @classmethod
     def get_all_task_names(cls) -> List[str]:
         """获取所有已注册的任务名称列表"""
-        if not cls._initialized:
-            raise RuntimeError("UnifiedTaskFactory 尚未初始化，请先调用 initialize() 方法")
 
         all_tasks = list(cls._task_registry.keys())
         logger.debug(f"获取到所有 {len(all_tasks)} 个已注册任务: {all_tasks}")
@@ -166,9 +164,7 @@ class UnifiedTaskFactory:
 
     @classmethod
     def get_tasks_by_type(cls, task_type: Optional[str] = None) -> Dict[str, Type[BaseTask]]:
-        """新增：按任务类型获取任务字典"""
-        if not cls._initialized:
-            raise RuntimeError("UnifiedTaskFactory 尚未初始化，请先调用 initialize() 方法")
+        """Read registered classes without initializing a database connection."""
             
         if task_type is None:
             return cls._task_registry.copy()
@@ -184,8 +180,6 @@ class UnifiedTaskFactory:
     @classmethod
     def get_task_names_by_type(cls, task_type: Optional[str] = None) -> List[str]:
         """新增：按任务类型获取任务名称列表"""
-        if not cls._initialized:
-            raise RuntimeError("UnifiedTaskFactory 尚未初始化，请先调用 initialize() 方法")
             
         if task_type is None:
             return cls.get_all_task_names()

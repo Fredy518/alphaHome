@@ -148,6 +148,11 @@ class PITTableManager(ABC):
         the start date expands to the earliest affected announcement date.  A
         one-day overlap avoids timestamp-boundary and task-order races.
         """
+        from ..planning_time import planned_date_range
+
+        frozen_range = planned_date_range()
+        if frozen_range is not None:
+            return frozen_range
         if days is None:
             days = int(PITConfig.DEFAULT_DATE_RANGES["incremental_days"])
         base_start, end_date = PITConfig.get_incremental_date_range(int(days))
@@ -233,7 +238,7 @@ class PITTableManager(ABC):
             )
         return earliest_changed.isoformat(), end_date
 
-    def _ensure_updated_at_triggers(self) -> None:
+    def install_updated_at_triggers(self) -> None:
         """幂等部署 PIT 四张表的 updated_at 触发器（不复用 pgs_factor 中的代码）。
         - 位置: alphahome/pit/database/create_pit_updated_at_triggers.sql
         - 仅由显式建表/迁移流程调用；进入上下文不会部署触发器
@@ -283,38 +288,31 @@ class PITTableManager(ABC):
         return set(frame["column_name"].astype(str))
 
     def _ensure_table_exists(self) -> None:
-        """确保当前 Manager 管理的 PIT 表存在；若不存在则自动创建。
-        创建策略：
-        1) 优先尝试执行 database/create_{table_name}_table.sql（如存在）
-        2) 否则按 pit_config 的 key_fields / data_fields 动态生成最小可用表结构
-        同时创建主键/唯一键与基础索引；字段包含 data_source, created_at, updated_at
-        """
-        schema = PITConfig.PIT_SCHEMA
-        table = self.table_name
-        if self._table_exists(schema, table):
-            return
-        self.logger.warning(f"检测到目标表不存在，准备创建：{schema}.{table}")
-        try:
-            self.context.db_manager.execute_sync(f"CREATE SCHEMA IF NOT EXISTS {schema}")
-            import os
-            base_dir = os.path.dirname(os.path.dirname(__file__))  # scripts/production/data_updaters/pit
-            ddl_path = os.path.join(base_dir, 'database', f'create_{table}_table.sql')
-            executed = False
-            if os.path.exists(ddl_path):
-                with open(ddl_path, 'r', encoding='utf-8') as f:
-                    ddl = f.read()
-                self.logger.info(f"使用预置DDL创建表：{ddl_path}")
-                self.context.db_manager.execute_sync(ddl)
-                executed = True
-            if not executed:
-                ddl = self._generate_create_table_sql(schema, table)
-                self.logger.info(f"使用动态DDL创建表：\n{ddl}")
-                self.context.db_manager.execute_sync(ddl)
-            self.logger.info(f"创建表成功：{schema}.{table}")
-            self._ensure_updated_at_triggers()
-        except Exception as e:
-            self.logger.error(f"创建表失败：{schema}.{table}，错误：{e}")
-            raise
+        """Validate the installed schema. Business execution never performs migration."""
+        if not self._table_exists(PITConfig.PIT_SCHEMA, self.table_name):
+            raise RuntimeError(f"migration_required: pit.{self.table_name} is missing")
+        structure = self.validate_table_structure()
+        if structure["missing"]:
+            raise RuntimeError(f"migration_required: pit.{self.table_name} missing columns {structure['missing']}")
+
+    def _require_columns(self, columns):
+        missing = set(columns) - set(self._get_table_columns(PITConfig.PIT_SCHEMA, self.table_name))
+        if missing:
+            raise RuntimeError(f"migration_required: pit.{self.table_name} missing columns {sorted(missing)}")
+
+    def _require_unique_keys(self, keys):
+        frame = self.context.query_dataframe("""
+            SELECT array_agg(a.attname::text ORDER BY a.attname::text) AS keys
+            FROM pg_index i JOIN pg_class c ON c.oid=i.indrelid
+            JOIN pg_namespace n ON n.oid=c.relnamespace
+            CROSS JOIN LATERAL unnest(i.indkey) WITH ORDINALITY k(attnum, position)
+            JOIN pg_attribute a ON a.attrelid=c.oid AND a.attnum=k.attnum
+            WHERE n.nspname=%s AND c.relname=%s AND i.indisunique AND i.indisvalid
+              AND i.indimmediate AND i.indpred IS NULL AND i.indexprs IS NULL
+              AND k.position<=i.indnkeyatts GROUP BY i.indexrelid
+        """, (PITConfig.PIT_SCHEMA, self.table_name))
+        if frame is None or not any(sorted(value) == sorted(keys) for value in frame.get("keys", [])):
+            raise RuntimeError(f"migration_required: pit.{self.table_name} requires unique keys {keys}")
 
     def _generate_create_table_sql(self, schema: str, table: str) -> str:
         """基于 pit_config 生成最小可用的建表DDL，包含：
@@ -386,7 +384,7 @@ class PITTableManager(ABC):
                 set(cfg.get('key_fields', []))
                 | set(cfg.get('data_fields', []))
                 | set(cfg.get('extended_fields', {}).keys())
-                | {'created_at', 'updated_at'}
+                | {'updated_at'}
             )
             if cfg.get('standard_data_source', True):
                 expected.add('data_source')
@@ -399,7 +397,7 @@ class PITTableManager(ABC):
             return {'missing': missing, 'unexpected': unexpected}
         except Exception as e:
             self.logger.error(f"验证表结构失败：{e}")
-            return {'missing': [], 'unexpected': []}
+            raise RuntimeError("PIT schema inspection failed") from e
 
     @abstractmethod
     def full_backfill(self, **kwargs) -> Dict[str, Any]:

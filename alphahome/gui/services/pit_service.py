@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Any, Callable, Dict, List, Optional
+import asyncio
 
 from ...common.logging_utils import get_logger
 from ...common.task_system import UnifiedTaskFactory
@@ -22,6 +23,28 @@ def initialize_pit_service(response_callback: Callable):
 
 def get_cached_pit_tasks() -> List[Dict[str, Any]]:
     return _pit_task_cache
+
+
+async def plan_pit_execution(db_manager, task_names, mode, *, cutoff=None, start_date=None, end_date=None):
+    from ...pit.pit_data_update_production import PITDataUpdateCoordinator
+
+    coordinator = PITDataUpdateCoordinator(db_manager=db_manager)
+    return await coordinator.plan(task_names, mode, cutoff=cutoff, start_date=start_date, end_date=end_date)
+
+
+async def execute_pit_plan(db_manager, plan, *, stop_event=None):
+    from ...pit.pit_data_update_production import PITDataUpdateCoordinator
+
+    coordinator = PITDataUpdateCoordinator(db_manager=db_manager)
+    return await coordinator.run_updates(list(plan.request.tasks), plan.request.mode, plan=plan,
+                                         expected_plan_hash=plan.plan_hash, stop_event=stop_event)
+
+
+async def run_pit_execution(db_manager, tasks, mode, *, start_date=None, end_date=None, stop_event=None):
+    plan = await plan_pit_execution(db_manager, tasks, mode, start_date=start_date, end_date=end_date)
+    if _send_response_callback:
+        _send_response_callback("LOG", {"level": "info", "message": f"PIT计划 {plan.plan_hash}: {len(plan.units)} 个任务，截止 {plan.effective_cutoff}"})
+    return await execute_pit_plan(db_manager, plan, stop_event=stop_event)
 
 
 async def handle_get_pit_tasks():

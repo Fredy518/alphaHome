@@ -27,8 +27,20 @@ class PITETFIndexMembersMonthlyManager(PITMonthlySnapshotManager):
 
     def _ensure_table_exists(self) -> None:
         super()._ensure_table_exists()
-        self._apply_idempotent_table_ddl()
-        self._ensure_updated_at_triggers()
+
+    def plan_incremental_months(
+        self,
+        months: int = DEFAULT_INCREMENTAL_MONTHS,
+        batch_size: int | None = None,
+        index_codes: Sequence[str] | None = None,
+        cutoff_date: date | str | pd.Timestamp | None = None,
+    ) -> dict[str, Any]:
+        if getattr(self, "_planned_months", None) is not None:
+            return list(self._planned_months)
+        requested = max(int(months or self.DEFAULT_INCREMENTAL_MONTHS), 1)
+        latest = self.complete_month_cutoff(cutoff_date)
+        target_months = self.incremental_months(requested, end_date=latest)
+        return target_months
 
     def incremental_update(
         self,
@@ -37,15 +49,27 @@ class PITETFIndexMembersMonthlyManager(PITMonthlySnapshotManager):
         index_codes: Sequence[str] | None = None,
         cutoff_date: date | str | pd.Timestamp | None = None,
     ) -> dict[str, Any]:
-        requested = max(int(months or self.DEFAULT_INCREMENTAL_MONTHS), 1)
-        latest = self.complete_month_cutoff(cutoff_date)
-        target_months = self.incremental_months(requested, end_date=latest)
+        target_months = self.plan_incremental_months(months=months, batch_size=batch_size, index_codes=index_codes, cutoff_date=cutoff_date)
         return self._run_months(
             target_months,
             batch_size=batch_size,
             index_codes=index_codes,
             result_key="updated_records",
         )
+
+    def plan_backfill_months(
+        self,
+        start_date: str | date | None = None,
+        end_date: str | date | None = None,
+        batch_size: int = DEFAULT_BACKFILL_BATCH_MONTHS,
+        index_codes: Sequence[str] | None = None,
+    ) -> dict[str, Any]:
+        if getattr(self, "_planned_months", None) is not None:
+            return list(self._planned_months)
+        start = self.as_month_end(start_date or self.DEFAULT_FULL_START)
+        end = self.as_month_end(end_date or self.latest_complete_month())
+        target_months = self.month_ends(start, end)
+        return target_months
 
     def full_backfill(
         self,
@@ -54,9 +78,7 @@ class PITETFIndexMembersMonthlyManager(PITMonthlySnapshotManager):
         batch_size: int = DEFAULT_BACKFILL_BATCH_MONTHS,
         index_codes: Sequence[str] | None = None,
     ) -> dict[str, Any]:
-        start = self.as_month_end(start_date or self.DEFAULT_FULL_START)
-        end = self.as_month_end(end_date or self.latest_complete_month())
-        target_months = self.month_ends(start, end)
+        target_months = self.plan_backfill_months(start_date=start_date, end_date=end_date, batch_size=batch_size, index_codes=index_codes)
         return self._run_months(
             target_months,
             batch_size=batch_size,

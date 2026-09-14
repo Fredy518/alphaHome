@@ -112,6 +112,15 @@ class PITBalanceQuarterlyManager(PITTableManager):
                 'message': '历史回填失败'
             }
 
+    def plan_incremental_range(self, days=None):
+        return self.resolve_incremental_date_range(
+            days,
+            (
+                (f"{PITConfig.TUSHARE_SCHEMA}.fina_balancesheet", ("ann_date",), "update_time"),
+                (f"{PITConfig.TUSHARE_SCHEMA}.fina_express", ("ann_date",), "update_time"),
+            ),
+        )
+
     def incremental_update(self,
                           days: int = None,
                           batch_size: int = None,
@@ -136,13 +145,7 @@ class PITBalanceQuarterlyManager(PITTableManager):
             batch_size = self.batch_size
 
         # 默认滚动窗口之外，按上游 update_time 水位捕获晚到或补录的旧公告。
-        start_date, end_date = self.resolve_incremental_date_range(
-            days,
-            (
-                (f"{PITConfig.TUSHARE_SCHEMA}.fina_balancesheet", ("ann_date",), "update_time"),
-                (f"{PITConfig.TUSHARE_SCHEMA}.fina_express", ("ann_date",), "update_time"),
-            ),
-        )
+        start_date, end_date = self.plan_incremental_range(days)
 
         self.logger.info(f"增量更新日期范围: {start_date} ~ {end_date}")
         self.logger.info(f"批次大小: {batch_size}")
@@ -976,20 +979,8 @@ class PITBalanceQuarterlyManager(PITTableManager):
 
 
     def ensure_indexes(self) -> None:
-        """幂等创建优化查询的索引（历史回看/PIT填充等）。"""
-        try:
-            import os
-            sql_path = os.path.join(os.path.dirname(__file__), 'database', 'create_pit_balance_indexes.sql')
-            sql_path = os.path.normpath(sql_path)
-            if not os.path.exists(sql_path):
-                self.logger.warning(f"未找到索引SQL: {sql_path}")
-                return
-            with open(sql_path, 'r', encoding='utf-8') as f:
-                ddl = f.read()
-            self.context.db_manager.execute_sync(ddl)
-            self.logger.info("已确保 PIT 资产负债表相关索引存在（幂等）")
-        except Exception as e:
-            self.logger.error(f"创建索引失败: {e}")
+        """Compatibility validation; optional performance indexes belong to migration."""
+        self._ensure_table_exists()
 
     def _upsert_batch(self, upsert_sql: str, batch_data: pd.DataFrame, all_fields: List[str]) -> Dict[str, int]:
         """处理单个批次的UPSERT"""
@@ -1027,47 +1018,7 @@ class PITBalanceQuarterlyManager(PITTableManager):
 
         return {'inserted': inserted_count, 'updated': updated_count, 'errors': error_count}
     def _ensure_balance_unique_keys(self) -> None:
-        """将 pit_balance_quarterly 唯一键升级为 (ts_code, end_date, ann_date, data_source)。幂等执行。"""
-        try:
-            # 删除旧唯一键（若存在）
-            self.context.db_manager.execute_sync(
-                f"""
-                DO $$ BEGIN
-                    IF EXISTS (
-                        SELECT 1 FROM pg_constraint c
-                        JOIN pg_class t ON c.conrelid = t.oid
-                        JOIN pg_namespace n ON n.oid = t.relnamespace
-                        WHERE n.nspname = '{PITConfig.PIT_SCHEMA}'
-                          AND t.relname = '{self.table_name}'
-                          AND c.conname = '{self.table_name}_ts_code_end_date_ann_date_key'
-                    ) THEN
-                        ALTER TABLE {PITConfig.PIT_SCHEMA}.{self.table_name}
-                        DROP CONSTRAINT {self.table_name}_ts_code_end_date_ann_date_key;
-                    END IF;
-                END $$;
-                """
-            )
-            # 新建包含 data_source 的唯一键（若不存在）
-            self.context.db_manager.execute_sync(
-                f"""
-                DO $$ BEGIN
-                    IF NOT EXISTS (
-                        SELECT 1 FROM pg_constraint c
-                        JOIN pg_class t ON c.conrelid = t.oid
-                        JOIN pg_namespace n ON n.oid = t.relnamespace
-                        WHERE n.nspname = '{PITConfig.PIT_SCHEMA}'
-                          AND t.relname = '{self.table_name}'
-                          AND c.conname = '{self.table_name}_uniq_with_source'
-                    ) THEN
-                        ALTER TABLE {PITConfig.PIT_SCHEMA}.{self.table_name}
-                        ADD CONSTRAINT {self.table_name}_uniq_with_source UNIQUE (ts_code, end_date, ann_date, data_source);
-                    END IF;
-                END $$;
-                """
-            )
-            self.logger.info("唯一键已升级至包含 data_source（balance）")
-        except Exception as e:
-            self.logger.error(f"升级唯一键失败（balance）: {e}")
+        self._require_unique_keys(("ts_code", "end_date", "ann_date", "data_source"))
 
 
 def main():

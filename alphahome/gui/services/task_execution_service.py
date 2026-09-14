@@ -304,6 +304,30 @@ async def run_tasks(
     # 创建新的停止事件
     _global_stop_event = asyncio.Event()
     _current_running_tasks = []
+
+    pit_tasks = [item for item in tasks_to_run if _is_pit_task(item)]
+    if pit_tasks:
+        try:
+            if len(pit_tasks) != len(tasks_to_run):
+                raise ValueError("PIT must be submitted through its own domain plan")
+            from .pit_service import run_pit_execution
+
+            mode = {"智能增量": "incremental", "全量更新": "full_backfill", "手动增量": "manual_range"}.get(exec_mode, exec_mode)
+            runner = asyncio.create_task(run_pit_execution(
+                db_manager, [item["task_name"] for item in pit_tasks], mode,
+                start_date=start_date, end_date=end_date, stop_event=_global_stop_event,
+            ))
+            _current_running_tasks.extend(item["task_name"] for item in pit_tasks)
+            results = await runner
+            if _send_response_callback:
+                _send_response_callback("LOG", {"level": "info", "message": str(results)})
+            return results
+        finally:
+            _is_running = False
+            _global_stop_event = None
+            _current_running_tasks = []
+            if _send_response_callback:
+                _send_response_callback("LOG", {"level": "info", "message": "PIT计划处理结束。"})
     
     # 首先确保task_status表存在
     try:

@@ -52,17 +52,43 @@ class PITStockFTTMManager(PITMonthlySnapshotManager):
         super().__init__("pit_stock_fttm_monthly")
         self.calculator = StockFTTMCalculator()
 
+    def plan_incremental_months(
+        self,
+        months: int = DEFAULT_INCREMENTAL_MONTHS,
+        batch_size: int | None = None,
+        cutoff_date: date | str | pd.Timestamp | None = None,
+    ) -> Dict[str, Any]:
+        if getattr(self, "_planned_months", None) is not None:
+            return list(self._planned_months)
+        requested = max(int(months or self.DEFAULT_INCREMENTAL_MONTHS), self.DEFAULT_INCREMENTAL_MONTHS)
+        target_months = self.incremental_months(
+            requested, end_date=self.complete_month_cutoff(cutoff_date)
+        )
+        return target_months
+
     def incremental_update(
         self,
         months: int = DEFAULT_INCREMENTAL_MONTHS,
         batch_size: int | None = None,
         cutoff_date: date | str | pd.Timestamp | None = None,
     ) -> Dict[str, Any]:
-        requested = max(int(months or self.DEFAULT_INCREMENTAL_MONTHS), self.DEFAULT_INCREMENTAL_MONTHS)
-        target_months = self.incremental_months(
-            requested, end_date=self.complete_month_cutoff(cutoff_date)
-        )
+        target_months = self.plan_incremental_months(months=months, batch_size=batch_size, cutoff_date=cutoff_date)
         return self._run_months(target_months, batch_size=batch_size, result_key="updated_records")
+
+    def plan_backfill_months(
+        self,
+        start_date: str | date | None = None,
+        end_date: str | date | None = None,
+        batch_size: int = DEFAULT_BACKFILL_BATCH_MONTHS,
+    ) -> Dict[str, Any]:
+        if getattr(self, "_planned_months", None) is not None:
+            return list(self._planned_months)
+        start = self.as_month_end(start_date or self.DEFAULT_FULL_START)
+        latest = self.latest_complete_month()
+        requested_end = self.as_month_end(end_date or latest)
+        end = min(requested_end, latest)
+        target_months = self.month_ends(start, end)
+        return target_months
 
     def full_backfill(
         self,
@@ -70,11 +96,7 @@ class PITStockFTTMManager(PITMonthlySnapshotManager):
         end_date: str | date | None = None,
         batch_size: int = DEFAULT_BACKFILL_BATCH_MONTHS,
     ) -> Dict[str, Any]:
-        start = self.as_month_end(start_date or self.DEFAULT_FULL_START)
-        latest = self.latest_complete_month()
-        requested_end = self.as_month_end(end_date or latest)
-        end = min(requested_end, latest)
-        target_months = self.month_ends(start, end)
+        target_months = self.plan_backfill_months(start_date=start_date, end_date=end_date, batch_size=batch_size)
         return self._run_months(
             target_months,
             batch_size=batch_size,

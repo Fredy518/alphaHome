@@ -2,11 +2,28 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime
+from datetime import date
 
 import pytest
 
 from alphahome.pit.base.pit_task import PITTaskContract
 from alphahome.pit.pit_data_update_production import PITDataUpdateCoordinator
+from alphahome.common.run_models import RunPlan, RunRequest, RunUnit
+
+
+@pytest.fixture
+def execution_plan(monkeypatch):
+    """Inject catalog evidence, retaining real request/hash/dependency execution."""
+    async def plan(self, targets, mode="incremental", **kwargs):
+        from alphahome.pit.pit_data_update_production import TARGET_TO_TASK
+        names = [TARGET_TO_TASK.get(value, value) for value in self._normalize_targets(targets)]
+        contracts = self._registered_contracts()
+        selected = self._expand_dependency_closure(names, contracts)
+        layers = self._topological_layers(selected, contracts)
+        return RunPlan.build(RunRequest("pit", tuple(names), mode, "a"*64),
+                             [RunUnit(name, dependencies=tuple(contracts[name].dependencies)) for layer in layers for name in layer],
+                             date(2026,8,31), schema={}, sources={}, config={})
+    monkeypatch.setattr(PITDataUpdateCoordinator, "plan", plan)
 
 
 class _Manager:
@@ -143,7 +160,7 @@ def test_earnings_surprise_expands_income_and_consensus_dependencies():
 @pytest.mark.asyncio
 @pytest.mark.parametrize("parallel", [False, True])
 async def test_serial_and_parallel_execute_only_within_topological_layer(
-    monkeypatch, parallel
+    monkeypatch, parallel, execution_plan
 ):
     coordinator = PITDataUpdateCoordinator(max_workers=2)
     contracts = _fttm_contracts()
@@ -189,17 +206,16 @@ async def test_serial_and_parallel_execute_only_within_topological_layer(
     assert calls[-1] == "pit_industry_fttm_monthly"
     assert len(cutoff_references) == 1
     assert isinstance(cutoff_references[0], datetime)
-    assert configs == [
-        {"pit_month_end_cutoff": "2026-07-31"},
-        {"pit_month_end_cutoff": "2026-07-31"},
-        {"pit_month_end_cutoff": "2026-07-31"},
-    ]
+    assert len(configs) == 3
+    assert all(config["pit_month_end_cutoff"] == "2026-07-31" for config in configs)
+    assert len({config["plan_hash"] for config in configs}) == 1
+    assert all(config["pit_business_date"] == "2026-08-31" for config in configs)
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("failure_status", ["error", "partial_success"])
 @pytest.mark.parametrize("parallel", [False, True])
-async def test_upstream_failure_marks_industry_skipped(monkeypatch, failure_status, parallel):
+async def test_upstream_failure_marks_industry_skipped(monkeypatch, failure_status, parallel, execution_plan):
     coordinator = PITDataUpdateCoordinator()
     contracts = _fttm_contracts()
     calls = []

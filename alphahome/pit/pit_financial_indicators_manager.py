@@ -43,27 +43,7 @@ class PITFinancialIndicatorsManager(PITTableManager):
         self.calculator = None
 
     def ensure_table_exists(self) -> None:
-        """确保财务指标表存在（DDL 职责归位到 Manager）"""
-        try:
-            # 优先 pit_data/database
-            sql_path = os.path.join(os.path.dirname(__file__), 'database', 'create_pit_financial_indicators_table.sql')
-            sql_path = os.path.normpath(sql_path)
-            if not os.path.exists(sql_path):
-                alt_path = os.path.join(
-                    os.path.dirname(__file__), 'database', 'create_mvp_financial_indicators_table.sql'
-                )
-                alt_path = os.path.normpath(alt_path)
-                if os.path.exists(alt_path):
-                    sql_path = alt_path
-                else:
-                    self.logger.warning(f"未找到建表SQL: {sql_path}")
-                    return
-            with open(sql_path, 'r', encoding='utf-8') as f:
-                create_sql = f.read()
-            self.context.db_manager.execute_sync(create_sql)
-            self.logger.info("财务指标表创建/验证完成")
-        except Exception as e:
-            self.logger.error(f"创建财务指标表失败: {e}")
+        self._ensure_table_exists()
 
     def _initialize_calculator(self):
         if self.calculator is None:
@@ -85,6 +65,15 @@ class PITFinancialIndicatorsManager(PITTableManager):
         except Exception as e:
             self.logger.warning(f"清理 forecast 财务指标遗留记录失败: {e}")
             return 0
+
+    def plan_incremental_range(self, days=None):
+        return self.resolve_incremental_date_range(
+            days,
+            (
+                (f"{PITConfig.PIT_SCHEMA}.pit_income_quarterly", ("ann_date",), "updated_at"),
+                (f"{PITConfig.PIT_SCHEMA}.pit_balance_quarterly", ("ann_date",), "updated_at"),
+            ),
+        )
 
     def incremental_update(self, days: int | None = None, batch_size: int | None = None) -> Dict[str, Any]:
         """
@@ -110,13 +99,7 @@ class PITFinancialIndicatorsManager(PITTableManager):
 
         # 确保表结构完整
         self._ensure_table_exists()
-        start_date, end_date = self.resolve_incremental_date_range(
-            days,
-            (
-                (f"{PITConfig.PIT_SCHEMA}.pit_income_quarterly", ("ann_date",), "updated_at"),
-                (f"{PITConfig.PIT_SCHEMA}.pit_balance_quarterly", ("ann_date",), "updated_at"),
-            ),
-        )
+        start_date, end_date = self.plan_incremental_range(days)
         self.ensure_table_exists()  # 再次确认表存在
         self._initialize_calculator()
         removed_forecast_records = self._remove_forecast_indicator_rows()

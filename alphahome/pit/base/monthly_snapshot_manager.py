@@ -25,7 +25,7 @@ class PITMonthlySnapshotManager(PITTableManager):
 
     DEFAULT_FULL_START = date(2014, 1, 31)
 
-    def _apply_idempotent_table_ddl(self) -> None:
+    def install_table_ddl(self) -> None:
         """Apply the table's checked-in DDL even when the table already exists.
 
         ``PITTableManager._ensure_table_exists`` only creates missing tables. Monthly
@@ -44,7 +44,9 @@ class PITMonthlySnapshotManager(PITTableManager):
 
     @staticmethod
     def latest_complete_month(today: date | None = None) -> date:
-        current = today or datetime.now().date()
+        from ..planning_time import business_date
+
+        current = today or business_date()
         return current.replace(day=1) - timedelta(days=1)
 
     @classmethod

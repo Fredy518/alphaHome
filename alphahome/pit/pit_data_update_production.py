@@ -7,6 +7,8 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import json
+from zoneinfo import ZoneInfo
 import sys
 from datetime import datetime
 from typing import Any, Dict, List, Mapping, Optional, Sequence
@@ -64,45 +66,73 @@ DEFAULT_TARGET_ORDER = [
 class PITDataUpdateCoordinator:
     """Run registered PIT tasks through UnifiedTaskFactory."""
 
-    def __init__(self, max_workers: int = 2, max_retries: int = 3, retry_delay: int = 5):
+    def __init__(self, max_workers: int = 2, max_retries: int = 3, retry_delay: int = 5, *, db_manager=None):
         self.max_workers = max_workers
         self.max_retries = max_retries
         self.retry_delay = retry_delay
-        self.db_url: Optional[str] = None
+        self._db_manager = db_manager
+        self.db_url = getattr(db_manager, "connection_string", None)
+        self.last_plan = None
+        self._owns_factory = False
 
-    async def initialize(self):
+    async def initialize(self, database_url=None):
         from alphahome.pit.tasks import discover_tasks
 
         discover_tasks()
-        self.db_url = get_database_url()
+        self.db_url = database_url or self.db_url or get_database_url()
         if not self.db_url:
             raise ValueError("数据库连接配置未找到，请检查config.json文件")
-        await UnifiedTaskFactory.initialize(self.db_url)
+        if self._db_manager is None:
+            await UnifiedTaskFactory.initialize(self.db_url)
+            self._db_manager = UnifiedTaskFactory.get_db_manager()
+            self._owns_factory = True
         logger.info("PIT数据更新协调器初始化完成")
 
     async def cleanup(self):
+        if not self._owns_factory:
+            return
         try:
             await UnifiedTaskFactory.shutdown()
         except Exception as exc:
             logger.warning("关闭PIT任务工厂连接失败: %s", exc)
 
-    async def run_updates(self, targets: List[str], mode: str = "incremental", parallel: bool = False):
-        batch_started_at = datetime.now().astimezone()
+    async def plan(self, targets, mode="incremental", *, cutoff=None, start_date=None, end_date=None):
+        from .run_plan import build_pit_plan
+
+        normalized = self._normalize_targets(targets)
+        task_names = [TARGET_TO_TASK.get(value, value) for value in normalized]
+        if not self.db_url:
+            raise ValueError("An explicit initialized PIT database target is required")
+        plan = await asyncio.to_thread(build_pit_plan, self.db_url, task_names, mode,
+                                       cutoff=cutoff, start_date=start_date, end_date=end_date)
+        self.last_plan = plan
+        return plan
+
+    async def run_updates(self, targets, mode="incremental", parallel=False, *, plan=None,
+                          expected_plan_hash=None, stop_event=None, start_date=None, end_date=None):
+        from alphahome.common.run_models import RunPlan
+
+        if isinstance(plan, dict):
+            plan = RunPlan.from_dict(plan)
+        if plan is None:
+            plan = await self.plan(targets, mode, start_date=start_date, end_date=end_date)
         normalized_targets = self._normalize_targets(targets)
-        update_type = self._update_type_from_mode(mode)
-        logger.info("开始执行PIT任务: targets=%s, mode=%s, parallel=%s", normalized_targets, mode, parallel)
+        requested = tuple(sorted(TARGET_TO_TASK.get(value, value) for value in normalized_targets))
+        normalized_mode = {"smart": "incremental", "full": "full_backfill", "manual": "manual_range"}.get(mode, mode)
+        if plan.request.domain != "pit" or requested != plan.request.tasks or normalized_mode != plan.request.mode:
+            raise ValueError("PIT execution request differs from its submitted plan")
+        plan.require_matching(expected_plan_hash or plan.plan_hash)
+        current = await self.plan(targets, plan.request.mode, cutoff=plan.effective_cutoff,
+                                  start_date=plan.request.start_date, end_date=plan.request.end_date)
+        current.require_matching(plan.plan_hash)
+        self.last_plan = plan
+        update_type = self._update_type_from_mode(plan.request.mode)
         contracts = self._registered_contracts()
-        requested_tasks = [TARGET_TO_TASK[target] for target in normalized_targets]
-        execution_tasks = self._expand_dependency_closure(requested_tasks, contracts)
+        execution_tasks = {unit.task_name for unit in plan.units}
         layers = self._topological_layers(execution_tasks, contracts)
-        has_monthly_tasks = any(
-            contracts[task_name].pit_time_key == "obs_date"
-            for task_name in execution_tasks
-        )
-        pit_month_end_cutoff = (
-            self._freeze_pit_month_end_cutoff(batch_started_at)
-            if has_monthly_tasks
-            else None
+        unit_by_name = {unit.task_name: unit for unit in plan.units}
+        pit_month_end_cutoff = self._freeze_pit_month_end_cutoff(
+            datetime.combine(plan.effective_cutoff, datetime.min.time(), tzinfo=ZoneInfo("Asia/Shanghai"))
         )
         if pit_month_end_cutoff is not None:
             logger.info(
@@ -116,6 +146,8 @@ class PITDataUpdateCoordinator:
 
         async def _execute_task(task_name: str) -> Dict[str, Any]:
             run_started_at = datetime.now().astimezone().isoformat()
+            if stop_event and stop_event.is_set():
+                return {"task": task_name, "status": "cancelled", "committed_rows": 0, "plan_hash": plan.plan_hash}
             dependency_statuses = {
                 dependency: (results_by_task.get(dependency) or {}).get("status", "missing")
                 for dependency in contracts[task_name].dependencies
@@ -131,11 +163,17 @@ class PITDataUpdateCoordinator:
                 if contracts[task_name].pit_time_key == "obs_date"
                 else None
             )
-            task_config = (
-                {PIT_MONTH_END_CUTOFF_CONFIG_KEY: task_cutoff}
-                if task_cutoff is not None
-                else {}
-            )
+            unit = unit_by_name[task_name]
+            task_config = {
+                **json.loads(unit.parameters_json), "pit_mode": plan.request.mode,
+                "pit_business_date": plan.effective_cutoff.isoformat(), "plan_hash": plan.plan_hash,
+            }
+            if unit.start_date:
+                task_config["start_date"] = unit.start_date.isoformat()
+            if unit.end_date:
+                task_config["end_date"] = unit.end_date.isoformat()
+            if task_cutoff:
+                task_config[PIT_MONTH_END_CUTOFF_CONFIG_KEY] = task_cutoff
             if dependency_failures:
                 skipped = {
                     "target": target,
@@ -165,6 +203,7 @@ class PITDataUpdateCoordinator:
                         update_type,
                         task_config=task_config,
                     )
+                result.setdefault("plan_hash", plan.plan_hash)
                 result.setdefault("dependency_statuses", dependency_statuses)
                 if task_cutoff is not None:
                     result.setdefault("pit_month_end_cutoff", task_cutoff)
@@ -269,15 +308,12 @@ class PITDataUpdateCoordinator:
         update_type: str,
         task_config: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        task_name = TARGET_TO_TASK[target]
         config = dict(task_config or {})
-        contract = self._registered_contracts().get(task_name)
-        if contract is not None and contract.pit_time_key == "obs_date":
-            config.setdefault(
-                PIT_MONTH_END_CUTOFF_CONFIG_KEY,
-                self._freeze_pit_month_end_cutoff(),
-            )
-        return await self._run_task(task_name, target, update_type, config)
+        if set(config) - {"start_date", "end_date"}:
+            raise ValueError("Compatibility target methods accept dates only; use an explicit domain plan for execution")
+        mode = {UpdateTypes.SMART: "incremental", UpdateTypes.FULL: "full_backfill", UpdateTypes.MANUAL: "manual_range"}[update_type]
+        results = await self.run_updates([target], mode, **config)
+        return next(result for result in results if result["task"] == TARGET_TO_TASK[target])
 
     async def _run_task(
         self,
@@ -286,14 +322,13 @@ class PITDataUpdateCoordinator:
         update_type: str,
         task_config: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        task = await UnifiedTaskFactory.create_task_instance(
-            task_name,
-            update_type=update_type,
-            task_config=task_config or {},
-        )
+        task_class = UnifiedTaskFactory.get_tasks_by_type("pit")[task_name]
+        if self._db_manager is None:
+            raise RuntimeError("PIT coordinator has no bound database manager")
+        task = task_class(self._db_manager, update_type=update_type, task_config=task_config or {})
         result = await task.execute()
         if not isinstance(result, dict):
-            result = {"status": "success", "result": result}
+            result = {"status": "error", "error": "PIT task returned an invalid result contract"}
         result.setdefault("target", target)
         result.setdefault("task", task_name)
         logger.info("PIT任务完成: target=%s, task=%s, result=%s", target, task_name, result)
@@ -303,6 +338,8 @@ class PITDataUpdateCoordinator:
     def _normalize_targets(targets: List[str]) -> List[str]:
         if not targets or "all" in targets:
             return list(DEFAULT_TARGET_ORDER)
+        reverse = {value: key for key, value in TARGET_TO_TASK.items()}
+        targets = [reverse.get(value, value) for value in targets]
         unknown = [target for target in targets if target not in TARGET_TO_TASK]
         if unknown:
             raise ValueError(f"未知PIT target: {unknown}")
@@ -381,13 +418,8 @@ class PITDataUpdateCoordinator:
     def _is_failed_result(result: Optional[Dict[str, Any]]) -> bool:
         if result is None:
             return True
-        return result.get("status") in {
-            "error",
-            "failed",
-            "partial_success",
-            "cancelled",
-            "skipped_dependency_failed",
-        }
+        return result.get("status") not in {"success", "no_op", "expected_no_data"} or bool(result.get("error_records") or result.get("error"))
+
 
     @staticmethod
     def _update_type_from_mode(mode: str) -> str:
@@ -395,7 +427,7 @@ class PITDataUpdateCoordinator:
             return UpdateTypes.SMART
         if mode in ("full", "full_backfill", UpdateTypes.FULL):
             return UpdateTypes.FULL
-        if mode in ("manual", UpdateTypes.MANUAL):
+        if mode in ("manual", "manual_range", UpdateTypes.MANUAL):
             return UpdateTypes.MANUAL
         raise ValueError(f"未知PIT更新模式: {mode}")
 
@@ -410,6 +442,9 @@ async def main():
         help="要更新的目标数据类型",
     )
     parser.add_argument("--mode", choices=["incremental", "full"], default="incremental", help="更新模式")
+    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--expected-plan-hash")
+    parser.add_argument("--cutoff")
     parser.add_argument("--parallel", action="store_true", help="是否并行执行")
     parser.add_argument("--workers", type=int, default=2, help="最大并发任务数")
     parser.add_argument("--log-level", choices=["DEBUG", "INFO", "WARNING", "ERROR"], default="INFO", help="日志级别")
@@ -419,19 +454,25 @@ async def main():
     coordinator = PITDataUpdateCoordinator(max_workers=args.workers)
 
     try:
+        # Preview uses an owned read-only session and never initializes the task factory.
+        coordinator.db_url = get_database_url()
+        plan = await coordinator.plan(args.target, args.mode, cutoff=args.cutoff)
+        print(json.dumps(plan.to_dict(), ensure_ascii=False, indent=2))
+        if args.dry_run:
+            return 1 if plan.blockers else 0
         await coordinator.initialize()
-        results = await coordinator.run_updates(args.target, args.mode, args.parallel)
+        results = await coordinator.run_updates(args.target, args.mode, args.parallel, plan=plan,
+                                                expected_plan_hash=args.expected_plan_hash)
         failures = [
             result
             for result in results
-            if isinstance(result, dict)
-            and result.get("status")
-            in {"error", "failed", "cancelled", "skipped_dependency_failed"}
+            if coordinator._is_failed_result(result)
         ]
         if failures:
             logger.error("PIT数据更新存在失败任务: %s", failures)
             sys.exit(1)
         logger.info("PIT数据更新执行完成")
+        return 0
     except Exception as exc:
         logger.error("PIT数据更新执行失败: %s", exc, exc_info=True)
         sys.exit(1)
@@ -440,4 +481,4 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    raise SystemExit(asyncio.run(main()))

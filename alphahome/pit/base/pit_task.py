@@ -136,7 +136,8 @@ class PITTask(BaseTask):
             audit_service = PITAuditService(self.db)
             result = await audit_service.audit_task(self.name, persist=True)
             return {
-                "status": result.get("status", "success"),
+                "status": "error" if result.get("status") == "error" else "success",
+                "readiness_status": result.get("status"),
                 "task": self.name,
                 "table": self.table_name,
                 "rows": int(result.get("row_count") or 0),
@@ -179,10 +180,19 @@ class PITTask(BaseTask):
         return result
 
     def _run_manager(self, manager_class, call_name, call_kwargs, cancel_requested):
+        from ..planning_time import frozen_pit_time
+
+        with frozen_pit_time(self.task_config.get("pit_business_date"), self.task_config.get("planned_date_range")):
+            return self._run_bound_manager(manager_class, call_name, call_kwargs, cancel_requested)
+
+    def _run_bound_manager(self, manager_class, call_name, call_kwargs, cancel_requested):
         """Construct, bind, execute, normalize and close on one worker thread."""
         if cancel_requested.is_set():
             return {"status": "cancelled", "task": self.name, "committed_rows": 0}
         manager = manager_class()
+        if "planned_months" in self.task_config:
+            from datetime import date
+            manager._planned_months = [date.fromisoformat(value) for value in self.task_config["planned_months"]]
         connection_string = getattr(self.db, "connection_string", None)
         if isinstance(connection_string, str) and connection_string:
             manager.bind_database(database_url=connection_string)
@@ -192,8 +202,14 @@ class PITTask(BaseTask):
             if cancel_requested.is_set():
                 return {"status": "cancelled", "task": self.name, "committed_rows": 0}
             result = self._call_manager_method(getattr(manager, call_name), call_kwargs)
+            stats = getattr(manager, "stats", {})
+            if isinstance(result, dict) and stats.get("error_records"):
+                result = {**result, "error_records": max(int(result.get("error_records") or 0), stats["error_records"])}
+            if isinstance(result, dict) and hasattr(manager, "_verified_committed_rows"):
+                result = {**result, "committed_rows": manager._verified_committed_rows}
             self._sync_manager_stats_from_result(manager, result)
             normalized = self._normalize_result(result)
+            normalized["plan_hash"] = self.task_config.get("plan_hash")
             if cancel_requested.is_set():
                 normalized["cancel_requested"] = True
             return normalized

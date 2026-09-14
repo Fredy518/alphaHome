@@ -107,47 +107,24 @@ def test_pit_batch_cutoff_is_frozen_to_last_complete_month():
 
 
 @pytest.mark.asyncio
-async def test_run_tasks_passes_one_frozen_cutoff_to_every_pit_task(monkeypatch):
-    first = _TaskWithoutIncrementalCapabilityMethod()
-    second = _TaskWithoutIncrementalCapabilityMethod()
-    create_task_instance = AsyncMock(side_effect=[first, second])
-    cutoff_references = []
+async def test_run_tasks_submits_pit_batch_to_one_domain_coordinator(monkeypatch):
+    from alphahome.gui.services import pit_service
 
-    def freeze_cutoff(tasks_to_run, batch_started_at=None):
-        cutoff_references.append(batch_started_at)
-        return date(2026, 7, 31)
-
+    execute = AsyncMock(return_value=[{"status": "success"}])
+    legacy = AsyncMock(side_effect=AssertionError("Legacy per-task executor used"))
     monkeypatch.setattr(task_execution_service, "_is_running", False)
-    monkeypatch.setattr(
-        task_execution_service,
-        "_freeze_pit_month_end_cutoff",
-        freeze_cutoff,
+    monkeypatch.setattr(pit_service, "run_pit_execution", execute)
+    monkeypatch.setattr(task_execution_service.UnifiedTaskFactory, "create_task_instance", legacy)
+    db = object()
+    result = await task_execution_service.run_tasks(
+        db, [{"task_name": "pit_industry_fttm_monthly", "task_type": "pit"}],
+        None, None, "智能增量",
     )
-    monkeypatch.setattr(task_execution_service, "_ensure_task_status_table_exists", AsyncMock())
-    monkeypatch.setattr(task_execution_service, "_record_task_status", AsyncMock())
-    monkeypatch.setattr(task_execution_service, "get_all_task_status", AsyncMock())
-    monkeypatch.setattr(
-        task_execution_service.UnifiedTaskFactory,
-        "create_task_instance",
-        create_task_instance,
-    )
-
-    await task_execution_service.run_tasks(
-        db_manager=object(),
-        tasks_to_run=[
-            {"task_name": "pit_stock_fttm_monthly", "task_type": "pit"},
-            {"task_name": "pit_industry_fttm_monthly", "task_type": "pit"},
-        ],
-        start_date=None,
-        end_date=None,
-        exec_mode="智能增量",
-    )
-
-    expected_config = {"pit_month_end_cutoff": "2026-07-31"}
-    assert len(cutoff_references) == 1
-    assert isinstance(cutoff_references[0], datetime)
-    assert create_task_instance.await_args_list[0].kwargs["task_config"] == expected_config
-    assert create_task_instance.await_args_list[1].kwargs["task_config"] == expected_config
+    assert result == [{"status": "success"}]
+    assert execute.await_args.args == (db, ["pit_industry_fttm_monthly"], "incremental")
+    assert execute.await_args.kwargs["stop_event"] is not None
+    legacy.assert_not_awaited()
+    assert task_execution_service._is_running is False
 
 
 @pytest.mark.asyncio

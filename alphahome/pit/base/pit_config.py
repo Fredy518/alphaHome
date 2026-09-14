@@ -410,7 +410,8 @@ class PITConfig:
         if days is None:
             days = cls.DEFAULT_DATE_RANGES['incremental_days']
         
-        end_date = datetime.now().date()
+        from ..planning_time import business_date
+        end_date = business_date()
         start_date = end_date - timedelta(days=days)
         
         return start_date.strftime('%Y-%m-%d'), end_date.strftime('%Y-%m-%d')
@@ -422,7 +423,8 @@ class PITConfig:
             start_date = cls.DEFAULT_DATE_RANGES['backfill_start']
         
         if end_date is None:
-            end_date = datetime.now().strftime('%Y-%m-%d')
+            from ..planning_time import business_date
+            end_date = business_date().isoformat()
         
         return start_date, end_date
     

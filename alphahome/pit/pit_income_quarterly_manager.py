@@ -149,6 +149,16 @@ class PITIncomeQuarterlyManager(PITTableManager):
                 'message': '历史回填失败'
             }
 
+    def plan_incremental_range(self, days=None):
+        return self.resolve_incremental_date_range(
+            days,
+            (
+                (f"{PITConfig.TUSHARE_SCHEMA}.fina_income", ("ann_date",), "update_time"),
+                (f"{PITConfig.TUSHARE_SCHEMA}.fina_express", ("ann_date",), "update_time"),
+                (f"{PITConfig.TUSHARE_SCHEMA}.fina_forecast", ("ann_date",), "update_time"),
+            ),
+        )
+
     def incremental_update(self,
                           days: int = None,
                           batch_size: int = None) -> Dict[str, Any]:
@@ -172,14 +182,7 @@ class PITIncomeQuarterlyManager(PITTableManager):
             batch_size = self.batch_size
 
         # 默认滚动窗口之外，按上游 update_time 水位捕获晚到或补录的旧公告。
-        start_date, end_date = self.resolve_incremental_date_range(
-            days,
-            (
-                (f"{PITConfig.TUSHARE_SCHEMA}.fina_income", ("ann_date",), "update_time"),
-                (f"{PITConfig.TUSHARE_SCHEMA}.fina_express", ("ann_date",), "update_time"),
-                (f"{PITConfig.TUSHARE_SCHEMA}.fina_forecast", ("ann_date",), "update_time"),
-            ),
-        )
+        start_date, end_date = self.plan_incremental_range(days)
 
         self.logger.info(f"增量更新日期范围: {start_date} ~ {end_date}")
         self.logger.info(f"每批股票数: {batch_size}")
@@ -910,80 +913,10 @@ class PITIncomeQuarterlyManager(PITTableManager):
 
 
     def _ensure_income_unique_keys(self) -> None:
-        """确保利润表 PIT 运行所需 schema 与唯一键完整。幂等执行。
-        """
-        try:
-            self._ensure_income_forecast_horizon_columns()
-            self._ensure_income_annual_actual_columns()
-            sqls = [
-                # 删除旧唯一约束（如果存在）
-                f"""
-                DO $$ BEGIN
-                    IF EXISTS (
-                        SELECT 1 FROM pg_constraint c
-                        JOIN pg_class t ON c.conrelid = t.oid
-                        JOIN pg_namespace n ON n.oid = t.relnamespace
-                        WHERE n.nspname = '{PITConfig.PIT_SCHEMA}'
-                          AND t.relname = '{self.table_name}'
-                          AND c.conname = '{self.table_name}_ts_code_end_date_ann_date_key'
-                    ) THEN
-                        ALTER TABLE {PITConfig.PIT_SCHEMA}.{self.table_name}
-                        DROP CONSTRAINT {self.table_name}_ts_code_end_date_ann_date_key;
-                    END IF;
-                END $$;
-                """,
-                # 创建新唯一约束
-                f"""
-                DO $$ BEGIN
-                    IF NOT EXISTS (
-                        SELECT 1 FROM pg_constraint c
-                        JOIN pg_class t ON c.conrelid = t.oid
-                        JOIN pg_namespace n ON n.oid = t.relnamespace
-                        WHERE n.nspname = '{PITConfig.PIT_SCHEMA}'
-                          AND t.relname = '{self.table_name}'
-                          AND c.conname = '{self.table_name}_uniq_with_source'
-                    ) THEN
-                        ALTER TABLE {PITConfig.PIT_SCHEMA}.{self.table_name}
-                        ADD CONSTRAINT {self.table_name}_uniq_with_source UNIQUE (ts_code, end_date, ann_date, data_source);
-                    END IF;
-                END $$;
-                """,
-            ]
-            for s in sqls:
-                self.context.db_manager.execute_sync(s)
-        except Exception as e:
-            self.logger.warning(f"唯一键迁移失败或无需迁移: {e}")
+        self._require_unique_keys(("ts_code", "end_date", "ann_date", "data_source"))
 
     def _ensure_income_annual_actual_columns(self) -> None:
-        """保留正式财报单季化前的累计归母净利与EPS。幂等执行。"""
-        try:
-            alter_parts = [
-                f"ADD COLUMN IF NOT EXISTS {column} {column_type}"
-                for column, column_type in self.ANNUAL_ACTUAL_COLUMNS.items()
-            ]
-            ddl = f"""
-            ALTER TABLE {PITConfig.PIT_SCHEMA}.{self.table_name}
-            {', '.join(alter_parts)}
-            """
-            self.context.db_manager.execute_sync(ddl)
-            self.context.db_manager.execute_sync(
-                f"""
-                COMMENT ON COLUMN {PITConfig.PIT_SCHEMA}.{self.table_name}.n_income_attr_p_ytd
-                    IS 'Formal-report cumulative parent net profit in CNY before quarterization';
-                COMMENT ON COLUMN {PITConfig.PIT_SCHEMA}.{self.table_name}.basic_eps_ytd
-                    IS 'Formal-report cumulative basic EPS before quarterization';
-                COMMENT ON COLUMN {PITConfig.PIT_SCHEMA}.{self.table_name}.diluted_eps_ytd
-                    IS 'Formal-report cumulative diluted EPS before quarterization';
-                COMMENT ON COLUMN {PITConfig.PIT_SCHEMA}.{self.table_name}.report_source_row_count
-                    IS 'Number of raw fina_income rows sharing the report business key';
-                COMMENT ON COLUMN {PITConfig.PIT_SCHEMA}.{self.table_name}.report_source_value_conflict
-                    IS 'True when duplicate raw report rows disagree on parent NP or EPS';
-                COMMENT ON COLUMN {PITConfig.PIT_SCHEMA}.{self.table_name}.report_source_selection_basis
-                    IS 'Deterministic source-row choice for duplicate report business keys';
-                """
-            )
-        except Exception as e:
-            self.logger.warning(f"年度实际值列迁移失败或无需迁移: {e}")
+        self._require_columns(self.ANNUAL_ACTUAL_COLUMNS)
 
     def backfill_annual_actual_fields(self) -> Dict[str, Any]:
         """Backfill cumulative actuals and duplicate-source lineage in place."""
@@ -1063,19 +996,7 @@ class PITIncomeQuarterlyManager(PITTableManager):
         }
 
     def _ensure_income_forecast_horizon_columns(self) -> None:
-        """确保 forecast horizon 治理列存在。幂等执行。"""
-        try:
-            alter_parts = [
-                f"ADD COLUMN IF NOT EXISTS {column} {column_type}"
-                for column, column_type in self.FORECAST_HORIZON_COLUMNS.items()
-            ]
-            ddl = f"""
-            ALTER TABLE {PITConfig.PIT_SCHEMA}.{self.table_name}
-            {', '.join(alter_parts)}
-            """
-            self.context.db_manager.execute_sync(ddl)
-        except Exception as e:
-            self.logger.warning(f"forecast horizon 列迁移失败或无需迁移: {e}")
+        self._require_columns(self.FORECAST_HORIZON_COLUMNS)
 
     def backfill_forecast_horizon_metadata(self) -> Dict[str, Any]:
         """回填既有 forecast 行的 horizon 元数据。"""
@@ -1221,17 +1142,8 @@ class PITIncomeQuarterlyManager(PITTableManager):
         return ''
 
     def ensure_indexes(self) -> None:
-        """幂等创建收入PIT表的加速索引。"""
-        try:
-            import os
-            sql_path = os.path.join(os.path.dirname(__file__), 'database', 'create_pit_income_indexes.sql')
-            if os.path.exists(sql_path):
-                with open(sql_path, 'r', encoding='utf-8') as f:
-                    ddl = f.read()
-                self.context.db_manager.execute_sync(ddl)
-                self.logger.info("已确保 PIT 利润表相关索引存在（幂等）")
-        except Exception as e:
-            self.logger.error(f"创建收入表索引失败: {e}")
+        """Compatibility validation; optional performance indexes belong to migration."""
+        self._ensure_table_exists()
 
     def _enrich_express_parent_profit(self, df: pd.DataFrame) -> pd.DataFrame:
         """当 express 缺少 n_income_attr_p 时，使用分级回退策略估算归母净利润。

@@ -70,14 +70,20 @@ class RunUnit:
     task_name: str
     dates: tuple[date, ...] = ()
     dependencies: tuple[str, ...] = ()
-    estimated_rows: int = 0
-    existing_rows_to_replace: int = 0
+    estimated_rows: int | None = None
+    existing_rows_to_replace: int | None = None
+    start_date: date | None = None
+    end_date: date | None = None
+    parameters_json: str = "{}"
 
     def __post_init__(self):
         object.__setattr__(self, "dates", tuple(sorted(set(self.dates))))
         object.__setattr__(self, "dependencies", tuple(sorted(set(self.dependencies))))
-        if self.estimated_rows < 0 or self.existing_rows_to_replace < 0:
+        if any(value is not None and value < 0 for value in (self.estimated_rows, self.existing_rows_to_replace)):
             raise ValueError("Plan row counts cannot be negative")
+        if self.start_date and self.end_date and self.start_date > self.end_date:
+            raise ValueError("Invalid unit date range")
+        object.__setattr__(self, "parameters_json", canonical_json(json.loads(self.parameters_json)))
 
 
 @dataclass(frozen=True)
@@ -114,6 +120,28 @@ class RunPlan:
 
     def to_dict(self):
         return {**json.loads(canonical_json(asdict(self))), "plan_hash": self.plan_hash}
+
+    @classmethod
+    def from_dict(cls, payload):
+        data = dict(payload)
+        expected_hash = data.pop("plan_hash", None)
+        request = dict(data.pop("request"))
+        for key in ("start_date", "end_date"):
+            if request.get(key):
+                request[key] = date.fromisoformat(request[key])
+        units = []
+        for item in data.pop("units"):
+            unit = dict(item)
+            unit["dates"] = tuple(date.fromisoformat(value) for value in unit.get("dates", ()))
+            for key in ("start_date", "end_date"):
+                if unit.get(key):
+                    unit[key] = date.fromisoformat(unit[key])
+            units.append(RunUnit(**unit))
+        data["effective_cutoff"] = date.fromisoformat(data["effective_cutoff"])
+        plan = cls(request=RunRequest(**request), units=tuple(units), **data)
+        if expected_hash is not None and expected_hash != plan.plan_hash:
+            raise ValueError("Serialized plan hash does not match its contents")
+        return plan
 
     def require_matching(self, expected_hash: str) -> None:
         if expected_hash != self.plan_hash:

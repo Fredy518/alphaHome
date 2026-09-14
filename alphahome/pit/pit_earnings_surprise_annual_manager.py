@@ -38,23 +38,11 @@ class PITEarningsSurpriseAnnualManager(PITTableManager):
 
     def _ensure_table_exists(self) -> None:
         super()._ensure_table_exists()
-        alter_parts = [
-            f"ADD COLUMN IF NOT EXISTS {column} {column_type}"
-            for column, column_type in self.OUTPUT_MIGRATION_COLUMNS.items()
-        ]
-        self.context.db_manager.execute_sync(
-            f"ALTER TABLE {PITConfig.PIT_SCHEMA}.{self.table_name} "
-            f"{', '.join(alter_parts)}"
-        )
+        self._require_columns(self.OUTPUT_MIGRATION_COLUMNS)
 
-    def incremental_update(
-        self,
-        days: int = DEFAULT_INCREMENTAL_DAYS,
-        batch_size: int | None = None,
-    ) -> Dict[str, Any]:
-        requested = max(int(days or self.DEFAULT_INCREMENTAL_DAYS), 1)
-        start_date, end_date = self.resolve_incremental_date_range(
-            requested,
+    def plan_incremental_range(self, days=None):
+        return self.resolve_incremental_date_range(
+            days,
             (
                 (
                     f"{PITConfig.PIT_SCHEMA}.pit_income_quarterly",
@@ -68,6 +56,14 @@ class PITEarningsSurpriseAnnualManager(PITTableManager):
                 ),
             ),
         )
+
+    def incremental_update(
+        self,
+        days: int = DEFAULT_INCREMENTAL_DAYS,
+        batch_size: int | None = None,
+    ) -> Dict[str, Any]:
+        requested = max(int(days or self.DEFAULT_INCREMENTAL_DAYS), 1)
+        start_date, end_date = self.plan_incremental_range(requested)
         return self._run_range(
             date.fromisoformat(start_date),
             date.fromisoformat(end_date),
@@ -82,7 +78,8 @@ class PITEarningsSurpriseAnnualManager(PITTableManager):
         batch_size: int = DEFAULT_BATCH_YEARS,
     ) -> Dict[str, Any]:
         start = pd.Timestamp(start_date or self.DEFAULT_FULL_START).date()
-        end = pd.Timestamp(end_date or datetime.now().date()).date()
+        from .planning_time import business_date
+        end = pd.Timestamp(end_date or business_date()).date()
         return self._run_range(
             start,
             end,
