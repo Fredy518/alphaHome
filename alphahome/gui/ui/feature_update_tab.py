@@ -5,7 +5,6 @@
 用于管理和刷新 features 模块中的物化视图。
 """
 import tkinter as tk
-from tkinter import font as tkFont
 from tkinter import ttk
 from typing import Dict
 from ..utils.dpi_aware_ui import get_ui_factory
@@ -46,7 +45,7 @@ def create_feature_update_tab(parent: ttk.Frame) -> Dict[str, tk.Widget]:
     # --- 刷新操作按钮 ---
     refresh_selected_button = ui_factory.create_button(
         top_frame,
-        text="增量刷新选中",
+        text="智能刷新选中",
     )
     refresh_selected_button.pack(side=tk.LEFT, padx=(20, 5))
     widgets["feature_refresh_selected_button"] = refresh_selected_button

@@ -8,7 +8,6 @@
 - 与数据库交互获取物化视图状态
 - 为GUI提供统一的特征信息接口
 """
-import asyncio
 from datetime import datetime
 import re
 from typing import Any, Callable, Dict, List, Optional
@@ -22,6 +21,7 @@ logger = get_logger(__name__)
 # --- 缓存和回调 ---
 _feature_cache: List[Dict[str, Any]] = []
 _send_response_callback: Optional[Callable] = None
+_feature_operation_running = False
 
 
 def initialize_feature_service(response_callback: Callable):
@@ -112,31 +112,95 @@ async def plan_feature_execution(feature_names, strategy="default", *, operation
     return await FeatureCoordinator(db).plan(feature_names, strategy, operation=operation, as_of_date=as_of_date)
 
 
-async def _execute_features(feature_names, strategy="default", *, operation="refresh", submitted_plan=None):
+async def _execute_features(
+    feature_names,
+    strategy="default",
+    *,
+    operation="refresh",
+    submitted_plan=None,
+    as_of_date=None,
+    stop_event=None,
+):
+    global _feature_operation_running
     from ...features.coordinator import execute_feature_request
+    if _feature_operation_running:
+        result = {
+            "status": "busy",
+            "success_count": 0,
+            "fail_count": 0,
+            "error_message": "已有 Features 操作正在运行",
+        }
+        if _send_response_callback:
+            _send_response_callback(
+                "FEATURE_OPERATION_COMPLETE",
+                {
+                    **result,
+                    "operation": "刷新" if operation == "refresh" else "创建",
+                    "refresh_list": stop_event is None,
+                },
+            )
+        return result
+
+    _feature_operation_running = True
     result = None
     try:
         db = UnifiedTaskFactory.get_db_manager()
-        result = await execute_feature_request(db, feature_names, strategy, operation=operation,
-                                               submitted_plan=submitted_plan)
+        plan = submitted_plan or await plan_feature_execution(
+            feature_names,
+            strategy,
+            operation=operation,
+            as_of_date=as_of_date,
+        )
+        expected_plan_hash = (
+            plan.get("plan_hash") if isinstance(plan, dict) else plan.plan_hash
+        )
+        result = await execute_feature_request(
+            db,
+            feature_names,
+            strategy,
+            operation=operation,
+            submitted_plan=plan,
+            expected_plan_hash=expected_plan_hash,
+            as_of_date=as_of_date,
+            stop_event=stop_event,
+        )
         return result
     except Exception as error:
         logger.exception("Features operation failed")
         result = {"status": "error", "success_count": 0, "fail_count": len(feature_names), "error_message": str(error)}
         return result
     finally:
+        _feature_operation_running = False
         if _send_response_callback and result is not None:
             _send_response_callback("FEATURE_OPERATION_COMPLETE", {
                 **result, "operation": "刷新" if operation == "refresh" else "创建",
+                "refresh_list": stop_event is None,
             })
 
 
-async def handle_refresh_features(feature_names: List[str], strategy: str = "default", *, submitted_plan=None):
-    return await _execute_features(feature_names, strategy, submitted_plan=submitted_plan)
+async def handle_refresh_features(
+    feature_names: List[str],
+    strategy: str = "default",
+    *,
+    submitted_plan=None,
+    as_of_date=None,
+    stop_event=None,
+):
+    return await _execute_features(
+        feature_names,
+        strategy,
+        submitted_plan=submitted_plan,
+        as_of_date=as_of_date,
+        stop_event=stop_event,
+    )
 
 
 async def handle_create_features(feature_names: List[str], *, submitted_plan=None):
     return await _execute_features(feature_names, operation="create", submitted_plan=submitted_plan)
+
+
+def is_feature_operation_running() -> bool:
+    return _feature_operation_running
 
 
 def _infer_category(recipe_cls) -> str:
@@ -178,7 +242,6 @@ def _infer_storage_type(recipe_cls) -> str:
         return "数据表"
     
     # 检查基类是否为 IncrementalTableView（数据表）
-    from alphahome.features.storage.incremental_view import IncrementalTableView
     if any(base.__name__ == 'IncrementalTableView' for base in recipe_cls.__mro__):
         return "数据表"
     

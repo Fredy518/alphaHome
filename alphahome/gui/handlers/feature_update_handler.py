@@ -6,7 +6,7 @@
 """
 import tkinter as tk
 from tkinter import ttk, messagebox
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from ...common.logging_utils import get_logger
 from .. import controller
@@ -137,17 +137,17 @@ def handle_storage_type_filter_change(widgets: Dict[str, tk.Widget]):
 
 
 def handle_refresh_selected_features(widgets: Dict[str, tk.Widget]):
-    """处理增量刷新选中视图按钮点击"""
+    """按每个配方声明的默认策略刷新选中特征。"""
     selected = get_selected_features()
     if not selected:
         messagebox.showwarning("提示", "请先选择要刷新的特征视图。")
         return
     
-    logger.info(f"Requesting incremental refresh of {len(selected)} selected features...")
+    logger.info(f"Requesting smart refresh of {len(selected)} selected features...")
     
     status_label = widgets.get("feature_status_label")
     if status_label:
-        status_label.config(text=f"正在增量刷新 {len(selected)} 个特征视图...")
+        status_label.config(text=f"正在智能刷新 {len(selected)} 个特征视图...")
     
     controller.request_refresh_features(selected)
 
@@ -206,18 +206,30 @@ def handle_feature_operation_complete(
 ):
     """处理特征操作（刷新/创建）完成的回调"""
     operation = data.get("operation", "操作")
+    status = data.get("status")
     success_count = data.get("success_count", 0)
     fail_count = data.get("fail_count", 0)
+    cancelled_count = data.get("cancelled_count", 0)
     
     status_label = ui_elements.get("feature_status_label")
     if status_label:
-        if fail_count == 0:
+        if status == "cancelled":
+            parts = [f"成功 {success_count}", f"未执行 {cancelled_count}"]
+            if fail_count:
+                parts.append(f"停止前异常 {fail_count}")
+            status_label.config(text=f"{operation}已停止: {', '.join(parts)}")
+        elif status == "busy":
+            status_label.config(
+                text=f"{operation}未启动: {data.get('error_message', '已有任务运行')}"
+            )
+        elif fail_count == 0:
             status_label.config(text=f"{operation}完成: 成功 {success_count} 个")
         else:
             status_label.config(text=f"{operation}完成: 成功 {success_count}, 失败 {fail_count}")
     
     # 刷新列表以更新状态
-    controller.request_feature_list()
+    if data.get("refresh_list", True):
+        controller.request_feature_list()
 
 
 def _toggle_feature_selection(feature_name: str, widgets: Dict[str, tk.Widget]):

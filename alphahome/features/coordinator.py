@@ -23,6 +23,35 @@ from .storage.python_feature import PythonFeatureTable
 GOOD = {"success", "no_op", "expected_no_data"}
 
 
+def _summarize_feature_results(plan_hash, expected_task_count, results):
+    """Keep user cancellation separate from execution failures."""
+
+    statuses = [item.get("status") for item in results.values()]
+    good = sum(status in GOOD for status in statuses)
+    cancelled = sum(status == "cancelled" for status in statuses)
+    missing = max(int(expected_task_count) - len(statuses), 0)
+    failed = sum(
+        status not in GOOD and status != "cancelled" for status in statuses
+    ) + missing
+    if cancelled:
+        status = "cancelled"
+    elif good == expected_task_count:
+        status = "success"
+    elif good:
+        status = "partial_success"
+    else:
+        status = "error"
+    return {
+        "status": status,
+        "plan_hash": plan_hash,
+        "results": results,
+        "success_count": good,
+        "fail_count": failed,
+        "cancelled_count": cancelled,
+        "source_consumption": "unverified",
+    }
+
+
 def _recipes():
     return {recipe.name: recipe for recipe in FeatureRegistry.discover()}
 
@@ -232,21 +261,25 @@ class FeatureCoordinator:
             raise
         finally:
             await connection.close()  # Closing releases the pipeline lock, including on cancellation.
-            good = sum(item["status"] in GOOD for item in results.values())
-            cancelled = any(item["status"] == "cancelled" for item in results.values())
-            self.last_result = {"status": "success" if good == len(plan.units) else "partial_success" if good else "cancelled" if cancelled else "error",
-                                "plan_hash": plan.plan_hash, "results": results,
-                                "success_count": good, "fail_count": len(plan.units) - good,
-                                "source_consumption": "unverified"}
+            self.last_result = _summarize_feature_results(
+                plan.plan_hash,
+                len(plan.units),
+                results,
+            )
         return self.last_result
 
 
 async def execute_feature_request(db_manager, names, strategy="default", *, operation="refresh", submitted_plan=None,
-                                  expected_plan_hash=None, as_of_date=None, allow_blocking_fallback=False):
+                                  expected_plan_hash=None, as_of_date=None, allow_blocking_fallback=False,
+                                  stop_event=None):
     coordinator = FeatureCoordinator(db_manager)
     plan = submitted_plan or await coordinator.plan(names, strategy, operation=operation, as_of_date=as_of_date,
                                                     allow_blocking_fallback=allow_blocking_fallback)
     plan = RunPlan.from_dict(plan) if isinstance(plan, dict) else plan
     if plan.request.tasks != tuple(sorted(set(names))) or plan.request.mode != operation + ":" + strategy:
         raise ValueError("Feature request differs from submitted plan")
-    return await coordinator.run(plan, expected_plan_hash=expected_plan_hash)
+    return await coordinator.run(
+        plan,
+        expected_plan_hash=expected_plan_hash,
+        stop_event=stop_event,
+    )

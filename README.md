@@ -13,7 +13,7 @@ AlphaHome 是一个面向个人和内部投研环境的量化数据与离线特�
 | `alphahome.pit` | 可用 | PIT 财务表 manager、财务指标 calculator 和 PIT 更新协调器 |
 | `alphahome.providers` | 部分可用 | 面向研究脚本的简化数据访问工具 `AlphaDataTool` |
 | `alphahome.integrations.fundpos` | 影子生产接入 | 维护并调用仓库内冻结的 Python 3.12 引擎，严格串联仓位估算、事务入库和数据库勾稽 |
-| `alphahome.gui` | 可用但偏内部工具 | Tkinter GUI，含独立 PIT 管理、因子管理和 Features 页面 |
+| `alphahome.gui` | 可用 | 面向日常使用的一键智能更新，并保留采集、PIT、因子、Features、FundPos 专业管理页 |
 | `alphahome.cli` | 已下线 | 仅保留空壳包兼容导入；不再安装 `ah` / `alphahome-cli` / `refresh-materialized-view` |
 | `alphahome.processors` | 已删除 | 历史 processors 能力已迁移到 `features`、`scripts` 或 research 侧 |
 

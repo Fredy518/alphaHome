@@ -30,6 +30,8 @@ def test_daily_object_uses_plain_features_table_name():
     )
     assert feature.refresh_strategy == "full"
     assert feature.supported_strategies == ("full",)
+    assert feature.date_column == "trade_date"
+    assert feature.primary_keys == ("series_id", "trade_date")
 
 
 def test_expma_object_excludes_strategy_state():
@@ -40,6 +42,8 @@ def test_expma_object_excludes_strategy_state():
     assert "target_budget" not in ddl
     assert "state_after" not in ddl
     assert feature.supported_strategies == ("full",)
+    assert feature.date_column == "signal_date"
+    assert feature.primary_keys == ("series_id", "signal_date")
 
 
 def test_day_step_uses_lagged_cap_weights():

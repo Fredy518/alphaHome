@@ -1,7 +1,11 @@
 from datetime import date
 
 from alphahome.gui.handlers import pit_management_handler
-from alphahome.gui.handlers.pit_management_handler import _format_stock_diagnosis, _format_task_detail
+from alphahome.gui.handlers.pit_management_handler import (
+    _execution_status_display,
+    _format_stock_diagnosis,
+    _format_task_detail,
+)
 
 
 def test_format_stock_diagnosis_includes_expected_gap_reason():
@@ -104,3 +108,16 @@ def test_format_task_detail_separates_live_execution_and_audit_values():
     assert "最近审计快照" in text
     assert "审计时间: 2026-07-03 13:39:29" in text
     assert "审计时最新日期: 2026-07-02" in text
+
+
+def test_historical_execution_error_does_not_masquerade_as_live_table_failure():
+    task = {
+        "last_execution_status": "error",
+        "live_status": "healthy",
+        "row_count": 920994,
+        "coverage_rate": 1.0,
+        "gap_count": 0,
+    }
+
+    assert _execution_status_display(task) == "历史失败（覆盖完整）"
+    assert "最近执行失败是历史运行记录" in _format_task_detail(task)

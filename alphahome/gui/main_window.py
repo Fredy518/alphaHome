@@ -63,8 +63,10 @@ from ..common.task_system import UnifiedTaskFactory
 from . import controller
 from .handlers import (
     data_collection_handler,
+    daily_update_handler,
     factor_management_handler,
     feature_update_handler,
+    fundpos_handler,
     pit_management_handler,
     storage_settings_handler,
     task_execution_handler,
@@ -202,9 +204,8 @@ class MainWindow(WindowEventsMixin, WindowDpiMixin, WindowLayoutMixin, tk.Tk):
         
         ## 在事件循环启动后执行的异步初始化流程：
         1. 初始化后端控制器
-        2. 加载数据采集任务列表
-        3. 加载特征列表
-        4. 加载存储设置
+        2. 生成日常更新计划
+        3. 并发加载各专业任务页、FundPos 状态和存储设置
         """
         # 首先初始化控制器
         await controller.initialize_controller(self.handle_controller_response)
@@ -212,10 +213,12 @@ class MainWindow(WindowEventsMixin, WindowDpiMixin, WindowLayoutMixin, tk.Tk):
         # 各列表互不依赖。并发启动后，快速的特征列表不再等待较慢的
         # PIT 实时统计，任一页面完成即可立即通过回调更新界面。
         await asyncio.gather(
+            controller.handle_request("GET_DAILY_UPDATE_PLAN"),
             controller.handle_request("GET_FEATURES"),
             controller.handle_request("GET_COLLECTION_TASKS"),
             controller.handle_request("GET_PIT_TASKS"),
             controller.handle_request("GET_FACTOR_TASKS"),
+            controller.handle_request("GET_FUNDPOS_TASKS"),
             controller.handle_request("GET_STORAGE_SETTINGS"),
         )
 
@@ -316,6 +319,34 @@ class MainWindow(WindowEventsMixin, WindowDpiMixin, WindowLayoutMixin, tk.Tk):
             ),
             "FEATURE_OPERATION_COMPLETE": (
                 feature_update_handler.handle_feature_operation_complete,
+                [self.ui_elements, data],
+            ),
+            "DAILY_UPDATE_PLAN_UPDATE": (
+                daily_update_handler.update_daily_update_plan_ui,
+                [self.ui_elements, data],
+            ),
+            "DAILY_UPDATE_PLAN_COMPLETE": (
+                daily_update_handler.handle_daily_update_plan_complete,
+                [self.ui_elements, data],
+            ),
+            "DAILY_UPDATE_STAGE_UPDATE": (
+                daily_update_handler.update_daily_update_stage_ui,
+                [self.ui_elements, data],
+            ),
+            "DAILY_UPDATE_COMPLETE": (
+                daily_update_handler.handle_daily_update_complete,
+                [self.ui_elements, data],
+            ),
+            "FUNDPOS_TASK_LIST_UPDATE": (
+                fundpos_handler.update_fundpos_task_list_ui,
+                [self.ui_elements, data],
+            ),
+            "FUNDPOS_REFRESH_COMPLETE": (
+                fundpos_handler.handle_fundpos_refresh_complete,
+                [self.ui_elements, data],
+            ),
+            "FUNDPOS_RUN_COMPLETE": (
+                fundpos_handler.handle_fundpos_run_complete,
                 [self.ui_elements, data],
             ),
         }

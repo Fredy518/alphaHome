@@ -28,17 +28,20 @@ import logging
 import sys
 import time
 from datetime import datetime
-from typing import List, Dict, Any, Optional
+from pathlib import Path
+from typing import List, Dict, Any, Callable, Optional
 from concurrent.futures import ThreadPoolExecutor
 
 # 添加项目根目录到 Python 路径
-sys.path.insert(0, '.')
+PROJECT_ROOT = Path(__file__).resolve().parents[4]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
-from alphahome.common.logging_utils import get_logger
-from alphahome.common.task_system import UnifiedTaskFactory
-from alphahome.common.constants import UpdateTypes
-from alphahome.common.config_manager import get_database_url
-from alphahome.fetchers.tasks import discover_tasks
+from alphahome.common.logging_utils import get_logger  # noqa: E402
+from alphahome.common.task_system import UnifiedTaskFactory  # noqa: E402
+from alphahome.common.constants import UpdateTypes  # noqa: E402
+from alphahome.common.config_manager import get_database_url  # noqa: E402
+from alphahome.fetchers.tasks import discover_tasks  # noqa: E402
 
 logger = get_logger(__name__)
 
@@ -51,14 +54,27 @@ class DataCollectionProductionUpdater:
     """
 
     def __init__(self, max_workers: int = 3, max_retries: int = 3, retry_delay: int = 5, dry_run: bool = False,
-                 optional_tasks: Optional[List[str]] = None):
+                 optional_tasks: Optional[List[str]] = None,
+                 task_names: Optional[List[str]] = None,
+                 db_manager: Any = None,
+                 manage_factory_lifecycle: bool = True,
+                 stop_event: Optional[asyncio.Event] = None,
+                 progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None):
         self.max_workers = max_workers
         self.max_retries = max_retries
         self.retry_delay = retry_delay
         self.dry_run = dry_run
         self.optional_tasks = frozenset(optional_tasks or ())
+        self.requested_task_names = (
+            tuple(dict.fromkeys(task_names)) if task_names is not None else None
+        )
         self.batch_outcome = {"status": "not_started"}
-        self.db_manager = None
+        self.db_manager = db_manager
+        self.manage_factory_lifecycle = manage_factory_lifecycle
+        self.stop_event = stop_event
+        self.progress_callback = progress_callback
+        self._owns_factory = False
+        self.last_results: List[Dict[str, Any]] = []
         self.executor = ThreadPoolExecutor(max_workers=max_workers)
 
         # 数据采集 API 并发限制说明
@@ -78,6 +94,7 @@ class DataCollectionProductionUpdater:
             'successful_tasks': 0,
             'failed_tasks': 0,
             'skipped_tasks': 0,
+            'cancelled_tasks': 0,
             'start_time': None,
             'end_time': None,
             'data_source_stats': {}  # 数据源级别的统计
@@ -90,6 +107,18 @@ class DataCollectionProductionUpdater:
             if self.dry_run:
                 logger.info("干运行只发现任务，不读取数据库配置或建立连接")
                 return True
+            if self.db_manager is not None:
+                logger.info("复用调用方提供的数据库连接")
+                return True
+
+            try:
+                existing = UnifiedTaskFactory.get_db_manager()
+            except RuntimeError:
+                existing = None
+            if existing is not None:
+                self.db_manager = existing
+                logger.info("复用已初始化的任务工厂数据库连接")
+                return True
             logger.info("正在初始化数据库连接...")
 
             # 获取数据库连接字符串
@@ -99,6 +128,7 @@ class DataCollectionProductionUpdater:
 
             await UnifiedTaskFactory.initialize(db_url=db_url)
             self.db_manager = UnifiedTaskFactory.get_db_manager()
+            self._owns_factory = True
 
             logger.info("[SUCCESS] 数据库连接和任务工厂初始化成功")
             return True
@@ -187,8 +217,19 @@ class DataCollectionProductionUpdater:
                 concurrency_info = ", ".join([f"{source}: {workers}并发" for source, workers in sorted(data_source_concurrency.items())])
                 logger.info(f"[CONFIG] 数据源并发配置: {concurrency_info}")
 
+            discovered = set(fetch_tasks)
+            if self.requested_task_names is not None:
+                unknown = sorted(set(self.requested_task_names) - discovered)
+                if unknown:
+                    raise ValueError(f"请求了未知或非采集任务: {unknown}")
+                fetch_tasks = [
+                    name for name in self.requested_task_names if name in discovered
+                ]
+            else:
+                fetch_tasks = sorted(fetch_tasks)
+
             logger.info(f"[SUCCESS] 发现 {len(fetch_tasks)} 个数据采集 (fetch) 任务")
-            return sorted(fetch_tasks)
+            return fetch_tasks
 
         except Exception as e:
             logger.error(f"[ERROR] 获取数据采集任务列表失败: {e}")
@@ -197,6 +238,13 @@ class DataCollectionProductionUpdater:
     async def execute_task_with_retry(self, task_name: str, attempt: int = 1) -> Dict[str, Any]:
         """执行单个任务，支持重试机制"""
         try:
+            if self.stop_event and self.stop_event.is_set():
+                return {
+                    'task_name': task_name,
+                    'status': 'cancelled',
+                    'message': '收到停止信号，任务未启动',
+                    'attempts': attempt,
+                }
             logger.info(f"[{task_name}] 开始执行 (尝试 {attempt}/{self.max_retries + 1})")
 
             # 干运行模式：不实际执行任务
@@ -233,7 +281,7 @@ class DataCollectionProductionUpdater:
 
             # 执行任务
             start_time = time.time()
-            result = await task_instance.execute()
+            result = await task_instance.execute(stop_event=self.stop_event)
             execution_time = time.time() - start_time
 
             if isinstance(result, dict):
@@ -324,7 +372,17 @@ class DataCollectionProductionUpdater:
 
             async def execute_with_semaphore(task_name: str):
                 async with semaphore:
-                    return await self.execute_task_with_retry(task_name)
+                    result = await self.execute_task_with_retry(task_name)
+                    if self.progress_callback:
+                        try:
+                            self.progress_callback(dict(result))
+                        except Exception as callback_error:
+                            logger.warning(
+                                "任务进度回调失败 %s: %s",
+                                task_name,
+                                callback_error,
+                            )
+                    return result
 
             # 执行该数据源的所有任务
             tasks = []
@@ -365,6 +423,7 @@ class DataCollectionProductionUpdater:
         print(f"[SUCCESS] 成功任务: {self.stats['successful_tasks']}")
         print(f"[FAILED] 失败任务: {self.stats['failed_tasks']}")
         print(f"[SKIPPED] 跳过任务: {self.stats['skipped_tasks']}")
+        print(f"[CANCELLED] 已停止任务: {self.stats['cancelled_tasks']}")
         print(f"[ERROR] 异常任务: {sum(1 for r in results if r.get('status') == 'error' and isinstance(r, dict))}")
         print(f"[PARTIAL] 部分成功: {sum(1 for r in results if r.get('status') == 'partial_success' and isinstance(r, dict))}")
         print(f"成功率: {(self.stats['successful_tasks'] / max(self.stats['total_tasks'], 1) * 100):.2f}%")
@@ -488,6 +547,7 @@ class DataCollectionProductionUpdater:
             # 执行任务
             logger.info("[PRODUCTION] 开始生产级数据采集更新...")
             results = await self.execute_tasks_parallel(fetch_tasks)
+            self.last_results = list(results)
             batch_success = self.evaluate_batch(fetch_tasks, results)
 
             # 统计结果
@@ -502,6 +562,8 @@ class DataCollectionProductionUpdater:
                     self.stats['failed_tasks'] += 1
                 elif status in ['skipped', 'expected_skip', 'skipped_dry_run']:
                     self.stats['skipped_tasks'] += 1
+                elif status == 'cancelled':
+                    self.stats['cancelled_tasks'] += 1
                 else:
                     # 处理其他未知状态
                     logger.warning(f"未知任务状态: {status} for task {task_name}")
@@ -515,6 +577,7 @@ class DataCollectionProductionUpdater:
                     if data_source not in self.stats['data_source_stats']:
                         self.stats['data_source_stats'][data_source] = {
                             'total': 0, 'success': 0, 'failed': 0, 'skipped': 0,
+                            'cancelled': 0,
                             'total_time': 0.0, 'avg_time': 0.0
                         }
 
@@ -527,6 +590,8 @@ class DataCollectionProductionUpdater:
                         ds_stats['failed'] += 1
                     elif status in ['skipped', 'expected_skip', 'skipped_dry_run']:
                         ds_stats['skipped'] += 1
+                    elif status == 'cancelled':
+                        ds_stats['cancelled'] += 1
 
                     # 记录执行时间
                     exec_time = result.get('execution_time', 0.0)
@@ -551,7 +616,7 @@ class DataCollectionProductionUpdater:
             # 清理资源
             if self.executor:
                 self.executor.shutdown(wait=True)
-            if self.db_manager:
+            if self.db_manager and self.manage_factory_lifecycle and self._owns_factory:
                 if self.db_manager is UnifiedTaskFactory._db_manager:
                     await UnifiedTaskFactory.shutdown()
                 else:
@@ -573,6 +638,8 @@ async def main():
                        help='启用干运行模式，只显示将要执行的任务，不实际执行')
     parser.add_argument('--optional-task', action='append', default=[],
                        help='明确声明可选任务，可重复；未列出的任务全部必需')
+    parser.add_argument('--task', action='append', default=None,
+                       help='仅运行指定采集任务，可重复；默认运行全部已注册采集任务')
 
     args = parser.parse_args()
 
@@ -596,6 +663,7 @@ async def main():
         retry_delay=args.retry_delay,
         dry_run=args.dry_run,
         optional_tasks=args.optional_task,
+        task_names=args.task,
     )
     print(updater.api_concurrency_note)
     print()

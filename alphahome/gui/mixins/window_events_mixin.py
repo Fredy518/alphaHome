@@ -13,8 +13,10 @@ from async_tkinter_loop import async_handler
 from .. import controller
 from ..handlers import (
     data_collection_handler,
+    daily_update_handler,
     factor_management_handler,
     feature_update_handler,
+    fundpos_handler,
     pit_management_handler,
     storage_settings_handler,
     task_execution_handler,
@@ -26,6 +28,29 @@ class WindowEventsMixin:
 
     def bind_events(self):
         """绑定所有UI组件的事件处理器"""
+        # Daily Update Binds
+        self.ui_elements["daily_update_preview_button"].config(
+            command=lambda: daily_update_handler.handle_preview_daily_update(
+                self.ui_elements
+            )
+        )
+        self.ui_elements["daily_update_run_button"].config(
+            command=lambda: daily_update_handler.handle_run_daily_update(
+                self.ui_elements
+            )
+        )
+        self.ui_elements["daily_update_stop_button"].config(
+            command=lambda: daily_update_handler.handle_stop_daily_update(
+                self.ui_elements
+            )
+        )
+        self.ui_elements["daily_update_tree"].bind(
+            "<<TreeviewSelect>>",
+            lambda event: daily_update_handler.handle_daily_update_tree_select(
+                event, self.ui_elements
+            ),
+        )
+
         # Storage Settings
         self.ui_elements["load_settings_button"].config(
             command=async_handler(controller.handle_request, "GET_STORAGE_SETTINGS")
@@ -269,6 +294,37 @@ class WindowEventsMixin:
                     c, self.ui_elements
                 ),
             )
+
+        # FundPos Binds
+        self.ui_elements["fundpos_refresh_button"].config(
+            command=lambda: fundpos_handler.handle_refresh_fundpos(self.ui_elements)
+        )
+        self.ui_elements["fundpos_select_all_button"].config(
+            command=lambda: fundpos_handler.handle_select_all_fundpos(self.ui_elements)
+        )
+        self.ui_elements["fundpos_deselect_all_button"].config(
+            command=lambda: fundpos_handler.handle_deselect_all_fundpos(
+                self.ui_elements
+            )
+        )
+        self.ui_elements["fundpos_check_button"].config(
+            command=lambda: fundpos_handler.handle_check_fundpos(self.ui_elements)
+        )
+        self.ui_elements["fundpos_shadow_button"].config(
+            command=lambda: fundpos_handler.handle_shadow_fundpos(self.ui_elements)
+        )
+        self.ui_elements["fundpos_task_tree"].bind(
+            "<ButtonRelease-1>",
+            lambda event: fundpos_handler.handle_fundpos_tree_click(
+                event, self.ui_elements
+            ),
+        )
+        self.ui_elements["fundpos_task_tree"].bind(
+            "<<TreeviewSelect>>",
+            lambda event: fundpos_handler.handle_fundpos_tree_select(
+                event, self.ui_elements
+            ),
+        )
 
         # Task Execution Binds
         self.ui_elements["run_tasks_button"].config(

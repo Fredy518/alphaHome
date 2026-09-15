@@ -624,10 +624,15 @@ def stop_tasks():
     
     # 设置停止事件
     _global_stop_event.set()
-    
     logger.info("停止信号已发送")
     if _send_response_callback:
         _send_response_callback("LOG", {"level": "warning", "message": "停止信号已发送，任务将在安全点停止"})
+
+
+def is_task_execution_running() -> bool:
+    """Return whether the generic/PIT/Factor GUI runner owns a batch."""
+
+    return _is_running
 
 
 async def _ensure_task_status_table_exists(db_manager: DBManager):

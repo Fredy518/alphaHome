@@ -105,7 +105,7 @@ def create_pit_management_tab(parent: ttk.Frame) -> Dict[str, tk.Widget]:
     tree.column("row_count", width=110, minwidth=90, anchor=tk.E, stretch=False)
     tree.column("coverage_rate", width=100, minwidth=80, anchor=tk.CENTER, stretch=False)
     tree.column("gap_count", width=90, minwidth=80, anchor=tk.E, stretch=False)
-    tree.column("last_execution_status", width=110, minwidth=90, anchor=tk.CENTER, stretch=False)
+    tree.column("last_execution_status", width=150, minwidth=120, anchor=tk.CENTER, stretch=False)
     tree.column("last_execution_time", width=170, minwidth=150, anchor=tk.CENTER, stretch=False)
     tree.column("last_audit_time", width=170, minwidth=150, anchor=tk.CENTER, stretch=False)
 

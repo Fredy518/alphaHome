@@ -8,7 +8,7 @@
 | PIT | `python -m alphahome.pit.pit_data_update_production`；原 scripts 路径是兼容门面 | `RunPlan`、依赖闭包、固定截止、预检哈希；只写 pit，正常执行不安装表/触发器 |
 | Factors | `python -m alphahome.factors` | P v2.0、G v1.1；自然周五、同日 P→G；只写 factors，不自动启动 PIT |
 | Features | `python -m alphahome.features` | 注册依赖、冻结计划、整批互斥；只写 features；表内事务刷新保留 OID |
-| GUI | `python run.py` / `alphahome` | PIT、Factors、Features 服务提交同领域计划，不另设公式或数据所有权 |
+| GUI | `python run.py` / `alphahome` | “日常更新”按采集→PIT→Factors→Features→FundPos 编排现有正式入口；各领域仍提交自身计划，不另设公式或数据所有权；FundPos 仅检查/影子模式 |
 | Features 初始化 | `scripts/features_init.py` / `scripts/initialize_materialized_views.py` | 显式 schema 维护；创建配方委托同一 Features 协调器；普通刷新不调用初始化 |
 | Factors 修复 / schema | Factors `repair` / `schema` 子命令 | 先预览；具体 apply 和 rollback 参数见 `--help`；回滚验证快照所有权 |
 | PIT schema | `alphahome.pit.schema.render_schema_sql()` | 纯 SQL 生成器，独立审核执行 |

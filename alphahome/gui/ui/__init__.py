@@ -22,6 +22,8 @@ from .task_log_tab import create_task_log_tab
 from .feature_update_tab import create_feature_update_tab
 from .factor_management_tab import create_factor_management_tab
 from .pit_management_tab import create_pit_management_tab
+from .daily_update_tab import create_daily_update_tab
+from .fundpos_tab import create_fundpos_tab
 
 __all__ = [
     "create_data_collection_tab",
@@ -31,4 +33,6 @@ __all__ = [
     "create_task_execution_tab",
     "create_task_log_tab",
     "create_feature_update_tab",
+    "create_daily_update_tab",
+    "create_fundpos_tab",
 ]

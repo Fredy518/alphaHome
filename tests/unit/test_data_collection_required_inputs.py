@@ -83,3 +83,73 @@ async def test_actual_main_propagates_required_batch_status(monkeypatch, updater
         await production.main()
     assert result.value.code == exit_code
     assert updater.stats["failed_tasks"] == int(failure)
+
+
+@pytest.mark.asyncio
+async def test_requested_task_subset_is_preserved(monkeypatch):
+    classes = {
+        "daily_a": SimpleNamespace(data_source="fixture"),
+        "daily_b": SimpleNamespace(data_source="fixture"),
+    }
+    value = production.DataCollectionProductionUpdater(
+        max_workers=1,
+        task_names=["daily_b"],
+    )
+    monkeypatch.setattr(
+        production.UnifiedTaskFactory,
+        "get_all_task_names",
+        lambda: list(classes),
+    )
+    monkeypatch.setattr(
+        production.UnifiedTaskFactory,
+        "get_task_info",
+        lambda name: {"type": "fetch"},
+    )
+    monkeypatch.setattr(production.UnifiedTaskFactory, "_task_registry", classes)
+    try:
+        assert await value.get_fetch_tasks() == ["daily_b"]
+    finally:
+        value.executor.shutdown(wait=True)
+
+
+@pytest.mark.asyncio
+async def test_task_progress_callback_is_emitted_as_each_task_finishes(monkeypatch):
+    seen = []
+    value = production.DataCollectionProductionUpdater(
+        max_workers=1,
+        progress_callback=seen.append,
+    )
+    monkeypatch.setattr(
+        production.UnifiedTaskFactory,
+        "_task_registry",
+        {"daily_a": SimpleNamespace(data_source="fixture")},
+    )
+    value.execute_task_with_retry = AsyncMock(
+        return_value={"task_name": "daily_a", "status": "success"}
+    )
+    try:
+        results = await value.execute_tasks_parallel(["daily_a"])
+        assert seen == results
+    finally:
+        value.executor.shutdown(wait=True)
+
+
+@pytest.mark.asyncio
+async def test_cancelled_collection_task_is_not_counted_as_failed(monkeypatch):
+    value = production.DataCollectionProductionUpdater(max_workers=1)
+    value.initialize = AsyncMock(return_value=True)
+    value.get_fetch_tasks = AsyncMock(return_value=["daily_a"])
+    value.execute_tasks_parallel = AsyncMock(
+        return_value=[{"task_name": "daily_a", "status": "cancelled"}]
+    )
+    monkeypatch.setattr(
+        production.UnifiedTaskFactory,
+        "_task_registry",
+        {"daily_a": SimpleNamespace(data_source="fixture")},
+    )
+    try:
+        assert await value.run_production_update() is False
+        assert value.stats["failed_tasks"] == 0
+        assert value.stats["cancelled_tasks"] == 1
+    finally:
+        value.executor.shutdown(wait=True)

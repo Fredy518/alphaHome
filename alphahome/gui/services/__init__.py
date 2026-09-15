@@ -15,7 +15,9 @@ __all__ = [
     "task_registry_service",
     "task_execution_service",
     "configuration_service",
+    "daily_update_service",
     "feature_service",
+    "fundpos_service",
     "factor_service",
     "pit_service",
 ]

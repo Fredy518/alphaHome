@@ -257,19 +257,19 @@ def _update_pit_task_display(widgets: Dict[str, tk.Widget]):
             task.get("row_count", 0),
             _format_rate(task.get("coverage_rate")),
             "" if task.get("gap_count") is None else task.get("gap_count"),
-            task.get("last_execution_status", ""),
+            _execution_status_display(task),
             _fmt(task.get("last_execution_time")),
             _fmt(task.get("last_audit_time")),
         )
         tags = ("selected",) if task.get("selected") else ()
-        if (
-            task.get("last_execution_status") == "error"
-            or task.get("live_status") in ("error", "missing_table")
-        ):
+        if task.get("live_status") in ("error", "missing_table"):
             tags = tags + ("error",)
+        elif task.get("last_execution_status") == "error":
+            tags = tags + ("history_warning",)
         tree.insert("", tk.END, values=values, tags=tags)
     tree.tag_configure("selected", background="#e8f4fd")
     tree.tag_configure("error", foreground="red")
+    tree.tag_configure("history_warning", foreground="#b54708")
 
 
 def _show_task_detail(widgets: Dict[str, tk.Widget], task_name: str):
@@ -313,11 +313,39 @@ def _format_task_detail(task: Dict[str, Any]) -> str:
         f"审计时覆盖率: {_format_rate(task.get('audited_coverage_rate'))}",
         f"审计时缺口数: {task.get('audited_gap_count')}",
     ]
+    if _is_live_table_complete(task) and task.get("last_execution_status") == "error":
+        lines.extend(
+            [
+                "",
+                "状态说明: 最近执行失败是历史运行记录；当前实时表覆盖检查完整。"
+                "来源消费认证仍以审计状态为准；该执行状态会在下一次成功运行后更新。",
+            ]
+        )
     return "\n".join(lines)
 
 
 def _find_task(task_name: str) -> Optional[Dict[str, Any]]:
     return next((task for task in _full_pit_task_list if task.get("name") == task_name), None)
+
+
+def _is_live_table_complete(task: Dict[str, Any]) -> bool:
+    if task.get("live_status") not in {"healthy", "available"}:
+        return False
+    try:
+        return (
+            int(task.get("row_count") or 0) > 0
+            and int(task.get("gap_count") or 0) == 0
+            and float(task.get("coverage_rate") or 0) >= 1.0
+        )
+    except (TypeError, ValueError):
+        return False
+
+
+def _execution_status_display(task: Dict[str, Any]) -> str:
+    status = str(task.get("last_execution_status") or "")
+    if status == "error" and _is_live_table_complete(task):
+        return "历史失败（覆盖完整）"
+    return status
 
 
 def _format_audit_results(results: List[Dict[str, Any]]) -> str:

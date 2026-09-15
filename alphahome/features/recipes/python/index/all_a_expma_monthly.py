@@ -159,6 +159,8 @@ class AllAExpmaMonthlyFeature(_AuditedAtomicFullRefreshFeature):
     materialized_view_name = "all_a_expma_monthly"
     description = "自建全A完整月K与EXPMA12/120技术原子（月频）"
     category = "index"
+    date_column = "signal_date"
+    primary_keys = ("series_id", "signal_date")
     source_tables = [
         "features.all_a_index_daily",
         "rawdata.others_calendar",

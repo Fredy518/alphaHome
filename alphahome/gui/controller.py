@@ -65,9 +65,11 @@ from ..common.task_system import UnifiedTaskFactory
 from .services import (
     task_registry_service,
     configuration_service,
+    daily_update_service,
     task_execution_service,
     factor_service,
     feature_service,
+    fundpos_service,
     pit_service,
 )
 
@@ -123,6 +125,8 @@ async def initialize_controller(response_callback):
     feature_service.initialize_feature_service(response_callback)
     pit_service.initialize_pit_service(response_callback)
     factor_service.initialize_factor_service(response_callback)
+    fundpos_service.initialize_fundpos_service(response_callback)
+    daily_update_service.initialize_daily_update_service(response_callback)
     
     # 初始化任务执行会话
     task_execution_service.initialize_session()
@@ -248,6 +252,60 @@ async def handle_get_factor_tasks():
     await factor_service.handle_get_factor_tasks()
 
 
+async def handle_get_fundpos_tasks():
+    await fundpos_service.handle_get_fundpos_tasks()
+
+
+async def handle_run_fundpos(mode: str, families: Optional[List[str]] = None):
+    await fundpos_service.handle_run_fundpos(mode, families)
+
+
+async def handle_get_daily_update_plan(as_of_date: Optional[str] = None):
+    await daily_update_service.handle_get_daily_update_plan(db_manager, as_of_date)
+
+
+async def handle_run_daily_update(as_of_date: Optional[str] = None):
+    if db_manager is None:
+        if _response_callback:
+            _response_callback(
+                "DAILY_UPDATE_COMPLETE",
+                {
+                    "success": False,
+                    "result": {"status": "error", "error": "数据库未连接"},
+                },
+            )
+        return
+    active = []
+    if task_execution_service.is_task_execution_running():
+        active.append("任务运行")
+    if feature_service.is_feature_operation_running():
+        active.append("Features")
+    if fundpos_service.is_fundpos_running():
+        active.append("FundPos")
+    if active:
+        if _response_callback:
+            _response_callback(
+                "DAILY_UPDATE_COMPLETE",
+                {
+                    "success": False,
+                    "result": {
+                        "status": "busy",
+                        "error": f"已有操作正在运行：{', '.join(active)}",
+                    },
+                },
+            )
+        return
+    await daily_update_service.handle_run_daily_update(db_manager, as_of_date)
+    # Keep expert pages aligned with the just-finished one-click run.
+    await asyncio.gather(
+        task_registry_service.handle_get_collection_tasks(),
+        pit_service.handle_get_pit_tasks(),
+        factor_service.handle_get_factor_tasks(),
+        feature_service.handle_get_features(),
+        fundpos_service.handle_get_fundpos_tasks(),
+    )
+
+
 async def handle_factor_preflight(
     task_names: List[str],
     mode: str,
@@ -321,6 +379,36 @@ async def handle_request(command: str, data: Optional[Dict[str, Any]] = None):
     data = data or {}
 
     try:
+        if daily_update_service.is_daily_update_running() and command in {
+            "RUN_TASKS",
+            "REFRESH_FEATURES",
+            "CREATE_FEATURES",
+            "RUN_FUNDPOS",
+            "SAVE_STORAGE_SETTINGS",
+        }:
+            message = "一键日常更新正在运行，本次操作已跳过"
+            logger.warning("%s: %s", message, command)
+            if _response_callback:
+                _response_callback("LOG", {"level": "warning", "message": message})
+                if command in {"REFRESH_FEATURES", "CREATE_FEATURES"}:
+                    _response_callback(
+                        "FEATURE_OPERATION_COMPLETE",
+                        {
+                            "status": "busy",
+                            "success_count": 0,
+                            "fail_count": 0,
+                            "error_message": message,
+                            "operation": "刷新" if command == "REFRESH_FEATURES" else "创建",
+                            "refresh_list": False,
+                        },
+                    )
+                elif command == "RUN_FUNDPOS":
+                    _response_callback(
+                        "FUNDPOS_RUN_COMPLETE",
+                        {"success": False, "result": {"status": "busy", "error": message}},
+                    )
+            return
+
         if command == "GET_ALL_TASK_STATUS":
             await handle_get_all_task_status()
 
@@ -354,6 +442,23 @@ async def handle_request(command: str, data: Optional[Dict[str, Any]] = None):
 
         elif command == "GET_FACTOR_TASKS":
             await handle_get_factor_tasks()
+
+        elif command == "GET_FUNDPOS_TASKS":
+            await handle_get_fundpos_tasks()
+
+        elif command == "RUN_FUNDPOS":
+            await handle_run_fundpos(
+                data.get("mode", "shadow"), data.get("families") or []
+            )
+
+        elif command == "GET_DAILY_UPDATE_PLAN":
+            await handle_get_daily_update_plan(data.get("as_of_date"))
+
+        elif command == "RUN_DAILY_UPDATE":
+            await handle_run_daily_update(data.get("as_of_date"))
+
+        elif command == "STOP_DAILY_UPDATE":
+            daily_update_service.stop_daily_update()
 
         elif command == "PREFLIGHT_FACTOR_RUN":
             await handle_factor_preflight(
@@ -476,6 +581,35 @@ def request_pit_stock_diagnosis(ts_code: str):
 
 def request_factor_tasks():
     asyncio.create_task(handle_request("GET_FACTOR_TASKS"))
+
+
+def request_fundpos_tasks():
+    asyncio.create_task(handle_request("GET_FUNDPOS_TASKS"))
+
+
+def request_run_fundpos(mode: str, families: Optional[List[str]] = None):
+    asyncio.create_task(
+        handle_request(
+            "RUN_FUNDPOS",
+            {"mode": mode, "families": families or []},
+        )
+    )
+
+
+def request_daily_update_plan(as_of_date: Optional[str] = None):
+    asyncio.create_task(
+        handle_request("GET_DAILY_UPDATE_PLAN", {"as_of_date": as_of_date})
+    )
+
+
+def request_run_daily_update(as_of_date: Optional[str] = None):
+    asyncio.create_task(
+        handle_request("RUN_DAILY_UPDATE", {"as_of_date": as_of_date})
+    )
+
+
+def request_stop_daily_update():
+    asyncio.create_task(handle_request("STOP_DAILY_UPDATE"))
 
 
 def request_factor_preflight(

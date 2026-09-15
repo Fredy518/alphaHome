@@ -347,6 +347,8 @@ class AllAIndexDailyFeature(_AuditedAtomicFullRefreshFeature):
     materialized_view_name = "all_a_index_daily"
     description = "自建全A自由流通市值加权全收益近似指数（日频）"
     category = "index"
+    date_column = "trade_date"
+    primary_keys = ("series_id", "trade_date")
     source_tables = [
         "rawdata.stock_daily",
         "rawdata.stock_dailybasic",

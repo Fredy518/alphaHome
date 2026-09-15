@@ -33,10 +33,12 @@ def test_gui_startup_provides_writable_streams_without_console(monkeypatch):
 @pytest.mark.asyncio
 async def test_initial_async_load_starts_independent_lists_concurrently(monkeypatch):
     commands = {
+        "GET_DAILY_UPDATE_PLAN",
         "GET_COLLECTION_TASKS",
         "GET_PIT_TASKS",
         "GET_FACTOR_TASKS",
         "GET_FEATURES",
+        "GET_FUNDPOS_TASKS",
         "GET_STORAGE_SETTINGS",
     }
     started = set()
