@@ -140,6 +140,9 @@ CREATE INDEX IF NOT EXISTS idx_pit_etf_index_fapi_eligible_date
 CREATE INDEX IF NOT EXISTS idx_pit_etf_index_fapi_member_source_date
     ON pit.pit_etf_index_fapi_monthly (member_weight_basis, obs_date);
 
+CREATE INDEX IF NOT EXISTS idx_pit_etf_index_fapi_method_date
+    ON pit.pit_etf_index_fapi_monthly (method_version, obs_date);
+
 COMMENT ON TABLE pit.pit_etf_index_fapi_monthly IS
     'ETF跟踪指数相对中证800的来源适配FAPI与预期ROE月末PIT快照。';
 

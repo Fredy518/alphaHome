@@ -1,6 +1,7 @@
 """Regression coverage for ETF task denominators and shared-table isolation."""
 
 from datetime import date, timedelta
+from pathlib import Path
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -104,14 +105,31 @@ class _SourceDB:
 
     async def fetch(self, query, *args):
         self.queries.append((query, args))
-        if "FROM rawdata.index_weight" in query:
-            codes, start, end = args
-            assert "trade_date BETWEEN $2 AND $3" in query
+        if "AS candidate_date" in query:
+            codes, before_dates, start = args
+            assert "weights.trade_date < requested.before_date" in query
+            result = []
+            for code, before_date in zip(codes, before_dates):
+                dates = [
+                    row["weight_trade_date"]
+                    for row in self.official
+                    if row["index_code"] == code
+                    and start <= row["weight_trade_date"] < before_date
+                ]
+                result.append(
+                    {
+                        "index_code": code,
+                        "candidate_date": max(dates) if dates else None,
+                    }
+                )
+            return result
+        if "JOIN rawdata.index_weight weights" in query:
+            codes, dates = args
+            requested = set(zip(codes, dates))
             return [
                 row
                 for row in self.official
-                if row["index_code"] in codes
-                and start <= row["weight_trade_date"] <= end
+                if (row["index_code"], row["weight_trade_date"]) in requested
             ]
         if "WITH latest AS" in query:
             codes, start, end = args
@@ -182,6 +200,28 @@ async def test_members_mix_official_and_fallback_sources_without_double_counting
 
 
 @pytest.mark.asyncio
+async def test_member_denominator_tries_older_snapshot_when_latest_is_invalid(
+    monkeypatch,
+):
+    newest_incomplete = _official(when=OBS_DATE - timedelta(days=1))[:4]
+    older_complete = _official(when=OBS_DATE - timedelta(days=2))
+    db = _SourceDB(newest_incomplete + older_complete)
+    service = PITAuditService(db)
+    monkeypatch.setattr(service, "_relation_exists", AsyncMock(return_value=True))
+
+    count = await service._denominator_count(
+        PITETFIndexMembersMonthlyTask.contract, OBS_DATE
+    )
+
+    assert count == 5
+    candidate_queries = [
+        (query, args) for query, args in db.queries if "AS candidate_date" in query
+    ]
+    assert len(candidate_queries) == 2
+    assert candidate_queries[1][1][1] == [OBS_DATE - timedelta(days=1)]
+
+
+@pytest.mark.asyncio
 async def test_proxy_member_denominator_counts_a_shares_after_full_snapshot_validation(
     monkeypatch,
 ):
@@ -202,7 +242,7 @@ async def test_proxy_member_denominator_counts_a_shares_after_full_snapshot_vali
     )
 
     assert count == 5
-    assert len(db.queries) == 1
+    assert len(db.queries) == 2
     assert db.queries[0][1][0] == ["931238.CSI"]
 
 
@@ -341,3 +381,18 @@ def test_etf_source_tasks_declare_audit_query_indexes():
     assert ("ts_code", "end_date") in declared_columns(
         TushareFundPortfolioTask
     )
+
+
+def test_etf_output_schemas_declare_method_date_indexes():
+    database_dir = Path(__file__).parents[2] / "alphahome" / "pit" / "database"
+    members_sql = (
+        database_dir / "create_pit_etf_index_members_monthly_table.sql"
+    ).read_text(encoding="utf-8")
+    fapi_sql = (
+        database_dir / "create_pit_etf_index_fapi_monthly_table.sql"
+    ).read_text(encoding="utf-8")
+
+    assert "idx_pit_etf_index_members_method_date" in members_sql
+    assert "(method_version, obs_date)" in members_sql
+    assert "idx_pit_etf_index_fapi_method_date" in fapi_sql
+    assert "(method_version, obs_date)" in fapi_sql

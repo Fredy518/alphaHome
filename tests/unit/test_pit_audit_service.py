@@ -632,7 +632,14 @@ async def test_etf_member_denominator_reconstructs_visible_source_rows():
             self.queries.append((query, args))
             if "FROM rawdata.fund_etf_basic" in query:
                 return [{"index_code": "000300.SH"}]
-            if "FROM rawdata.index_weight" in query:
+            if "AS candidate_date" in query:
+                return [
+                    {
+                        "index_code": "000300.SH",
+                        "candidate_date": date(2026, 8, 28),
+                    }
+                ]
+            if "JOIN rawdata.index_weight weights" in query:
                 return [
                     {
                         "index_code": "000300.SH",
@@ -701,17 +708,25 @@ async def test_proxy_denominators_use_registry_and_valid_official_a_share_member
 
         async def fetch(self, query, *args):
             self.queries.append((query, args))
-            assert "FROM rawdata.index_weight" in query
-            return [
-                {
-                    "index_code": "931238.CSI",
-                    "index_name": "931238.CSI",
-                    "weight_trade_date": date(2026, 8, 28),
-                    "ts_code": f"{stock:06d}.SZ",
-                    "raw_weight": 20.0,
-                }
-                for stock in range(1, 6)
-            ]
+            if "AS candidate_date" in query:
+                return [
+                    {
+                        "index_code": "931238.CSI",
+                        "candidate_date": date(2026, 8, 28),
+                    }
+                ]
+            if "JOIN rawdata.index_weight weights" in query:
+                return [
+                    {
+                        "index_code": "931238.CSI",
+                        "index_name": "931238.CSI",
+                        "weight_trade_date": date(2026, 8, 28),
+                        "ts_code": f"{stock:06d}.SZ",
+                        "raw_weight": 20.0,
+                    }
+                    for stock in range(1, 6)
+                ]
+            raise AssertionError(query)
 
     index_contract = _etf_audit_contract(
         "etf_index_a_share_proxy_fapi",

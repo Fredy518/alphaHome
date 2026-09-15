@@ -756,35 +756,15 @@ class PITAuditService:
             return 0
 
         obs_date = pd.Timestamp(coverage_period).date()
-        official = pd.DataFrame()
+        expected = pd.DataFrame(columns=calculator.OUTPUT_COLUMNS)
         if await self._relation_exists("rawdata.index_weight"):
-            rows = await self.db.fetch(
-                """
-                SELECT index_code, index_code AS index_name,
-                       trade_date AS weight_trade_date,
-                       con_code AS ts_code, weight AS raw_weight
-                FROM rawdata.index_weight
-                WHERE index_code = ANY($1::text[])
-                  AND trade_date BETWEEN $2 AND $3
-                  AND con_code IS NOT NULL
-                  AND weight IS NOT NULL AND weight > 0
-                  AND weight::text NOT IN ('NaN', 'Infinity')
-                ORDER BY index_code, trade_date, con_code
-                """,
-                codes,
-                obs_date
-                - timedelta(days=calculator.threshold.official_max_staleness_days),
-                obs_date,
+            expected = await self._select_etf_official_snapshots(
+                calculator=calculator,
+                codes=codes,
+                obs_date=obs_date,
+                proxy=proxy,
             )
-            official = pd.DataFrame([dict(row) for row in rows])
-        if proxy:
-            expected = await asyncio.to_thread(
-                calculator.calculate, official, [obs_date], codes
-            )
-        else:
-            expected = await asyncio.to_thread(
-                calculator.calculate, official, pd.DataFrame(), [obs_date], codes
-            )
+        if not proxy:
             missing_codes = sorted(set(codes) - set(expected["index_code"]))
             holdings = pd.DataFrame()
             # Official snapshots have priority; load disclosures only for indices
@@ -837,6 +817,121 @@ class PITAuditService:
                         else pd.concat([expected, fallback], ignore_index=True)
                     )
         return len(expected.drop_duplicates(list(contract.audit_entity_keys)))
+
+    async def _select_etf_official_snapshots(
+        self,
+        *,
+        calculator: Any,
+        codes: Sequence[str],
+        obs_date: date,
+        proxy: bool,
+    ) -> Any:
+        """Select the newest valid source snapshot without loading every row.
+
+        Candidate dates come from the covering ``(index_code, trade_date)``
+        index.  Only one candidate snapshot per index is loaded at a time.  If
+        that snapshot fails the production calculator's quality gates, the
+        next older candidate is tried, preserving the original selection
+        semantics while avoiding a 65-day heap scan and transfer.
+        """
+        import pandas as pd
+
+        lower_bound = obs_date - timedelta(
+            days=calculator.threshold.official_max_staleness_days
+        )
+        before_dates = {code: obs_date + timedelta(days=1) for code in codes}
+        pending = set(codes)
+        selected_pieces = []
+
+        while pending:
+            batch = sorted(pending)
+            rows = await self.db.fetch(
+                """
+                SELECT requested.index_code,
+                       (
+                           SELECT weights.trade_date
+                           FROM rawdata.index_weight weights
+                           WHERE weights.index_code = requested.index_code
+                             AND weights.trade_date >= $3
+                             AND weights.trade_date < requested.before_date
+                           ORDER BY weights.trade_date DESC
+                           LIMIT 1
+                       ) AS candidate_date
+                FROM unnest($1::text[], $2::date[])
+                     AS requested(index_code, before_date)
+                """,
+                batch,
+                [before_dates[code] for code in batch],
+                lower_bound,
+            )
+            candidate_dates = {
+                str(row["index_code"]): row["candidate_date"]
+                for row in rows
+                if row["candidate_date"] is not None
+            }
+            candidate_codes = sorted(candidate_dates)
+            if not candidate_codes:
+                break
+
+            rows = await self.db.fetch(
+                """
+                WITH requested AS (
+                    SELECT *
+                    FROM unnest($1::text[], $2::date[])
+                         AS pairs(index_code, trade_date)
+                )
+                SELECT weights.index_code,
+                       weights.index_code AS index_name,
+                       weights.trade_date AS weight_trade_date,
+                       weights.con_code AS ts_code,
+                       weights.weight AS raw_weight
+                FROM requested
+                JOIN rawdata.index_weight weights
+                  ON weights.index_code = requested.index_code
+                 AND weights.trade_date = requested.trade_date
+                WHERE weights.con_code IS NOT NULL
+                  AND weights.weight IS NOT NULL
+                  AND weights.weight > 0
+                  AND weights.weight::text NOT IN ('NaN', 'Infinity')
+                ORDER BY weights.index_code,
+                         weights.trade_date,
+                         weights.con_code
+                """,
+                candidate_codes,
+                [candidate_dates[code] for code in candidate_codes],
+            )
+            official = pd.DataFrame([dict(row) for row in rows])
+            if proxy:
+                selected = await asyncio.to_thread(
+                    calculator.calculate,
+                    official,
+                    [obs_date],
+                    candidate_codes,
+                )
+            else:
+                selected = await asyncio.to_thread(
+                    calculator.calculate,
+                    official,
+                    pd.DataFrame(),
+                    [obs_date],
+                    candidate_codes,
+                )
+            found = (
+                set(selected["index_code"].astype(str))
+                if not selected.empty
+                else set()
+            )
+            if not selected.empty:
+                selected_pieces.append(selected)
+
+            # A strict upper bound guarantees progress for invalid snapshots.
+            pending = (pending - found) & set(candidate_codes)
+            for code in pending:
+                before_dates[code] = candidate_dates[code]
+
+        if not selected_pieces:
+            return pd.DataFrame(columns=calculator.OUTPUT_COLUMNS)
+        return pd.concat(selected_pieces, ignore_index=True)
 
     async def _domain_audit_details(
         self, contract: PITTaskContract, coverage_period: Any

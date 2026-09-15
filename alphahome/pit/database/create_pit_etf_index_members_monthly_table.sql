@@ -71,6 +71,9 @@ CREATE INDEX IF NOT EXISTS idx_pit_etf_index_members_eligible_date
 CREATE INDEX IF NOT EXISTS idx_pit_etf_index_members_source_date
     ON pit.pit_etf_index_members_monthly (weight_basis, obs_date);
 
+CREATE INDEX IF NOT EXISTS idx_pit_etf_index_members_method_date
+    ON pit.pit_etf_index_members_monthly (method_version, obs_date);
+
 COMMENT ON TABLE pit.pit_etf_index_members_monthly IS
     'ETF跟踪指数月末PIT成分：官方历史指数权重优先，缺失时以公告后可见的ETF定期持仓降级替代。';
 
