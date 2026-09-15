@@ -65,6 +65,10 @@ class TushareIndexWeightTask(TushareTask):
     # 6. 自定义索引 (如果除了主键和 date_column 外还需要其他索引)
     indexes = [
         {
+            "name": "idx_tushare_index_weight_code_trade_date",
+            "columns": "index_code, trade_date",
+        },
+        {
             "name": "idx_tushare_index_weight_update_time",
             "columns": "update_time",
         }  # 新增 update_time 索引

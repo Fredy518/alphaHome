@@ -619,17 +619,31 @@ def _etf_audit_contract(domain, denominator, output_table, entity_keys):
 
 
 @pytest.mark.asyncio
-async def test_etf_member_denominator_uses_selected_source_member_counts():
+async def test_etf_member_denominator_reconstructs_visible_source_rows():
     class CaptureDB:
         def __init__(self):
-            self.query = ""
-            self.args = ()
+            self.queries = []
 
         async def fetch_one(self, query, *args):
-            self.query, self.args = query, args
-            if "information_schema.tables" in query:
-                return {"exists": True}
-            return {"cnt": 321}
+            self.queries.append((query, args))
+            return {"exists": True}
+
+        async def fetch(self, query, *args):
+            self.queries.append((query, args))
+            if "FROM rawdata.fund_etf_basic" in query:
+                return [{"index_code": "000300.SH"}]
+            if "FROM rawdata.index_weight" in query:
+                return [
+                    {
+                        "index_code": "000300.SH",
+                        "index_name": "000300.SH",
+                        "weight_trade_date": date(2026, 8, 28),
+                        "ts_code": f"{stock:06d}.SZ",
+                        "raw_weight": 20.0,
+                    }
+                    for stock in range(1, 6)
+                ]
+            raise AssertionError(query)
 
     contract = _etf_audit_contract(
         "etf_index_members",
@@ -641,10 +655,12 @@ async def test_etf_member_denominator_uses_selected_source_member_counts():
 
     count = await PITAuditService(db)._denominator_count(contract, date(2026, 8, 31))
 
-    assert count == 321
-    assert "MAX(source_member_count)" in db.query
-    assert db.args[0] == date(2026, 8, 31)
-    assert db.args[1] == "official_then_disclosed_etf_holdings_v1"
+    assert count == 5
+    assert any("FROM rawdata.index_weight" in query for query, _ in db.queries)
+    assert all(
+        "pit.pit_etf_index_members_monthly" not in query
+        for query, _ in db.queries
+    )
 
 
 @pytest.mark.asyncio
@@ -655,6 +671,8 @@ async def test_etf_fapi_denominator_uses_matching_member_universes():
 
         async def fetch_one(self, query, *args):
             self.query = query
+            if "information_schema.tables" in query:
+                return {"exists": True}
             return {"cnt": 87}
 
     contract = _etf_audit_contract(
@@ -675,14 +693,25 @@ async def test_etf_fapi_denominator_uses_matching_member_universes():
 async def test_proxy_denominators_use_registry_and_valid_official_a_share_members():
     class CaptureDB:
         def __init__(self):
-            self.query = ""
-            self.args = ()
+            self.queries = []
 
         async def fetch_one(self, query, *args):
-            self.query, self.args = query, args
-            if "information_schema.tables" in query:
-                return {"exists": True}
-            return {"cnt": 269}
+            self.queries.append((query, args))
+            return {"exists": True}
+
+        async def fetch(self, query, *args):
+            self.queries.append((query, args))
+            assert "FROM rawdata.index_weight" in query
+            return [
+                {
+                    "index_code": "931238.CSI",
+                    "index_name": "931238.CSI",
+                    "weight_trade_date": date(2026, 8, 28),
+                    "ts_code": f"{stock:06d}.SZ",
+                    "raw_weight": 20.0,
+                }
+                for stock in range(1, 6)
+            ]
 
     index_contract = _etf_audit_contract(
         "etf_index_a_share_proxy_fapi",
@@ -700,10 +729,13 @@ async def test_proxy_denominators_use_registry_and_valid_official_a_share_member
     service = PITAuditService(db)
 
     assert await service._denominator_count(index_contract, date(2026, 8, 31)) == 1
-    assert await service._denominator_count(member_contract, date(2026, 8, 31)) == 269
-    assert "valid_snapshots" in db.query
-    assert "rawdata.index_weight" in db.query
-    assert db.args[1] == ["931238.CSI"]
+    assert await service._denominator_count(member_contract, date(2026, 8, 31)) == 5
+    source_query = next(
+        (query, args)
+        for query, args in db.queries
+        if "FROM rawdata.index_weight" in query
+    )
+    assert source_query[1][0] == ["931238.CSI"]
 
 
 def test_shared_etf_tables_are_filtered_by_task_method_version():

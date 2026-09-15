@@ -89,6 +89,10 @@ class TushareFundPortfolioTask(TushareTask):
     # 6. 自定义索引
     indexes = [
         {"name": "idx_fund_portfolio_ts_code", "columns": "ts_code"},
+        {
+            "name": "idx_fund_portfolio_ts_code_end_date",
+            "columns": "ts_code, end_date",
+        },
         {"name": "idx_fund_portfolio_ann_date", "columns": "ann_date"},
         {"name": "idx_fund_portfolio_end_date", "columns": "end_date"},
         {"name": "idx_fund_portfolio_symbol", "columns": "symbol"},

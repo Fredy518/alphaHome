@@ -560,6 +560,12 @@ class PITAuditService:
         self, contract: PITTaskContract, coverage_period: Any
     ) -> int:
         denominator = contract.audit_denominator or "current_listed_stocks"
+        if denominator in {
+            "etf_index_member_source_pairs",
+            "registered_cross_market_a_share_proxy_members",
+            "registered_cross_market_a_share_proxy_indices",
+        }:
+            return await self._etf_denominator_count(contract, coverage_period)
         if denominator == "current_listed_stocks":
             return await self._current_listed_count()
         if denominator == "pit_time_active_stocks":
@@ -639,108 +645,6 @@ class PITAuditService:
                 coverage_period,
             )
             return int(row["cnt"] or 0) if row else 0
-        if denominator == "etf_index_member_source_pairs":
-            if not coverage_period:
-                return 0
-            from alphahome.pit.calculators.etf_index_members_calculator import (
-                ETFIndexMembersCalculator,
-            )
-
-            if contract.domain == "etf_index_members":
-                if not await self._relation_exists("pit.pit_etf_index_members_monthly"):
-                    return 0
-                row = await self.db.fetch_one(
-                    """
-                    WITH selected_sources AS (
-                        SELECT index_code,
-                               MAX(source_member_count)::bigint AS member_count
-                        FROM pit.pit_etf_index_members_monthly
-                        WHERE obs_date = $1
-                          AND method_version = $2
-                        GROUP BY index_code
-                    )
-                    SELECT COALESCE(SUM(member_count), 0)::bigint AS cnt
-                    FROM selected_sources
-                    """,
-                    coverage_period,
-                    ETFIndexMembersCalculator.METHOD_VERSION,
-                )
-            else:
-                row = await self.db.fetch_one(
-                    """
-                    SELECT COUNT(DISTINCT index_code)::bigint AS cnt
-                    FROM pit.pit_etf_index_members_monthly
-                    WHERE obs_date = $1
-                      AND method_version = $2
-                    """,
-                    coverage_period,
-                    ETFIndexMembersCalculator.METHOD_VERSION,
-                )
-            return int(row["cnt"] or 0) if row else 0
-        if denominator == "registered_cross_market_a_share_proxy_indices":
-            from alphahome.pit.pit_etf_index_a_share_proxy_members_manager import (
-                PITETFIndexAShareProxyMembersMonthlyManager,
-            )
-
-            return len(PITETFIndexAShareProxyMembersMonthlyManager.DEFAULT_PROXY_INDEX_CODES)
-        if denominator == "registered_cross_market_a_share_proxy_members":
-            if not coverage_period or not await self._relation_exists("rawdata.index_weight"):
-                return 0
-            from alphahome.pit.calculators.etf_index_a_share_proxy_members_calculator import (
-                ETFIndexAShareProxyMembersCalculator,
-            )
-            from alphahome.pit.pit_etf_index_a_share_proxy_members_manager import (
-                PITETFIndexAShareProxyMembersMonthlyManager,
-            )
-
-            threshold = ETFIndexAShareProxyMembersCalculator().threshold
-            row = await self.db.fetch_one(
-                """
-                WITH normalized AS (
-                    SELECT index_code,
-                           trade_date::date AS trade_date,
-                           CASE
-                               WHEN upper(btrim(con_code)) ~ '^[0-9]+\\.HK$'
-                                   THEN lpad(ltrim(split_part(upper(btrim(con_code)), '.', 1), '0'), 5, '0') || '.HK'
-                               WHEN upper(btrim(con_code)) ~ '^[0-9]+\\.(SH|SZ)$'
-                                   THEN lpad(ltrim(split_part(upper(btrim(con_code)), '.', 1), '0'), 6, '0') || '.' || split_part(upper(btrim(con_code)), '.', 2)
-                               ELSE upper(btrim(con_code))
-                           END AS ts_code,
-                           MAX(weight)::double precision AS raw_weight
-                    FROM rawdata.index_weight
-                    WHERE index_code = ANY($2::text[])
-                      AND trade_date <= $1
-                      AND trade_date >= $1 - $3::integer
-                      AND con_code IS NOT NULL
-                      AND weight IS NOT NULL
-                      AND weight > 0
-                    GROUP BY index_code, trade_date, 3
-                ),
-                valid_snapshots AS (
-                    SELECT index_code, trade_date
-                    FROM normalized
-                    GROUP BY index_code, trade_date
-                    HAVING COUNT(*) >= $4
-                       AND SUM(raw_weight) BETWEEN $5 AND $6
-                ),
-                selected AS (
-                    SELECT index_code, MAX(trade_date) AS trade_date
-                    FROM valid_snapshots
-                    GROUP BY index_code
-                )
-                SELECT COUNT(DISTINCT (n.index_code, n.ts_code))::bigint AS cnt
-                FROM normalized n
-                JOIN selected s USING (index_code, trade_date)
-                WHERE n.ts_code ~ '\\.(SH|SZ)$'
-                """,
-                coverage_period,
-                list(PITETFIndexAShareProxyMembersMonthlyManager.DEFAULT_PROXY_INDEX_CODES),
-                threshold.official_max_staleness_days,
-                threshold.official_min_members,
-                threshold.official_min_weight_sum,
-                threshold.official_max_weight_sum,
-            )
-            return int(row["cnt"] or 0) if row else 0
         logger.warning("未知PIT审计分母: %s", denominator)
         return 0
 
@@ -780,6 +684,159 @@ class PITAuditService:
         trusted_literal = method_version.replace("'", "''")
         prefix = f"{alias}." if alias else ""
         return f"AND {prefix}method_version = '{trusted_literal}'"
+
+    async def _etf_denominator_count(
+        self, contract: PITTaskContract, coverage_period: Any
+    ) -> int:
+        """Count expected members or indices at the audited observation date.
+
+        Membership uses the production source selector, independently of the
+        output table, so missing output rows cannot shrink their own denominator.
+        FAPI counts indices, rather than the number of stocks inside them.
+        """
+        if not coverage_period:
+            return 0
+
+        import pandas as pd
+
+        from alphahome.pit.calculators.etf_index_a_share_proxy_members_calculator import (
+            ETFIndexAShareProxyMembersCalculator,
+        )
+        from alphahome.pit.calculators.etf_index_members_calculator import (
+            ETFIndexMembersCalculator,
+        )
+        from alphahome.pit.pit_etf_index_a_share_proxy_members_manager import (
+            PITETFIndexAShareProxyMembersMonthlyManager,
+        )
+        from alphahome.pit.pit_etf_index_members_manager import (
+            PITETFIndexMembersMonthlyManager,
+        )
+
+        proxy = "a_share_proxy" in contract.domain
+        proxy_codes = sorted(
+            set(PITETFIndexAShareProxyMembersMonthlyManager.DEFAULT_PROXY_INDEX_CODES)
+        )
+        if (
+            contract.audit_denominator
+            == "registered_cross_market_a_share_proxy_indices"
+        ):
+            return len(proxy_codes)
+        if contract.domain == "etf_index_fapi":
+            if not await self._relation_exists(
+                "pit.pit_etf_index_members_monthly"
+            ):
+                return 0
+            row = await self.db.fetch_one(
+                """
+                SELECT COUNT(DISTINCT index_code)::bigint AS cnt
+                FROM pit.pit_etf_index_members_monthly
+                WHERE obs_date = $1 AND method_version = $2
+                  AND index_code IS NOT NULL AND ts_code IS NOT NULL
+                """,
+                coverage_period,
+                ETFIndexMembersCalculator.METHOD_VERSION,
+            )
+            return int(row["cnt"] or 0) if row else 0
+
+        if proxy:
+            codes = proxy_codes
+            calculator = ETFIndexAShareProxyMembersCalculator()
+        else:
+            if not await self._relation_exists("rawdata.fund_etf_basic"):
+                return 0
+            rows = await self.db.fetch("""
+                SELECT DISTINCT btrim(index_code) AS index_code
+                FROM rawdata.fund_etf_basic
+                WHERE status = 'L' AND etf_type = '纯境内'
+                  AND index_code IS NOT NULL AND btrim(index_code) <> ''
+                """)
+            codes = sorted({str(row["index_code"]) for row in rows})
+            calculator = ETFIndexMembersCalculator()
+        if not codes:
+            return 0
+
+        obs_date = pd.Timestamp(coverage_period).date()
+        official = pd.DataFrame()
+        if await self._relation_exists("rawdata.index_weight"):
+            rows = await self.db.fetch(
+                """
+                SELECT index_code, index_code AS index_name,
+                       trade_date AS weight_trade_date,
+                       con_code AS ts_code, weight AS raw_weight
+                FROM rawdata.index_weight
+                WHERE index_code = ANY($1::text[])
+                  AND trade_date BETWEEN $2 AND $3
+                  AND con_code IS NOT NULL
+                  AND weight IS NOT NULL AND weight > 0
+                  AND weight::text NOT IN ('NaN', 'Infinity')
+                ORDER BY index_code, trade_date, con_code
+                """,
+                codes,
+                obs_date
+                - timedelta(days=calculator.threshold.official_max_staleness_days),
+                obs_date,
+            )
+            official = pd.DataFrame([dict(row) for row in rows])
+        if proxy:
+            expected = await asyncio.to_thread(
+                calculator.calculate, official, [obs_date], codes
+            )
+        else:
+            expected = await asyncio.to_thread(
+                calculator.calculate, official, pd.DataFrame(), [obs_date], codes
+            )
+            missing_codes = sorted(set(codes) - set(expected["index_code"]))
+            holdings = pd.DataFrame()
+            # Official snapshots have priority; load disclosures only for indices
+            # without one, keeping GUI refreshes away from unrelated fund history.
+            if missing_codes and await self._relation_exists("rawdata.fund_portfolio"):
+                rows = await self.db.fetch(
+                    """
+                    WITH latest AS (
+                        SELECT f.index_code, f.ts_code AS etf_code,
+                               MAX(p.end_date) AS end_date
+                        FROM rawdata.fund_etf_basic f
+                        JOIN rawdata.fund_portfolio p ON p.ts_code = f.ts_code
+                        WHERE f.status = 'L' AND f.index_code = ANY($1::text[])
+                          AND p.ann_date <= $3 AND p.end_date BETWEEN $2 AND $3
+                          AND p.stk_mkv_ratio > 0
+                          AND p.stk_mkv_ratio::text NOT IN ('NaN', 'Infinity')
+                          AND NULLIF(btrim(p.symbol), '') IS NOT NULL
+                        GROUP BY f.index_code, f.ts_code
+                    )
+                    SELECT l.index_code, l.index_code AS index_name, l.etf_code,
+                           p.ann_date, p.end_date, p.symbol AS ts_code,
+                           p.stk_mkv_ratio AS raw_weight
+                    FROM latest l
+                    JOIN rawdata.fund_portfolio p
+                      ON p.ts_code = l.etf_code AND p.end_date = l.end_date
+                    WHERE p.ann_date <= $3 AND p.stk_mkv_ratio > 0
+                      AND p.stk_mkv_ratio::text NOT IN ('NaN', 'Infinity')
+                      AND NULLIF(btrim(p.symbol), '') IS NOT NULL
+                    ORDER BY l.index_code, l.etf_code, p.end_date, p.ann_date, p.symbol
+                    """,
+                    missing_codes,
+                    obs_date
+                    - timedelta(
+                        days=PITETFIndexMembersMonthlyManager.HOLDING_QUERY_LOOKBACK_DAYS
+                    ),
+                    obs_date,
+                )
+                holdings = pd.DataFrame([dict(row) for row in rows])
+                fallback = await asyncio.to_thread(
+                    calculator.calculate,
+                    pd.DataFrame(),
+                    holdings,
+                    [obs_date],
+                    missing_codes,
+                )
+                if not fallback.empty:
+                    expected = (
+                        fallback
+                        if expected.empty
+                        else pd.concat([expected, fallback], ignore_index=True)
+                    )
+        return len(expected.drop_duplicates(list(contract.audit_entity_keys)))
 
     async def _domain_audit_details(
         self, contract: PITTaskContract, coverage_period: Any
