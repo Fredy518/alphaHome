@@ -25,7 +25,7 @@ def create_daily_update_tab(parent: ttk.Frame) -> Dict[str, tk.Widget]:
     explanation = ui_factory.create_label(
         intro,
         text=(
-            "按依赖顺序更新数据采集、PIT、因子、Features 和 FundPos。"
+            "按依赖顺序更新数据采集、PIT、因子、Features、ETF候选池和 FundPos。"
             "工作日自动跳过周/月/季度等低频任务，非交易日自动纳入。"
         ),
     )

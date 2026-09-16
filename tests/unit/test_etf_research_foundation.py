@@ -60,10 +60,27 @@ class StatusDatabase:
                     "formal_candidate_count": 133,
                     "conditional_candidate_count": 4,
                     "watch_count": 9,
+                    "ai_confirmed_count": 146,
+                    "ai_review_required_count": 0,
+                    "human_confirmed_count": 0,
+                    "legacy_imported_count": 0,
                     "live_product_fact_count": 146,
                     "live_complete_count": 146,
                     "live_auxiliary_state_change_count": 0,
                     "live_facts_as_of": date(2026, 9, 11),
+                }
+            ]
+        if "FROM fund_pool_on.etf_candidate_ai_run" in normalized:
+            return [
+                {
+                    "ai_run_id": "etf_ai_202609_test",
+                    "run_month": date(2026, 9, 1),
+                    "facts_as_of": date(2026, 9, 11),
+                    "model_requested": "deepseek-flash",
+                    "prompt_version": "etf_candidate_confirmation_v2",
+                    "status": "SUCCEEDED",
+                    "decision_count": 146,
+                    "output_snapshot_id": "etf_candidate_master_ai_202609_test",
                 }
             ]
         if "FROM fund_pool_on.etf_candidate_index_coverage_current" in normalized:

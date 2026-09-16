@@ -242,6 +242,24 @@ def _format_group_detail(group: Dict[str, Any]) -> str:
         f"工作日按频率自动跳过（{len(policy_skipped)}）：",
         *(f"- {name}" for name in policy_skipped),
     ]
+    candidate_plan = group.get("candidate_plan") or {}
+    if candidate_plan:
+        lines.extend(
+            [
+                "",
+                "ETF候选池月度门禁：",
+                f"- 运行月份：{candidate_plan.get('run_month', '--')}",
+                f"- 产品事实截止：{candidate_plan.get('facts_as_of', '--')}",
+                f"- 当前候选数：{candidate_plan.get('current_candidate_count', '--')}",
+                f"- 模型目标数：{candidate_plan.get('llm_target_count', '--')}",
+                f"- 新上市产品数：{candidate_plan.get('new_product_count', '--')}",
+                f"- 当前可执行：{candidate_plan.get('executable_now', False)}",
+                "- 权限边界：仅候选研究，无资金和下单权限",
+            ]
+        )
+        guards = candidate_plan.get("guards") or {}
+        if guards:
+            lines.append(f"- 数据门禁：{guards}")
     progress = group.get("progress") or {}
     if progress:
         lines[4:4] = [

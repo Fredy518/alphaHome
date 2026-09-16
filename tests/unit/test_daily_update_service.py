@@ -17,6 +17,7 @@ class CalendarDB:
         self.is_open = is_open
         self.fail = fail
         self.calls = 0
+        self.connection_string = "postgresql://unit-test/alphadb"
 
     async def fetch_one(self, *_args):
         self.calls += 1
@@ -137,6 +138,17 @@ def discovered_tasks(monkeypatch):
             "families": [{"name": "fundpos.enhanced_index"}],
         },
     )
+    monkeypatch.setattr(
+        service.candidate_maintenance,
+        "build_candidate_monthly_maintenance_plan",
+        lambda *_args, **_kwargs: {
+            "status": "skipped_already_succeeded",
+            "run_month": "2026-09-01",
+            "not_before_day": 5,
+            "output_snapshot_id": "etf_candidate_master_ai_202609_test",
+            "executable_now": False,
+        },
+    )
 
 
 @pytest.mark.asyncio
@@ -167,6 +179,8 @@ async def test_workday_plan_skips_low_frequency_tasks(discovered_tasks):
         "full_only_python",
         "market_snapshot_monthly",
     ]
+    assert groups["etf_candidate_monthly"]["status"] == "skipped_policy"
+    assert "本月已成功" in groups["etf_candidate_monthly"]["action"]
     assert groups["fundpos"]["task_names"] == ["fundpos.enhanced_index"]
 
 
@@ -183,9 +197,64 @@ async def test_weekend_plan_includes_low_frequency_tasks(discovered_tasks):
     assert all(
         not group["skipped_task_names"]
         for group in plan["groups"]
-        if group["key"] != "collection"
+        if group["key"] not in {"collection", "etf_candidate_monthly"}
     )
     assert sum(group["run_count"] for group in plan["groups"]) == 12
+
+
+@pytest.mark.asyncio
+async def test_candidate_monthly_group_is_due_after_day_five(monkeypatch):
+    monkeypatch.setattr(
+        service.candidate_maintenance,
+        "build_candidate_monthly_maintenance_plan",
+        lambda *_args, **_kwargs: {
+            "status": "ready",
+            "run_month": "2026-10-01",
+            "not_before_day": 5,
+            "plan_hash": "a" * 64,
+            "facts_as_of": "2026-10-14",
+            "current_candidate_count": 143,
+            "llm_target_count": 2,
+            "new_product_count": 1,
+            "executable_now": True,
+        },
+    )
+
+    group = await service._build_candidate_monthly_group(
+        CalendarDB(), date(2026, 10, 15), order=5
+    )
+
+    assert group["status"] == "ready"
+    assert group["task_names"] == ["etf_candidate_ai_monthly"]
+    assert group["depends_on"] == ["features"]
+    assert "模型目标 2" in group["action"]
+
+
+@pytest.mark.asyncio
+async def test_candidate_monthly_execution_uses_internal_service(monkeypatch):
+    calls = []
+
+    def execute(database_url, **kwargs):
+        calls.append((database_url, kwargs))
+        return {"status": "succeeded", "llm_target_count": 1}
+
+    monkeypatch.setattr(
+        service.candidate_maintenance,
+        "execute_candidate_monthly_maintenance",
+        execute,
+    )
+
+    result = await service._run_candidate_monthly(
+        CalendarDB(), asyncio.Event(), date(2026, 10, 15)
+    )
+
+    assert result["status"] == "succeeded"
+    assert calls == [
+        (
+            "postgresql://unit-test/alphadb",
+            {"run_date": date(2026, 10, 15)},
+        )
+    ]
 
 
 @pytest.mark.asyncio
@@ -291,7 +360,9 @@ async def test_stop_during_group_is_cancelled_not_failed(monkeypatch):
 
     monkeypatch.setattr(service, "build_daily_update_plan", lambda *_args: _async(plan))
     monkeypatch.setattr(service, "_execute_group", execute_group)
-    monkeypatch.setattr(service, "_send_response_callback", lambda *args: events.append(args))
+    monkeypatch.setattr(
+        service, "_send_response_callback", lambda *args: events.append(args)
+    )
     service._is_running = False
 
     result = await service.handle_run_daily_update(object(), "2026-09-15")
@@ -351,6 +422,112 @@ async def test_failed_upstream_blocks_downstream_domains(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("failed_domain", [None, "collection", "pit", "features"])
+async def test_workday_failure_crosses_policy_skipped_factor_domain(
+    monkeypatch, discovered_tasks, failed_domain
+):
+    calls = []
+    monkeypatch.setattr(
+        service.candidate_maintenance,
+        "build_candidate_monthly_maintenance_plan",
+        lambda *_args, **_kwargs: {"status": "ready"},
+    )
+
+    async def execute_group(group, *_args):
+        calls.append(group["key"])
+        return {"status": "error" if group["key"] == failed_domain else "success"}
+
+    monkeypatch.setattr(service, "_execute_group", execute_group)
+    monkeypatch.setattr(service, "_send_response_callback", lambda *_args: None)
+    monkeypatch.setattr(service, "_is_running", False)
+
+    result = await service.handle_run_daily_update(CalendarDB(), "2026-09-15")
+    groups = {group["key"]: group for group in result["plan"]["groups"]}
+
+    assert groups["factors"]["status"] == "skipped_policy"
+    if failed_domain is None:
+        assert result["status"] == "success"
+        assert calls == [
+            "collection",
+            "pit",
+            "features",
+            "etf_candidate_monthly",
+            "fundpos",
+        ]
+    else:
+        expected = ["collection", "pit", "features"]
+        assert calls == expected[: expected.index(failed_domain) + 1]
+        for key in ("etf_candidate_monthly", "fundpos"):
+            assert groups[key]["status"] == "blocked"
+        if failed_domain != "features":
+            assert groups["features"]["status"] == "blocked"
+            assert groups["features"]["blocked_by"] == [groups["pit"]["label"]]
+
+
+@pytest.mark.asyncio
+async def test_candidate_failure_does_not_block_independent_fundpos(monkeypatch):
+    calls = []
+    plan = {
+        "status": "ready",
+        "as_of_date": "2026-10-15",
+        "day_type": "交易日",
+        "policy_hash": "policy",
+        "groups": [
+            {
+                "key": "features",
+                "label": "Features",
+                "order": 4,
+                "depends_on": [],
+                "status": "ready",
+                "task_names": ["etf_product_facts_current"],
+                "skipped_task_names": [],
+                "run_count": 1,
+                "skip_count": 0,
+            },
+            {
+                "key": "etf_candidate_monthly",
+                "label": "ETF候选池月度维护",
+                "order": 5,
+                "depends_on": ["features"],
+                "status": "ready",
+                "task_names": ["etf_candidate_ai_monthly"],
+                "skipped_task_names": [],
+                "run_count": 1,
+                "skip_count": 0,
+            },
+            {
+                "key": "fundpos",
+                "label": "FundPos 估算",
+                "order": 6,
+                "depends_on": ["features"],
+                "status": "ready",
+                "task_names": ["fundpos.enhanced_index"],
+                "skipped_task_names": [],
+                "run_count": 1,
+                "skip_count": 0,
+            },
+        ],
+    }
+
+    async def execute_group(group, *_args):
+        calls.append(group["key"])
+        if group["key"] == "etf_candidate_monthly":
+            return {"status": "error", "error": "model unavailable"}
+        return {"status": "success", "success_count": 1}
+
+    monkeypatch.setattr(service, "build_daily_update_plan", lambda *_args: _async(plan))
+    monkeypatch.setattr(service, "_execute_group", execute_group)
+    monkeypatch.setattr(service, "_send_response_callback", lambda *_args: None)
+    service._is_running = False
+
+    result = await service.handle_run_daily_update(object(), "2026-10-15")
+
+    assert result["status"] == "partial_success"
+    assert calls == ["features", "etf_candidate_monthly", "fundpos"]
+    assert plan["groups"][2]["status"] == "success"
+
+
+@pytest.mark.asyncio
 async def test_pit_cancelled_tasks_are_not_counted_as_failures(monkeypatch):
     plan = SimpleNamespace(plan_hash="pit-plan", units=[object(), object()])
     monkeypatch.setattr(
@@ -390,7 +567,9 @@ async def test_plan_failure_restores_running_state_and_notifies_gui(monkeypatch)
         raise RuntimeError("plan unavailable")
 
     monkeypatch.setattr(service, "build_daily_update_plan", fail_plan)
-    monkeypatch.setattr(service, "_send_response_callback", lambda *args: events.append(args))
+    monkeypatch.setattr(
+        service, "_send_response_callback", lambda *args: events.append(args)
+    )
     service._is_running = False
 
     result = await service.handle_run_daily_update(object(), "2026-09-15")

@@ -1,4 +1,5 @@
 from copy import deepcopy
+from datetime import datetime, timezone
 
 import pytest
 
@@ -7,6 +8,7 @@ from alphahome.curation.etf_candidate_master import (
     COVERAGE_VIEW_SQL,
     ENRICHED_VIEW_SQL,
     SCHEMA_SQL,
+    load_candidate_master_snapshot,
     validate_payload,
 )
 
@@ -113,6 +115,57 @@ def test_schema_isolated_from_legacy_latest_snapshot():
     assert "etf_candidate_master_latest_batch" in SCHEMA_SQL
     assert "latest_snapshot_batch" not in SCHEMA_SQL
     assert "features.mv_etf_product_facts_current" in ENRICHED_VIEW_SQL
+    assert "confirmation_status" in SCHEMA_SQL
+    assert "AI_CONFIRMED" in SCHEMA_SQL
+    assert "HUMAN_REJECTED" in SCHEMA_SQL
+    assert "WHERE s.include_in_candidate_pool" in SCHEMA_SQL
+
+
+def test_validate_payload_accepts_legacy_record_without_confirmation_fields():
+    payload = sample_payload()
+    validate_payload(payload, verify_source_file=False)
+
+
+def test_validate_payload_requires_ai_provenance():
+    payload = sample_payload()
+    payload["records"][0].update(
+        {
+            "confirmation_status": "AI_CONFIRMED",
+            "confirmation_actor": "deepseek:deepseek-flash",
+            "confirmation_at": "2026-09-16T00:00:00+00:00",
+            "ai_run_id": "etf_ai_202609_example",
+            "ai_model": "deepseek-flash",
+            "ai_confidence": 0.9,
+            "ai_decision_hash": "not-a-hash",
+            "human_review_note": None,
+        }
+    )
+    with pytest.raises(CandidateMasterValidationError, match="ai_decision_hash"):
+        validate_payload(payload, verify_source_file=False)
+
+    payload["records"][0]["ai_decision_hash"] = "b" * 64
+    validate_payload(payload, verify_source_file=False)
+
+
+def test_validate_payload_accepts_auditable_human_rejection():
+    payload = sample_payload()
+    payload["records"][0].update(
+        {
+            "confirmation_status": "HUMAN_REJECTED",
+            "confirmation_actor": "wuh",
+            "confirmation_at": "2026-09-16T00:00:00+00:00",
+            "human_review_note": "产品执行条件不满足",
+            "include_in_candidate_pool": False,
+        }
+    )
+
+    validate_payload(payload, verify_source_file=False)
+
+    payload["records"][0]["include_in_candidate_pool"] = True
+    with pytest.raises(
+        CandidateMasterValidationError, match="leave the candidate pool"
+    ):
+        validate_payload(payload, verify_source_file=False)
 
 
 def test_coverage_view_exposes_missing_direct_route_without_reconstruction():
@@ -132,3 +185,66 @@ def test_validate_payload_checks_accessible_source_hash_unless_skipped(tmp_path)
         validate_payload(payload)
 
     validate_payload(payload, verify_source_file=False)
+
+
+def test_loaded_snapshot_is_immutable_idempotent_noop(monkeypatch):
+    loaded_at = datetime(2026, 9, 16, 11, 26, tzinfo=timezone.utc)
+
+    class Cursor:
+        def __init__(self):
+            self.sql = []
+            self.result = None
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def execute(self, sql, _params=None):
+            self.sql.append(sql)
+            if sql == "SHOW transaction_isolation":
+                self.result = ("read committed",)
+            elif "pg_advisory_xact_lock" in sql:
+                self.result = (None,)
+            elif "SELECT source_file_sha256" in sql:
+                assert any("pg_advisory_xact_lock" in item for item in self.sql)
+                self.result = ("a" * 64, "loaded", loaded_at)
+            elif "COUNT(*) AS row_count" in sql:
+                self.result = (1, 1, 1, 0, 0)
+            else:
+                raise AssertionError(f"unexpected write during idempotent load: {sql}")
+
+        def fetchone(self):
+            return self.result
+
+    class Connection:
+        def __init__(self):
+            self.cursor_instance = Cursor()
+            self.commit_count = 0
+
+        def cursor(self):
+            return self.cursor_instance
+
+        def commit(self):
+            self.commit_count += 1
+
+        def rollback(self):
+            raise AssertionError("idempotent no-op must not roll back")
+
+    connection = Connection()
+    monkeypatch.setattr(
+        "alphahome.curation.etf_candidate_master.ensure_candidate_master_schema",
+        lambda _connection: None,
+    )
+
+    result = load_candidate_master_snapshot(
+        connection,
+        sample_payload(),
+        verify_source_file=False,
+    )
+
+    assert result["idempotent_noop"] is True
+    assert result["loaded_at"] == loaded_at.isoformat()
+    assert connection.commit_count == 1
+    assert not any("DELETE FROM" in sql for sql in connection.cursor_instance.sql)

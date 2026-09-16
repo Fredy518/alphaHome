@@ -14,6 +14,7 @@ from zoneinfo import ZoneInfo
 from ...common.logging_utils import get_logger
 from ...common.run_models import fingerprint
 from ...common.task_system import UnifiedTaskFactory
+from ...curation import etf_candidate_monthly_maintenance as candidate_maintenance
 from ...features import FeatureRegistry
 from ...factors import tasks as factor_tasks
 from ...fetchers import tasks as fetcher_tasks
@@ -202,8 +203,7 @@ def _feature_cadences(recipe_classes: Iterable[type]) -> Dict[str, str]:
         output = getattr(recipe, "full_name", None) or f"features.{name}"
         output_owners[str(output)] = name
         dependencies[name] = tuple(
-            str(source)
-            for source in (getattr(recipe, "source_tables", ()) or ())
+            str(source) for source in (getattr(recipe, "source_tables", ()) or ())
         )
 
     changed = True
@@ -230,6 +230,7 @@ def _make_group(
     is_workday: bool,
     execution_mode: str,
     description: str,
+    depends_on: Iterable[str] = (),
 ) -> Dict[str, Any]:
     ordered = sorted(items)
     selected = [
@@ -259,8 +260,131 @@ def _make_group(
         "schedule": "每日；低频仅非工作日；手工任务始终跳过",
         "action": action,
         "description": description,
+        "depends_on": list(depends_on),
         "status": "ready" if selected else "skipped_policy",
         "result": None,
+    }
+
+
+def _database_url(db_manager: Any) -> str | None:
+    value = getattr(db_manager, "connection_string", None)
+    return str(value) if value else None
+
+
+async def _build_candidate_monthly_group(
+    db_manager: Any,
+    day: date,
+    *,
+    order: int,
+) -> Dict[str, Any]:
+    """Build the ETF candidate row without exposing credentials to the GUI."""
+
+    task_name = candidate_maintenance.MONTHLY_TASK_NAME
+    base = {
+        "key": "etf_candidate_monthly",
+        "label": "ETF候选池月度维护",
+        "order": order,
+        "task_count": 1,
+        "execution_mode": "AlphaHome 内部计算 + DeepSeek确认",
+        "schedule": "每月5日起检查；每月最多成功一次",
+        "description": (
+            "在产品事实刷新后重算候选快照；保护人工确认/拒绝，"
+            "AI标签不赋予资金或下单权限"
+        ),
+        "depends_on": ["features"],
+        "manual_only_task_names": [],
+        "result": None,
+    }
+    database_url = _database_url(db_manager)
+    if not database_url:
+        return {
+            **base,
+            "run_count": 0,
+            "skip_count": 0,
+            "task_names": [],
+            "skipped_task_names": [],
+            "action": "配置阻断：数据库连接不可用",
+            "status": "blocked",
+        }
+
+    try:
+        preview = await asyncio.to_thread(
+            candidate_maintenance.build_candidate_monthly_maintenance_plan,
+            database_url,
+            run_date=day,
+        )
+    except Exception as exc:  # noqa: BLE001 - isolate this optional monthly domain
+        logger.error("生成 ETF 候选池月度计划失败: %s", exc, exc_info=True)
+        return {
+            **base,
+            "run_count": 0,
+            "skip_count": 0,
+            "task_names": [],
+            "skipped_task_names": [],
+            "action": f"配置阻断：{exc}",
+            "description": f"{base['description']}；计划生成失败：{exc}",
+            "status": "blocked",
+        }
+
+    preview_status = preview.get("status")
+    common = {
+        **base,
+        "candidate_plan": preview,
+        "plan_hash": preview.get("plan_hash"),
+    }
+    if preview_status == "deferred_before_monthly_window":
+        return {
+            **common,
+            "run_count": 0,
+            "skip_count": 1,
+            "task_names": [],
+            "skipped_task_names": [task_name],
+            "action": f"本月{preview['not_before_day']}日前，按规则跳过",
+            "status": "skipped_policy",
+        }
+    if preview_status == "skipped_already_succeeded":
+        return {
+            **common,
+            "run_count": 0,
+            "skip_count": 1,
+            "task_names": [],
+            "skipped_task_names": [task_name],
+            "action": (
+                "本月已成功维护，自动跳过"
+                + (
+                    f"（{preview.get('output_snapshot_id')}）"
+                    if preview.get("output_snapshot_id")
+                    else ""
+                )
+            ),
+            "status": "skipped_policy",
+        }
+    if preview_status == "blocked_missing_api_key":
+        return {
+            **common,
+            "run_count": 0,
+            "skip_count": 0,
+            "task_names": [],
+            "skipped_task_names": [],
+            "action": "配置阻断：需要 DEEPSEEK_API_KEY",
+            "description": f"{base['description']}；当前有模型目标但未读取到密钥",
+            "status": "blocked",
+        }
+
+    target_count = int(preview.get("llm_target_count") or 0)
+    new_count = int(preview.get("new_product_count") or 0)
+    if preview_status == "ready_after_upstream_refresh":
+        action = "上游刷新后重算门禁并执行月度维护"
+    else:
+        action = f"月度维护待执行：模型目标 {target_count}，新产品 {new_count}"
+    return {
+        **common,
+        "run_count": 1,
+        "skip_count": 0,
+        "task_names": [task_name],
+        "skipped_task_names": [],
+        "action": action,
+        "status": "ready",
     }
 
 
@@ -300,6 +424,7 @@ async def build_daily_update_plan(
             is_workday=is_workday,
             execution_mode="智能增量",
             description="全部已注册采集任务；隐藏、分钟线和兼容处理任务仅允许手工显式运行",
+            depends_on=(),
         ),
         _make_group(
             key="pit",
@@ -309,6 +434,7 @@ async def build_daily_update_plan(
             is_workday=is_workday,
             execution_mode="增量计划",
             description="工作日更新公告日任务；月末快照仅非工作日运行",
+            depends_on=("collection",),
         ),
         _make_group(
             key="factors",
@@ -321,6 +447,7 @@ async def build_daily_update_plan(
             is_workday=is_workday,
             execution_mode="智能增量",
             description="P/G 周五快照在非工作日补齐",
+            depends_on=("pit",),
         ),
         _make_group(
             key="features",
@@ -330,8 +457,11 @@ async def build_daily_update_plan(
             is_workday=is_workday,
             execution_mode="默认策略",
             description="增量型按窗口更新；全量型仅按其声明策略刷新",
+            depends_on=("factors",),
         ),
     ]
+
+    groups.append(await _build_candidate_monthly_group(db_manager, day, order=5))
 
     fundpos = fundpos_service.get_fundpos_snapshot()
     if fundpos.get("status") == "ready":
@@ -339,11 +469,12 @@ async def build_daily_update_plan(
             _make_group(
                 key="fundpos",
                 label="FundPos 估算",
-                order=5,
+                order=6,
                 items=((row["name"], "daily") for row in fundpos.get("families", [])),
                 is_workday=is_workday,
                 execution_mode="影子估算",
                 description="估算并勾稽入库，不更新正式发布指针",
+                depends_on=("features",),
             )
         )
     else:
@@ -351,7 +482,7 @@ async def build_daily_update_plan(
             {
                 "key": "fundpos",
                 "label": "FundPos 估算",
-                "order": 5,
+                "order": 6,
                 "task_count": 0,
                 "run_count": 0,
                 "skip_count": 0,
@@ -361,6 +492,7 @@ async def build_daily_update_plan(
                 "schedule": "每日",
                 "action": "配置阻断",
                 "description": fundpos.get("error", "FundPos 配置不可用"),
+                "depends_on": ["features"],
                 "status": "blocked",
                 "result": None,
             }
@@ -375,6 +507,8 @@ async def build_daily_update_plan(
                 "tasks": group["task_names"],
                 "skipped": group["skipped_task_names"],
                 "mode": group["execution_mode"],
+                "depends_on": group.get("depends_on", []),
+                "plan_hash": group.get("plan_hash"),
             }
             for group in groups
         ],
@@ -389,7 +523,10 @@ async def build_daily_update_plan(
         "calendar_source": calendar_source,
         "policy_hash": fingerprint(policy_payload),
         "groups": groups,
-        "publication_note": "FundPos 固定影子估算；一键更新不执行正式发布",
+        "publication_note": (
+            "ETF候选池仅研究候选且无资金/下单权限；"
+            "FundPos 固定影子估算；一键更新不执行正式发布"
+        ),
     }
 
 
@@ -519,6 +656,23 @@ async def _run_fundpos(names: List[str], day: date) -> Dict[str, Any]:
     )
 
 
+async def _run_candidate_monthly(
+    db_manager: Any,
+    stop_event: asyncio.Event,
+    day: date,
+) -> Dict[str, Any]:
+    if stop_event.is_set():
+        return {"status": "cancelled", "cancelled_count": 1}
+    database_url = _database_url(db_manager)
+    if not database_url:
+        raise RuntimeError("AlphaHome 数据库连接不可用")
+    return await asyncio.to_thread(
+        candidate_maintenance.execute_candidate_monthly_maintenance,
+        database_url,
+        run_date=day,
+    )
+
+
 async def _execute_group(
     group: Dict[str, Any],
     db_manager: Any,
@@ -534,6 +688,8 @@ async def _execute_group(
         return await _run_factors(db_manager, names, stop_event, day)
     if group["key"] == "features":
         return await _run_features(names, stop_event, day)
+    if group["key"] == "etf_candidate_monthly":
+        return await _run_candidate_monthly(db_manager, stop_event, day)
     if group["key"] == "fundpos":
         return await _run_fundpos(names, day)
     raise ValueError(f"未知日常更新域: {group['key']}")
@@ -545,7 +701,38 @@ def _result_is_success(result: Dict[str, Any]) -> bool:
         "passed",
         "no_op",
         "expected_no_data",
+        "succeeded",
+        "skipped_already_succeeded",
+        "deferred_before_monthly_window",
     }
+
+
+def _failed_dependency_labels(
+    group: Dict[str, Any],
+    groups_by_key: Dict[str, Dict[str, Any]],
+    failed_domains: Dict[str, str],
+) -> List[str]:
+    """策略跳过不切断依赖链；独立分支只受自身祖先的失败影响。"""
+
+    dependencies = group.get("depends_on")
+    if dependencies is None:
+        return list(failed_domains.values())
+    failures: List[str] = []
+    visited = set()
+
+    def visit(key: str) -> None:
+        if key in visited:
+            return
+        visited.add(key)
+        if key in failed_domains:
+            failures.append(failed_domains[key])
+            return
+        for dependency in groups_by_key.get(key, {}).get("depends_on") or ():
+            visit(dependency)
+
+    for key in dependencies:
+        visit(key)
+    return failures
 
 
 async def handle_get_daily_update_plan(
@@ -580,7 +767,7 @@ async def handle_run_daily_update(
     started = datetime.now(SHANGHAI)
     completed_groups = 0
     failed_groups = 0
-    blocking_domains: List[str] = []
+    failed_domains: Dict[str, str] = {}
     try:
         _cached_plan = await build_daily_update_plan(db_manager, as_of_date)
         _send("DAILY_UPDATE_PLAN_UPDATE", _cached_plan)
@@ -592,10 +779,12 @@ async def handle_run_daily_update(
             f"一键智能增量更新开始：{day.isoformat()} " f"({_cached_plan['day_type']})"
         )
 
+        total_groups = len(_cached_plan["groups"])
+        groups_by_key = {group["key"]: group for group in _cached_plan["groups"]}
         for group in _cached_plan["groups"]:
             if group["status"] in {"blocked", "skipped_policy"}:
                 if group["status"] == "blocked":
-                    blocking_domains.append(group["label"])
+                    failed_domains[group["key"]] = group["label"]
                 _send("DAILY_UPDATE_STAGE_UPDATE", group)
                 continue
             if _stop_event.is_set():
@@ -603,22 +792,25 @@ async def handle_run_daily_update(
                 group["action"] = "收到停止信号，未启动"
                 _send("DAILY_UPDATE_STAGE_UPDATE", group)
                 continue
-            if blocking_domains:
+            dependency_failures = _failed_dependency_labels(
+                group, groups_by_key, failed_domains
+            )
+            if dependency_failures:
                 group["status"] = "blocked"
-                group["blocked_by"] = list(blocking_domains)
+                group["blocked_by"] = dependency_failures
                 group["action"] = (
-                    f"前置更新域未成功（{', '.join(blocking_domains)}），"
+                    f"前置更新域未成功（{', '.join(dependency_failures)}），"
                     "为避免使用旧数据，本域未启动"
                 )
                 failed_groups += 1
-                blocking_domains.append(group["label"])
+                failed_domains[group["key"]] = group["label"]
                 _send("DAILY_UPDATE_STAGE_UPDATE", group)
                 continue
 
             group["status"] = "running"
             group["action"] = f"正在更新 {group['run_count']} 个任务"
             _send("DAILY_UPDATE_STAGE_UPDATE", group)
-            _log(f"[{group['order']}/5] {group['label']} 开始")
+            _log(f"[{group['order']}/{total_groups}] {group['label']} 开始")
             try:
                 result = await _execute_group(group, db_manager, _stop_event, day)
                 group["result"] = result
@@ -630,7 +822,7 @@ async def handle_run_daily_update(
                 else:
                     group["status"] = "error"
                     failed_groups += 1
-                    blocking_domains.append(group["label"])
+                    failed_domains[group["key"]] = group["label"]
                 group["action"] = _format_result(group, result)
             except Exception as exc:  # noqa: BLE001 - continue independent domains
                 logger.error("%s 更新失败: %s", group["label"], exc, exc_info=True)
@@ -638,7 +830,7 @@ async def handle_run_daily_update(
                 group["result"] = {"status": "error", "error": str(exc)}
                 group["action"] = f"失败：{exc}"
                 failed_groups += 1
-                blocking_domains.append(group["label"])
+                failed_domains[group["key"]] = group["label"]
             _send("DAILY_UPDATE_STAGE_UPDATE", group)
 
         stopped = _stop_event.is_set()
@@ -698,7 +890,10 @@ def _format_result(group: Dict[str, Any], result: Dict[str, Any]) -> str:
     status = result.get("status", "unknown")
     status_label = {
         "success": "成功",
+        "succeeded": "成功",
         "passed": "成功",
+        "skipped_already_succeeded": "本月已完成",
+        "deferred_before_monthly_window": "未到月度窗口",
         "partial_success": "部分成功",
         "error": "失败",
         "cancelled": "已停止",

@@ -75,6 +75,7 @@ RELATION_KEYS = {
     "refresh_log": "features.mv_refresh_log",
     "candidate_batch": "fund_pool_on.etf_candidate_master_latest_batch",
     "candidate_current": "fund_pool_on.etf_candidate_master_current_enriched",
+    "candidate_ai_run": "fund_pool_on.etf_candidate_ai_run",
     "index_coverage": "fund_pool_on.etf_candidate_index_coverage_current",
     **{item["key"]: item["relation"] for item in FACT_OBJECTS},
 }
@@ -236,6 +237,7 @@ async def get_etf_research_foundation_status(db_manager: Any) -> dict[str, Any]:
 
     candidate_batch: dict[str, Any] = {}
     candidate_current: dict[str, Any] = {}
+    candidate_ai_run: dict[str, Any] = {}
     index_coverage: dict[str, Any] = {}
     if relations.get("candidate_batch"):
         rows = await db_manager.fetch(
@@ -267,6 +269,18 @@ async def get_etf_research_foundation_status(db_manager: Any) -> dict[str, Any]:
                     AS conditional_candidate_count,
                 COUNT(*) FILTER (WHERE candidate_status = '观察')::integer
                     AS watch_count,
+                COUNT(*) FILTER (
+                    WHERE confirmation_status = 'AI_CONFIRMED'
+                )::integer AS ai_confirmed_count,
+                COUNT(*) FILTER (
+                    WHERE confirmation_status = 'AI_REVIEW_REQUIRED'
+                )::integer AS ai_review_required_count,
+                COUNT(*) FILTER (
+                    WHERE confirmation_status = 'HUMAN_CONFIRMED'
+                )::integer AS human_confirmed_count,
+                COUNT(*) FILTER (
+                    WHERE confirmation_status = 'LEGACY_IMPORTED'
+                )::integer AS legacy_imported_count,
                 COUNT(*) FILTER (WHERE live_facts_as_of IS NOT NULL)::integer
                     AS live_product_fact_count,
                 COUNT(*) FILTER (WHERE live_core_facts_complete)::integer
@@ -280,6 +294,25 @@ async def get_etf_research_foundation_status(db_manager: Any) -> dict[str, Any]:
             """
         )
         candidate_current = _record_to_dict(rows[0]) if rows else {}
+    if relations.get("candidate_ai_run"):
+        rows = await db_manager.fetch(
+            """
+            SELECT
+                ai_run_id,
+                run_month,
+                facts_as_of,
+                model_requested,
+                prompt_version,
+                status,
+                decision_count,
+                output_snapshot_id,
+                finished_at AT TIME ZONE 'Asia/Shanghai' AS finished_at
+            FROM fund_pool_on.etf_candidate_ai_run
+            ORDER BY started_at DESC
+            LIMIT 1
+            """
+        )
+        candidate_ai_run = _record_to_dict(rows[0]) if rows else {}
     if relations.get("index_coverage"):
         rows = await db_manager.fetch(
             """
@@ -302,6 +335,7 @@ async def get_etf_research_foundation_status(db_manager: Any) -> dict[str, Any]:
         "facts": facts,
         "candidate_batch": candidate_batch,
         "candidate_current": candidate_current,
+        "candidate_ai_run": candidate_ai_run,
         "index_coverage": index_coverage,
         "watermarks": watermarks,
         "authority": {

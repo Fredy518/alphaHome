@@ -16,12 +16,37 @@ from psycopg2.extras import Json, execute_values
 
 
 CONTRACT_VERSION = "etf_candidate_master_snapshot_v1"
+CANDIDATE_WRITE_LOCK_NAME = "alphahome_etf_candidate_master_write_v1"
 HASH_RE = re.compile(r"^[0-9a-f]{64}$")
 STATUS_PERMISSION = {
     "正式候选": "候选池研究",
     "条件候选": "条件研究",
     "观察": "仅观察",
 }
+
+CONFIRMATION_STATUS_LEGACY = "LEGACY_IMPORTED"
+CONFIRMATION_STATUS_AI = "AI_CONFIRMED"
+CONFIRMATION_STATUS_AI_REVIEW = "AI_REVIEW_REQUIRED"
+CONFIRMATION_STATUS_HUMAN = "HUMAN_CONFIRMED"
+CONFIRMATION_STATUS_HUMAN_REJECTED = "HUMAN_REJECTED"
+CONFIRMATION_STATUSES = {
+    CONFIRMATION_STATUS_LEGACY,
+    CONFIRMATION_STATUS_AI,
+    CONFIRMATION_STATUS_AI_REVIEW,
+    CONFIRMATION_STATUS_HUMAN,
+    CONFIRMATION_STATUS_HUMAN_REJECTED,
+}
+MEMBERSHIP_COLUMNS = ["include_in_candidate_pool"]
+CONFIRMATION_COLUMNS = [
+    "confirmation_status",
+    "confirmation_actor",
+    "confirmation_at",
+    "ai_run_id",
+    "ai_model",
+    "ai_confidence",
+    "ai_decision_hash",
+    "human_review_note",
+]
 
 SNAPSHOT_COLUMNS = [
     "snapshot_id",
@@ -61,9 +86,15 @@ SNAPSHOT_COLUMNS = [
     "research_permission",
     "duplicate_check",
     "data_source_id",
+    *CONFIRMATION_COLUMNS,
+    *MEMBERSHIP_COLUMNS,
 ]
 
-REQUIRED_RECORD_FIELDS = set(SNAPSHOT_COLUMNS) - {"snapshot_id"}
+REQUIRED_RECORD_FIELDS = set(SNAPSHOT_COLUMNS) - {
+    "snapshot_id",
+    *CONFIRMATION_COLUMNS,
+    *MEMBERSHIP_COLUMNS,
+}
 
 
 class CandidateMasterValidationError(ValueError):
@@ -138,6 +169,15 @@ CREATE TABLE IF NOT EXISTS fund_pool_on.etf_candidate_master_snapshot (
     research_permission text NOT NULL,
     duplicate_check text NOT NULL,
     data_source_id text,
+    confirmation_status text NOT NULL DEFAULT 'LEGACY_IMPORTED',
+    confirmation_actor text,
+    confirmation_at timestamptz,
+    ai_run_id text,
+    ai_model text,
+    ai_confidence numeric,
+    ai_decision_hash text,
+    human_review_note text,
+    include_in_candidate_pool boolean NOT NULL DEFAULT true,
     loaded_at timestamptz NOT NULL DEFAULT now(),
     PRIMARY KEY (snapshot_id, fund_code),
     UNIQUE (snapshot_id, source_rank),
@@ -145,6 +185,20 @@ CREATE TABLE IF NOT EXISTS fund_pool_on.etf_candidate_master_snapshot (
         (candidate_status = '正式候选' AND research_permission = '候选池研究') OR
         (candidate_status = '条件候选' AND research_permission = '条件研究') OR
         (candidate_status = '观察' AND research_permission = '仅观察')
+    ),
+    CONSTRAINT etf_candidate_master_confirmation_status CHECK (
+        confirmation_status IN (
+            'LEGACY_IMPORTED', 'AI_CONFIRMED', 'AI_REVIEW_REQUIRED',
+            'HUMAN_CONFIRMED', 'HUMAN_REJECTED'
+        )
+    ),
+    CONSTRAINT etf_candidate_master_membership_review CHECK (
+        (confirmation_status = 'HUMAN_REJECTED' AND NOT include_in_candidate_pool)
+        OR
+        (confirmation_status <> 'HUMAN_REJECTED' AND include_in_candidate_pool)
+    ),
+    CONSTRAINT etf_candidate_master_ai_confidence CHECK (
+        ai_confidence IS NULL OR (ai_confidence >= 0 AND ai_confidence <= 1)
     ),
     CONSTRAINT etf_candidate_master_duplicate_check CHECK (duplicate_check = 'OK')
 );
@@ -165,7 +219,44 @@ LIMIT 1;
 
 CREATE OR REPLACE VIEW fund_pool_on.etf_candidate_master_current AS
 SELECT
-    s.*,
+    s.snapshot_id,
+    s.source_row_number,
+    s.source_rank,
+    s.asset_class,
+    s.allocation_module,
+    s.allocation_role,
+    s.region_market,
+    s.level1_group,
+    s.level2_group,
+    s.exposure_name,
+    s.exposure_id,
+    s.fund_code,
+    s.fund_name,
+    s.tracking_index_code,
+    s.tracking_index_name,
+    s.product_role,
+    s.candidate_status,
+    s.exposure_relationship,
+    s.parent_fund_code,
+    s.budget_scope,
+    s.snapshot_aum_100m,
+    s.snapshot_amount_20d_100m,
+    s.snapshot_age_months,
+    s.snapshot_total_fee_pct,
+    s.snapshot_mean_abs_premium_60d,
+    s.snapshot_product_auxiliary_state,
+    s.snapshot_premium_observation_label,
+    s.product_facts_as_of,
+    s.source_supplement,
+    s.manual_review_status,
+    s.inclusion_reason,
+    s.risk_boundary,
+    s.update_frequency,
+    s.execution_check,
+    s.research_permission,
+    s.duplicate_check,
+    s.data_source_id,
+    s.loaded_at,
     b.source_version,
     b.source_file_name,
     b.source_file_sha256,
@@ -174,9 +265,19 @@ SELECT
     b.research_stage,
     b.authority_scope,
     b.capital_authority,
-    b.order_authority
+    b.order_authority,
+    s.confirmation_status,
+    s.confirmation_actor,
+    s.confirmation_at,
+    s.ai_run_id,
+    s.ai_model,
+    s.ai_confidence,
+    s.ai_decision_hash,
+    s.human_review_note,
+    s.include_in_candidate_pool
 FROM fund_pool_on.etf_candidate_master_snapshot s
-JOIN fund_pool_on.etf_candidate_master_latest_batch b USING (snapshot_id);
+JOIN fund_pool_on.etf_candidate_master_latest_batch b USING (snapshot_id)
+WHERE s.include_in_candidate_pool;
 
 CREATE OR REPLACE VIEW fund_pool_on.etf_candidate_exposure_current AS
 SELECT
@@ -206,14 +307,60 @@ COMMENT ON TABLE fund_pool_on.etf_candidate_master_batch IS
 COMMENT ON TABLE fund_pool_on.etf_candidate_master_snapshot IS
     'ETF候选身份、人工分类及入库时产品事实快照';
 COMMENT ON VIEW fund_pool_on.etf_candidate_master_current IS
-    '最新已成功载入的ETF候选母表，不表示交易或资金资格';
+    '最新已成功载入且未被人工拒绝的ETF候选母表，不表示交易或资金资格';
 """
 
 
 ENRICHED_VIEW_SQL = """
 CREATE OR REPLACE VIEW fund_pool_on.etf_candidate_master_current_enriched AS
 SELECT
-    s.*,
+    s.snapshot_id,
+    s.source_row_number,
+    s.source_rank,
+    s.asset_class,
+    s.allocation_module,
+    s.allocation_role,
+    s.region_market,
+    s.level1_group,
+    s.level2_group,
+    s.exposure_name,
+    s.exposure_id,
+    s.fund_code,
+    s.fund_name,
+    s.tracking_index_code,
+    s.tracking_index_name,
+    s.product_role,
+    s.candidate_status,
+    s.exposure_relationship,
+    s.parent_fund_code,
+    s.budget_scope,
+    s.snapshot_aum_100m,
+    s.snapshot_amount_20d_100m,
+    s.snapshot_age_months,
+    s.snapshot_total_fee_pct,
+    s.snapshot_mean_abs_premium_60d,
+    s.snapshot_product_auxiliary_state,
+    s.snapshot_premium_observation_label,
+    s.product_facts_as_of,
+    s.source_supplement,
+    s.manual_review_status,
+    s.inclusion_reason,
+    s.risk_boundary,
+    s.update_frequency,
+    s.execution_check,
+    s.research_permission,
+    s.duplicate_check,
+    s.data_source_id,
+    s.loaded_at,
+    s.source_version,
+    s.source_file_name,
+    s.source_file_sha256,
+    s.workbook_generated_on,
+    s.structure_baseline_as_of,
+    s.research_stage,
+    s.authority_scope,
+    s.capital_authority,
+    s.order_authority,
     f.as_of_date AS live_facts_as_of,
     f.price_date AS live_price_date,
     f.nav_date AS live_nav_date,
@@ -253,7 +400,16 @@ SELECT
         THEN f.amount_20d_100m / s.snapshot_amount_20d_100m - 1 END
         AS amount_20d_relative_change,
     f.total_fee_pct - s.snapshot_total_fee_pct AS total_fee_pct_change,
-    b.thresholds AS maintenance_thresholds
+    b.thresholds AS maintenance_thresholds,
+    s.confirmation_status,
+    s.confirmation_actor,
+    s.confirmation_at,
+    s.ai_run_id,
+    s.ai_model,
+    s.ai_confidence,
+    s.ai_decision_hash,
+    s.human_review_note,
+    s.include_in_candidate_pool
 FROM fund_pool_on.etf_candidate_master_current s
 JOIN fund_pool_on.etf_candidate_master_latest_batch b USING (snapshot_id)
 LEFT JOIN features.mv_etf_product_facts_current f
@@ -406,6 +562,74 @@ def validate_payload(
             raise CandidateMasterValidationError(
                 f"product_facts_as_of mismatch for {fund_code}"
             )
+        confirmation_status = (
+            record.get("confirmation_status") or CONFIRMATION_STATUS_LEGACY
+        )
+        include_in_candidate_pool = record.get("include_in_candidate_pool", True)
+        if not isinstance(include_in_candidate_pool, bool):
+            raise CandidateMasterValidationError(
+                f"include_in_candidate_pool must be boolean for {fund_code}"
+            )
+        if confirmation_status not in CONFIRMATION_STATUSES:
+            raise CandidateMasterValidationError(
+                f"invalid confirmation_status for {fund_code}: {confirmation_status}"
+            )
+        if confirmation_status in {
+            CONFIRMATION_STATUS_AI,
+            CONFIRMATION_STATUS_AI_REVIEW,
+        }:
+            required_ai_fields = (
+                "confirmation_actor",
+                "confirmation_at",
+                "ai_run_id",
+                "ai_model",
+                "ai_decision_hash",
+            )
+            for field in required_ai_fields:
+                if not record.get(field):
+                    raise CandidateMasterValidationError(
+                        f"AI confirmation requires {field} for {fund_code}"
+                    )
+            confidence = record.get("ai_confidence")
+            try:
+                confidence_number = float(confidence)
+            except (TypeError, ValueError) as exc:
+                raise CandidateMasterValidationError(
+                    f"AI confirmation requires numeric ai_confidence for {fund_code}"
+                ) from exc
+            if not 0.0 <= confidence_number <= 1.0:
+                raise CandidateMasterValidationError(
+                    f"ai_confidence out of range for {fund_code}"
+                )
+            if not HASH_RE.fullmatch(str(record.get("ai_decision_hash"))):
+                raise CandidateMasterValidationError(
+                    f"invalid ai_decision_hash for {fund_code}"
+                )
+        elif confirmation_status in {
+            CONFIRMATION_STATUS_HUMAN,
+            CONFIRMATION_STATUS_HUMAN_REJECTED,
+        }:
+            if not record.get("confirmation_actor"):
+                raise CandidateMasterValidationError(
+                    f"human review requires confirmation_actor for {fund_code}"
+                )
+            if not record.get("confirmation_at"):
+                raise CandidateMasterValidationError(
+                    f"human review requires confirmation_at for {fund_code}"
+                )
+        if confirmation_status == CONFIRMATION_STATUS_HUMAN_REJECTED:
+            if include_in_candidate_pool:
+                raise CandidateMasterValidationError(
+                    f"HUMAN_REJECTED must leave the candidate pool for {fund_code}"
+                )
+            if not str(record.get("human_review_note") or "").strip():
+                raise CandidateMasterValidationError(
+                    f"HUMAN_REJECTED requires human_review_note for {fund_code}"
+                )
+        elif not include_in_candidate_pool:
+            raise CandidateMasterValidationError(
+                f"inactive candidate must be HUMAN_REJECTED for {fund_code}"
+            )
 
     if quality.get("exposure_count") != len(exposure_ids):
         raise CandidateMasterValidationError(
@@ -430,6 +654,25 @@ def read_and_validate_payload(
         payload = json.load(handle)
     validate_payload(payload, verify_source_file=verify_source_file)
     return payload
+
+
+def lock_candidate_master(connection: Any) -> None:
+    """串行化候选发布与人工复核，锁随调用方事务提交/回滚释放。"""
+
+    if getattr(connection, "autocommit", False):
+        raise CandidateMasterValidationError(
+            "candidate writes require autocommit=False"
+        )
+    with connection.cursor() as cursor:
+        cursor.execute("SHOW transaction_isolation")
+        if cursor.fetchone()[0] not in {"read committed", "read uncommitted"}:
+            raise CandidateMasterValidationError(
+                "candidate writes require READ COMMITTED for post-lock revalidation"
+            )
+        cursor.execute(
+            "SELECT pg_advisory_xact_lock(hashtext(%s))",
+            (CANDIDATE_WRITE_LOCK_NAME,),
+        )
 
 
 def ensure_candidate_master_schema(connection: Any) -> None:
@@ -505,11 +748,28 @@ def _batch_values(payload: dict[str, Any]) -> tuple[Any, ...]:
     )
 
 
+def _normalized_record(record: dict[str, Any]) -> dict[str, Any]:
+    """补齐确认元数据；旧版工作簿快照保持向后兼容。"""
+
+    normalized = dict(record)
+    normalized.setdefault("confirmation_status", CONFIRMATION_STATUS_LEGACY)
+    normalized.setdefault("confirmation_actor", "workbook_import")
+    normalized.setdefault("confirmation_at", None)
+    normalized.setdefault("ai_run_id", None)
+    normalized.setdefault("ai_model", None)
+    normalized.setdefault("ai_confidence", None)
+    normalized.setdefault("ai_decision_hash", None)
+    normalized.setdefault("human_review_note", None)
+    normalized.setdefault("include_in_candidate_pool", True)
+    return normalized
+
+
 def load_candidate_master_snapshot(
     connection: Any,
     payload: dict[str, Any],
     *,
     verify_source_file: bool = True,
+    commit: bool = True,
 ) -> dict[str, Any]:
     """在单一事务中幂等载入一个候选母表快照。"""
 
@@ -519,11 +779,12 @@ def load_candidate_master_snapshot(
     records = payload["records"]
 
     try:
+        lock_candidate_master(connection)
         ensure_candidate_master_schema(connection)
         with connection.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT source_file_sha256
+                SELECT source_file_sha256, load_status, loaded_at
                 FROM fund_pool_on.etf_candidate_master_batch
                 WHERE snapshot_id = %s
                 """,
@@ -534,6 +795,41 @@ def load_candidate_master_snapshot(
                 raise CandidateMasterValidationError(
                     "snapshot_id already exists with a different source hash"
                 )
+            if existing and existing[1] == "loaded":
+                cursor.execute(
+                    """
+                    SELECT
+                        COUNT(*) AS row_count,
+                        COUNT(DISTINCT exposure_id) AS exposure_count,
+                        COUNT(*) FILTER (
+                            WHERE candidate_status = '正式候选'
+                        ) AS formal_count,
+                        COUNT(*) FILTER (
+                            WHERE candidate_status = '条件候选'
+                        ) AS conditional_count,
+                        COUNT(*) FILTER (
+                            WHERE candidate_status = '观察'
+                        ) AS watch_count
+                    FROM fund_pool_on.etf_candidate_master_snapshot
+                    WHERE snapshot_id = %s
+                    """,
+                    (snapshot_id,),
+                )
+                counts = cursor.fetchone()
+                if commit:
+                    connection.commit()
+                return {
+                    "snapshot_id": snapshot_id,
+                    "source_file_sha256": source_hash,
+                    "row_count": counts[0],
+                    "exposure_count": counts[1],
+                    "formal_candidate_count": counts[2],
+                    "conditional_candidate_count": counts[3],
+                    "watch_count": counts[4],
+                    "load_status": "loaded",
+                    "loaded_at": existing[2].isoformat(),
+                    "idempotent_noop": True,
+                }
 
             cursor.execute(
                 """
@@ -555,7 +851,7 @@ def load_candidate_master_snapshot(
                     row_count = EXCLUDED.row_count,
                     exposure_count = EXCLUDED.exposure_count,
                     load_status = 'loading',
-                    loaded_at = now()
+                    loaded_at = clock_timestamp()
                 """,
                 _batch_values(payload),
             )
@@ -567,7 +863,10 @@ def load_candidate_master_snapshot(
 
             rows = []
             for record in records:
-                enriched = {"snapshot_id": snapshot_id, **record}
+                enriched = {
+                    "snapshot_id": snapshot_id,
+                    **_normalized_record(record),
+                }
                 rows.append(tuple(enriched[column] for column in SNAPSHOT_COLUMNS))
             execute_values(
                 cursor,
@@ -581,7 +880,7 @@ def load_candidate_master_snapshot(
             cursor.execute(
                 """
                 UPDATE fund_pool_on.etf_candidate_master_batch
-                SET load_status = 'loaded', loaded_at = now()
+                SET load_status = 'loaded', loaded_at = clock_timestamp()
                 WHERE snapshot_id = %s
                 """,
                 (snapshot_id,),
@@ -600,7 +899,8 @@ def load_candidate_master_snapshot(
                 (snapshot_id,),
             )
             counts = cursor.fetchone()
-        connection.commit()
+        if commit:
+            connection.commit()
     except Exception:
         connection.rollback()
         raise
@@ -614,4 +914,5 @@ def load_candidate_master_snapshot(
         "conditional_candidate_count": counts[3],
         "watch_count": counts[4],
         "load_status": "loaded",
+        "idempotent_noop": False,
     }
