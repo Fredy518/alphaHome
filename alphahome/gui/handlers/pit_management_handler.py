@@ -256,7 +256,12 @@ def _update_pit_task_display(widgets: Dict[str, tk.Widget]):
             _fmt(task.get("latest_date")),
             task.get("row_count", 0),
             _format_rate(task.get("coverage_rate")),
-            "" if task.get("gap_count") is None else task.get("gap_count"),
+            "" if task.get("missing_count") is None else task.get("missing_count"),
+            (
+                ""
+                if task.get("unexpected_count") is None
+                else task.get("unexpected_count")
+            ),
             _execution_status_display(task),
             _fmt(task.get("last_execution_time")),
             _fmt(task.get("last_audit_time")),
@@ -282,6 +287,18 @@ def _show_task_detail(widgets: Dict[str, tk.Widget], task_name: str):
 
 
 def _format_task_detail(task: Dict[str, Any]) -> str:
+    live_missing = task.get("missing_count")
+    if live_missing is None:
+        live_missing = task.get("gap_count")
+    live_mismatch = task.get("mismatch_count")
+    if live_mismatch is None:
+        live_mismatch = task.get("gap_count")
+    audited_missing = task.get("audited_missing_count")
+    if audited_missing is None:
+        audited_missing = task.get("audited_gap_count")
+    audited_mismatch = task.get("audited_mismatch_count")
+    if audited_mismatch is None:
+        audited_mismatch = task.get("audited_gap_count")
     lines = [
         f"任务: {task.get('name')}",
         f"域: {task.get('domain')}",
@@ -297,7 +314,11 @@ def _format_task_detail(task: Dict[str, Any]) -> str:
         f"最新日期: {_fmt(task.get('latest_date'))}",
         f"行数: {task.get('row_count', 0)}",
         f"覆盖率: {_format_rate(task.get('coverage_rate'))}",
-        f"缺口数: {task.get('gap_count')}",
+        f"实际实体数: {task.get('actual_entity_count')}",
+        f"匹配实体数: {task.get('matched_entity_count')}",
+        f"缺失数: {live_missing}",
+        f"额外数: {task.get('unexpected_count')}",
+        f"总差异数: {live_mismatch}",
         f"实时表状态: {task.get('live_status')}",
         "",
         "最近执行记录",
@@ -311,7 +332,9 @@ def _format_task_detail(task: Dict[str, Any]) -> str:
         f"审计时最新日期: {_fmt(task.get('audited_latest_date'))}",
         f"审计时行数: {task.get('audited_row_count')}",
         f"审计时覆盖率: {_format_rate(task.get('audited_coverage_rate'))}",
-        f"审计时缺口数: {task.get('audited_gap_count')}",
+        f"审计时缺失数: {audited_missing}",
+        f"审计时额外数: {task.get('audited_unexpected_count')}",
+        f"审计时总差异数: {audited_mismatch}",
     ]
     if _is_live_table_complete(task) and task.get("last_execution_status") == "error":
         lines.extend(
@@ -332,9 +355,17 @@ def _is_live_table_complete(task: Dict[str, Any]) -> bool:
     if task.get("live_status") not in {"healthy", "available"}:
         return False
     try:
+        mismatch_count = task.get("mismatch_count")
+        if mismatch_count is None:
+            missing_count = task.get("missing_count")
+            if missing_count is None:
+                missing_count = task.get("gap_count")
+            mismatch_count = int(missing_count or 0) + int(
+                task.get("unexpected_count") or 0
+            )
         return (
             int(task.get("row_count") or 0) > 0
-            and int(task.get("gap_count") or 0) == 0
+            and int(mismatch_count or 0) == 0
             and float(task.get("coverage_rate") or 0) >= 1.0
         )
     except (TypeError, ValueError):
@@ -351,14 +382,22 @@ def _execution_status_display(task: Dict[str, Any]) -> str:
 def _format_audit_results(results: List[Dict[str, Any]]) -> str:
     lines = ["PIT审计结果", ""]
     for item in results:
+        missing = item.get("missing_count")
+        if missing is None:
+            missing = item.get("gap_count")
+        mismatches = item.get("mismatch_count")
+        if mismatches is None:
+            mismatches = item.get("gap_count")
         lines.append(
-            "{task} | {status} | rows={rows} | latest={latest} | coverage={coverage} | gaps={gaps}".format(
+            "{task} | {status} | rows={rows} | latest={latest} | coverage={coverage} | missing={missing} | unexpected={unexpected} | mismatches={mismatches}".format(
                 task=item.get("task_name"),
                 status=item.get("status"),
                 rows=item.get("row_count"),
                 latest=_fmt(item.get("latest_pit_time")),
                 coverage=_format_rate(item.get("coverage_rate")),
-                gaps=item.get("gap_count"),
+                missing=missing,
+                unexpected=item.get("unexpected_count"),
+                mismatches=mismatches,
             )
         )
         raw_gap = ((item.get("details") or {}).get("raw_vs_pit") or {})

@@ -88,6 +88,11 @@ def test_format_task_detail_separates_live_execution_and_audit_values():
             "row_count": 468456,
             "coverage_rate": 0.99,
             "gap_count": 10,
+            "actual_entity_count": 1000,
+            "matched_entity_count": 990,
+            "missing_count": 10,
+            "unexpected_count": 2,
+            "mismatch_count": 12,
             "live_status": "healthy",
             "last_execution_status": "success",
             "last_execution_time": "2026-08-14 14:16:08",
@@ -98,6 +103,9 @@ def test_format_task_detail_separates_live_execution_and_audit_values():
             "audited_row_count": 468304,
             "audited_coverage_rate": 0.98,
             "audited_gap_count": 20,
+            "audited_missing_count": 20,
+            "audited_unexpected_count": 3,
+            "audited_mismatch_count": 23,
         }
     )
 
@@ -108,6 +116,10 @@ def test_format_task_detail_separates_live_execution_and_audit_values():
     assert "最近审计快照" in text
     assert "审计时间: 2026-07-03 13:39:29" in text
     assert "审计时最新日期: 2026-07-02" in text
+    assert "缺失数: 10" in text
+    assert "额外数: 2" in text
+    assert "总差异数: 12" in text
+    assert "审计时额外数: 3" in text
 
 
 def test_historical_execution_error_does_not_masquerade_as_live_table_failure():
@@ -121,3 +133,19 @@ def test_historical_execution_error_does_not_masquerade_as_live_table_failure():
 
     assert _execution_status_display(task) == "历史失败（覆盖完整）"
     assert "最近执行失败是历史运行记录" in _format_task_detail(task)
+
+
+def test_unexpected_entities_prevent_live_table_from_looking_complete():
+    task = {
+        "last_execution_status": "error",
+        "live_status": "available",
+        "row_count": 920994,
+        "coverage_rate": 1.0,
+        "gap_count": 0,
+        "missing_count": 0,
+        "unexpected_count": 1,
+        "mismatch_count": 1,
+    }
+
+    assert _execution_status_display(task) == "error"
+    assert "最近执行失败是历史运行记录" not in _format_task_detail(task)

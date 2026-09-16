@@ -251,7 +251,10 @@ async def test_fapi_denominator_counts_upstream_indices_in_matching_month_and_ve
     monkeypatch,
 ):
     db = AsyncMock()
-    db.fetch_one.return_value = {"cnt": 2}
+    db.fetch.return_value = [
+        {"index_code": "IDX_A"},
+        {"index_code": "IDX_B"},
+    ]
     service = PITAuditService(db)
     monkeypatch.setattr(service, "_relation_exists", AsyncMock(return_value=True))
 
@@ -260,8 +263,8 @@ async def test_fapi_denominator_counts_upstream_indices_in_matching_month_and_ve
     )
 
     assert count == 2
-    sql, *args = db.fetch_one.call_args.args
-    assert "COUNT(DISTINCT index_code)" in sql
+    sql, *args = db.fetch.call_args.args
+    assert "SELECT DISTINCT index_code" in sql
     assert "FROM pit.pit_etf_index_members_monthly" in sql
     assert "obs_date = $1 AND method_version = $2" in sql
     assert args == [OBS_DATE, ETFIndexMembersCalculator.METHOD_VERSION]
@@ -300,27 +303,175 @@ async def test_all_stats_queries_scope_shared_table_to_task_version(
 ):
     db = AsyncMock()
     db.fetch_one.side_effect = [
-        {"row_count": 4, "latest_pit_time": OBS_DATE},
+        {"row_count": 5, "latest_pit_time": OBS_DATE},
         {"coverage_period": OBS_DATE},
-        {"coverage_count": 4},
+        {"coverage_count": 5},
     ]
     service = PITAuditService(db)
     monkeypatch.setattr(service, "_relation_exists", AsyncMock(return_value=True))
     monkeypatch.setattr(
         service, "_get_columns", AsyncMock(return_value=set(task.contract.primary_keys))
     )
-    monkeypatch.setattr(service, "_denominator_count", AsyncMock(return_value=5))
+    monkeypatch.setattr(
+        service,
+        "_etf_entity_coverage_stats",
+        AsyncMock(
+            return_value={
+                "expected_entity_count": 5,
+                "actual_entity_count": 5,
+                "matched_entity_count": 4,
+                "missing_count": 1,
+                "unexpected_count": 1,
+                "mismatch_count": 2,
+                "missing_examples": [],
+                "unexpected_examples": [],
+            }
+        ),
+    )
 
     stats = await service._table_stats(task.contract)
 
-    assert stats["row_count"] == 4
+    assert stats["row_count"] == 5
     assert stats["latest_pit_time"] == OBS_DATE
     assert stats["coverage_rate"] == 0.8
-    assert stats["gap_count"] == 1
+    assert stats["gap_count"] == 2
+    assert stats["missing_count"] == 1
+    assert stats["unexpected_count"] == 1
+    assert stats["mismatch_count"] == 2
+    assert stats["dimensions"]["coverage"] == "observed_incomplete"
     expected_scope = f"t.method_version = '{calculator.METHOD_VERSION}'"
     for call in db.fetch_one.call_args_list:
         sql, *_ = call.args
         assert expected_scope in sql
+
+
+@pytest.mark.asyncio
+async def test_entity_coverage_does_not_cancel_missing_with_unexpected(monkeypatch):
+    contract = PITETFIndexMembersMonthlyTask.contract
+    method = ETFIndexMembersCalculator.METHOD_VERSION
+    service = PITAuditService(AsyncMock())
+    monkeypatch.setattr(
+        service,
+        "_etf_expected_entity_keys",
+        AsyncMock(
+            return_value={
+                ("IDX", "000001.SZ", method),
+                ("IDX", "000002.SZ", method),
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        service,
+        "_output_entity_keys",
+        AsyncMock(
+            return_value={
+                ("IDX", "000001.SZ", method),
+                ("IDX", "999999.SZ", method),
+            }
+        ),
+    )
+
+    stats = await service._etf_entity_coverage_stats(contract, OBS_DATE)
+
+    assert stats["expected_entity_count"] == 2
+    assert stats["actual_entity_count"] == 2
+    assert stats["matched_entity_count"] == 1
+    assert stats["missing_count"] == 1
+    assert stats["unexpected_count"] == 1
+    assert stats["mismatch_count"] == 2
+    assert stats["missing_examples"] == [
+        {
+            "index_code": "IDX",
+            "ts_code": "000002.SZ",
+            "method_version": method,
+        }
+    ]
+    assert stats["unexpected_examples"] == [
+        {
+            "index_code": "IDX",
+            "ts_code": "999999.SZ",
+            "method_version": method,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_etf_audit_reports_coverage_mismatch_before_consumption_status(
+    monkeypatch,
+):
+    service = PITAuditService(AsyncMock())
+    monkeypatch.setattr(
+        service,
+        "_pit_task_classes",
+        lambda: {
+            PITETFIndexMembersMonthlyTask.contract.task_name: (
+                PITETFIndexMembersMonthlyTask
+            )
+        },
+    )
+    monkeypatch.setattr(
+        service,
+        "_table_stats",
+        AsyncMock(
+            return_value={
+                "status": "available",
+                "dimensions": {
+                    "structure": "ready",
+                    "dates": "complete",
+                    "coverage": "observed_incomplete",
+                },
+                "latest_pit_time": OBS_DATE,
+                "coverage_period": OBS_DATE,
+                "row_count": 5,
+                "coverage_count": 4,
+                "listed_stock_count": 5,
+                "denominator_name": "etf_index_member_source_pairs",
+                "denominator_count": 5,
+                "coverage_rate": 0.8,
+                "gap_count": 2,
+                "actual_entity_count": 5,
+                "matched_entity_count": 4,
+                "missing_count": 1,
+                "unexpected_count": 1,
+                "mismatch_count": 2,
+                "entity_diff": {},
+            }
+        ),
+    )
+    monkeypatch.setattr(service, "_raw_gap_summary", AsyncMock(return_value={}))
+    monkeypatch.setattr(service, "_domain_audit_details", AsyncMock(return_value={}))
+
+    result = await service._audit_task_live(
+        PITETFIndexMembersMonthlyTask.contract.task_name
+    )
+
+    assert result["status"] == "coverage_mismatch"
+    assert result["gap_count"] == 2
+    assert result["missing_count"] == 1
+    assert result["unexpected_count"] == 1
+    assert result["dimensions"]["coverage"] == "observed_incomplete"
+
+
+@pytest.mark.asyncio
+async def test_output_entity_keys_scope_shared_table_to_task_version(monkeypatch):
+    contract = PITETFIndexMembersMonthlyTask.contract
+    method = ETFIndexMembersCalculator.METHOD_VERSION
+    db = AsyncMock()
+    db.fetch.return_value = [
+        {"index_code": "IDX", "ts_code": "000001.SZ", "method_version": method}
+    ]
+    service = PITAuditService(db)
+
+    result = await service._output_entity_keys(
+        contract,
+        OBS_DATE,
+        output_columns=set(contract.primary_keys),
+    )
+
+    assert result == {("IDX", "000001.SZ", method)}
+    sql, *args = db.fetch.call_args.args
+    assert f"t.method_version = '{method}'" in sql
+    assert args == [OBS_DATE]
 
 
 @pytest.mark.asyncio

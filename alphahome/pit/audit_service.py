@@ -19,6 +19,15 @@ from alphahome.pit.base.pit_task import PITTaskContract
 logger = get_logger(__name__)
 
 
+_ETF_AUDIT_DENOMINATORS = frozenset(
+    {
+        "etf_index_member_source_pairs",
+        "registered_cross_market_a_share_proxy_members",
+        "registered_cross_market_a_share_proxy_indices",
+    }
+)
+
+
 def _quote_identifier(value: str) -> str:
     return f'"{str(value).replace(chr(34), chr(34) * 2)}"'
 
@@ -88,8 +97,13 @@ class PITAuditService:
                         "row_count": stats.get("row_count", 0),
                         "coverage_rate": stats.get("coverage_rate"),
                         "gap_count": stats.get("gap_count"),
-                         "live_status": stats.get("status", "unknown"),
-                         "dimensions": stats.get("dimensions"),
+                        "actual_entity_count": stats.get("actual_entity_count"),
+                        "matched_entity_count": stats.get("matched_entity_count"),
+                        "missing_count": stats.get("missing_count"),
+                        "unexpected_count": stats.get("unexpected_count"),
+                        "mismatch_count": stats.get("mismatch_count"),
+                        "live_status": stats.get("status", "unknown"),
+                        "dimensions": stats.get("dimensions"),
                     }
                 )
             except Exception as exc:
@@ -100,6 +114,11 @@ class PITAuditService:
                         "row_count": 0,
                         "coverage_rate": None,
                         "gap_count": None,
+                        "actual_entity_count": None,
+                        "matched_entity_count": None,
+                        "missing_count": None,
+                        "unexpected_count": None,
+                        "mismatch_count": None,
                         "live_status": "error",
                     }
                 )
@@ -117,6 +136,9 @@ class PITAuditService:
                     "audited_row_count": None,
                     "audited_coverage_rate": None,
                     "audited_gap_count": None,
+                    "audited_missing_count": None,
+                    "audited_unexpected_count": None,
+                    "audited_mismatch_count": None,
                     "audit_status": None,
                 }
             )
@@ -189,6 +211,12 @@ class PITAuditService:
             "listed_stock_count": stats.get("listed_stock_count"),
             "denominator_name": stats.get("denominator_name"),
             "denominator_count": stats.get("denominator_count"),
+            "actual_entity_count": stats.get("actual_entity_count"),
+            "matched_entity_count": stats.get("matched_entity_count"),
+            "missing_count": stats.get("missing_count"),
+            "unexpected_count": stats.get("unexpected_count"),
+            "mismatch_count": stats.get("mismatch_count"),
+            "entity_diff": stats.get("entity_diff"),
             "raw_vs_pit": raw_gap,
             "domain_metrics": domain_details,
         }
@@ -211,9 +239,12 @@ class PITAuditService:
             if int(domain_details.get("valued_universes") or 0) == 0:
                 status = "structure_only"
         source_gap = int(raw_gap.get("raw_missing_in_pit") or 0)
+        entity_mismatch = int(stats.get("mismatch_count") or 0)
         if status in {"healthy", "available"}:
             if source_gap:
                 status = "source_gap"
+            elif entity_mismatch:
+                status = "coverage_mismatch"
             elif (stats.get("dimensions") or {}).get("dates") == "incomplete":
                 status = "stale"
             else:
@@ -233,6 +264,11 @@ class PITAuditService:
             "row_count": stats.get("row_count", 0),
             "coverage_rate": stats.get("coverage_rate"),
             "gap_count": stats.get("gap_count"),
+            "actual_entity_count": stats.get("actual_entity_count"),
+            "matched_entity_count": stats.get("matched_entity_count"),
+            "missing_count": stats.get("missing_count"),
+            "unexpected_count": stats.get("unexpected_count"),
+            "mismatch_count": stats.get("mismatch_count"),
             "status": status,
             "details": details,
             "dimensions": dimensions,
@@ -385,6 +421,12 @@ class PITAuditService:
                 "denominator_count": denominator_count,
                 "coverage_rate": 0.0 if denominator_count else None,
                 "gap_count": denominator_count if denominator_count else None,
+                "actual_entity_count": 0,
+                "matched_entity_count": 0,
+                "missing_count": denominator_count if denominator_count else None,
+                "unexpected_count": 0 if denominator_count else None,
+                "mismatch_count": denominator_count if denominator_count else None,
+                "entity_diff": None,
             }
 
         relation = _qualified(contract.output_table)
@@ -419,14 +461,47 @@ class PITAuditService:
                 else 1
             ),
         )
-        coverage_count = int(coverage.get("coverage_count") or 0)
+        observed_coverage_count = int(coverage.get("coverage_count") or 0)
         coverage_period = coverage.get("coverage_period")
-        denominator_count = await self._denominator_count(contract, coverage_period)
+        entity_diff = None
+        if (
+            contract.audit_denominator in _ETF_AUDIT_DENOMINATORS
+            and coverage_period is not None
+        ):
+            entity_diff = await self._etf_entity_coverage_stats(
+                contract,
+                coverage_period,
+                output_columns=columns,
+            )
+            denominator_count = int(entity_diff["expected_entity_count"])
+            actual_entity_count = int(entity_diff["actual_entity_count"])
+            matched_entity_count = int(entity_diff["matched_entity_count"])
+            missing_count = int(entity_diff["missing_count"])
+            unexpected_count = int(entity_diff["unexpected_count"])
+            mismatch_count = int(entity_diff["mismatch_count"])
+            coverage_count = matched_entity_count
+            gap_count = mismatch_count
+        else:
+            denominator_count = await self._denominator_count(
+                contract, coverage_period
+            )
+            coverage_count = observed_coverage_count
+            actual_entity_count = observed_coverage_count
+            matched_entity_count = (
+                min(observed_coverage_count, denominator_count)
+                if denominator_count
+                else observed_coverage_count
+            )
+            missing_count = (
+                max(denominator_count - observed_coverage_count, 0)
+                if denominator_count
+                else None
+            )
+            unexpected_count = None
+            mismatch_count = missing_count
+            gap_count = missing_count
         coverage_rate = (
             round(coverage_count / denominator_count, 6) if denominator_count else None
-        )
-        gap_count = (
-            max(denominator_count - coverage_count, 0) if denominator_count else None
         )
         required = set(contract.primary_keys) | {contract.pit_time_key}
         structure = "ready" if required <= columns else "migration_required"
@@ -444,7 +519,11 @@ class PITAuditService:
             status = "future_violation"
         dimensions = AuditDimensions(
             structure=structure, dates=date_state,
-            coverage="complete" if denominator_count and coverage_count == denominator_count else "observed_incomplete",
+            coverage=(
+                "complete"
+                if denominator_count and int(mismatch_count or 0) == 0
+                else "observed_incomplete"
+            ),
         )
         return {
             "status": status,
@@ -461,6 +540,12 @@ class PITAuditService:
             "denominator_count": denominator_count,
             "coverage_rate": coverage_rate,
             "gap_count": gap_count,
+            "actual_entity_count": actual_entity_count,
+            "matched_entity_count": matched_entity_count,
+            "missing_count": missing_count,
+            "unexpected_count": unexpected_count,
+            "mismatch_count": mismatch_count,
+            "entity_diff": entity_diff,
         }
 
     async def _coverage_for_latest(
@@ -560,11 +645,7 @@ class PITAuditService:
         self, contract: PITTaskContract, coverage_period: Any
     ) -> int:
         denominator = contract.audit_denominator or "current_listed_stocks"
-        if denominator in {
-            "etf_index_member_source_pairs",
-            "registered_cross_market_a_share_proxy_members",
-            "registered_cross_market_a_share_proxy_indices",
-        }:
+        if denominator in _ETF_AUDIT_DENOMINATORS:
             return await self._etf_denominator_count(contract, coverage_period)
         if denominator == "current_listed_stocks":
             return await self._current_listed_count()
@@ -685,6 +766,29 @@ class PITAuditService:
         prefix = f"{alias}." if alias else ""
         return f"AND {prefix}method_version = '{trusted_literal}'"
 
+    @staticmethod
+    def _entity_key_from_mapping(
+        row: Any, entity_keys: Sequence[str]
+    ) -> Tuple[Any, ...]:
+        values = []
+        for key in entity_keys:
+            value = row[key]
+            values.append(value.strip() if isinstance(value, str) else value)
+        return tuple(values)
+
+    @staticmethod
+    def _entity_key_examples(
+        entity_keys: Sequence[str],
+        values: Iterable[Tuple[Any, ...]],
+        *,
+        limit: int = 10,
+    ) -> List[Dict[str, Any]]:
+        ordered = sorted(values, key=lambda item: tuple(str(value) for value in item))
+        return [
+            dict(zip(entity_keys, value))
+            for value in ordered[: max(0, int(limit))]
+        ]
+
     async def _etf_denominator_count(
         self, contract: PITTaskContract, coverage_period: Any
     ) -> int:
@@ -694,11 +798,22 @@ class PITAuditService:
         output table, so missing output rows cannot shrink their own denominator.
         FAPI counts indices, rather than the number of stocks inside them.
         """
+        return len(
+            await self._etf_expected_entity_keys(contract, coverage_period)
+        )
+
+    async def _etf_expected_entity_keys(
+        self, contract: PITTaskContract, coverage_period: Any
+    ) -> set[Tuple[Any, ...]]:
+        """Rebuild the exact entity keys expected at one ETF observation date."""
         if not coverage_period:
-            return 0
+            return set()
 
         import pandas as pd
 
+        from alphahome.pit.calculators.etf_index_fapi_calculator import (
+            ETFIndexFAPICalculator,
+        )
         from alphahome.pit.calculators.etf_index_a_share_proxy_members_calculator import (
             ETFIndexAShareProxyMembersCalculator,
         )
@@ -716,34 +831,59 @@ class PITAuditService:
         proxy_codes = sorted(
             set(PITETFIndexAShareProxyMembersMonthlyManager.DEFAULT_PROXY_INDEX_CODES)
         )
+        entity_keys = tuple(contract.audit_entity_keys)
+        method_version = self._task_method_version(contract)
         if (
             contract.audit_denominator
             == "registered_cross_market_a_share_proxy_indices"
         ):
-            return len(proxy_codes)
+            expected_rows = [
+                {
+                    "index_code": code,
+                    "benchmark_code": ETFIndexFAPICalculator.BENCHMARK_CODE,
+                    "method_version": method_version,
+                }
+                for code in proxy_codes
+            ]
+            return {
+                self._entity_key_from_mapping(row, entity_keys)
+                for row in expected_rows
+            }
         if contract.domain == "etf_index_fapi":
             if not await self._relation_exists(
                 "pit.pit_etf_index_members_monthly"
             ):
-                return 0
-            row = await self.db.fetch_one(
+                return set()
+            rows = await self.db.fetch(
                 """
-                SELECT COUNT(DISTINCT index_code)::bigint AS cnt
+                SELECT DISTINCT index_code
                 FROM pit.pit_etf_index_members_monthly
                 WHERE obs_date = $1 AND method_version = $2
                   AND index_code IS NOT NULL AND ts_code IS NOT NULL
+                ORDER BY index_code
                 """,
                 coverage_period,
                 ETFIndexMembersCalculator.METHOD_VERSION,
             )
-            return int(row["cnt"] or 0) if row else 0
+            expected_rows = [
+                {
+                    "index_code": row["index_code"],
+                    "benchmark_code": ETFIndexFAPICalculator.BENCHMARK_CODE,
+                    "method_version": method_version,
+                }
+                for row in rows
+            ]
+            return {
+                self._entity_key_from_mapping(row, entity_keys)
+                for row in expected_rows
+            }
 
         if proxy:
             codes = proxy_codes
             calculator = ETFIndexAShareProxyMembersCalculator()
         else:
             if not await self._relation_exists("rawdata.fund_etf_basic"):
-                return 0
+                return set()
             rows = await self.db.fetch("""
                 SELECT DISTINCT btrim(index_code) AS index_code
                 FROM rawdata.fund_etf_basic
@@ -753,7 +893,7 @@ class PITAuditService:
             codes = sorted({str(row["index_code"]) for row in rows})
             calculator = ETFIndexMembersCalculator()
         if not codes:
-            return 0
+            return set()
 
         obs_date = pd.Timestamp(coverage_period).date()
         expected = pd.DataFrame(columns=calculator.OUTPUT_COLUMNS)
@@ -816,7 +956,88 @@ class PITAuditService:
                         if expected.empty
                         else pd.concat([expected, fallback], ignore_index=True)
                     )
-        return len(expected.drop_duplicates(list(contract.audit_entity_keys)))
+        if expected.empty:
+            return set()
+        return {
+            self._entity_key_from_mapping(row, entity_keys)
+            for row in expected.drop_duplicates(list(entity_keys)).to_dict("records")
+        }
+
+    async def _output_entity_keys(
+        self,
+        contract: PITTaskContract,
+        coverage_period: Any,
+        *,
+        output_columns: Optional[set[str]] = None,
+    ) -> set[Tuple[Any, ...]]:
+        if coverage_period is None:
+            return set()
+        columns = (
+            output_columns
+            if output_columns is not None
+            else await self._get_columns(contract.output_table)
+        )
+        entity_keys = tuple(contract.audit_entity_keys)
+        required = set(entity_keys) | {contract.pit_time_key}
+        if not required <= columns:
+            return set()
+
+        relation = _qualified(contract.output_table)
+        time_key = _quote_identifier(contract.pit_time_key)
+        selected = ", ".join(
+            f"t.{_quote_identifier(key)}" for key in entity_keys
+        )
+        entity_not_null = " AND ".join(
+            f"t.{_quote_identifier(key)} IS NOT NULL" for key in entity_keys
+        )
+        scope_filter = self._task_scope_filter(contract, "t")
+        rows = await self.db.fetch(
+            f"""
+            SELECT DISTINCT {selected}
+            FROM {relation} t
+            WHERE t.{time_key} = $1
+              AND {entity_not_null}
+              {scope_filter}
+            ORDER BY {selected}
+            """,
+            coverage_period,
+        )
+        return {
+            self._entity_key_from_mapping(row, entity_keys)
+            for row in rows
+        }
+
+    async def _etf_entity_coverage_stats(
+        self,
+        contract: PITTaskContract,
+        coverage_period: Any,
+        *,
+        output_columns: Optional[set[str]] = None,
+    ) -> Dict[str, Any]:
+        expected = await self._etf_expected_entity_keys(contract, coverage_period)
+        actual = await self._output_entity_keys(
+            contract,
+            coverage_period,
+            output_columns=output_columns,
+        )
+        matched = expected & actual
+        missing = expected - actual
+        unexpected = actual - expected
+        entity_keys = tuple(contract.audit_entity_keys)
+        return {
+            "entity_keys": list(entity_keys),
+            "expected_entity_count": len(expected),
+            "actual_entity_count": len(actual),
+            "matched_entity_count": len(matched),
+            "missing_count": len(missing),
+            "unexpected_count": len(unexpected),
+            "mismatch_count": len(missing) + len(unexpected),
+            "missing_examples": self._entity_key_examples(entity_keys, missing),
+            "unexpected_examples": self._entity_key_examples(
+                entity_keys, unexpected
+            ),
+            "examples_limit": 10,
+        }
 
     async def _select_etf_official_snapshots(
         self,
@@ -1452,7 +1673,8 @@ AND EXISTS (
                    row_count,
                    coverage_rate,
                    gap_count,
-                   status
+                   status,
+                   details_json
             FROM pit.pit_audit_snapshot
             WHERE task_name = $1
             ORDER BY snapshot_time DESC
@@ -1462,6 +1684,19 @@ AND EXISTS (
         )
         if not row:
             return None
+        details = row["details_json"] or {}
+        if isinstance(details, str):
+            try:
+                details = json.loads(details)
+            except (TypeError, ValueError):
+                details = {}
+        if not isinstance(details, dict):
+            details = {}
+
+        def detail_count(name: str) -> Optional[int]:
+            value = details.get(name)
+            return int(value) if value is not None else None
+
         return {
             "last_audit_time": row["snapshot_time"],
             "audited_latest_date": row["latest_pit_time"],
@@ -1470,6 +1705,9 @@ AND EXISTS (
                 float(row["coverage_rate"]) if row["coverage_rate"] is not None else None
             ),
             "audited_gap_count": int(row["gap_count"]) if row["gap_count"] is not None else None,
+            "audited_missing_count": detail_count("missing_count"),
+            "audited_unexpected_count": detail_count("unexpected_count"),
+            "audited_mismatch_count": detail_count("mismatch_count"),
             "audit_status": row["status"],
         }
 

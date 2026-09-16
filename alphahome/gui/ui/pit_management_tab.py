@@ -71,7 +71,8 @@ def create_pit_management_tab(parent: ttk.Frame) -> Dict[str, tk.Widget]:
         "latest_date",
         "row_count",
         "coverage_rate",
-        "gap_count",
+        "missing_count",
+        "unexpected_count",
         "last_execution_status",
         "last_execution_time",
         "last_audit_time",
@@ -87,7 +88,8 @@ def create_pit_management_tab(parent: ttk.Frame) -> Dict[str, tk.Widget]:
         "latest_date": "最新日期",
         "row_count": "行数",
         "coverage_rate": "覆盖率",
-        "gap_count": "缺口数",
+        "missing_count": "缺失数",
+        "unexpected_count": "额外数",
         "last_execution_status": "最近执行状态",
         "last_execution_time": "最近执行时间",
         "last_audit_time": "最近审计时间",
@@ -104,7 +106,8 @@ def create_pit_management_tab(parent: ttk.Frame) -> Dict[str, tk.Widget]:
     tree.column("latest_date", width=140, minwidth=120, anchor=tk.CENTER, stretch=False)
     tree.column("row_count", width=110, minwidth=90, anchor=tk.E, stretch=False)
     tree.column("coverage_rate", width=100, minwidth=80, anchor=tk.CENTER, stretch=False)
-    tree.column("gap_count", width=90, minwidth=80, anchor=tk.E, stretch=False)
+    tree.column("missing_count", width=90, minwidth=80, anchor=tk.E, stretch=False)
+    tree.column("unexpected_count", width=90, minwidth=80, anchor=tk.E, stretch=False)
     tree.column("last_execution_status", width=150, minwidth=120, anchor=tk.CENTER, stretch=False)
     tree.column("last_execution_time", width=170, minwidth=150, anchor=tk.CENTER, stretch=False)
     tree.column("last_audit_time", width=170, minwidth=150, anchor=tk.CENTER, stretch=False)

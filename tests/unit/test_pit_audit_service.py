@@ -680,7 +680,14 @@ async def test_etf_fapi_denominator_uses_matching_member_universes():
             self.query = query
             if "information_schema.tables" in query:
                 return {"exists": True}
-            return {"cnt": 87}
+            raise AssertionError(query)
+
+        async def fetch(self, query, *args):
+            self.query = query
+            return [
+                {"index_code": f"INDEX_{index:03d}"}
+                for index in range(87)
+            ]
 
     contract = _etf_audit_contract(
         "etf_index_fapi",
@@ -693,7 +700,7 @@ async def test_etf_fapi_denominator_uses_matching_member_universes():
     count = await PITAuditService(db)._denominator_count(contract, date(2026, 8, 31))
 
     assert count == 87
-    assert "COUNT(DISTINCT index_code)" in db.query
+    assert "SELECT DISTINCT index_code" in db.query
 
 
 @pytest.mark.asyncio
