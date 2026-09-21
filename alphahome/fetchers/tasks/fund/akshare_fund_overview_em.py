@@ -105,11 +105,21 @@ class AkShareFundOverviewEmTask(AkShareFundCodeBatchMixin, AkShareTask):
             **kwargs,
         )
 
-    async def fetch_batch(self, params: Dict[str, Any], stop_event=None) -> Optional[pd.DataFrame]:
+    async def fetch_batch(
+        self, params: Dict[str, Any], stop_event=None
+    ) -> Optional[pd.DataFrame]:
+        symbol = normalize_fund_code(params.get("symbol"))
+        if not symbol:
+            self.logger.info(
+                "%s: fund_code=%s 不是 AkShare 支持的六位数字代码，按不适用跳过。",
+                self.name,
+                params.get("fund_code") or params.get("symbol"),
+            )
+            return None
         data = await self.api.call(
             func_name=self.api_name,
             stop_event=stop_event,
-            symbol=params["symbol"],
+            symbol=symbol,
         )
         if data is None or data.empty:
             return None
@@ -121,7 +131,9 @@ class AkShareFundOverviewEmTask(AkShareFundCodeBatchMixin, AkShareTask):
         if data is None or data.empty:
             return data
 
-        if {"fund_code", "snapshot_date", "management_fee_rate_pct"}.issubset(data.columns):
+        if {"fund_code", "snapshot_date", "management_fee_rate_pct"}.issubset(
+            data.columns
+        ):
             schema_columns = [col for col in self.schema_def if col in data.columns]
             return data[schema_columns].copy()
 
@@ -133,10 +145,18 @@ class AkShareFundOverviewEmTask(AkShareFundCodeBatchMixin, AkShareTask):
 
         data = data.copy()
         data["fund_code"] = fund_code
-        data["management_fee_rate_pct"] = data.get("management_fee_text", pd.Series(index=data.index)).apply(parse_percent)
-        data["custodian_fee_rate_pct"] = data.get("custodian_fee_text", pd.Series(index=data.index)).apply(parse_percent)
-        data["sales_service_fee_rate_pct"] = data.get("sales_service_fee_text", pd.Series(index=data.index)).apply(parse_percent)
-        data["max_subscription_fee_rate_pct"] = data.get("max_subscription_fee_text", pd.Series(index=data.index)).apply(parse_percent)
+        data["management_fee_rate_pct"] = data.get(
+            "management_fee_text", pd.Series(index=data.index)
+        ).apply(parse_percent)
+        data["custodian_fee_rate_pct"] = data.get(
+            "custodian_fee_text", pd.Series(index=data.index)
+        ).apply(parse_percent)
+        data["sales_service_fee_rate_pct"] = data.get(
+            "sales_service_fee_text", pd.Series(index=data.index)
+        ).apply(parse_percent)
+        data["max_subscription_fee_rate_pct"] = data.get(
+            "max_subscription_fee_text", pd.Series(index=data.index)
+        ).apply(parse_percent)
         data["snapshot_date"] = self._resolve_snapshot_date(**kwargs)
         data["raw_json"] = data.apply(row_to_json, axis=1)
 

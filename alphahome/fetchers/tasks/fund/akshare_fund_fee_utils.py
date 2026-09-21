@@ -30,7 +30,7 @@ def normalize_fund_code(value: Any) -> Optional[str]:
     if "." in text:
         text = text.split(".", 1)[0]
     match = re.search(r"\d{6}", text)
-    return match.group(0) if match else text
+    return match.group(0) if match else None
 
 
 def parse_code_list(value: Any) -> List[str]:
@@ -72,7 +72,7 @@ class AkShareFundCodeBatchMixin:
             or getattr(self, "task_specific_config", {}).get("codes")
         )
         codes = parse_code_list(configured)
-        if not codes:
+        if not codes and configured in (None, ""):
             query = """
                 SELECT ts_code
                 FROM tushare.fund_basic
@@ -83,7 +83,9 @@ class AkShareFundCodeBatchMixin:
             codes = [normalize_fund_code(row["ts_code"]) for row in rows]
             codes = [code for code in codes if code]
 
-        max_codes = kwargs.get("max_codes") or getattr(self, "task_specific_config", {}).get("max_codes")
+        max_codes = kwargs.get("max_codes") or getattr(
+            self, "task_specific_config", {}
+        ).get("max_codes")
         if max_codes not in (None, ""):
             codes = codes[: max(0, int(max_codes))]
         return list(dict.fromkeys(codes))
@@ -102,7 +104,10 @@ class AkShareFundCodeBatchMixin:
 
         current_date, month_start, next_month = self._current_snapshot_month_window()
         if self._parse_bool(
-            kwargs.get("force_refresh", getattr(self, "task_specific_config", {}).get("force_refresh")),
+            kwargs.get(
+                "force_refresh",
+                getattr(self, "task_specific_config", {}).get("force_refresh"),
+            ),
             False,
         ):
             return self._attach_snapshot_date(batches, current_date)
@@ -130,12 +135,11 @@ class AkShareFundCodeBatchMixin:
                 for row in rows
                 if row["first_snapshot_date"] is not None
             ]
-            existing = {
-                self._existing_month_key(row, key_columns)
-                for row in rows
-            }
+            existing = {self._existing_month_key(row, key_columns) for row in rows}
         except Exception as exc:
-            self.logger.warning("%s: 查询本月已入库批次失败，将执行完整批次: %s", self.name, exc)
+            self.logger.warning(
+                "%s: 查询本月已入库批次失败，将执行完整批次: %s", self.name, exc
+            )
             return self._attach_snapshot_date(batches, current_date)
 
         if not existing:
@@ -146,7 +150,9 @@ class AkShareFundCodeBatchMixin:
             )
             return self._attach_snapshot_date(batches, current_date)
 
-        snapshot_anchor = min(first_snapshot_dates) if first_snapshot_dates else current_date
+        snapshot_anchor = (
+            min(first_snapshot_dates) if first_snapshot_dates else current_date
+        )
         filtered = [
             batch
             for batch in batches
@@ -190,7 +196,9 @@ class AkShareFundCodeBatchMixin:
         return parsed.strftime("%Y-%m-%d")
 
     @staticmethod
-    def _existing_month_key(row: Any, key_fields: Sequence[str]) -> tuple[Optional[str], ...]:
+    def _existing_month_key(
+        row: Any, key_fields: Sequence[str]
+    ) -> tuple[Optional[str], ...]:
         values: list[Optional[str]] = []
         for field in key_fields:
             value = row[field]
@@ -220,7 +228,9 @@ def parse_flat_fee_yuan(value: Any) -> Optional[float]:
     return float(match.group(1)) if match else None
 
 
-def split_original_discount_fee(value: Any) -> tuple[Optional[float], Optional[float], Optional[float], str]:
+def split_original_discount_fee(
+    value: Any,
+) -> tuple[Optional[float], Optional[float], Optional[float], str]:
     """Parse Eastmoney fee text into original rate, discounted rate, and flat fee."""
     text = "" if value is None or pd.isna(value) else str(value).strip()
     if "|" in text:

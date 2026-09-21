@@ -53,6 +53,9 @@ from alphahome.fetchers.tasks.stock.tushare_stock_report_rc import (
 from alphahome.fetchers.tasks.stock.tushare_stock_limitprice import (
     TushareStockLimitPriceTask,
 )
+from alphahome.fetchers.tasks.stock.tushare_stock_thsindex import (
+    TushareStockThsIndexTask,
+)
 
 
 def _validate(task_cls, data):
@@ -317,6 +320,55 @@ def test_ahcomparison_allows_one_market_close_to_be_missing():
 
     assert passed is True
     assert details["failed_validations"] == {}
+
+
+def test_thsindex_allows_unknown_count_but_rejects_negative_count():
+    common = {
+        "ts_code": ["883400.TI"],
+        "name": ["测试指数"],
+        "exchange": ["A"],
+        "type": ["S"],
+    }
+
+    passed, _, details = _validate(
+        TushareStockThsIndexTask,
+        {**common, "count": [np.nan]},
+    )
+    assert passed is True
+    assert details["failed_validations"] == {}
+
+    passed, _, details = _validate(
+        TushareStockThsIndexTask,
+        {**common, "count": [-1]},
+    )
+    assert passed is False
+    assert details["failed_validations"] == {"成分个数有值时不能为负数": "1行失败"}
+
+
+@pytest.mark.asyncio
+async def test_thsindex_publishes_one_atomic_full_snapshot():
+    class ReplaceDB:
+        def __init__(self):
+            self.calls = []
+
+        async def replace_from_dataframe(self, **kwargs):
+            self.calls.append(kwargs)
+            return len(kwargs["df"])
+
+    db = ReplaceDB()
+    task = TushareStockThsIndexTask(
+        db_connection=db,
+        api_token="test-token",
+        api=object(),
+        task_config={"stream_batches": True},
+    )
+    data = pd.DataFrame({"ts_code": ["883400.TI"], "name": ["测试指数"]})
+
+    assert task._should_stream_batches({"stream_batches": True}) is False
+    assert await task._save_to_database(data) == 1
+    assert len(db.calls) == 1
+    assert db.calls[0]["target"] is task
+    assert db.calls[0]["timestamp_column"] == "update_time"
 
 
 def test_holdernumber_process_drops_unusable_source_rows():

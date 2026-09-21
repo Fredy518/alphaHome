@@ -2,12 +2,13 @@
 # -*- coding: utf-8 -*-
 
 """
-同花顺概念和行业指数 (ths_index) 全量更新任务
-获取同花顺板块指数基本信息，每次执行时替换数据库中的旧数据。
-继承自 TushareTask，利用 pre_execute 清空表。
+同花顺概念和行业指数 (ths_index) 全量更新任务。
+
+获取同花顺板块指数基本信息，并在完整数据获取及校验成功后原子替换旧快照。
 """
 
-from typing import Any, Dict, List
+import asyncio
+from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
@@ -42,6 +43,7 @@ class TushareStockThsIndexTask(TushareTask):
     # --- 代码级默认配置 (会被 config.json 覆盖) --- #
     default_concurrent_limit = 1
     default_page_size = 8000
+    default_stream_batches = False
 
     # 2. TushareTask 特有属性
     api_name = "ths_index"
@@ -108,17 +110,50 @@ class TushareStockThsIndexTask(TushareTask):
         self.logger.info(f"任务 {self.name}: 全量获取模式，生成单一批次。")
         return [{}]  # 触发一次不带参数的 API 调用
 
+    def _should_stream_batches(self, kwargs: Optional[Dict[str, Any]] = None) -> bool:
+        """完整快照必须聚合并校验完毕后一次性替换，禁止流式分段写入。"""
+        return False
+
+    async def _save_to_database(
+        self,
+        data: pd.DataFrame,
+        stop_event: Optional[asyncio.Event] = None,
+        **kwargs: Any,
+    ) -> int:
+        """在同一事务中发布完整快照，自动清除源端已经删除的指数。"""
+        if stop_event and stop_event.is_set():
+            raise asyncio.CancelledError("任务在原子替换前被取消")
+
+        return await self.db.replace_from_dataframe(
+            df=data,
+            target=self,
+            timestamp_column="update_time" if self.auto_add_update_time else None,
+        )
+
     # 7. 数据验证规则 (真正生效的验证机制)
     validations = [
-        (lambda df: df['ts_code'].notna(), "指数代码不能为空"),
-        (lambda df: df['name'].notna(), "指数名称不能为空"),
-        (lambda df: df['count'].notna(), "成分个数不能为空"),
-        (lambda df: df['exchange'].notna(), "交易所不能为空"),
-        (lambda df: df['type'].notna(), "指数类型不能为空"),
-        (lambda df: ~(df['name'].astype(str).str.strip().eq('') | df['name'].isna()), "指数名称不能为空字符串"),
-        (lambda df: ~(df['exchange'].astype(str).str.strip().eq('') | df['exchange'].isna()), "交易所不能为空字符串"),
-        (lambda df: ~(df['type'].astype(str).str.strip().eq('') | df['type'].isna()), "指数类型不能为空字符串"),
-        (lambda df: df['count'] >= 0, "成分个数不能为负数"),
+        (lambda df: df["ts_code"].notna(), "指数代码不能为空"),
+        (lambda df: df["name"].notna(), "指数名称不能为空"),
+        (lambda df: df["exchange"].notna(), "交易所不能为空"),
+        (lambda df: df["type"].notna(), "指数类型不能为空"),
+        (
+            lambda df: ~(df["name"].astype(str).str.strip().eq("") | df["name"].isna()),
+            "指数名称不能为空字符串",
+        ),
+        (
+            lambda df: ~(
+                df["exchange"].astype(str).str.strip().eq("") | df["exchange"].isna()
+            ),
+            "交易所不能为空字符串",
+        ),
+        (
+            lambda df: ~(df["type"].astype(str).str.strip().eq("") | df["type"].isna()),
+            "指数类型不能为空字符串",
+        ),
+        (
+            lambda df: df["count"].isna() | (df["count"] >= 0),
+            "成分个数有值时不能为负数",
+        ),
     ]
 
 

@@ -505,6 +505,7 @@ class DatabaseOperationsMixin:
         conflict_columns: Optional[List[str]] = None,
         update_columns: Optional[List[str]] = None,
         timestamp_column: Optional[str] = None,
+        replace_existing: bool = False,
     ):
         """将DataFrame数据高效复制并可选地UPSERT到数据库表中。
 
@@ -527,6 +528,8 @@ class DatabaseOperationsMixin:
                                                 如果为None且conflict_columns已指定，则更新所有非冲突列。
             timestamp_column (Optional[str]): 时间戳列名。如果指定并在冲突时更新，
                                              如果其他数据列发生变化或特定条件下，该列将自动更新为当前时间。
+            replace_existing (bool): 是否在同一事务中用完整 DataFrame 替换目标表。
+                                     临时表加载成功后才锁表、删除旧数据并写入新快照。
 
         Returns:
             int: 影响的总行数 (指通过COPY命令加载到临时表的行数)。
@@ -538,7 +541,11 @@ class DatabaseOperationsMixin:
         # 性能监控：记录开始时间
         start_time = time.time()
         batch_size = len(df)
-        operation_type = "upsert" if conflict_columns else "copy_from_dataframe"
+        operation_type = (
+            "replace_from_dataframe"
+            if replace_existing
+            else "upsert" if conflict_columns else "copy_from_dataframe"
+        )
         if self.pool is None: # type: ignore
             await self.connect() # type: ignore
 
@@ -668,7 +675,26 @@ class DatabaseOperationsMixin:
                     # 3. 从临时表插入/更新到目标表
                     target_col_str = ", ".join([f'"{col}"' for col in df_columns])
 
-                    if conflict_columns:
+                    if replace_existing:
+                        # 完整快照替换：先把所有新数据复制到事务内临时表，成功后再短暂
+                        # 锁定目标表并替换。任一步失败都会由外层事务回滚，旧快照仍可见。
+                        await conn.execute(
+                            f"LOCK TABLE {resolved_table_name} IN ACCESS EXCLUSIVE MODE;",
+                            timeout=bulk_execute_timeout_seconds,
+                        )
+                        await conn.execute(
+                            f"DELETE FROM {resolved_table_name};",
+                            timeout=bulk_execute_timeout_seconds,
+                        )
+                        replace_sql = f'''
+                        INSERT INTO {resolved_table_name} ({target_col_str})
+                        SELECT {target_col_str} FROM "{temp_table}";
+                        '''
+                        await conn.execute(
+                            replace_sql,
+                            timeout=bulk_execute_timeout_seconds,
+                        )
+                    elif conflict_columns:
                         # --- UPSERT 逻辑 ---
                         conflict_col_str = ", ".join([f'"{col}"' for col in conflict_columns])
 
@@ -801,6 +827,20 @@ class DatabaseOperationsMixin:
             conflict_columns=conflict_columns,
             update_columns=update_columns,
             timestamp_column=timestamp_column,
+        )
+
+    async def replace_from_dataframe(
+        self,
+        df: pd.DataFrame,
+        target: Any,
+        timestamp_column: Optional[str] = None,
+    ):
+        """原子地用完整 DataFrame 替换目标表。"""
+        return await self.copy_from_dataframe(
+            df=df,
+            target=target,
+            timestamp_column=timestamp_column,
+            replace_existing=True,
         )
 
     def get_performance_statistics(self) -> Dict[str, Any]:

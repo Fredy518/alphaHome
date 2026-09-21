@@ -5,9 +5,11 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
+import requests
 
 from ...sources.akshare.akshare_api import AkShareAPIError
 from ...sources.akshare.akshare_task import AkShareTask
@@ -40,7 +42,17 @@ class AkShareFundIndividualDetailInfoXqTask(AkShareFundCodeBatchMixin, AkShareTa
     default_timeout = 10
     default_concurrent_limit = 4
     default_request_interval = 0.15
-    missing_payload_fields = ("data", "declare_rate_table")
+    missing_payload_fields = (
+        "data",
+        "declare_rate_table",
+        "withdraw_rate_table",
+        "other_rate_table",
+    )
+    rate_table_labels = {
+        "declare_rate_table": "买入规则",
+        "withdraw_rate_table": "卖出规则",
+        "other_rate_table": "其他费用",
+    }
 
     column_mapping = {
         "费用类型": "fee_type",
@@ -84,14 +96,19 @@ class AkShareFundIndividualDetailInfoXqTask(AkShareFundCodeBatchMixin, AkShareTa
             or getattr(self, "task_specific_config", {}).get("timeout")
             or self.default_timeout
         )
-        batches = [{"fund_code": code, "symbol": code, "timeout": float(timeout)} for code in codes]
+        batches = [
+            {"fund_code": code, "symbol": code, "timeout": float(timeout)}
+            for code in codes
+        ]
         return await self._exclude_existing_month_batches(
             batches,
             key_fields=("fund_code",),
             **kwargs,
         )
 
-    async def fetch_batch(self, params: Dict[str, Any], stop_event=None) -> Optional[pd.DataFrame]:
+    async def fetch_batch(
+        self, params: Dict[str, Any], stop_event=None
+    ) -> Optional[pd.DataFrame]:
         try:
             data = await self.api.call(
                 func_name=self.api_name,
@@ -102,18 +119,99 @@ class AkShareFundIndividualDetailInfoXqTask(AkShareFundCodeBatchMixin, AkShareTa
         except AkShareAPIError as exc:
             missing_field = self._missing_payload_field_from_error(exc)
             if missing_field:
-                self.logger.info(
-                    "%s: fund_code=%s 雪球蛋卷详情缺少 %s 字段，按无数据跳过。",
-                    self.name,
-                    params.get("fund_code") or params.get("symbol"),
-                    missing_field,
+                data = await self._fetch_available_rate_tables(
+                    params["symbol"],
+                    timeout=params.get("timeout"),
+                    stop_event=stop_event,
                 )
-                return None
-            raise
+                if data is not None and not data.empty:
+                    self.logger.info(
+                        "%s: fund_code=%s 缺少 %s 字段，已保留其余 %s 行费率规则。",
+                        self.name,
+                        params.get("fund_code") or params.get("symbol"),
+                        missing_field,
+                        len(data),
+                    )
+                else:
+                    self.logger.info(
+                        "%s: fund_code=%s 雪球蛋卷详情缺少 %s 字段且无其他费率规则，按无数据跳过。",
+                        self.name,
+                        params.get("fund_code") or params.get("symbol"),
+                        missing_field,
+                    )
+                    return None
+            else:
+                raise
         if data is None or data.empty:
             return None
         transformed = self.data_transformer.process_data(data)
         return self.process_data(transformed, **params)
+
+    async def _fetch_available_rate_tables(
+        self,
+        symbol: str,
+        *,
+        timeout: Optional[float],
+        stop_event=None,
+    ) -> Optional[pd.DataFrame]:
+        """Recover the valid fee sections when AkShare assumes every section exists."""
+        if stop_event and stop_event.is_set():
+            raise asyncio.CancelledError("操作被用户取消")
+        try:
+            return await asyncio.to_thread(
+                self._read_available_rate_tables,
+                symbol,
+                timeout,
+            )
+        except (requests.RequestException, ValueError, TypeError, KeyError) as exc:
+            raise AkShareAPIError(
+                f"akshare.{self.api_name} 缺字段后的兼容解析失败: {exc}"
+            ) from exc
+
+    @classmethod
+    def _read_available_rate_tables(
+        cls,
+        symbol: str,
+        timeout: Optional[float],
+    ) -> Optional[pd.DataFrame]:
+        response = requests.get(
+            f"https://danjuanfunds.com/djapi/fund/detail/{symbol}",
+            headers={
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 Chrome/80.0.3987.149 Safari/537.36"
+                )
+            },
+            timeout=timeout,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        data = payload.get("data") if isinstance(payload, dict) else None
+        rates = data.get("fund_rates") if isinstance(data, dict) else None
+        if not isinstance(rates, dict):
+            return None
+
+        frames: List[pd.DataFrame] = []
+        for field, label in cls.rate_table_labels.items():
+            rows = rates.get(field)
+            if not rows:
+                continue
+            frame = pd.DataFrame.from_records(rows)
+            missing = {"name", "value"} - set(frame.columns)
+            if missing:
+                raise ValueError(f"{field} 缺少字段: {sorted(missing)}")
+            frame = frame[["name", "value"]].copy()
+            frame.insert(0, "费用类型", label)
+            frame.rename(
+                columns={"name": "条件或名称", "value": "费用"},
+                inplace=True,
+            )
+            frames.append(frame)
+        if not frames:
+            return None
+        combined = pd.concat(frames, ignore_index=True)
+        combined["费用"] = pd.to_numeric(combined["费用"], errors="coerce")
+        return combined
 
     def _missing_payload_field_from_error(self, exc: Exception) -> Optional[str]:
         message = str(exc)
@@ -127,7 +225,13 @@ class AkShareFundIndividualDetailInfoXqTask(AkShareFundCodeBatchMixin, AkShareTa
         if data is None or data.empty:
             return data
 
-        if {"fund_code", "row_no", "fee_type", "snapshot_date", "fee_unit_hint"}.issubset(data.columns):
+        if {
+            "fund_code",
+            "row_no",
+            "fee_type",
+            "snapshot_date",
+            "fee_unit_hint",
+        }.issubset(data.columns):
             schema_columns = [col for col in self.schema_def if col in data.columns]
             return data[schema_columns].copy()
 

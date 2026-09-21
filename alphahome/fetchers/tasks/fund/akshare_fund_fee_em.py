@@ -54,7 +54,7 @@ class AkShareFundFeeEmTask(AkShareFundCodeBatchMixin, AkShareTask):
 
     api_name = "fund_fee_em"
     default_indicators = ("申购费率（前端）", "赎回费率", "运作费用")
-    known_optional_indicators = {"申购费率（前端）", "赎回费率"}
+    known_optional_indicators = {"申购费率（前端）", "赎回费率", "运作费用"}
     default_stream_save_batch_size = 3000
 
     schema_def = {
@@ -114,9 +114,7 @@ class AkShareFundFeeEmTask(AkShareFundCodeBatchMixin, AkShareTask):
                     list(columns),
                 )
                 columns_to_alter = [
-                    row["column_name"]
-                    for row in rows
-                    if row["data_type"] != "text"
+                    row["column_name"] for row in rows if row["data_type"] != "text"
                 ]
                 if not columns_to_alter:
                     return
@@ -126,14 +124,14 @@ class AkShareFundFeeEmTask(AkShareFundCodeBatchMixin, AkShareTask):
                     await self.db.connect()
                 async with self.db.pool.acquire() as conn:
                     async with conn.transaction():
-                        await conn.execute('DROP VIEW IF EXISTS "rawdata"."fund_fee_em"')
+                        await conn.execute(
+                            'DROP VIEW IF EXISTS "rawdata"."fund_fee_em"'
+                        )
                         for column in columns_to_alter:
-                            await conn.execute(
-                                f"""
+                            await conn.execute(f"""
                                 ALTER TABLE {self.get_full_table_name()}
                                 ALTER COLUMN {column} TYPE TEXT
-                                """
-                            )
+                                """)
                         await conn.execute(rawdata_view_sql)
                 self.logger.info(
                     "%s: 已将字段扩展为 TEXT: %s。",
@@ -141,7 +139,9 @@ class AkShareFundFeeEmTask(AkShareFundCodeBatchMixin, AkShareTask):
                     ", ".join(columns_to_alter),
                 )
         except Exception as exc:
-            self.logger.warning("%s: 扩展文本字段为 TEXT 失败，将继续执行: %s", self.name, exc)
+            self.logger.warning(
+                "%s: 扩展文本字段为 TEXT 失败，将继续执行: %s", self.name, exc
+            )
 
     @staticmethod
     def _rawdata_view_sql() -> str:
@@ -171,10 +171,16 @@ class AkShareFundFeeEmTask(AkShareFundCodeBatchMixin, AkShareTask):
         """
 
     def _resolve_indicators(self, **kwargs: Any) -> List[str]:
-        configured = kwargs.get("indicators") or getattr(self, "task_specific_config", {}).get("indicators")
+        configured = kwargs.get("indicators") or getattr(
+            self, "task_specific_config", {}
+        ).get("indicators")
         indicators: List[str] = []
         if isinstance(configured, str):
-            indicators = [item.strip() for item in configured.replace(";", ",").split(",") if item.strip()]
+            indicators = [
+                item.strip()
+                for item in configured.replace(";", ",").split(",")
+                if item.strip()
+            ]
         elif isinstance(configured, (list, tuple, set)):
             indicators = [str(item).strip() for item in configured if str(item).strip()]
         if not indicators:
@@ -203,9 +209,13 @@ class AkShareFundFeeEmTask(AkShareFundCodeBatchMixin, AkShareTask):
             **kwargs,
         )
 
-    async def fetch_batch(self, params: Dict[str, Any], stop_event=None) -> Optional[pd.DataFrame]:
+    async def fetch_batch(
+        self, params: Dict[str, Any], stop_event=None
+    ) -> Optional[pd.DataFrame]:
         if params.get("indicator") in self.known_optional_indicators:
-            data = await self._call_optional_indicator_once(params, stop_event=stop_event)
+            data = await self._call_optional_indicator_once(
+                params, stop_event=stop_event
+            )
         else:
             data = await self.api.call(
                 func_name=self.api_name,
@@ -239,7 +249,9 @@ class AkShareFundFeeEmTask(AkShareFundCodeBatchMixin, AkShareTask):
         except KeyError as exc:
             missing_key = str(exc.args[0]) if exc.args else str(exc).strip("'\"")
             if missing_key == params["indicator"]:
-                fallback = await self._call_purchase_fee_title_fallback(params, stop_event=stop_event)
+                fallback = await self._call_purchase_fee_title_fallback(
+                    params, stop_event=stop_event
+                )
                 if fallback is not None and not fallback.empty:
                     return fallback
                 self.logger.info(
@@ -255,7 +267,9 @@ class AkShareFundFeeEmTask(AkShareFundCodeBatchMixin, AkShareTask):
             self.logger.warning("akshare.%s 返回 None，参数: %s", self.api_name, params)
             return None
         if isinstance(result, pd.DataFrame):
-            self.logger.info("akshare.%s 成功返回 %s 行数据", self.api_name, len(result))
+            self.logger.info(
+                "akshare.%s 成功返回 %s 行数据", self.api_name, len(result)
+            )
         return result
 
     async def _call_purchase_fee_title_fallback(
@@ -269,7 +283,9 @@ class AkShareFundFeeEmTask(AkShareFundCodeBatchMixin, AkShareTask):
             raise asyncio.CancelledError("操作被用户取消")
 
         await self.api._wait_for_rate_limit()
-        data = await asyncio.to_thread(self._read_fund_fee_table_by_title, params["symbol"], "申购费率")
+        data = await asyncio.to_thread(
+            self._read_fund_fee_table_by_title, params["symbol"], "申购费率"
+        )
         if data is None or data.empty:
             return None
         self.logger.info(
@@ -281,7 +297,9 @@ class AkShareFundFeeEmTask(AkShareFundCodeBatchMixin, AkShareTask):
         return data
 
     @staticmethod
-    def _read_fund_fee_table_by_title(symbol: str, title: str) -> Optional[pd.DataFrame]:
+    def _read_fund_fee_table_by_title(
+        symbol: str, title: str
+    ) -> Optional[pd.DataFrame]:
         url = f"https://fundf10.eastmoney.com/jjfl_{symbol}.html"
         response = requests.get(url, timeout=15)
         response.raise_for_status()
@@ -301,7 +319,9 @@ class AkShareFundFeeEmTask(AkShareFundCodeBatchMixin, AkShareTask):
         if data is None or data.empty:
             return data
 
-        if {"fund_code", "indicator", "row_no", "rule_type", "snapshot_date"}.issubset(data.columns):
+        if {"fund_code", "indicator", "row_no", "rule_type", "snapshot_date"}.issubset(
+            data.columns
+        ):
             schema_columns = [col for col in self.schema_def if col in data.columns]
             return data[schema_columns].copy()
 
@@ -316,9 +336,13 @@ class AkShareFundFeeEmTask(AkShareFundCodeBatchMixin, AkShareTask):
 
         snapshot_date = self._resolve_snapshot_date(**kwargs)
         if indicator == "运作费用":
-            normalized = self._normalize_operation_fee(data, fund_code, indicator, snapshot_date)
+            normalized = self._normalize_operation_fee(
+                data, fund_code, indicator, snapshot_date
+            )
         else:
-            normalized = self._normalize_schedule_fee(data, fund_code, indicator, snapshot_date)
+            normalized = self._normalize_schedule_fee(
+                data, fund_code, indicator, snapshot_date
+            )
 
         schema_columns = [col for col in self.schema_def if col in normalized.columns]
         return normalized[schema_columns].copy()
@@ -338,12 +362,18 @@ class AkShareFundFeeEmTask(AkShareFundCodeBatchMixin, AkShareTask):
             fee_col = columns[1] if len(columns) > 1 else columns[0]
             condition_text = row.get(condition_col)
             fee_text = row.get(fee_col)
-            original_rate, discount_rate, flat_fee, fee_unit = split_original_discount_fee(fee_text)
+            original_rate, discount_rate, flat_fee, fee_unit = (
+                split_original_discount_fee(fee_text)
+            )
 
             min_amount = max_amount = None
             min_days = max_days = None
             rule_type = "fee_schedule"
-            if "金额" in str(condition_col) or "申购" in indicator or "认购" in indicator:
+            if (
+                "金额" in str(condition_col)
+                or "申购" in indicator
+                or "认购" in indicator
+            ):
                 rule_type = "amount_fee"
                 min_amount, max_amount = parse_amount_condition_wan(condition_text)
             elif "期限" in str(condition_col) or "赎回" in indicator:
@@ -356,7 +386,9 @@ class AkShareFundFeeEmTask(AkShareFundCodeBatchMixin, AkShareTask):
                     "indicator": indicator,
                     "row_no": idx + 1,
                     "rule_type": rule_type,
-                    "condition_text": None if pd.isna(condition_text) else str(condition_text),
+                    "condition_text": (
+                        None if pd.isna(condition_text) else str(condition_text)
+                    ),
                     "condition_min_amount_wan": min_amount,
                     "condition_max_amount_wan": max_amount,
                     "condition_min_holding_days": min_days,
@@ -365,7 +397,9 @@ class AkShareFundFeeEmTask(AkShareFundCodeBatchMixin, AkShareTask):
                     "original_rate_pct": original_rate,
                     "discount_rate_pct": discount_rate,
                     "flat_fee_amount_yuan": flat_fee,
-                    "fee_rate_pct": discount_rate if discount_rate is not None else original_rate,
+                    "fee_rate_pct": (
+                        discount_rate if discount_rate is not None else original_rate
+                    ),
                     "fee_unit": fee_unit,
                     "snapshot_date": snapshot_date,
                     "raw_json": row_to_json(row),
@@ -389,7 +423,11 @@ class AkShareFundFeeEmTask(AkShareFundCodeBatchMixin, AkShareTask):
             for i in range(0, len(values), 2):
                 item_name = values[i] if i < len(values) else None
                 fee_text = values[i + 1] if i + 1 < len(values) else None
-                if item_name is None or pd.isna(item_name) or str(item_name).strip() == "":
+                if (
+                    item_name is None
+                    or pd.isna(item_name)
+                    or str(item_name).strip() == ""
+                ):
                     continue
                 rate = parse_percent(fee_text)
                 rows.append(
@@ -399,7 +437,11 @@ class AkShareFundFeeEmTask(AkShareFundCodeBatchMixin, AkShareTask):
                         "row_no": row_no,
                         "rule_type": "operation_fee",
                         "item_name": str(item_name).strip(),
-                        "fee_text": None if fee_text is None or pd.isna(fee_text) else str(fee_text).strip(),
+                        "fee_text": (
+                            None
+                            if fee_text is None or pd.isna(fee_text)
+                            else str(fee_text).strip()
+                        ),
                         "flat_fee_amount_yuan": parse_flat_fee_yuan(fee_text),
                         "fee_rate_pct": rate,
                         "fee_unit": "pct_per_period" if rate is not None else "",

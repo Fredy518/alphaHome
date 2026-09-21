@@ -116,3 +116,24 @@ async def test_copy_from_dataframe_chunks_copy_but_merges_once():
     ]
     assert len(merge_calls) == 1
     assert merge_calls[0]["timeout"] == 22
+
+
+@pytest.mark.asyncio
+async def test_replace_from_dataframe_stages_then_replaces_in_one_transaction():
+    connection = _FakeConnection()
+    harness = _CopyHarness(connection)
+    data = pd.DataFrame({"id": [1, 2], "value": [10, 20]})
+
+    copied = await harness.replace_from_dataframe(data, target="target_table")
+
+    assert copied == 2
+    statements = [call["sql"] for call in connection.execute_calls]
+    lock_index = next(i for i, sql in enumerate(statements) if "LOCK TABLE" in sql)
+    delete_index = next(i for i, sql in enumerate(statements) if "DELETE FROM" in sql)
+    insert_index = next(
+        i
+        for i, sql in enumerate(statements)
+        if "INSERT INTO" in sql and "ON CONFLICT" not in sql
+    )
+    assert lock_index < delete_index < insert_index
+    assert "ON CONFLICT" not in statements[insert_index]
