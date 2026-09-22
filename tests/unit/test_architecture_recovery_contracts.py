@@ -22,6 +22,29 @@ def test_maintenance_sql_does_not_force_drop_dependencies():
     assert 'SELECT "ts_code", "trade_date" FROM "tushare"."stock_daily"' in sql
     with pytest.raises(ValueError):
         rawdata_mapping_sql('unsafe; DROP TABLE', 'tushare', 'stock_daily')
+    archived = rawdata_mapping_sql(
+        'macro_release_calendar',
+        'akshare',
+        'macro_release_calendar',
+        archive_existing_table='macro_release_calendar_legacy_20260922',
+    )
+    assert 'ALTER TABLE rawdata."macro_release_calendar" RENAME TO "macro_release_calendar_legacy_20260922"' in archived
+    assert "target_kind = 'r'" in archived
+    assert 'DROP' not in archived
+    with pytest.raises(ValueError, match='differ'):
+        rawdata_mapping_sql(
+            'macro_release_calendar',
+            'akshare',
+            'macro_release_calendar',
+            archive_existing_table='macro_release_calendar',
+        )
+    with pytest.raises(ValueError, match='identifier'):
+        rawdata_mapping_sql(
+            'macro_release_calendar',
+            'akshare',
+            'macro_release_calendar',
+            archive_existing_table='legacy; DROP TABLE',
+        )
     ledgers = recovery_schema_sql()
     assert 'pit.task_run' in ledgers and 'features.refresh_checkpoint' in ledgers
     assert 'UPDATE ' not in ledgers and 'DELETE ' not in ledgers

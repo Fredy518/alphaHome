@@ -38,7 +38,16 @@
 
 - 按 AlphaHome 现有约定，`rawdata` 主要作为统一访问视图层
 - 本任务的真实入库位置是 `akshare` schema
-- 在没有同名 `tushare` 表冲突时，系统会自动创建 `rawdata.macro_release_calendar -> akshare.macro_release_calendar` 的映射视图
+- 采集任务只验证 `rawdata.macro_release_calendar -> akshare.macro_release_calendar` 映射，不在采集事务中自动修改 schema
+- 映射缺失时需先执行显式迁移；若 `rawdata` 中已有同名旧实体表，必须先保留为归档表，再建立视图
+
+生成可审阅迁移 SQL（命令只打印 SQL，不连接数据库）：
+
+```bash
+python -m alphahome.common.maintenance_sql rawdata-mapping --view macro_release_calendar --source-schema akshare --source-table macro_release_calendar --archive-existing-table macro_release_calendar_legacy_20260922
+```
+
+迁移会在一个事务内把旧实体表重命名为归档表，再创建映射视图；不会删除旧表，也不会使用 `DROP CASCADE`。如果目标已经是视图，该命令可重复执行；如果归档名已被占用而目标仍是实体表，迁移会失败并回滚。
 
 核心字段：
 

@@ -19,14 +19,45 @@ def recovery_schema_sql():
             + CREATE_RUN_LEDGER_SQL + CREATE_CHECKPOINT_SQL + "\nCOMMIT;\n")
 
 
-def rawdata_mapping_sql(view, source_schema, source_table, columns=None):
+def rawdata_mapping_sql(
+    view,
+    source_schema,
+    source_table,
+    columns=None,
+    *,
+    archive_existing_table=None,
+):
     target = 'rawdata.' + _identifier(view)
     source = _identifier(source_schema) + '.' + _identifier(source_table)
     projection = ', '.join(_identifier(column) for column in columns) if columns else '*'
+    archive_sql = ''
+    if archive_existing_table is not None:
+        if archive_existing_table == view:
+            raise ValueError('Archive identifier must differ from mapping view')
+        archive = _identifier(archive_existing_table)
+        archive_sql = (
+            "DO $rawdata_mapping$\n"
+            "DECLARE target_kind \"char\";\n"
+            "BEGIN\n"
+            "  SELECT c.relkind INTO target_kind\n"
+            "  FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace\n"
+            f"  WHERE n.nspname = 'rawdata' AND c.relname = '{view}';\n"
+            "  IF target_kind = 'r' THEN\n"
+            f"    IF to_regclass('rawdata.{archive}') IS NOT NULL THEN\n"
+            f"      RAISE EXCEPTION 'archive relation rawdata.{archive_existing_table} already exists';\n"
+            "    END IF;\n"
+            f"    ALTER TABLE {target} RENAME TO {archive};\n"
+            "  ELSIF target_kind IS NOT NULL AND target_kind <> 'v' THEN\n"
+            f"    RAISE EXCEPTION 'rawdata.{view} has unsupported relation kind %', target_kind;\n"
+            "  END IF;\n"
+            "END\n"
+            "$rawdata_mapping$;\n"
+        )
     # OR REPLACE retains dependencies and fails on incompatible existing column
     # types/order. Never DROP CASCADE to force a routine mapping migration.
     return ("BEGIN;\nSET LOCAL lock_timeout = '5s';\nCREATE SCHEMA IF NOT EXISTS rawdata;\n"
-            f'CREATE OR REPLACE VIEW {target} AS SELECT {projection} FROM {source};\nCOMMIT;\n')
+            + archive_sql
+            + f'CREATE OR REPLACE VIEW {target} AS SELECT {projection} FROM {source};\nCOMMIT;\n')
 
 
 def main(argv=None):
@@ -38,9 +69,17 @@ def main(argv=None):
     mapping.add_argument('--source-schema', required=True)
     mapping.add_argument('--source-table', required=True)
     mapping.add_argument('--column', action='append', help='Explicit projection in existing view column order')
+    mapping.add_argument(
+        '--archive-existing-table',
+        help='Rename an existing rawdata base table to this name before creating the view',
+    )
     args = parser.parse_args(argv)
     sql = recovery_schema_sql() if args.operation == 'recovery-ledgers' else rawdata_mapping_sql(
-        args.view, args.source_schema, args.source_table, args.column,
+        args.view,
+        args.source_schema,
+        args.source_table,
+        args.column,
+        archive_existing_table=args.archive_existing_table,
     )
     print(sql, end='')
     return 0

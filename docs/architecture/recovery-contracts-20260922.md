@@ -24,7 +24,7 @@ PIT 批次新增跨进程运行锁；并行任务取消时先等待其余写入�
 以下是通用生产切换顺序。2026-09-22 已按该顺序完成恢复账本安装和 `stock_daily_enriched` 纵向样板迁移，结果见“生产采用记录”；其他 Features 配方和 PIT 产品仍需逐项执行，不能由样板结果推定已经迁移。
 
 1. **安装恢复表。** 在已有 PIT/Features 部署上运行 `python -m alphahome.common.maintenance_sql recovery-ledgers` 生成 SQL，审阅后针对明确数据库执行。它只新增两个账本及索引，不填充、认证或重写旧产物。已有初始化入口也包含这些 DDL。常规运行缺表会报 `migration_required`。
-2. **核对 rawdata 映射。** 对预检或采集返回的精确目标，使用 `python -m alphahome.common.maintenance_sql rawdata-mapping --view stock_daily --source-schema tushare --source-table stock_daily` 生成单对象 SQL。特殊列序用重复的 `--column` 指定。先检查供应商优先级、原列序、类型、权限和依赖；`OR REPLACE` 不兼容时停止，禁止用 `DROP CASCADE` 强推。
+2. **核对 rawdata 映射。** 对预检或采集返回的精确目标，使用 `python -m alphahome.common.maintenance_sql rawdata-mapping --view stock_daily --source-schema tushare --source-table stock_daily` 生成单对象 SQL。特殊列序用重复的 `--column` 指定。先检查供应商优先级、原列序、类型、权限和依赖；`OR REPLACE` 不兼容时停止，禁止用 `DROP CASCADE` 强推。若目标是必须保留的旧实体表，可显式增加 `--archive-existing-table <归档名>`，在同一事务中先重命名归档再建视图；归档名冲突时整笔迁移回滚。
 3. **选择纵向产品并建立基线。** 财务 PIT 先从管理器声明的历史起点执行 full_backfill，再运行增量；手工局部回填不替代这一步。行情 Features 对选中的配方执行 full 到明确截止日，再核对范围、业务键和新账本。使用现有 dry-run/plan_hash 入口冻结并核验执行计划，保存产物对照。不要直接把旧“最近成功时间”插入账本。
 4. **验收恢复而非只验收成功码。** 对样板核对停更 60 天后没有应有日期缺口；修订旧日期后该日期确实变化；上下游同批次到达新月；非空但漏键的结果拒绝发布；失败保留旧数据与旧水位。确定真实源的空值/行数阈值适用，门禁失败时查原因而不是关闭检查。
 5. **切换日常入口。** GUI 月度候选链观察到候选维护和后续 MV 两个结果都合格再视为完成。盘点所有外部计划任务、固定解释器和调用者；新入口验证通过后再启用对应调度。需要撤销旧远端凭据时，在其所属平台处理，不在报告或 URL 中复制凭据。
@@ -49,11 +49,13 @@ PIT 批次新增跨进程运行锁；并行任务取消时先等待其余写入�
 
 2026-09-22 发布前复跑：根项目离线 1,098 passed、2 skipped；隔离数据库 99 passed、4 skipped；FundPos 冻结运行时 161 passed。数据库轮包含本次新增的 15 个跨模块场景。两个历史 PITManager 模块在各轮均跳过，数据库轮另外两项因无真实 FTTM 样本跳过；外部 API 未执行。根测试使用现有 Python 3.12.7 测试依赖，未认证全新安装及生产依赖环境。
 
+ETF 月度发布与旧表归档修复后复跑：根项目 1,110 passed、108 skipped；其中数据库标记用例因未向普通测试进程提供隔离库而跳过。另在只监听 `127.0.0.1:55439` 的临时 PostgreSQL 17 集群执行新增的 5 项集成场景，5 项全部通过，随后停止该集群。外部 API 未执行。
+
 最小恢复表 SQL 已在隔离库重复执行两次成功。发布前复跑日志为 `current-final-unit.txt`、`current-final-postgres.txt`、`current-final-fundpos.txt`；可审阅迁移文件为 `recovery-ledgers.sql`。
 
 ## 生产采用记录（2026-09-22）
 
-本次生产采用只覆盖两个恢复账本和一个纵向 Features 产品，没有把测试通过扩张为整个项目已迁移：
+本次生产采用只覆盖两个恢复账本、一个纵向 Features 产品和一个精确 rawdata 映射，没有把测试通过扩张为整个项目已迁移：
 
 - 在明确的本机 PostgreSQL `alphadb` 上新增 `features.refresh_checkpoint` 和 `pit.task_run` 及其索引。DDL 哈希为 `bfcef2266b25baff2434bb8b6f79c77a1ab7f9143e224ae095276fbba665752f`；安装后两表为空。没有填充伪造水位。
 - 迁移前将 `features.mv_stock_daily_enriched` 的 457,386 行和表结构导出到仓库外。数据备份为 42,763,128 字节，SHA-256 为 `018c9df7be028428cac39dc0471c0ffd65e4ef97ad36d74b407925d7142e28e5`；结构备份 SHA-256 为 `73c841403b93fcb23ebf85f131c632594c3eebe100471c0f75b78d85b14face1`。
@@ -62,5 +64,6 @@ PIT 批次新增跨进程运行锁；并行任务取消时先等待其余写入�
 - 随后以计划哈希 `d2c862441566ae67998d241b44ecdb7c057839cc5441bbdb68fe1d6c69d3f358` 执行 2026-08-22 至 2026-09-21 的增量验收。计划与提交均为 116,521 行，耗时 30.063 秒；逐行复核零缺键、零多键、零字段差异，窗口外 18,399,326 行未重写，目标表 OID 保持 `1240194`。
 - 批量装载后 `pg_class.reltuples` 仍是迁移前的 457,386，故在再次核对总行数与截止日后对单表执行 `ANALYZE`。PostgreSQL 随后自动 vacuum 目标表，将估算死元组从约 533,755 降到 0；自动维护结束后再次 `ANALYZE`，最终规划器估算为 18,503,672，与真实行数相差约 0.066%。
 - 最终检查点为 `covered_from=1900-01-01`、`covered_through=2026-09-21`，并记录本次来源计数。执行结果仍标记 `source_consumption=unverified`：它证明按当前源重建的一致性，不证明历史时点可得性，也不授予研究、资金或订单权限。
+- `rawdata.macro_release_calendar` 原为 480 行旧实体表，业务期只覆盖至 2026-02-28；`akshare.macro_release_calendar` 为 496 行，覆盖至 2026-08-31。迁移前确认无外部依赖视图、无活动会话和关系锁；随后用哈希为 `6b02fd15763a6b3ac2232121ea7c2ac556d473d0f45901adf2225209af02e2a6` 的事务 SQL 将旧表重命名为 `rawdata.macro_release_calendar_legacy_20260922`，再建立指向 `akshare` 的同名映射视图。归档表保留原 OID 与 relfilenode、仍为 480 行；新视图与 496 行源表双向 `EXCEPT ALL` 零差异，运行时 `verify_only` 映射检查通过。未删除旧数据，也未运行采集。
 
 迁移期间外部 AlphaDB 录入由维护者手动停止，最终核验时来源仍截止 2026-09-21。迁移结束后可以恢复常规录入；本次未自动重启外部 BetaNavigator/AlphaHome 业务进程。其他五个增量样板、全部 PIT 业务基线、停更 60 天后的真实追赶和供应商旧日修订仍未在生产演练，必须继续按固定截止日、计划哈希、独立核验和恢复预算逐项迁移。
