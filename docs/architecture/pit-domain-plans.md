@@ -11,3 +11,5 @@
 `python -m alphahome.pit.pit_data_update_production --target stock_fttm --mode incremental --dry-run` 不初始化任务工厂、不写运行日志或 schema。实际执行可附 `--expected-plan-hash` 和同一个 `--cutoff`。历史单管理器维护 CLI 不应作为新生产入口，统一入口清单见运维文档。
 
 行业分类快照按月持锁后计算并校验，在同一事务内完成暂存、删除和插入；源失败、意外空集合、写入或提交失败保留原快照。部分批次提交的实际行数保留，失败计数不再被汇总过程覆盖。
+
+2026-09-22：增量恢复改用领域自己的 `pit.task_run`，不再读取 GUI `public.task_status`。未建立完整历史基线时明确阻断；月度依赖计划投影本批次上游月份，并核对实际完成月份。生产采用、空月份证明及失联重放边界见 [恢复合同与切换顺序](recovery-contracts-20260922.md)。

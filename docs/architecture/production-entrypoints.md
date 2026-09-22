@@ -21,4 +21,6 @@
 
 GUI 的策略跳过不会切断依赖链：即使工作日不运行 Factors，采集或 PIT 失败仍会阻断 Features 及其下游。ETF 候选池与 FundPos 是 Features 后的独立分支，候选池模型/数据门禁失败不影响 FundPos 自身的检查或影子运行。
 
+候选月度维护成功或已完成重试后，GUI 会再刷新 `etf_exposure_technical_current_universe_daily`，失败报告部分成功，不能沿用候选变更前的 Features 成功状态。日常采集仅核验 rawdata 映射；映射 DDL 与恢复表的纯 SQL 生成入口为 `python -m alphahome.common.maintenance_sql`。2026-09-22 本机陈旧 ETF 定时任务已禁用，新的生产调度尚未启用；采用步骤见 [恢复合同](recovery-contracts-20260922.md)。
+
 旧 P/G 日、季度、年度脚本保留薄门面，服从同一日期和公式契约。删除旧入口前必须登记调用者、验证替代入口的目标/计划/退出码、保留可恢复版本，并完成约定观察窗口。两个未注册历史 MV、历史 seed、fundpos 资源不因目录整齐而删除。安装器只在独立授权的调度切换中运行，Git 远端和生产凭据不由代码发布顺带更改。
