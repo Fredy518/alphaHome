@@ -666,11 +666,26 @@ async def _run_candidate_monthly(
     database_url = _database_url(db_manager)
     if not database_url:
         raise RuntimeError("AlphaHome 数据库连接不可用")
-    return await asyncio.to_thread(
+    result = await asyncio.to_thread(
         candidate_maintenance.execute_candidate_monthly_maintenance,
         database_url,
         run_date=day,
     )
+    if result.get('status') in {'succeeded', 'skipped_already_succeeded'}:
+        candidate_status = result['status']
+        # This product depends on the newly committed candidate set, not merely
+        # on the earlier Features phase. A retry can repair it without another LLM call.
+        try:
+            refresh = await feature_service.handle_refresh_features(
+                ['etf_exposure_technical_current_universe_daily'], strategy='full',
+                as_of_date=day.isoformat(), stop_event=stop_event,
+            )
+        except Exception as exc:
+            refresh = {'status': 'error', 'error': str(exc), 'fail_count': 1}
+        result = {**result, 'candidate_status': candidate_status, 'dependent_features': refresh}
+        if refresh.get('status') not in GOOD_TASK_STATUSES:
+            result['status'] = 'cancelled' if refresh.get('status') == 'cancelled' else 'partial_success'
+    return result
 
 
 async def _execute_group(

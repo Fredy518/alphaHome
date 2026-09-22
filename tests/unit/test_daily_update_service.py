@@ -233,6 +233,13 @@ async def test_candidate_monthly_group_is_due_after_day_five(monkeypatch):
 @pytest.mark.asyncio
 async def test_candidate_monthly_execution_uses_internal_service(monkeypatch):
     calls = []
+    refreshes = []
+
+    async def refresh(names, **kwargs):
+        refreshes.append((names, kwargs))
+        return {'status': 'success'}
+
+    monkeypatch.setattr(service.feature_service, 'handle_refresh_features', refresh)
 
     def execute(database_url, **kwargs):
         calls.append((database_url, kwargs))
@@ -249,6 +256,8 @@ async def test_candidate_monthly_execution_uses_internal_service(monkeypatch):
     )
 
     assert result["status"] == "succeeded"
+    assert refreshes[0][0] == ['etf_exposure_technical_current_universe_daily']
+    assert result['dependent_features']['status'] == 'success'
     assert calls == [
         (
             "postgresql://unit-test/alphadb",
