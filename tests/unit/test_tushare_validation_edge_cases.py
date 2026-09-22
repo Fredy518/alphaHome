@@ -337,12 +337,11 @@ def test_thsindex_allows_unknown_count_but_rejects_negative_count():
     assert passed is True
     assert details["failed_validations"] == {}
 
-    passed, _, details = _validate(
-        TushareStockThsIndexTask,
-        {**common, "count": [-1]},
-    )
-    assert passed is False
-    assert details["failed_validations"] == {"成分个数有值时不能为负数": "1行失败"}
+    with pytest.raises(ValueError, match="成分个数有值时不能为负数"):
+        _validate(
+            TushareStockThsIndexTask,
+            {**common, "count": [-1]},
+        )
 
 
 @pytest.mark.asyncio

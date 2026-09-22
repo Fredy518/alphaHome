@@ -114,6 +114,26 @@ class TushareStockThsIndexTask(TushareTask):
         """完整快照必须聚合并校验完毕后一次性替换，禁止流式分段写入。"""
         return False
 
+    def _validate_data(
+        self,
+        data: pd.DataFrame,
+        stop_event: Optional[asyncio.Event] = None,
+        validation_mode: str = "report",
+    ):
+        """整表替换不允许带着校验警告或过滤后的残缺快照继续写入。"""
+        result = super()._validate_data(
+            data, stop_event=stop_event, validation_mode=validation_mode
+        )
+        validation_passed, _, details = result
+        if not validation_passed:
+            # BaseTask 默认将校验失败视为 partial_success 并继续保存。
+            # 全量替换会删除旧快照，必须在进入保存阶段前明确终止。
+            raise ValueError(
+                f"{self.name}: 完整快照校验失败，保留旧快照。"
+                f"失败详情: {details['failed_validations']}"
+            )
+        return result
+
     async def _save_to_database(
         self,
         data: pd.DataFrame,
