@@ -10,6 +10,7 @@ from alphahome.common.run_models import RunPlan, RunRequest, RunUnit, canonical_
 from .base.monthly_snapshot_manager import PITMonthlySnapshotManager
 from .base.pit_config import PITConfig
 from .planning_time import business_date, frozen_pit_time
+from .run_ledger import PITBaselineRequired, baseline_eligible
 
 
 def build_pit_plan(connection_string, task_names, mode, *, cutoff=None, start_date=None, end_date=None):
@@ -30,10 +31,17 @@ def build_pit_plan(connection_string, task_names, mode, *, cutoff=None, start_da
     layers = PITDataUpdateCoordinator._topological_layers(selected, contracts)
     request = RunRequest("pit", tuple(task_names), mode, target_fingerprint(connection_string), start_date, end_date)
     units, blockers, structures, boundaries = [], [], {}, {}
+    planned = {}
     with owned_sync_session(connection_string, readonly=True) as db, query_timeout(db), frozen_pit_time(cutoff):
         # A strict snapshot token also invalidates a preview after a late transaction
         # commits. It may conservatively invalidate after an unrelated DB write.
         snapshot = db.fetch_val_sync("SELECT pg_current_snapshot()::text")
+        structures['pit.task_run'] = inspect_relation(db, 'pit.task_run')
+        ledger_ready = {'run_id', 'baseline_ready', 'started_at', 'end_date'} <= {
+            row['attname'] for row in structures['pit.task_run']['columns']
+        }
+        if not ledger_ready:
+            blockers.append('migration_required: pit.task_run recovery ledger is missing or incompatible')
         for name in [item for layer in layers for item in layer]:
             contract = contracts[name]
             if mode not in contract.supported_modes:
@@ -46,11 +54,28 @@ def build_pit_plan(connection_string, task_names, mode, *, cutoff=None, start_da
                     boundaries[relation] = observed_relation_boundary(db, relation, structures[relation])
             dates, start, end, parameters, replacement_count = (), start_date, end_date or cutoff, {}, None
             manager = contract.resolve_manager_class()().bind_database(db_manager=db)
-            if all(structures[relation]["columns"] for relation in (contract.output_table, *contract.source_tables)):
+            if ledger_ready and all(structures[relation]["columns"] for relation in (contract.output_table, *contract.source_tables)):
                 with manager:
                     manager._ensure_table_exists()
                     manager._require_unique_keys(contract.primary_keys)
                     if isinstance(manager, PITMonthlySnapshotManager):
+                        # Project this batch's upstream outputs, rather than
+                        # freezing the downstream to their pre-run frontier.
+                        frontiers = []
+                        for dependency in contract.dependencies:
+                            dep_contract = contracts[dependency]
+                            if dep_contract.pit_time_key != 'obs_date':
+                                continue
+                            unit = planned[dependency]
+                            observed = db.fetch_val_sync(
+                                f'SELECT MAX(obs_date) FROM {qualified_relation(dep_contract.output_table)}'
+                            )
+                            projected = max(unit.dates) if unit.dates else None
+                            candidates = [value for value in (observed, projected) if value is not None]
+                            if candidates:
+                                frontiers.append(max(candidates))
+                        if frontiers:
+                            manager._planning_dependency_cutoff = min(frontiers)
                         if mode == "incremental":
                             dates = tuple(manager.plan_incremental_months(cutoff_date=cutoff.replace(day=1)-timedelta(days=1)))
                         else:
@@ -74,9 +99,19 @@ def build_pit_plan(connection_string, task_names, mode, *, cutoff=None, start_da
                             default_days = inspect.signature(manager.incremental_update).parameters.get("days")
                             days = default_days.default if default_days else None
                             days = days if isinstance(days, int) else None
-                            start_s, end_s = manager.plan_incremental_range(days)
-                            start, end = date.fromisoformat(start_s), date.fromisoformat(end_s)
-                            parameters["planned_date_range"] = [start.isoformat(), end.isoformat()]
+                            try:
+                                start_s, end_s = manager.plan_incremental_range(days)
+                                start, end = date.fromisoformat(start_s), date.fromisoformat(end_s)
+                                # Financial children must also include revisions
+                                # their parents will publish later in this run.
+                                for dependency in contract.dependencies:
+                                    dep_start = planned[dependency].start_date
+                                    if dep_start is not None:
+                                        start = min(start, dep_start)
+                                parameters["planned_date_range"] = [start.isoformat(), end.isoformat()]
+                            except PITBaselineRequired as exc:
+                                blockers.append(str(exc))
+                                start = end = None
                         else:
                             default_start = getattr(manager, "DEFAULT_FULL_START", PITConfig.DEFAULT_DATE_RANGES["backfill_start"])
                             start = start or date.fromisoformat(str(default_start)[:10])
@@ -84,8 +119,13 @@ def build_pit_plan(connection_string, task_names, mode, *, cutoff=None, start_da
                         replacement_count = int(db.fetch_val_sync(
                             f'SELECT COUNT(*) FROM {qualified_relation(contract.output_table)} WHERE "{contract.pit_time_key}" BETWEEN %s AND %s', (start, end),
                         ))
-            units.append(RunUnit(name, dates, tuple(contract.dependencies), existing_rows_to_replace=replacement_count,
-                                 start_date=start, end_date=end, parameters_json=canonical_json(parameters)))
+            parameters['baseline_ready'] = contract.pit_time_key != 'obs_date' and baseline_eligible(
+                mode, start, getattr(manager, 'DEFAULT_FULL_START', PITConfig.DEFAULT_DATE_RANGES['backfill_start'])
+            )
+            unit = RunUnit(name, dates, tuple(contract.dependencies), existing_rows_to_replace=replacement_count,
+                           start_date=start, end_date=end, parameters_json=canonical_json(parameters))
+            units.append(unit)
+            planned[name] = unit
     return RunPlan.build(request, units, cutoff, schema=structures,
                          sources={"planning_snapshot": snapshot, "observations": boundaries, "consumed": False},
                          config={"contracts": {name: contracts[name].to_dict() for name in sorted(selected)},

@@ -44,6 +44,8 @@ def render_schema_sql(task_names=None):
             kind = "income" if "income" in table else "balance"
             statements.append((directory / f"create_pit_{kind}_indexes.sql").read_text(encoding="utf-8"))
     statements.append((directory / "create_pit_updated_at_triggers.sql").read_text(encoding="utf-8"))
+    from .run_ledger import CREATE_RUN_LEDGER_SQL
+    statements.append(CREATE_RUN_LEDGER_SQL)
     statements.append("COMMIT;")
     return "\n\n".join(statements) + "\n"
 

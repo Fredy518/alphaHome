@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime
 from datetime import date
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -24,6 +26,9 @@ def execution_plan(monkeypatch):
                              [RunUnit(name, dependencies=tuple(contracts[name].dependencies)) for layer in layers for name in layer],
                              date(2026,8,31), schema={}, sources={}, config={})
     monkeypatch.setattr(PITDataUpdateCoordinator, "plan", plan)
+    connection = AsyncMock()
+    connection.fetchval.return_value = datetime(2026, 8, 31)
+    monkeypatch.setattr('asyncpg.connect', AsyncMock(return_value=connection))
 
 
 class _Manager:
@@ -53,6 +58,39 @@ def _fttm_contracts():
             ("pit_stock_fttm_monthly", "pit_industry_classification"),
         ),
     }
+
+
+@pytest.mark.asyncio
+async def test_parallel_cancel_drains_other_writers_before_releasing_pipeline_lock(monkeypatch, execution_plan):
+    import asyncpg
+
+    coordinator = PITDataUpdateCoordinator(max_workers=2, db_manager=SimpleNamespace(connection_string='postgresql://unit-test'))
+    monkeypatch.setattr(coordinator, '_registered_contracts', _fttm_contracts)
+    writer_started, release_writer, cancelled_writer = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    connection = asyncpg.connect.return_value
+
+    async def run(task_name, *args, **kwargs):
+        if task_name == 'pit_industry_classification':
+            await writer_started.wait()
+            raise asyncio.CancelledError()
+        writer_started.set()
+        try:
+            await release_writer.wait()
+        except asyncio.CancelledError:
+            cancelled_writer.set()
+            await release_writer.wait()  # Synchronous writer still finishing.
+            raise
+
+    monkeypatch.setattr(coordinator, '_run_task', run)
+    batch = asyncio.create_task(coordinator.run_updates(['industry_fttm'], parallel=True))
+    try:
+        await asyncio.wait_for(cancelled_writer.wait(), timeout=2)
+        connection.close.assert_not_awaited()
+    finally:
+        release_writer.set()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(batch, timeout=2)
+    connection.close.assert_awaited_once()
 
 
 def test_batch_cutoff_uses_batch_start_date_not_later_task_time():
@@ -162,7 +200,7 @@ def test_earnings_surprise_expands_income_and_consensus_dependencies():
 async def test_serial_and_parallel_execute_only_within_topological_layer(
     monkeypatch, parallel, execution_plan
 ):
-    coordinator = PITDataUpdateCoordinator(max_workers=2)
+    coordinator = PITDataUpdateCoordinator(max_workers=2, db_manager=SimpleNamespace(connection_string='postgresql://unit-test'))
     contracts = _fttm_contracts()
     calls = []
     configs = []
@@ -216,7 +254,7 @@ async def test_serial_and_parallel_execute_only_within_topological_layer(
 @pytest.mark.parametrize("failure_status", ["error", "partial_success"])
 @pytest.mark.parametrize("parallel", [False, True])
 async def test_upstream_failure_marks_industry_skipped(monkeypatch, failure_status, parallel, execution_plan):
-    coordinator = PITDataUpdateCoordinator()
+    coordinator = PITDataUpdateCoordinator(db_manager=SimpleNamespace(connection_string='postgresql://unit-test'))
     contracts = _fttm_contracts()
     calls = []
     monkeypatch.setattr(coordinator, "_registered_contracts", lambda: contracts)

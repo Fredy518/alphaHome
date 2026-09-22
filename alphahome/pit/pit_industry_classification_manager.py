@@ -267,6 +267,7 @@ class PITIndustryClassificationManager(PITTableManager):
                 names = sql.SQL(",").join(sql.Identifier(column) for column in columns)
                 cursor.execute(sql.SQL("INSERT INTO pit.pit_industry_classification ({}) SELECT {} FROM pg_temp.pit_industry_stage").format(names, names))
         self._verified_committed_rows = getattr(self, "_verified_committed_rows", 0) + len(records)
+        self._verified_replacement_months = sorted(set(getattr(self, '_verified_replacement_months', ())) | {month_end})
         return len(records)
     
     def _generate_industry_snapshot(self, data_source: str, snapshot_date: date) -> List[Dict]:

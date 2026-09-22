@@ -104,6 +104,8 @@ class PITMonthlySnapshotManager(PITTableManager):
         obs_dates: Sequence[date | str | pd.Timestamp],
         columns: Sequence[str],
         primary_keys: Sequence[str],
+        *,
+        expected_empty_months: dict[date, str] | None = None,
     ) -> int:
         """Validate staging and replace all requested months in one transaction."""
 
@@ -128,6 +130,14 @@ class PITMonthlySnapshotManager(PITTableManager):
             if duplicates:
                 raise ValueError(f"staging 主键重复行: {duplicates}")
 
+        present = set(data['obs_date']) if not data.empty else set()
+        empty_reasons = {pd.Timestamp(key).date(): value for key, value in (expected_empty_months or {}).items()}
+        missing = set(normalized_dates) - present
+        unproven = sorted(month for month in missing if not isinstance(empty_reasons.get(month), str)
+                          or not empty_reasons[month].strip())
+        if unproven:
+            raise ValueError(f"pit_incomplete_months: {unproven}; an empty partition requires an explicit expected-no-data reason")
+
         schema = PITConfig.PIT_SCHEMA
         table = self.table_name
         relation = f"{_quote_identifier(schema)}.{_quote_identifier(table)}"
@@ -139,6 +149,9 @@ class PITMonthlySnapshotManager(PITTableManager):
         connection = self.context.db_manager._get_sync_connection()
         try:
             with connection.cursor() as cursor:
+                cursor.execute("SET LOCAL lock_timeout = '30s'")
+                cursor.execute("SELECT pg_advisory_xact_lock(hashtext(%s), hashtext(%s))",
+                               ('alphahome.pit', f'{schema}.{table}'))
                 cursor.execute(
                     f"CREATE TEMP TABLE {quoted_staging} "
                     f"(LIKE {relation} INCLUDING DEFAULTS INCLUDING CONSTRAINTS) ON COMMIT DROP"
@@ -181,6 +194,9 @@ class PITMonthlySnapshotManager(PITTableManager):
                         f"SELECT {quoted_columns} FROM {quoted_staging}"
                     )
             connection.commit()
+            self._verified_replacement_months = sorted(
+                set(getattr(self, '_verified_replacement_months', ())) | set(normalized_dates)
+            )
             return staged_count
         except Exception:
             connection.rollback()

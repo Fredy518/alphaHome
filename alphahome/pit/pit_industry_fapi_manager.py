@@ -352,6 +352,8 @@ class PITIndustryFAPIManager(PITMonthlySnapshotManager):
         self, cutoff_date: date | str | pd.Timestamp | None = None
     ) -> date | None:
         latest_complete = self.complete_month_cutoff(cutoff_date)
+        if getattr(self, '_planning_dependency_cutoff', None) is not None:
+            return min(latest_complete, self._planning_dependency_cutoff)
         frame = self.context.query_dataframe(
             """
             SELECT

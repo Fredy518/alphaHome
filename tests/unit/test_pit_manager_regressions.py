@@ -331,8 +331,8 @@ class _IncrementalWatermarkContext:
 
     def query_dataframe(self, query, params=None):
         self.calls.append((query, params))
-        if "public.task_status" in query:
-            return pd.DataFrame({"last_success_local": [self.last_success]})
+        if "pit.task_run" in query:
+            return pd.DataFrame({"last_success_local": [self.last_success], 'coverage_end': [self.last_success.date()]})
         value = self.changed_dates.pop(0)
         return pd.DataFrame({"min_changed_date": [value]})
 

@@ -159,27 +159,17 @@ class PITTableManager(ABC):
         if self.context is None or not source_specs:
             return base_start, end_date
 
-        try:
-            watermark_df = self.context.query_dataframe(
-                """
-                SELECT MAX(update_time AT TIME ZONE 'Asia/Shanghai') AS last_success_local
-                FROM public.task_status
-                WHERE task_name = %s
-                  AND status = 'success'
-                """,
-                (self.table_name,),
-            )
-            if watermark_df is None or watermark_df.empty:
-                return base_start, end_date
-            watermark_value = watermark_df.iloc[0].get("last_success_local")
-            watermark = pd.to_datetime(watermark_value, errors="coerce")
-            if pd.isna(watermark):
-                return base_start, end_date
-            watermark = watermark.to_pydatetime().replace(tzinfo=None) - timedelta(days=1)
-        except Exception as exc:
-            if self.logger:
-                self.logger.warning("读取PIT增量水位失败，使用默认窗口: %s", exc)
-            return base_start, end_date
+        from ..run_ledger import read_incremental_baseline, PITBaselineRequired
+
+        baseline = read_incremental_baseline(self.context, self.table_name)
+        watermark = pd.to_datetime(baseline['last_success_local'], errors='coerce')
+        coverage_end = pd.to_datetime(baseline['coverage_end'], errors='coerce')
+        if pd.isna(watermark) or pd.isna(coverage_end):
+            raise PITBaselineRequired(f"pit_baseline_invalid: {self.table_name}")
+        # Replay from the beginning, not the completion, of the last successful
+        # run. A late commit during computation must remain eligible next time.
+        watermark = watermark.to_pydatetime().replace(tzinfo=None) - timedelta(days=1)
+        base_start = min(date.fromisoformat(base_start), coverage_end.date()).isoformat()
 
         earliest_changed: date | None = None
         end_value = date.fromisoformat(end_date)
@@ -223,8 +213,7 @@ class PITTableManager(ABC):
                 if earliest_changed is None or changed_date < earliest_changed:
                     earliest_changed = changed_date
             except Exception as exc:
-                if self.logger:
-                    self.logger.warning("读取增量源水位失败 %s: %s", relation, exc)
+                raise RuntimeError(f"pit_source_change_check_failed: {relation}") from exc
 
         base_start_value = date.fromisoformat(base_start)
         if earliest_changed is None or earliest_changed >= base_start_value:

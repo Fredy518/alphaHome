@@ -210,6 +210,12 @@ class PITTask(BaseTask):
             self._sync_manager_stats_from_result(manager, result)
             normalized = self._normalize_result(result)
             normalized["plan_hash"] = self.task_config.get("plan_hash")
+            if self.contract.pit_time_key == 'obs_date':
+                completed = getattr(manager, '_verified_replacement_months', ())
+                normalized['completed_months'] = [value.isoformat() for value in completed]
+                requested = set(self.task_config.get('planned_months') or ())
+                if requested - set(normalized['completed_months']):
+                    normalized.update(status='error', error='pit_incomplete_planned_months')
             if cancel_requested.is_set():
                 normalized["cancel_requested"] = True
             return normalized

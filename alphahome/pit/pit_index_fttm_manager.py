@@ -418,6 +418,8 @@ class PITIndexFTTMManager(PITMonthlySnapshotManager):
         self, cutoff_date: date | str | pd.Timestamp | None = None
     ) -> date | None:
         latest_complete = self.complete_month_cutoff(cutoff_date)
+        if getattr(self, '_planning_dependency_cutoff', None) is not None:
+            return min(latest_complete, self._planning_dependency_cutoff)
         codes = [spec.code for spec in IMPORTANT_INDEX_SPECS]
         frame = self.context.query_dataframe(
             """

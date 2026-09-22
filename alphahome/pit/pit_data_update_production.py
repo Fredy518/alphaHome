@@ -8,6 +8,7 @@ import argparse
 import asyncio
 import logging
 import json
+from uuid import uuid4
 from zoneinfo import ZoneInfo
 import sys
 from datetime import datetime
@@ -110,6 +111,25 @@ class PITDataUpdateCoordinator:
 
     async def run_updates(self, targets, mode="incremental", parallel=False, *, plan=None,
                           expected_plan_hash=None, stop_event=None, start_date=None, end_date=None):
+        import asyncpg
+
+        if not isinstance(self.db_url, str) or not self.db_url:
+            raise RuntimeError('An explicit PIT database target is required')
+        connection = await asyncpg.connect(self.db_url, command_timeout=7200)
+        try:
+            await connection.execute("SET lock_timeout = '30s'")
+            await connection.execute("SELECT pg_advisory_lock(hashtext('alphahome.pit'), hashtext('pipeline'))")
+            return await self._run_updates_locked(
+                targets, mode, parallel, plan=plan, expected_plan_hash=expected_plan_hash,
+                stop_event=stop_event, start_date=start_date, end_date=end_date,
+                ledger_connection=connection,
+            )
+        finally:
+            await connection.close()
+
+    async def _run_updates_locked(self, targets, mode="incremental", parallel=False, *, plan=None,
+                                  expected_plan_hash=None, stop_event=None, start_date=None, end_date=None,
+                                  ledger_connection):
         from alphahome.common.run_models import RunPlan
 
         if isinstance(plan, dict):
@@ -143,6 +163,21 @@ class PITDataUpdateCoordinator:
         results_by_task: Dict[str, Dict[str, Any]] = {}
 
         semaphore = asyncio.Semaphore(max(int(self.max_workers or 1), 1))
+        ledger_lock = asyncio.Lock()
+        batch_id = uuid4()
+        batch_started = await ledger_connection.fetchval('SELECT clock_timestamp()')
+
+        async def finish_run(run_id, result, baseline_ready=False):
+            status = 'cancelled' if result.get('status') == 'cancelled' else (
+                'error' if self._is_failed_result(result) else 'success'
+            )
+            async with ledger_lock:
+                await ledger_connection.execute(
+                    """UPDATE pit.task_run SET status=$2, finished_at=clock_timestamp(),
+                           baseline_ready=$3, result=$4::jsonb WHERE run_id=$1""",
+                    run_id, status, status == 'success' and baseline_ready,
+                    json.dumps(result, ensure_ascii=False, default=str),
+                )
 
         async def _execute_task(task_name: str) -> Dict[str, Any]:
             run_started_at = datetime.now().astimezone().isoformat()
@@ -187,6 +222,15 @@ class PITDataUpdateCoordinator:
                 if task_cutoff is not None:
                     skipped["pit_month_end_cutoff"] = task_cutoff
                 return skipped
+            run_id = uuid4()
+            async with ledger_lock:
+                await ledger_connection.execute(
+                    """INSERT INTO pit.task_run
+                       (run_id,batch_id,task_name,plan_hash,mode,started_at,start_date,end_date,status)
+                       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'running')""",
+                    run_id, batch_id, task_name, plan.plan_hash, plan.request.mode,
+                    batch_started, unit.start_date, unit.end_date,
+                )
             try:
                 if parallel:
                     async with semaphore:
@@ -204,6 +248,8 @@ class PITDataUpdateCoordinator:
                         task_config=task_config,
                     )
                 result.setdefault("plan_hash", plan.plan_hash)
+                result['run_id'] = str(run_id)
+                result['source_consumption'] = 'unverified'
                 result.setdefault("dependency_statuses", dependency_statuses)
                 if task_cutoff is not None:
                     result.setdefault("pit_month_end_cutoff", task_cutoff)
@@ -211,7 +257,15 @@ class PITDataUpdateCoordinator:
                 result.setdefault(
                     "run_completed_at", datetime.now().astimezone().isoformat()
                 )
+                if (plan.request.mode == 'full_backfill' and task_config.get('baseline_ready')
+                        and not self._is_failed_result(result)
+                        and not (result.get('committed_rows') or result.get('rows'))):
+                    result.update(status='error', error='pit_baseline_unproven: full history produced no committed rows')
+                await finish_run(run_id, result, bool(task_config.get('baseline_ready')))
                 return result
+            except asyncio.CancelledError:
+                await finish_run(run_id, {'task': task_name, 'status': 'cancelled'})
+                raise
             except Exception as exc:
                 logger.error("PIT任务失败: %s: %s", target, exc, exc_info=True)
                 failed = {
@@ -225,13 +279,26 @@ class PITDataUpdateCoordinator:
                 }
                 if task_cutoff is not None:
                     failed["pit_month_end_cutoff"] = task_cutoff
+                await finish_run(run_id, failed)
                 return failed
 
         for layer in layers:
             if parallel:
-                layer_results = await asyncio.gather(
-                    *(_execute_task(task_name) for task_name in layer)
-                )
+                workers = [asyncio.create_task(_execute_task(task_name)) for task_name in layer]
+                try:
+                    layer_results = await asyncio.gather(*workers)
+                except BaseException:
+                    # A cancelled/failed child must not release the pipeline
+                    # lock while another synchronous manager is still writing.
+                    for worker in workers:
+                        worker.cancel()
+                    drained = asyncio.gather(*workers, return_exceptions=True)
+                    while not drained.done():
+                        try:
+                            await asyncio.shield(drained)
+                        except asyncio.CancelledError:
+                            continue
+                    raise
             else:
                 layer_results = []
                 for task_name in layer:

@@ -80,7 +80,7 @@ class _DB:
         return self.connection
 
 
-def test_empty_recalculation_still_deletes_old_month_atomically(monkeypatch):
+def test_explicit_expected_empty_month_can_replace_old_month_atomically(monkeypatch):
     manager = PITStockFTTMManager()
     manager.context = type("Context", (), {"db_manager": _DB()})()
     monkeypatch.setattr(
@@ -94,6 +94,7 @@ def test_empty_recalculation_still_deletes_old_month_atomically(monkeypatch):
         [date(2026, 7, 31)],
         columns=["ts_code", "org_name", "obs_date"],
         primary_keys=["ts_code", "org_name", "obs_date"],
+        expected_empty_months={date(2026, 7, 31): 'verified empty eligible universe'},
     )
 
     connection = manager.context.db_manager.connection
