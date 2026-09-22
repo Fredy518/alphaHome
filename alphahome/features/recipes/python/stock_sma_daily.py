@@ -25,6 +25,7 @@ class StockSmaDailyFeature(PythonFeatureTable):
     description = "股票简单移动平均线 (SMA5/SMA10/SMA20) - Python 计算示例"
     category = "stock"  # 显式指定分类
     source_tables = ["rawdata.stock_daily"]
+    recovery_sources = {source: ('trade_date', 'update_time') for source in source_tables}
     refresh_strategy = "incremental"
     incremental_days = 30
     date_column = "trade_date"

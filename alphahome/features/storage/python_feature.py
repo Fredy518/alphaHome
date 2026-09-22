@@ -17,6 +17,7 @@ Python 计算特征基类
 import logging
 from abc import abstractmethod
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 from typing import Any, Dict, Optional
 
 import numpy as np
@@ -25,6 +26,8 @@ import pandas as pd
 from .base_view import BaseFeatureView
 from .refresh_log import log_mv_refresh
 from .atomic import identifier, table_refresh_transaction
+from .recovery import begin_recovery, commit_checkpoint, incremental_window
+from .quality import comparable_row_counts, validate_quality, validate_expected_keys
 
 logger = logging.getLogger(__name__)
 
@@ -160,14 +163,14 @@ class PythonFeatureTable(BaseFeatureView):
         raise ValueError(f"Unsupported Python feature refresh strategy: {actual_strategy}")
 
     async def _incremental_refresh(self) -> Dict[str, Any]:
-        now = datetime.now()
+        end = datetime.now(ZoneInfo('Asia/Shanghai')).date()
+        start = await incremental_window(self, end)
         return await self._refresh_window(
-            "incremental", (now - timedelta(days=self.incremental_days)).strftime("%Y%m%d"),
-            now.strftime("%Y%m%d"),
+            "incremental", start.strftime("%Y%m%d"), end.strftime("%Y%m%d"),
         )
 
     async def _full_refresh(self) -> Dict[str, Any]:
-        return await self._refresh_window("full", "19000101", "20991231")
+        return await self._refresh_window("full", "19000101", datetime.now(ZoneInfo('Asia/Shanghai')).strftime('%Y%m%d'))
 
     def _validate_frame(self, frame, start_date, end_date):
         if not isinstance(frame, pd.DataFrame):
@@ -194,7 +197,8 @@ class PythonFeatureTable(BaseFeatureView):
             raise ValueError("Invalid or duplicate feature business keys")
         return frame, "success"
 
-    async def _refresh_window(self, strategy, start_date, end_date):
+    async def _refresh_window(self, strategy, start_date, end_date, *,
+                              approved_initial_baseline_rows=None):
         import asyncpg
 
         started = datetime.now()
@@ -211,15 +215,28 @@ class PythonFeatureTable(BaseFeatureView):
             # Hold the same target lock before computing: a slower earlier run
             # must not overwrite a later run's already committed snapshot.
             async with table_refresh_transaction(connection, self._schema, self.view_name):
+                recovery = await begin_recovery(connection, self, strategy, start, end)
+                if approved_initial_baseline_rows is not None and (
+                    strategy != 'full' or recovery is None or not recovery['initial_baseline']
+                ):
+                    raise ValueError('Initial baseline growth approval requires a first full recovery baseline')
                 frame, status = self._validate_frame(await self.compute(start_date, end_date), start, end)
+                await connection.execute(
+                    f"CREATE TEMP TABLE feature_stage (LIKE {target} INCLUDING DEFAULTS INCLUDING CONSTRAINTS) ON COMMIT DROP"
+                )
                 if not frame.empty:
-                    await connection.execute(
-                        f"CREATE TEMP TABLE feature_stage (LIKE {target} INCLUDING DEFAULTS INCLUDING CONSTRAINTS) ON COMMIT DROP"
-                    )
                     await self._insert_dataframe(connection, frame, table_name="feature_stage", schema_name="pg_temp")
                     staged = await connection.fetchval("SELECT COUNT(*) FROM pg_temp.feature_stage")
                     if staged != len(frame):
                         raise ValueError("Feature staging row count differs from computed result")
+                previous_count, comparable_count = await comparable_row_counts(
+                    connection, self.full_name, 'pg_temp.feature_stage', self.date_column, strategy, start, end,
+                )
+                quality = await validate_quality(connection, self.quality_checks, 'pg_temp.feature_stage',
+                                                 previous_count, expected_empty=status == 'expected_no_data',
+                                                 comparable_count=comparable_count,
+                                                 approved_initial_baseline_rows=approved_initial_baseline_rows)
+                await validate_expected_keys(connection, self, 'pg_temp.feature_stage', start, end)
                 if strategy == "full":
                     await connection.execute(f"DELETE FROM {target}")
                 else:
@@ -227,6 +244,7 @@ class PythonFeatureTable(BaseFeatureView):
                 if not frame.empty:
                     columns = ", ".join(identifier(column) for column in frame.columns)
                     await connection.execute(f"INSERT INTO {target} ({columns}) SELECT {columns} FROM pg_temp.feature_stage")
+                await commit_checkpoint(connection, self, recovery)
             row_count = len(frame)
         except Exception as exc:
             await self._log_refresh(strategy, False, (datetime.now()-started).total_seconds(), date_range=date_range, error=f"{type(exc).__name__}: {exc}")
@@ -241,6 +259,9 @@ class PythonFeatureTable(BaseFeatureView):
             "full_name": self.full_name, "row_count": row_count, "committed_rows": row_count,
             "duration_seconds": duration, "refresh_strategy": strategy, "strategy": strategy,
             "date_range": date_range,
+            "history_coverage": "checkpointed_range" if recovery else "unverified",
+            "source_consumption": "unverified",
+            "quality": quality,
         }
 
     async def _insert_dataframe(self, conn, df, *, table_name=None, schema_name=None):

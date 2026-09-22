@@ -50,6 +50,7 @@ class MarketSentimentDailyMV(IncrementalTableView):
         "tushare.stock_dailybasic",
     ]
     refresh_strategy = "incremental"  # 默认增量刷新
+    recovery_sources = {source: ('trade_date', 'update_time') for source in source_tables}
     incremental_days = 30  # 增量刷新最近 30 天
     date_column = "trade_date"
     

@@ -16,6 +16,7 @@ class DCIndexFeaturesDailyMV(IncrementalTableView):
     name = "dc_index_features_daily"
     description = "打板指数、连板指数、高度板特征"
     source_tables = ["rawdata.stock_dcindex", "rawdata.stock_dcdaily"]
+    recovery_sources = {source: ('trade_date', 'update_time') for source in source_tables}
     refresh_strategy = "incremental"  # 默认增量刷新
     incremental_days = 30  # 增量刷新最近 30 天
     date_column = "trade_date"

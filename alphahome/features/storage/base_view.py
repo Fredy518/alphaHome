@@ -40,6 +40,17 @@ class BaseFeatureView(ABC):
     source_tables: List[str] = []  # 数据来源表
     supported_strategies = ("full", "concurrent")
     quality_checks: Dict[str, Any] = {}  # 质量检查配置
+    recovery_sources = None  # relation -> (output-aligned date column or None, update timestamp)
+    max_incremental_recovery_days = 120
+    recovery_contract_version = '1'  # Bump when historical calculation semantics change.
+
+    async def expected_empty_view_reason(self, connection):
+        """Prove that an empty MV is intentional, using the refresh transaction."""
+        return None
+
+    def expected_keys_sql(self, start, end):
+        """Optional exact eligible-key contract; dates are parsed by the caller."""
+        return None
 
     # 强制约定
     ALLOWED_SCHEMA = "features"
@@ -252,17 +263,13 @@ class BaseFeatureView(ABC):
             strategy = None
 
         actual_strategy = strategy or self.refresh_strategy
-        refresher = self._ensure_refresher()
 
         self.logger.info(
             f"刷新物化视图: {self.full_name}, 策略: {actual_strategy}"
         )
 
-        return await refresher.refresh(
-            view_name=self.view_name,
-            strategy=actual_strategy,
-            allow_blocking_fallback=allow_blocking_fallback,
-        )
+        from .validated_mv import refresh_validated_mv
+        return await refresh_validated_mv(self, actual_strategy, allow_blocking_fallback)
 
     async def get_row_count(self) -> int:
         """

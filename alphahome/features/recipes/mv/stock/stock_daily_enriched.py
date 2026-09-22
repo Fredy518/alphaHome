@@ -51,6 +51,12 @@ class StockDailyEnrichedMV(IncrementalTableView):
     incremental_days = 30  # 增量刷新最近 30 天
     date_column = "trade_date"
     source_tables: List[str] = ["rawdata.stock_daily", "rawdata.stock_dailybasic"]
+    recovery_sources = {source: ('trade_date', 'update_time') for source in source_tables}
+
+    def expected_keys_sql(self, start, end):
+        return ("SELECT ts_code, trade_date FROM rawdata.stock_daily "
+                f"WHERE trade_date BETWEEN '{start}' AND '{end}' "
+                "AND ts_code IS NOT NULL AND close IS NOT NULL AND close > 0")
 
     quality_checks: Dict[str, Any] = {
         "null_check": {

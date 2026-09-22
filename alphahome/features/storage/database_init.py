@@ -9,6 +9,7 @@ Features 数据库初始化模块
 """
 
 import logging
+from .recovery import CREATE_CHECKPOINT_SQL
 
 logger = logging.getLogger(__name__)
 
@@ -85,7 +86,7 @@ COMMENT ON COLUMN features.mv_refresh_log.success IS '是否成功';
 COMMENT ON COLUMN features.mv_refresh_log.error_message IS '错误信息';
 COMMENT ON COLUMN features.mv_refresh_log.row_count IS '刷新后行数';
 COMMENT ON COLUMN features.mv_refresh_log.details IS '本次构建的数据版本、水位和质量摘要';
-"""
+""" + CREATE_CHECKPOINT_SQL
 
 
 class FeaturesDatabaseInit:

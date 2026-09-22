@@ -169,6 +169,13 @@ class ETFExposureTechnicalCurrentUniverseDailyMV(BaseFeatureView):
     def get_create_sql(self) -> str:
         return self.create_sql
 
+    async def expected_empty_view_reason(self, connection):
+        has_index = await connection.fetchval(
+            'SELECT EXISTS(SELECT 1 FROM fund_pool_on.etf_candidate_master_current '
+            'WHERE tracking_index_code IS NOT NULL)'
+        )
+        return None if has_index else 'Current candidate universe has no tracked index.'
+
     def get_post_create_sqls(self) -> list[str]:
         return [
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_etf_exposure_technical_key "

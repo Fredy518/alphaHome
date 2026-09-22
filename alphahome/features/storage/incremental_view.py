@@ -10,6 +10,8 @@ from typing import Any, Dict, Optional
 from .base_view import BaseFeatureView
 from .atomic import identifier, table_refresh_transaction
 from .refresh_log import log_mv_refresh
+from .recovery import begin_recovery, commit_checkpoint, incremental_window
+from .quality import comparable_row_counts, validate_quality, validate_expected_keys
 
 logger = logging.getLogger(__name__)
 
@@ -94,14 +96,15 @@ class IncrementalFeatureView(BaseFeatureView):
 
     async def _incremental_refresh(self) -> Dict[str, Any]:
         end = datetime.now(ZoneInfo("Asia/Shanghai")).date()
-        start = end - timedelta(days=self.incremental_days)
+        start = await incremental_window(self, end)
         return await self._refresh_table_window("incremental", start.strftime("%Y%m%d"), end.strftime("%Y%m%d"))
 
     async def expected_no_data_reason(self, connection, start, end) -> Optional[str]:
         """A recipe must explicitly prove an empty eligible universe before clearing it."""
         return None
 
-    async def _refresh_table_window(self, strategy, start_date, end_date):
+    async def _refresh_table_window(self, strategy, start_date, end_date, *,
+                                    approved_initial_baseline_rows=None):
         import asyncpg
 
         start = datetime.strptime(start_date, "%Y%m%d").date()
@@ -122,6 +125,11 @@ class IncrementalFeatureView(BaseFeatureView):
             lock_started = monotonic()
             # Same whole-table lock as PythonFeatureTable, held BEFORE computing.
             async with table_refresh_transaction(connection, self._schema, self.view_name):
+                recovery = await begin_recovery(connection, self, strategy, start, end)
+                if approved_initial_baseline_rows is not None and (
+                    strategy != 'full' or recovery is None or not recovery['initial_baseline']
+                ):
+                    raise ValueError('Initial baseline growth approval requires a first full recovery baseline')
                 lock_wait = monotonic() - lock_started
                 kind = await connection.fetchval("SELECT relkind::text FROM pg_class WHERE oid=$1::regclass", self.full_name)
                 if kind != "r":
@@ -156,11 +164,20 @@ class IncrementalFeatureView(BaseFeatureView):
                 ):
                     raise ValueError("Feature contains null keys or dates outside the replacement window")
                 await connection.execute(f"CREATE UNIQUE INDEX ON pg_temp.feature_sql_stage ({keys})")
+                previous_count, comparable_count = await comparable_row_counts(
+                    connection, self.full_name, 'pg_temp.feature_sql_stage', self.date_column, strategy, start, end,
+                )
+                quality = await validate_quality(connection, self.quality_checks, 'pg_temp.feature_sql_stage',
+                                                 previous_count, expected_empty=status == 'expected_no_data',
+                                                 comparable_count=comparable_count,
+                                                 approved_initial_baseline_rows=approved_initial_baseline_rows)
+                await validate_expected_keys(connection, self, 'pg_temp.feature_sql_stage', start, end)
                 if strategy == "full":
                     await connection.execute(f"DELETE FROM {target}")
                 else:
                     await connection.execute(f"DELETE FROM {target} WHERE {date_column} BETWEEN $1 AND $2", start, end)
                 await connection.execute(f"INSERT INTO {target} ({insert_columns}) SELECT {insert_columns} FROM pg_temp.feature_sql_stage")
+                await commit_checkpoint(connection, self, recovery)
                 # Commit remains inside the try; deferred failures are never success.
         except Exception as exc:
             await self._log_refresh(strategy, False, monotonic()-started, date_range=date_range, error=f"{type(exc).__name__}: {exc}")
@@ -177,6 +194,9 @@ class IncrementalFeatureView(BaseFeatureView):
             "refresh_strategy": strategy, "strategy": strategy,
             "requested_strategy": strategy, "effective_strategy": strategy,
             "fallback_reason": None, "date_range": date_range, "empty_reason": empty_reason,
+            "history_coverage": "checkpointed_range" if recovery else "unverified",
+            "source_consumption": "unverified",
+            "quality": quality,
         }
 
     async def _log_refresh(
@@ -231,7 +251,7 @@ class IncrementalTableView(IncrementalFeatureView):
         return await self._incremental_refresh()
 
     async def _full_refresh_table(self) -> Dict[str, Any]:
-        return await self._refresh_table_window("full", "19000101", "20991231")
+        return await self._refresh_table_window("full", "19000101", datetime.now(ZoneInfo('Asia/Shanghai')).strftime('%Y%m%d'))
 
     async def create(self, if_not_exists: bool = True) -> bool:
         """

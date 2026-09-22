@@ -18,6 +18,7 @@ from .registry import FeatureRegistry
 from .storage.atomic import identifier, table_refresh_transaction
 from .storage.incremental_view import IncrementalTableView
 from .storage.python_feature import PythonFeatureTable
+from .storage.recovery import plan_recovery
 
 
 GOOD = {"success", "no_op", "expected_no_data"}
@@ -86,7 +87,7 @@ def _ordered_recipes(names, recipes):
 
 
 def build_feature_plan(connection_string, names, strategy="default", *, operation="refresh", as_of_date=None,
-                       allow_blocking_fallback=False):
+                       allow_blocking_fallback=False, approve_initial_baseline_growth=False):
     today = datetime.now(ZoneInfo("Asia/Shanghai")).date()
     cutoff = date.fromisoformat(as_of_date) if isinstance(as_of_date, str) else as_of_date or today
     if cutoff > today:
@@ -95,15 +96,19 @@ def build_feature_plan(connection_string, names, strategy="default", *, operatio
         raise ValueError("Unsupported feature operation or strategy")
     if operation == "create" and (strategy != "default" or allow_blocking_fallback):
         raise ValueError("Create does not accept refresh options")
+    if approve_initial_baseline_growth and (operation != "refresh" or strategy != "full"):
+        raise ValueError("Initial baseline growth approval requires an explicit full refresh")
     request = RunRequest("features", tuple(names), operation + ":" + strategy, target_fingerprint(connection_string), as_of_date=cutoff)
     recipes = _recipes()
     ordered, dependencies = _ordered_recipes(request.tasks, recipes)
+    if approve_initial_baseline_growth and len(ordered) != 1:
+        raise ValueError("Initial baseline growth approval is limited to one feature at a time")
     structures, boundaries, units, blockers = {}, {}, [], []
     targets = {recipes[name]().full_name for name in ordered}
     with owned_sync_session(connection_string, readonly=True) as db, query_timeout(db):
         snapshot = db.fetch_val_sync("SELECT pg_current_snapshot()::text")
         for relation in sorted(targets | {source for name in ordered for source in recipes[name].source_tables}
-                               | {"features.mv_metadata", "features.mv_refresh_log"}):
+                               | {"features.mv_metadata", "features.mv_refresh_log", "features.refresh_checkpoint"}):
             structures[relation] = inspect_relation(db, relation)
             boundaries[relation] = observed_relation_boundary(db, relation, structures[relation])
             if not structures[relation]["columns"] and not (operation == "create" and relation in targets):
@@ -127,19 +132,47 @@ def build_feature_plan(connection_string, names, strategy="default", *, operatio
                 if not keys or recipe.date_column not in keys or not all(key_columns.get(key) for key in keys) or not unique:
                     blockers.append(f"migration_required: {recipe.full_name} requires its declared NOT NULL unique key")
             actual = recipe.refresh_strategy if strategy == "default" else strategy
-            start, end, count, fallback = None, None, None, None
+            start, end, count, fallback, approved_rows = None, None, None, None, None
             if operation == "refresh":
                 if actual not in recipe.supported_strategies:
                     blockers.append(f"{name}: unsupported strategy {actual}")
                 if table:
                     end = cutoff
                     start = date(1900, 1, 1) if actual == "full" else end - timedelta(days=recipe.incremental_days)
+                    if structures['features.refresh_checkpoint']['columns']:
+                        try:
+                            start = plan_recovery(db, recipe, actual, start, end)
+                        except RuntimeError as exc:
+                            blockers.append(str(exc))
+                    if actual == 'incremental':
+                        for prior in units:
+                            if prior.task_name in dependencies[name] and prior.start_date is not None:
+                                start = min(start, prior.start_date)
+                        if (end - start).days > recipe.max_incremental_recovery_days:
+                            blockers.append(f'feature_backfill_required: {recipe.full_name} exceeds automatic recovery budget')
                     if not keys or recipe.date_column not in keys or not set(keys) <= {row["attname"] for row in columns}:
                         blockers.append(f"migration_required: {recipe.full_name} lacks its declared date/key columns")
                     elif exists:
                         where = "" if actual == "full" else f" WHERE {identifier(recipe.date_column)} BETWEEN %s AND %s"
                         count = db.fetch_val_sync(f"SELECT COUNT(*) FROM {qualified_relation(recipe.full_name)}{where}",
                                                   () if actual == "full" else (start, end))
+                    if approve_initial_baseline_growth:
+                        checkpoint = db.fetch_one_sync(
+                            "SELECT target FROM features.refresh_checkpoint WHERE target=%s", (recipe.full_name,)
+                        ) if structures['features.refresh_checkpoint']['columns'] else None
+                        if checkpoint:
+                            blockers.append(f"{name}: initial baseline already exists")
+                        expected_sql = recipe.expected_keys_sql(start, end)
+                        if expected_sql is None:
+                            blockers.append(f"{name}: initial baseline approval requires exact expected business keys")
+                        else:
+                            approved_rows = int(db.fetch_val_sync(
+                                f"SELECT COUNT(*) FROM ({expected_sql}) AS expected_business_keys"
+                            ))
+                            if approved_rows <= 0:
+                                blockers.append(f"{name}: initial baseline approval cannot authorize an empty result")
+                            if count is not None and approved_rows < count:
+                                blockers.append(f"{name}: initial baseline approval cannot authorize row loss")
                 elif actual == "concurrent" and exists:
                     capability = db.fetch_one_sync("""SELECT relispopulated,
                         EXISTS(SELECT 1 FROM pg_index i WHERE i.indrelid=c.oid AND i.indisunique
@@ -151,13 +184,18 @@ def build_feature_plan(connection_string, names, strategy="default", *, operatio
             parameters = {"operation": operation, "target": recipe.full_name, "exists": exists,
                           "requested_strategy": actual, "effective_strategy": "full" if fallback else actual,
                           "fallback_reason": fallback, "allow_blocking_fallback": bool(allow_blocking_fallback),
+                          "approve_initial_baseline_growth": bool(approve_initial_baseline_growth),
+                          "initial_baseline_expected_rows": approved_rows,
                           "scope": "date_window" if start else "all_rows", "source_consumption": "unverified"}
             units.append(RunUnit(name, dependencies=dependencies[name], start_date=start, end_date=end,
-                                 existing_rows_to_replace=count, parameters_json=canonical_json(parameters)))
+                                 estimated_rows=approved_rows, existing_rows_to_replace=count,
+                                 parameters_json=canonical_json(parameters)))
         return RunPlan.build(request, units, cutoff, schema=structures,
                              sources={"snapshot": snapshot, "observations": boundaries},
                              config={"implementation": package_fingerprint(Path(__file__).parent),
-                                     "allow_blocking_fallback": bool(allow_blocking_fallback)}, blockers=blockers)
+                                     "allow_blocking_fallback": bool(allow_blocking_fallback),
+                                     "approve_initial_baseline_growth": bool(approve_initial_baseline_growth)},
+                             blockers=blockers)
 
 
 class _CreationSession:
@@ -226,7 +264,8 @@ class FeatureCoordinator:
             # Hold a session lock across the whole dependency chain, including commits.
             await connection.execute("SELECT pg_advisory_lock(hashtext('alphahome.features'), hashtext('pipeline'))")
             current = await self.plan(plan.request.tasks, strategy, operation=operation, as_of_date=plan.effective_cutoff,
-                                      allow_blocking_fallback=options["allow_blocking_fallback"])
+                                      allow_blocking_fallback=options["allow_blocking_fallback"],
+                                      approve_initial_baseline_growth=options["approve_initial_baseline_growth"])
             current.require_matching(expected)
             recipes = _recipes()
             for unit in plan.units:
@@ -242,9 +281,17 @@ class FeatureCoordinator:
                     if operation == "create":
                         result = await self._create(recipe, params["exists"])
                     elif isinstance(recipe, PythonFeatureTable):
-                        result = await recipe._refresh_window(params["requested_strategy"], unit.start_date.strftime("%Y%m%d"), unit.end_date.strftime("%Y%m%d"))
+                        result = await recipe._refresh_window(
+                            params["requested_strategy"], unit.start_date.strftime("%Y%m%d"),
+                            unit.end_date.strftime("%Y%m%d"),
+                            approved_initial_baseline_rows=params["initial_baseline_expected_rows"],
+                        )
                     elif isinstance(recipe, IncrementalTableView):
-                        result = await recipe._refresh_table_window(params["requested_strategy"], unit.start_date.strftime("%Y%m%d"), unit.end_date.strftime("%Y%m%d"))
+                        result = await recipe._refresh_table_window(
+                            params["requested_strategy"], unit.start_date.strftime("%Y%m%d"),
+                            unit.end_date.strftime("%Y%m%d"),
+                            approved_initial_baseline_rows=params["initial_baseline_expected_rows"],
+                        )
                     else:
                         result = await recipe.refresh(strategy=params["requested_strategy"], allow_blocking_fallback=params["allow_blocking_fallback"])
                     if result.get("status") not in GOOD or result.get("error_count", 0):
@@ -271,13 +318,17 @@ class FeatureCoordinator:
 
 async def execute_feature_request(db_manager, names, strategy="default", *, operation="refresh", submitted_plan=None,
                                   expected_plan_hash=None, as_of_date=None, allow_blocking_fallback=False,
-                                  stop_event=None):
+                                  approve_initial_baseline_growth=False, stop_event=None):
     coordinator = FeatureCoordinator(db_manager)
     plan = submitted_plan or await coordinator.plan(names, strategy, operation=operation, as_of_date=as_of_date,
-                                                    allow_blocking_fallback=allow_blocking_fallback)
+                                                    allow_blocking_fallback=allow_blocking_fallback,
+                                                    approve_initial_baseline_growth=approve_initial_baseline_growth)
     plan = RunPlan.from_dict(plan) if isinstance(plan, dict) else plan
     if plan.request.tasks != tuple(sorted(set(names))) or plan.request.mode != operation + ":" + strategy:
         raise ValueError("Feature request differs from submitted plan")
+    planned_approval = json.loads(plan.units[0].parameters_json).get("approve_initial_baseline_growth", False)
+    if bool(planned_approval) != bool(approve_initial_baseline_growth):
+        raise ValueError("Initial baseline growth approval differs from submitted plan")
     return await coordinator.run(
         plan,
         expected_plan_hash=expected_plan_hash,

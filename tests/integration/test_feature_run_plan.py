@@ -33,6 +33,9 @@ async def feature_plan_db(isolated_database_url, monkeypatch):
     await connection.execute(f"CREATE TABLE {source}(ts_code text, trade_date date, value integer); INSERT INTO {source} VALUES ('A', '2026-09-11', 1)")
 
     class Parent(IncrementalTableView):
+        # These tests exercise dependency orchestration. Incremental recovery is
+        # covered separately with explicit sources and a committed baseline.
+        refresh_strategy = 'full'
         name = "plan_parent_" + suffix
         source_tables = [source]
         primary_keys = ("ts_code", "trade_date")
