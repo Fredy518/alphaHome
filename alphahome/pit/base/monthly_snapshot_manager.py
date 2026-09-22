@@ -106,8 +106,17 @@ class PITMonthlySnapshotManager(PITTableManager):
         primary_keys: Sequence[str],
         *,
         expected_empty_months: dict[date, str] | None = None,
+        scope_filters: dict[str, Any] | None = None,
+        required_scope_columns: Sequence[str] = (),
     ) -> int:
-        """Validate staging and replace all requested months in one transaction."""
+        """Validate staging and replace requested months in one transaction.
+
+        ``scope_filters`` narrows deletion for shared physical tables.  It is
+        validated against staging before any database statement, so a custom
+        scoped writer cannot bypass month-completion proof or publish rows into
+        a different method/index scope.  ``required_scope_columns`` additionally
+        proves that every requested month contains every requested scope value.
+        """
 
         normalized_dates = sorted({pd.Timestamp(value).date() for value in obs_dates})
         if not normalized_dates:
@@ -130,6 +139,28 @@ class PITMonthlySnapshotManager(PITTableManager):
             if duplicates:
                 raise ValueError(f"staging 主键重复行: {duplicates}")
 
+        normalized_scope: list[tuple[str, str, Any]] = []
+        for column, expected in (scope_filters or {}).items():
+            if column not in columns:
+                raise ValueError(f"删除范围字段不在写入列中: {column}")
+            if isinstance(expected, (list, tuple, set, frozenset)):
+                values = list(dict.fromkeys(expected))
+                if not values:
+                    raise ValueError(f"pit_empty_scope: {column}")
+                if not data.empty:
+                    unexpected = set(data[column].dropna()) - set(values)
+                    if unexpected:
+                        raise ValueError(
+                            f"staging 含删除范围外 {column}: {sorted(unexpected)}"
+                        )
+                normalized_scope.append((column, "any", values))
+            else:
+                if expected is None:
+                    raise ValueError(f"pit_empty_scope: {column}")
+                if not data.empty and not bool(data[column].eq(expected).all()):
+                    raise ValueError(f"staging 含删除范围外 {column}")
+                normalized_scope.append((column, "eq", expected))
+
         present = set(data['obs_date']) if not data.empty else set()
         empty_reasons = {pd.Timestamp(key).date(): value for key, value in (expected_empty_months or {}).items()}
         missing = set(normalized_dates) - present
@@ -138,6 +169,27 @@ class PITMonthlySnapshotManager(PITTableManager):
         if unproven:
             raise ValueError(f"pit_incomplete_months: {unproven}; an empty partition requires an explicit expected-no-data reason")
 
+        for column in required_scope_columns:
+            matching = [item for item in normalized_scope if item[0] == column]
+            if len(matching) != 1 or matching[0][1] != "any":
+                raise ValueError(
+                    f"完整性范围字段必须使用非空序列过滤: {column}"
+                )
+            expected_values = matching[0][2]
+            observed_pairs = (
+                set(zip(data["obs_date"], data[column])) if not data.empty else set()
+            )
+            missing_pairs = [
+                (month, value)
+                for month in normalized_dates
+                for value in expected_values
+                if month not in missing and (month, value) not in observed_pairs
+            ]
+            if missing_pairs:
+                raise ValueError(
+                    f"pit_incomplete_scope: {column} missing {missing_pairs}"
+                )
+
         schema = PITConfig.PIT_SCHEMA
         table = self.table_name
         relation = f"{_quote_identifier(schema)}.{_quote_identifier(table)}"
@@ -145,6 +197,13 @@ class PITMonthlySnapshotManager(PITTableManager):
         quoted_staging = _quote_identifier(staging)
         quoted_columns = ", ".join(_quote_identifier(column) for column in columns)
         key_list = ", ".join(_quote_identifier(column) for column in primary_keys)
+        delete_predicates = ["obs_date = ANY(%s)"]
+        delete_params: list[Any] = [normalized_dates]
+        for column, operator, value in normalized_scope:
+            delete_predicates.append(
+                f"{_quote_identifier(column)} = {'ANY(%s)' if operator == 'any' else '%s'}"
+            )
+            delete_params.append(value)
 
         connection = self.context.db_manager._get_sync_connection()
         try:
@@ -185,8 +244,8 @@ class PITMonthlySnapshotManager(PITTableManager):
                     raise RuntimeError(f"staging 主键重复组: {duplicate_groups}")
 
                 cursor.execute(
-                    f"DELETE FROM {relation} WHERE obs_date = ANY(%s)",
-                    (normalized_dates,),
+                    f"DELETE FROM {relation} WHERE " + " AND ".join(delete_predicates),
+                    tuple(delete_params),
                 )
                 if staged_count:
                     cursor.execute(

@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-import uuid
 from datetime import date, datetime, timedelta
 from typing import Any, Iterable, Sequence
 
 import pandas as pd
-from psycopg2.extras import execute_values
 
 from .base.monthly_snapshot_manager import PITMonthlySnapshotManager
 from .calculators.etf_index_members_calculator import ETFIndexMembersCalculator
@@ -340,49 +338,17 @@ class PITETFIndexMembersMonthlyManager(PITMonthlySnapshotManager):
             for column in ("source_effective_date", "source_available_date"):
                 data[column] = pd.to_datetime(data[column]).dt.date
 
-        relation = '"pit"."pit_etf_index_members_monthly"'
-        staging = f"staging_pit_etf_index_members_{uuid.uuid4().hex}"
-        quoted_staging = f'"{staging}"'
-        quoted_columns = ", ".join(
-            f'"{column}"' for column in ETFIndexMembersCalculator.OUTPUT_COLUMNS
+        return self._atomic_replace_months(
+            data,
+            dates,
+            ETFIndexMembersCalculator.OUTPUT_COLUMNS,
+            ("obs_date", "index_code", "ts_code", "method_version"),
+            scope_filters={
+                "index_code": codes,
+                "method_version": ETFIndexMembersCalculator.METHOD_VERSION,
+            },
+            required_scope_columns=("index_code",),
         )
-        connection = self.context.db_manager._get_sync_connection()
-        try:
-            with connection.cursor() as cursor:
-                cursor.execute(
-                    f"CREATE TEMP TABLE {quoted_staging} "
-                    f"(LIKE {relation} INCLUDING DEFAULTS INCLUDING CONSTRAINTS) ON COMMIT DROP"
-                )
-                if not data.empty:
-                    records = [
-                        tuple(self._postgres_value(value) for value in row)
-                        for row in data.itertuples(index=False, name=None)
-                    ]
-                    execute_values(
-                        cursor,
-                        f"INSERT INTO {quoted_staging} ({quoted_columns}) VALUES %s",
-                        records,
-                        page_size=max(int(self.batch_size or 1000), 1),
-                    )
-                cursor.execute(
-                    f"DELETE FROM {relation} "
-                    "WHERE obs_date = ANY(%s) "
-                    "  AND index_code = ANY(%s) "
-                    "  AND method_version = %s",
-                    (dates, codes, ETFIndexMembersCalculator.METHOD_VERSION),
-                )
-                cursor.execute(f"SELECT COUNT(*) FROM {quoted_staging}")
-                staged_count = int(cursor.fetchone()[0])
-                if staged_count:
-                    cursor.execute(
-                        f"INSERT INTO {relation} ({quoted_columns}) "
-                        f"SELECT {quoted_columns} FROM {quoted_staging}"
-                    )
-            connection.commit()
-            return staged_count
-        except Exception:
-            connection.rollback()
-            raise
 
     def _dependency_freshness(self, index_codes: Sequence[str]) -> dict[str, Any]:
         frame = self.context.query_dataframe(
