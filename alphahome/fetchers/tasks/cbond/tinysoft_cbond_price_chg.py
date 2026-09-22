@@ -189,21 +189,9 @@ class TinySoftCBondPriceChgTask(TinySoftP0InfoArrayTask):
         place, so SELECT * is not safe for this source migration.
         """
         try:
-            await self.db.ensure_schema_exists("rawdata")
-            select_columns = ",\n            ".join(f'"{col}"' for col in self.rawdata_view_columns)
-            await self.db.execute(
-                f"""
-                CREATE OR REPLACE VIEW rawdata."{self.table_name}" AS
-                SELECT
-                    {select_columns}
-                FROM "{self.data_source}"."{self.table_name}";
-                """
-            )
-            await self.db.execute(
-                f"""
-                COMMENT ON VIEW rawdata."{self.table_name}" IS
-                'AUTO_MANAGED: source={self.data_source}.{self.table_name}; compatible_prefix=tushare.cbond_price_chg';
-                """
+            await self.db.create_rawdata_view(
+                view_name=self.table_name, source_schema=self.data_source, source_table=self.table_name,
+                replace=True, verify_only=True, columns=self.rawdata_view_columns,
             )
             self.logger.info(
                 "已同步 rawdata.%s 视图 -> %s.%s（替代已归档 Tushare 任务）",
@@ -212,7 +200,7 @@ class TinySoftCBondPriceChgTask(TinySoftP0InfoArrayTask):
                 self.table_name,
             )
         except Exception as exc:
-            self.logger.warning("创建 rawdata 视图时出错（不影响数据采集）: %s", exc)
+            raise RuntimeError(f'rawdata_mapping_not_ready: rawdata.{self.table_name}') from exc
 
     async def _load_bond_short_name_map(self) -> Dict[str, str]:
         if not self.db:

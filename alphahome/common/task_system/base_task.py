@@ -707,8 +707,7 @@ class BaseTask(ABC):
                     self.logger.error(f"表结构兼容检查失败，停止任务以避免后续部分写入: {e}")
                     raise
 
-        # 表创建完成后，自动创建 rawdata 视图（如果表是新创建的，或者已存在）
-        # 注意：第一次调用时表刚创建，后续调用时表已存在都会尝试创建视图
+        # 表结构准备后验证下游映射；首次运行也需要显式安装映射。
         await self._create_rawdata_view_if_needed()
 
 
@@ -720,14 +719,14 @@ class BaseTask(ABC):
 
     async def _create_rawdata_view_if_needed(self):
         """
-        根据数据源优先级自动创建/更新 rawdata 视图
+        根据数据源优先级只读验证 rawdata 视图
         
         策略（基于用户选择）：
-        1. tushare: 总是创建 OR REPLACE VIEW（覆盖任何已存在的视图）
-        2. 其他源: 当 tushare 无同名物理表时，对 rawdata 映射视图使用 OR REPLACE，
-           以便源表增列后视图仍为 `SELECT *`，避免长期停留在旧列清单上。
+        1. tushare: 视图必须精确映射到 tushare。
+        2. 其他源: tushare 有同名物理表时验证优先映射，否则验证当前源。
+        源表增列导致映射变化时，要求单独执行维护 SQL。
         
-        为了确保系统稳定性，该方法的失败不会中断主数据采集流程。
+        映射是下游消费合同；失败必须阻断任务，不能作为成功采集交给下游。
         """
         # 跳过非主要数据源（rawdata 本身不需要映射）
         if not self.data_source or self.data_source == 'rawdata':
@@ -736,22 +735,21 @@ class BaseTask(ABC):
         schema = self.data_source  # 例如 'tushare', 'akshare'
         table = self.table_name    # 例如 'stock_basic'
         
-        # tushare 优先：总是创建/替换
+        # tushare 优先：验证现有映射。
         if self.data_source == 'tushare':
             try:
                 await self.db.create_rawdata_view(
                     view_name=table,
                     source_schema=schema,
                     source_table=table,
-                    replace=True  # OR REPLACE
+                    replace=True,
+                    verify_only=True,
                 )
                 self.logger.info(
-                    f"已为 tushare.{table} 创建 rawdata 视图（优先级覆盖）"
+                    f"rawdata.{table} -> tushare.{table} 映射验证通过"
                 )
             except Exception as e:
-                self.logger.warning(
-                    f"创建 rawdata 视图失败（不影响数据采集）: {e}"
-                )
+                raise RuntimeError(f"rawdata_mapping_not_ready: rawdata.{table}; run the mapping maintenance step") from e
             return
         
         # 非 tushare 源：检查 tushare 是否已有同名表
@@ -763,24 +761,25 @@ class BaseTask(ABC):
 
             if tushare_exists:
                 self.logger.info(
-                    f"跳过 {schema}.{table} 的 rawdata 视图创建：tushare 优先"
+                    f"rawdata.{table} 按 tushare 优先级验证"
                 )
+                await self.db.create_rawdata_view(view_name=table, source_schema='tushare',
+                                                 source_table=table, replace=True, verify_only=True)
                 return
 
-            # 始终 OR REPLACE：源 schema 表结构演进后，rawdata 视图需同步列集合
+            # 验证当前源的完整列集合，结构变化由显式迁移处理。
             await self.db.create_rawdata_view(
                 view_name=table,
                 source_schema=schema,
                 source_table=table,
                 replace=True,
+                verify_only=True,
             )
             self.logger.info(
-                f"已同步 rawdata.{table} 视图 -> {schema}.{table}（OR REPLACE）"
+                f"rawdata.{table} -> {schema}.{table} 映射验证通过"
             )
         except Exception as e:
-            self.logger.warning(
-                f"创建 rawdata 视图时出错（不影响数据采集）: {e}"
-            )
+            raise RuntimeError(f"rawdata_mapping_not_ready: rawdata.{table}; run the mapping maintenance step") from e
 
 
     async def _save_to_database(self, data, stop_event: Optional[asyncio.Event] = None, **kwargs):

@@ -979,12 +979,46 @@ class SchemaManagementMixin:
             self.logger.error(f"创建视图 '{schema}.{view_name}' 失败: {e}", exc_info=True) # type: ignore
             raise
 
+    async def rawdata_mapping_matches(self, view_name, source_schema, source_table, columns=None):
+        """Read-only validation of the exact projection, source and absence of filters."""
+        for value in (view_name, source_schema, source_table, *(columns or ())):
+            if not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', value):
+                raise ValueError('Invalid rawdata mapping identifier')
+        if self.pool is None:
+            await self.connect()
+        async with self.pool.acquire() as conn, conn.transaction():
+            # pg_get_viewdef omits schemas visible on search_path. Keep its
+            # rendering independent of the pool's session configuration.
+            await conn.execute('SET LOCAL search_path = pg_catalog')
+            definition = await conn.fetchval(
+                "SELECT pg_get_viewdef(oid,true) FROM pg_class WHERE oid=to_regclass($1) AND relkind='v'",
+                f'rawdata."{view_name}"',
+            )
+            if definition is None:
+                return False
+            if columns is None:
+                rows = await conn.fetch(
+                    'SELECT attname FROM pg_attribute WHERE attrelid=to_regclass($1) '
+                    'AND attnum>0 AND NOT attisdropped ORDER BY attnum', f'"{source_schema}"."{source_table}"',
+                )
+                columns = [row['attname'] for row in rows]
+            if not columns:
+                return False
+            # PostgreSQL versions differ in whether single-source columns are
+            # table-qualified. Both exact projections are safe; filters, joins,
+            # expressions, reordered columns and other sources remain rejected.
+            projections = (','.join(columns), ','.join(f'{source_table}.{column}' for column in columns))
+            normalize = lambda sql: re.sub(r'\s+', '', sql.replace('"', '')).rstrip(';')
+            return any(normalize(definition) == normalize(f'SELECT {projection} FROM {source_schema}.{source_table};')
+                       for projection in projections)
+
     async def create_rawdata_view(
         self,
         view_name: str,
         source_schema: str,
         source_table: str,
-        replace: bool = False
+        replace: bool = False,
+        *, verify_only: bool = False, columns=None,
     ) -> None:
         """
         在 rawdata schema 创建跨 schema 的映射视图
@@ -999,6 +1033,10 @@ class SchemaManagementMixin:
             source_table: 源表名称
             replace: 是否使用 OR REPLACE（非 tushare 源在源表增列后同步 rawdata 视图时也应为 True）
         """
+        if await self.rawdata_mapping_matches(view_name, source_schema, source_table, columns):
+            return
+        if verify_only:
+            raise RuntimeError(f'migration_required: rawdata.{view_name} does not match {source_schema}.{source_table}')
         if self.pool is None: # type: ignore
             await self.connect() # type: ignore
 
@@ -1008,9 +1046,10 @@ class SchemaManagementMixin:
         replace_clause = "OR REPLACE " if replace else ""
         
         # 构建跨 schema 的视图创建语句
+        projection = ', '.join(f'"{column}"' for column in columns) if columns else '*'
         create_view_sql = f"""
         CREATE {replace_clause}VIEW rawdata."{view_name}" AS
-        SELECT * FROM {source_schema}."{source_table}";
+        SELECT {projection} FROM {source_schema}."{source_table}";
         """
         
         try:

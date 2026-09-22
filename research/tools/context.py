@@ -391,7 +391,7 @@ class ResearchContext:
 
     # === 新增便捷方法，基于providers数据提供层 ===
 
-    def get_stock_data(self, symbols, start_date: str, end_date: str, adjust: bool = True):
+    def get_stock_data(self, symbols, start_date: str, end_date: str, adjust: bool = False):
         """获取股票行情数据的便捷方法"""
         return self.data_tool.get_stock_data(symbols, start_date, end_date, adjust=adjust) # 明确传递 adjust
 
@@ -399,7 +399,7 @@ class ResearchContext:
         """获取指数权重数据的便捷方法"""
         return self.data_tool.get_index_weights(index_code, start_date, end_date, monthly=monthly) # 明确传递 monthly
 
-    def get_industry_data(self, symbols=None, level: str = 'sw_l1'):
+    def get_industry_data(self, symbols=None, level: str = 'stock_basic'):
         """获取行业分类数据的便捷方法"""
         return self.data_tool.get_industry_data(symbols, level)
 

@@ -57,6 +57,7 @@ async def test_non_tushare_always_or_replaces_rawdata_view_when_no_tushare_table
         source_schema="tinysoft",
         source_table="tinysoft_only_table",
         replace=True,
+        verify_only=True,
     )
 
 
@@ -70,7 +71,10 @@ async def test_non_tushare_skips_rawdata_view_when_tushare_has_same_table():
     await task._create_rawdata_view_if_needed()
 
     db.check_table_exists.assert_awaited_once_with("tushare", "tinysoft_only_table")
-    db.create_rawdata_view.assert_not_called()
+    db.create_rawdata_view.assert_awaited_once_with(
+        view_name='tinysoft_only_table', source_schema='tushare', source_table='tinysoft_only_table',
+        replace=True, verify_only=True,
+    )
 
 
 @pytest.mark.asyncio
@@ -87,6 +91,7 @@ async def test_tushare_always_or_replaces_rawdata_view():
         source_schema="tushare",
         source_table="stock_basic",
         replace=True,
+        verify_only=True,
     )
 
 

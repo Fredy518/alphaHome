@@ -260,15 +260,16 @@ def test_tushare_cbond_price_chg_is_archived_and_not_registered():
 
 @pytest.mark.asyncio
 async def test_tinysoft_cbond_price_chg_forces_rawdata_view_to_tinysoft():
-    db = _RawdataViewDB()
+    from unittest.mock import AsyncMock
+    db = AsyncMock()
     task = _make_task(db=db)
 
     await task._create_rawdata_view_if_needed()
 
-    assert db.schemas == ["rawdata"]
-    create_sql = db.executed[0]
-    assert 'CREATE OR REPLACE VIEW rawdata."cbond_price_chg"' in create_sql
-    assert 'FROM "tinysoft"."cbond_price_chg"' in create_sql
-    assert create_sql.index('"publish_date"') < create_sql.index('"source_code"')
-    assert create_sql.index('"convertprice_aft"') < create_sql.index('"update_time"')
-    assert "compatible_prefix=tushare.cbond_price_chg" in db.executed[1]
+    db.create_rawdata_view.assert_awaited_once_with(
+        view_name='cbond_price_chg', source_schema='tinysoft', source_table='cbond_price_chg',
+        replace=True, verify_only=True, columns=task.rawdata_view_columns,
+    )
+    assert task.rawdata_view_columns.index('publish_date') < task.rawdata_view_columns.index('source_code')
+    assert task.rawdata_view_columns.index('convertprice_aft') < task.rawdata_view_columns.index('update_time')
+    db.execute.assert_not_awaited()

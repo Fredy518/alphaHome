@@ -90,8 +90,8 @@ class AlphaDataTool:
         symbols: Union[str, List[str]],
         start_date: Union[str, date],
         end_date: Union[str, date],
-        fields: Optional[List[str]] = None,  # 保持API兼容性
-        adjust: bool = True
+        fields: Optional[List[str]] = None,
+        adjust: bool = False
     ) -> pd.DataFrame:
         """获取股票行情数据
         
@@ -99,8 +99,8 @@ class AlphaDataTool:
             symbols: 股票代码或代码列表，如 '000001.SZ' 或 ['000001.SZ', '000002.SZ']
             start_date: 开始日期，如 '2024-01-01'
             end_date: 结束日期，如 '2024-12-31'
-            fields: 字段列表（保持兼容性，实际忽略）
-            adjust: 是否使用复权价格（当前数据库不支持，保持兼容性）
+            fields: 返回字段；股票代码和交易日期始终保留
+            adjust: 此入口仅支持 False（未复权）；True 会明确报错
             
         Returns:
             包含股票行情数据的 DataFrame
@@ -109,12 +109,26 @@ class AlphaDataTool:
             >>> data_tool = AlphaDataTool(db_manager)
             >>> df = data_tool.get_stock_data(['000001.SZ'], '2024-01-01', '2024-01-31')
         """
+        if adjust is not False:
+            raise ValidationError("get_stock_data only supports adjust=False (unadjusted); use an explicit adjustment-factor query for adjusted prices")
+        available = ('ts_code', 'trade_date', 'open', 'high', 'low', 'close',
+                     'pre_close', 'change', 'pct_chg', 'vol', 'amount')
+        if fields is not None and (not isinstance(fields, (list, tuple))
+                                   or any(not isinstance(field, str) for field in fields)
+                                   or set(fields) - set(available)):
+            raise ValidationError("Unsupported stock fields")
+        selected = list(dict.fromkeys(['ts_code', 'trade_date', *(fields if fields is not None else available)]))
+        table_name = self._get_stock_table()
+
+        def empty_result():
+            frame = pd.DataFrame(columns=selected)
+            frame.attrs.update(price_adjustment='unadjusted', source_table=table_name)
+            return frame
         # 标准化输入
         if isinstance(symbols, str):
             symbols = [symbols]
-        
-        # 获取表名
-        table_name = self._get_stock_table()
+        if not symbols:
+            return empty_result()
         
         # 构建参数化查询
         placeholders = ','.join(['%s'] * len(symbols))
@@ -140,7 +154,7 @@ class AlphaDataTool:
             
             if df.empty:
                 self.logger.warning(f"未查询到股票数据: {symbols}")
-                return df
+                return empty_result()
             
             # 数据类型转换
             df['trade_date'] = pd.to_datetime(df['trade_date'])
@@ -149,6 +163,9 @@ class AlphaDataTool:
                 if col in df.columns:
                     df[col] = pd.to_numeric(df[col], errors='coerce')
             
+            if fields is not None:
+                df = df.loc[:, selected]
+            df.attrs.update(price_adjustment="unadjusted", source_table=table_name)
             self.logger.info(f"获取股票数据成功: {len(df)} 条记录")
             return df
             
@@ -397,19 +414,21 @@ class AlphaDataTool:
     def get_industry_data(
         self,
         symbols: Optional[Union[str, List[str]]] = None,
-        industry_type: str = 'SW2021',  # 保持兼容性
+        industry_type: str = 'stock_basic',
         active_only: bool = False  # 新增参数：是否只获取上市股票
     ) -> pd.DataFrame:
         """获取行业分类数据
 
         Args:
             symbols: 股票代码或代码列表，为空则获取所有股票
-            industry_type: 行业分类标准（保持兼容性）
+            industry_type: 仅支持 stock_basic 当前行业标签；不支持申万或历史行业口径
             active_only: 是否只获取上市股票（list_status='L'），默认False获取所有股票
 
         Returns:
             包含行业分类数据的 DataFrame
         """
+        if industry_type != 'stock_basic':
+            raise ValidationError("get_industry_data only supports industry_type='stock_basic' (current labels, not PIT or SW2021)")
         query = """
         SELECT ts_code, industry as industry_name, industry as industry_code
         FROM tushare.stock_basic
@@ -439,6 +458,8 @@ class AlphaDataTool:
             result = self.db_manager.fetch_sync(query, params)
             df = pd.DataFrame(result)
 
+            df.attrs.update(industry_standard="stock_basic", temporal_scope="current_snapshot",
+                            source_table="tushare.stock_basic", industry_code_is_label=True)
             self.logger.info(f"获取行业分类数据成功: {len(df)} 条记录")
             return df
 
