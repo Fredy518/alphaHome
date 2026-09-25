@@ -2,7 +2,7 @@
 
 import logging
 from abc import abstractmethod
-from datetime import datetime, timedelta
+from datetime import datetime
 from time import monotonic
 from zoneinfo import ZoneInfo
 from typing import Any, Dict, Optional
@@ -121,7 +121,11 @@ class IncrementalFeatureView(BaseFeatureView):
         connection = None
         date_range = "all" if strategy == "full" else f"{start_date}-{end_date}"
         try:
-            connection = await asyncpg.connect(self._db_manager.connection_string, command_timeout=7200)
+            # Large first full baselines can spend hours maintaining target indexes on NAS storage.
+            connection = await asyncpg.connect(
+                self._db_manager.connection_string,
+                command_timeout=14400 if strategy == "full" else 7200,
+            )
             lock_started = monotonic()
             # Same whole-table lock as PythonFeatureTable, held BEFORE computing.
             async with table_refresh_transaction(connection, self._schema, self.view_name):

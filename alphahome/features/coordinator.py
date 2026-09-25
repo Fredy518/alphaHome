@@ -87,7 +87,8 @@ def _ordered_recipes(names, recipes):
 
 
 def build_feature_plan(connection_string, names, strategy="default", *, operation="refresh", as_of_date=None,
-                       allow_blocking_fallback=False, approve_initial_baseline_growth=False):
+                       allow_blocking_fallback=False, approve_initial_baseline_growth=False,
+                       inspection_timeout_ms=30000):
     today = datetime.now(ZoneInfo("Asia/Shanghai")).date()
     cutoff = date.fromisoformat(as_of_date) if isinstance(as_of_date, str) else as_of_date or today
     if cutoff > today:
@@ -98,6 +99,9 @@ def build_feature_plan(connection_string, names, strategy="default", *, operatio
         raise ValueError("Create does not accept refresh options")
     if approve_initial_baseline_growth and (operation != "refresh" or strategy != "full"):
         raise ValueError("Initial baseline growth approval requires an explicit full refresh")
+    inspection_timeout_ms = int(inspection_timeout_ms)
+    if not 1000 <= inspection_timeout_ms <= 600000:
+        raise ValueError("Feature inspection timeout must be 1-600 seconds")
     request = RunRequest("features", tuple(names), operation + ":" + strategy, target_fingerprint(connection_string), as_of_date=cutoff)
     recipes = _recipes()
     ordered, dependencies = _ordered_recipes(request.tasks, recipes)
@@ -105,7 +109,7 @@ def build_feature_plan(connection_string, names, strategy="default", *, operatio
         raise ValueError("Initial baseline growth approval is limited to one feature at a time")
     structures, boundaries, units, blockers = {}, {}, [], []
     targets = {recipes[name]().full_name for name in ordered}
-    with owned_sync_session(connection_string, readonly=True) as db, query_timeout(db):
+    with owned_sync_session(connection_string, readonly=True) as db, query_timeout(db, inspection_timeout_ms):
         snapshot = db.fetch_val_sync("SELECT pg_current_snapshot()::text")
         for relation in sorted(targets | {source for name in ordered for source in recipes[name].source_tables}
                                | {"features.mv_metadata", "features.mv_refresh_log", "features.refresh_checkpoint"}):
@@ -185,6 +189,7 @@ def build_feature_plan(connection_string, names, strategy="default", *, operatio
                           "requested_strategy": actual, "effective_strategy": "full" if fallback else actual,
                           "fallback_reason": fallback, "allow_blocking_fallback": bool(allow_blocking_fallback),
                           "approve_initial_baseline_growth": bool(approve_initial_baseline_growth),
+                          "inspection_timeout_ms": inspection_timeout_ms,
                           "initial_baseline_expected_rows": approved_rows,
                           "scope": "date_window" if start else "all_rows", "source_consumption": "unverified"}
             units.append(RunUnit(name, dependencies=dependencies[name], start_date=start, end_date=end,
@@ -194,7 +199,8 @@ def build_feature_plan(connection_string, names, strategy="default", *, operatio
                              sources={"snapshot": snapshot, "observations": boundaries},
                              config={"implementation": package_fingerprint(Path(__file__).parent),
                                      "allow_blocking_fallback": bool(allow_blocking_fallback),
-                                     "approve_initial_baseline_growth": bool(approve_initial_baseline_growth)},
+                                     "approve_initial_baseline_growth": bool(approve_initial_baseline_growth),
+                                     "inspection_timeout_ms": inspection_timeout_ms},
                              blockers=blockers)
 
 
@@ -265,7 +271,8 @@ class FeatureCoordinator:
             await connection.execute("SELECT pg_advisory_lock(hashtext('alphahome.features'), hashtext('pipeline'))")
             current = await self.plan(plan.request.tasks, strategy, operation=operation, as_of_date=plan.effective_cutoff,
                                       allow_blocking_fallback=options["allow_blocking_fallback"],
-                                      approve_initial_baseline_growth=options["approve_initial_baseline_growth"])
+                                      approve_initial_baseline_growth=options["approve_initial_baseline_growth"],
+                                      inspection_timeout_ms=options.get("inspection_timeout_ms", 30000))
             current.require_matching(expected)
             recipes = _recipes()
             for unit in plan.units:
@@ -318,17 +325,22 @@ class FeatureCoordinator:
 
 async def execute_feature_request(db_manager, names, strategy="default", *, operation="refresh", submitted_plan=None,
                                   expected_plan_hash=None, as_of_date=None, allow_blocking_fallback=False,
-                                  approve_initial_baseline_growth=False, stop_event=None):
+                                  approve_initial_baseline_growth=False, inspection_timeout_ms=30000,
+                                  stop_event=None):
     coordinator = FeatureCoordinator(db_manager)
     plan = submitted_plan or await coordinator.plan(names, strategy, operation=operation, as_of_date=as_of_date,
                                                     allow_blocking_fallback=allow_blocking_fallback,
-                                                    approve_initial_baseline_growth=approve_initial_baseline_growth)
+                                                    approve_initial_baseline_growth=approve_initial_baseline_growth,
+                                                    inspection_timeout_ms=inspection_timeout_ms)
     plan = RunPlan.from_dict(plan) if isinstance(plan, dict) else plan
     if plan.request.tasks != tuple(sorted(set(names))) or plan.request.mode != operation + ":" + strategy:
         raise ValueError("Feature request differs from submitted plan")
     planned_approval = json.loads(plan.units[0].parameters_json).get("approve_initial_baseline_growth", False)
     if bool(planned_approval) != bool(approve_initial_baseline_growth):
         raise ValueError("Initial baseline growth approval differs from submitted plan")
+    planned_timeout = json.loads(plan.units[0].parameters_json).get("inspection_timeout_ms", 30000)
+    if int(planned_timeout) != int(inspection_timeout_ms):
+        raise ValueError("Feature inspection timeout differs from submitted plan")
     return await coordinator.run(
         plan,
         expected_plan_hash=expected_plan_hash,

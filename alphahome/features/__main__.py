@@ -21,6 +21,7 @@ def main(argv=None):
     parser.add_argument("--expected-plan-hash")
     parser.add_argument("--allow-blocking-fallback", action="store_true")
     parser.add_argument("--approve-initial-baseline-growth", action="store_true")
+    parser.add_argument("--inspection-timeout-seconds", type=int, default=30)
     args = parser.parse_args(argv)
     if args.operation == "list":
         from .registry import FeatureRegistry
@@ -43,17 +44,20 @@ def main(argv=None):
             raise ValueError("An explicit database target is required")
         db = DBManager(connection_string, mode="async")
         try:
+            inspection_timeout_ms = args.inspection_timeout_seconds * 1000
             if args.dry_run:
                 plan = await FeatureCoordinator(db).plan(args.task, args.strategy, operation=args.operation,
                     as_of_date=args.as_of_date, allow_blocking_fallback=args.allow_blocking_fallback,
-                    approve_initial_baseline_growth=args.approve_initial_baseline_growth)
+                    approve_initial_baseline_growth=args.approve_initial_baseline_growth,
+                    inspection_timeout_ms=inspection_timeout_ms)
                 print(canonical_json(plan.to_dict()))
                 return 1 if plan.blockers else 0
             submitted = json.loads(args.plan_file.read_text(encoding="utf-8")) if args.plan_file else None
             result = await execute_feature_request(db, args.task, args.strategy, operation=args.operation,
                 submitted_plan=submitted, expected_plan_hash=args.expected_plan_hash, as_of_date=args.as_of_date,
                 allow_blocking_fallback=args.allow_blocking_fallback,
-                approve_initial_baseline_growth=args.approve_initial_baseline_growth)
+                approve_initial_baseline_growth=args.approve_initial_baseline_growth,
+                inspection_timeout_ms=inspection_timeout_ms)
             print(canonical_json(result))
             return 0 if result["status"] == "success" else 1
         finally:

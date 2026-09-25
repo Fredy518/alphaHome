@@ -1,4 +1,5 @@
 import asyncio
+import json
 from datetime import date
 from threading import Event
 from uuid import uuid4
@@ -96,6 +97,32 @@ async def test_preview_readonly_gui_cli_hash_and_dag(feature_plan_db, monkeypatc
     assert await connection.fetchval(f"SELECT value FROM {child().full_name}") == 2
     assert result["source_consumption"] == "unverified"
     assert (await execute_feature_request(db, [child.name], operation="create", as_of_date=CUTOFF))["results"][child.name]["status"] == "no_op"
+
+
+async def test_inspection_budget_is_frozen_and_reused_for_execution(feature_plan_db):
+    connection, db, parent, child, source = feature_plan_db
+    await create_chain(db, child)
+    coordinator = FeatureCoordinator(db)
+    normal = await coordinator.plan([child.name], strategy="full", as_of_date=CUTOFF)
+    extended = await coordinator.plan(
+        [child.name], strategy="full", as_of_date=CUTOFF,
+        inspection_timeout_ms=180000,
+    )
+    assert not extended.blockers
+    assert extended.plan_hash != normal.plan_hash
+    assert json.loads(extended.units[0].parameters_json)["inspection_timeout_ms"] == 180000
+    with pytest.raises(ValueError, match="inspection timeout differs"):
+        await execute_feature_request(
+            db, [child.name], strategy="full", submitted_plan=extended,
+            as_of_date=CUTOFF,
+        )
+    result = await execute_feature_request(
+        db, [child.name], strategy="full", submitted_plan=extended,
+        expected_plan_hash=extended.plan_hash, as_of_date=CUTOFF,
+        inspection_timeout_ms=180000,
+    )
+    assert result["status"] == "success"
+    assert await connection.fetchval(f"SELECT COUNT(*) FROM {child().full_name}") == 1
 
 
 async def test_source_drift_rejects_before_creation(feature_plan_db):
