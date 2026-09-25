@@ -169,6 +169,7 @@ CREATE TABLE IF NOT EXISTS fund_pool_on.etf_candidate_master_snapshot (
     research_permission text NOT NULL,
     duplicate_check text NOT NULL,
     data_source_id text,
+    loaded_at timestamptz NOT NULL DEFAULT now(),
     confirmation_status text NOT NULL DEFAULT 'LEGACY_IMPORTED',
     confirmation_actor text,
     confirmation_at timestamptz,
@@ -178,7 +179,6 @@ CREATE TABLE IF NOT EXISTS fund_pool_on.etf_candidate_master_snapshot (
     ai_decision_hash text,
     human_review_note text,
     include_in_candidate_pool boolean NOT NULL DEFAULT true,
-    loaded_at timestamptz NOT NULL DEFAULT now(),
     PRIMARY KEY (snapshot_id, fund_code),
     UNIQUE (snapshot_id, source_rank),
     CONSTRAINT etf_candidate_master_status_permission CHECK (

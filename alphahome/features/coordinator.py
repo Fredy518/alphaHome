@@ -250,7 +250,19 @@ class FeatureCoordinator:
                 await recipe._upsert_metadata()
                 if adapter.failed:
                     raise RuntimeError("Feature creation metadata failed; all creation changes rolled back")
-                count = await connection.fetchval(f"SELECT COUNT(*) FROM {qualified_relation(recipe.full_name)}")
+                storage = await connection.fetchrow(
+                    "SELECT relkind::text AS kind, relispopulated AS populated "
+                    "FROM pg_class WHERE oid = to_regclass($1)",
+                    recipe.full_name,
+                )
+                if storage["kind"] == "m" and not storage["populated"]:
+                    # CREATE MATERIALIZED VIEW ... WITH NO DATA creates a valid
+                    # object, but PostgreSQL rejects SELECT until its first REFRESH.
+                    count = 0
+                else:
+                    count = await connection.fetchval(
+                        f"SELECT COUNT(*) FROM {qualified_relation(recipe.full_name)}"
+                    )
             return {"status": "success", "committed_rows": count}
         finally:
             await connection.close()

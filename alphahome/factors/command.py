@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 from typing import Any, Iterable, List, Optional
 from datetime import date
 
@@ -57,7 +58,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Optional[List[str]] = None) -> int:
     args = build_parser().parse_args(argv)
-    db_url = ConfigManager().get_database_url()
+    db_url = os.environ.get("ALPHAHOME_DATABASE_URL") or ConfigManager().get_database_url()
     if not db_url:
         raise SystemExit("数据库连接未配置")
     if args.command == "schema":

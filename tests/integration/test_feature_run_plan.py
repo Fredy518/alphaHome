@@ -12,6 +12,7 @@ from alphahome.common.db_manager import DBManager
 from alphahome.common.run_models import RunPlan
 from alphahome.features import coordinator as module
 from alphahome.features.coordinator import FeatureCoordinator, execute_feature_request
+from alphahome.features.storage.base_view import BaseFeatureView
 from alphahome.features.storage.database_init import CREATE_MV_METADATA_TABLE_SQL, CREATE_MV_REFRESH_LOG_TABLE_SQL
 from alphahome.features.storage.incremental_view import IncrementalTableView
 
@@ -97,6 +98,34 @@ async def test_preview_readonly_gui_cli_hash_and_dag(feature_plan_db, monkeypatc
     assert await connection.fetchval(f"SELECT value FROM {child().full_name}") == 2
     assert result["source_consumption"] == "unverified"
     assert (await execute_feature_request(db, [child.name], operation="create", as_of_date=CUTOFF))["results"][child.name]["status"] == "no_op"
+
+
+async def test_create_unpopulated_materialized_view_requires_separate_refresh(feature_plan_db, monkeypatch):
+    connection, db, _, _, source = feature_plan_db
+
+    class Unpopulated(BaseFeatureView):
+        name = "plan_unpopulated_" + uuid4().hex[:10]
+        source_tables = [source]
+
+        def get_create_sql(self):
+            return f"CREATE MATERIALIZED VIEW {self.full_name} AS SELECT * FROM {source} WITH NO DATA"
+
+    monkeypatch.setattr(module, "_recipes", lambda: {Unpopulated.name: Unpopulated})
+    recipe = Unpopulated()
+    try:
+        result = await execute_feature_request(db, [recipe.name], operation="create", as_of_date=CUTOFF)
+        assert result["status"] == "success"
+        assert result["results"][recipe.name] == {"status": "success", "committed_rows": 0}
+        assert await connection.fetchval("SELECT to_regclass($1) IS NOT NULL", recipe.full_name)
+        assert not await connection.fetchval(
+            "SELECT relispopulated FROM pg_class WHERE oid=to_regclass($1)", recipe.full_name
+        )
+        await connection.execute(f"REFRESH MATERIALIZED VIEW {recipe.full_name}")
+        assert await connection.fetchval(f"SELECT COUNT(*) FROM {recipe.full_name}") == 1
+    finally:
+        await connection.execute(f"DROP MATERIALIZED VIEW IF EXISTS {recipe.full_name}")
+        await connection.execute("DELETE FROM features.mv_metadata WHERE view_name=$1", recipe.view_name)
+        await connection.execute("DELETE FROM features.mv_refresh_log WHERE view_name=$1", recipe.view_name)
 
 
 async def test_inspection_budget_is_frozen_and_reused_for_execution(feature_plan_db):
