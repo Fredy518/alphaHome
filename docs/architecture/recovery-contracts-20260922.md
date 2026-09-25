@@ -67,3 +67,5 @@ ETF 月度发布与旧表归档修复后复跑：根项目 1,110 passed、108 sk
 - `rawdata.macro_release_calendar` 原为 480 行旧实体表，业务期只覆盖至 2026-02-28；`akshare.macro_release_calendar` 为 496 行，覆盖至 2026-08-31。迁移前确认无外部依赖视图、无活动会话和关系锁；随后用哈希为 `6b02fd15763a6b3ac2232121ea7c2ac556d473d0f45901adf2225209af02e2a6` 的事务 SQL 将旧表重命名为 `rawdata.macro_release_calendar_legacy_20260922`，再建立指向 `akshare` 的同名映射视图。归档表保留原 OID 与 relfilenode、仍为 480 行；新视图与 496 行源表双向 `EXCEPT ALL` 零差异，运行时 `verify_only` 映射检查通过。未删除旧数据，也未运行采集。
 
 迁移期间外部 AlphaDB 录入由维护者手动停止，最终核验时来源仍截止 2026-09-21。迁移结束后可以恢复常规录入；本次未自动重启外部 BetaNavigator/AlphaHome 业务进程。其他五个增量样板、全部 PIT 业务基线、停更 60 天后的真实追赶和供应商旧日修订仍未在生产演练，必须继续按固定截止日、计划哈希、独立核验和恢复预算逐项迁移。
+
+NAS 上按相同纵向范围执行的 2026-09-25 生产迁移及其独立验收，见 [NAS AlphaDB 生产迁移记录](nas-production-migration-20260925.md)。这不改变上述其他配方和 PIT 产品的迁移边界。
