@@ -1,6 +1,12 @@
-# AlphaDB NAS 可持续同步
+# AlphaDB NAS 逻辑同步历史方案（现行生产停用）
 
-脚本入口：
+截至 2026-09-25，NAS 由另一台电脑直接维护，是独立生产库；本机到 NAS 的
+publisher/subscriber 复制不是现行生产拓扑。NAS 没有订阅，本机旧复制槽已失效，
+并且两库结构和部分现有数据不相同。**不得对当前 NAS 执行下文的 `bootstrap`
+或 `sync-now`。** 本文保留为历史设计记录；现行迁移边界与验证见
+`docs/architecture/nas-stage2-rehearsal-20260925.md`。
+
+以下是历史脚本入口，仅用于理解旧方案：
 
 ```bash
 python scripts/database/alphadb_nas_logical_sync.py bootstrap
@@ -42,7 +48,7 @@ python scripts/database/alphadb_nas_logical_sync.py status
 - 补齐 NAS 上的 sequence 值
 - 可选刷新 NAS 全部 materialized view
 
-建议：
+旧命令示例，现行生产不得执行：
 
 ```bash
 python scripts/database/alphadb_nas_logical_sync.py sync-now
@@ -65,4 +71,4 @@ python scripts/database/alphadb_nas_logical_sync.py sync-now --publisher-host 19
 - PostgreSQL 逻辑复制不自动同步 DDL。若本机新增列、改列类型、改主键等，需要先让 NAS schema 对齐。
 - PostgreSQL 逻辑复制不复制 sequence 对象本身，因此脚本会在追平后额外执行 `setval(...)`。
 - PostgreSQL 逻辑复制不复制 materialized view，因此脚本只提供“在 NAS 端刷新”。
-- 若本机离线时间太长且 WAL 保留策略不足，逻辑复制槽可能失效；当前本机 `max_slot_wal_keep_size = -1`，能保证精确追平，但会占用本机磁盘。
+- 若本机离线时间太长且 WAL 保留策略不足，逻辑复制槽可能失效。2026-09-25 只读核对时，本机 `max_slot_wal_keep_size = 20GB`，旧槽 `wal_status = lost`；不能凭旧槽精确追平。
