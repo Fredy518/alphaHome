@@ -1,5 +1,7 @@
 # NAS AlphaDB 生产迁移记录（2026-09-25）
 
+> 本文记录先期授权范围。后来范围扩展到本机独有的 48 张表、相关结构与 NAS 来源刷新；生产结果见 [第四阶段记录](nas-stage4-production-migration-20260925.md)。
+
 本次目标是 NAS PostgreSQL `192.168.5.6:15432/alphadb`。维护者选择与 2026-09-22 本机生产采用相同的范围：恢复账本、`stock_daily_enriched` 首次全量基线及固定截止日增量验收、`macro_release_calendar` 的精确映射。截止日固定为 **2026-09-24**。这不是本机与 NAS 的整库同构迁移：迁移前盘点发现 NAS 缺少本机的 48 张表，也没有逻辑复制订阅；这两项不在本次授权范围内。
 
 生产证据和备份保存在仓库外的 `C:\Users\wuh\Documents\Codex\Reviews\AlphaHome-NAS-production-migration-20260925`。所有数据库校验均针对上述 NAS 目标；文件中不保存连接凭据。
