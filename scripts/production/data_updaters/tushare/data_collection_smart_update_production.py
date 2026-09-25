@@ -42,6 +42,7 @@ from alphahome.common.task_system import UnifiedTaskFactory  # noqa: E402
 from alphahome.common.constants import UpdateTypes  # noqa: E402
 from alphahome.common.config_manager import get_database_url  # noqa: E402
 from alphahome.fetchers.tasks import discover_tasks  # noqa: E402
+from alphahome.fetchers.sources.excel.input_file import missing_excel_input_reason  # noqa: E402
 
 logger = get_logger(__name__)
 
@@ -263,6 +264,17 @@ class DataCollectionProductionUpdater:
                 task_name,
                 update_type=UpdateTypes.SMART  # 使用智能增量模式
             )
+
+            missing_input_reason = missing_excel_input_reason(task_instance)
+            if missing_input_reason:
+                logger.info(f"[{task_name}] {missing_input_reason}")
+                return {
+                    'task_name': task_name,
+                    'status': 'expected_skip',
+                    'message': missing_input_reason,
+                    'result': {'status': 'expected_skip', 'reason': missing_input_reason},
+                    'attempts': attempt,
+                }
 
             # 检查是否支持智能增量更新
             if not task_instance.supports_incremental_update():

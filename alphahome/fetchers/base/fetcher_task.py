@@ -802,6 +802,16 @@ class FetcherTask(BaseTask, ABC):
         **kwargs: Any,
     ):
         try:
+            if self.data_source == "excel" and not (
+                stop_event and stop_event.is_set()
+            ):
+                from ..sources.excel.input_file import missing_excel_input_reason
+
+                skip_reason = missing_excel_input_reason(self)
+                if skip_reason:
+                    self.logger.info("任务 %s: %s", self.name, skip_reason)
+                    return {"status": "expected_skip", "reason": skip_reason}
+
             if self._should_stream_batches(kwargs):
                 result = await self._execute_streaming(stop_event=stop_event, **kwargs)
             else:

@@ -9,7 +9,6 @@ Excel 数据源任务基类
 """
 
 import abc
-import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -67,9 +66,6 @@ class ExcelTask(FetcherTask, abc.ABC):
             
         self.excel_file_path = Path(self.excel_file_path)
         
-        if not self.excel_file_path.exists():
-            raise FileNotFoundError(f"Excel 文件不存在: {self.excel_file_path}")
-            
         self.logger.info(f"Excel任务初始化: {self.name}, 文件: {self.excel_file_path}")
 
     async def get_batch_list(self, **kwargs) -> List[Dict]:

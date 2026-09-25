@@ -17,6 +17,7 @@ from ...common.logging_utils import get_logger
 from ...common.task_system import UnifiedTaskFactory
 from ..utils.common import format_status_chinese, format_datetime_for_display
 from ...common.constants import UpdateTypes
+from ...fetchers.sources.excel.input_file import missing_excel_input_reason
 from ...pit.base.monthly_snapshot_manager import PITMonthlySnapshotManager
 from ...pit.base.pit_task import PIT_MONTH_END_CUTOFF_CONFIG_KEY
 
@@ -399,11 +400,6 @@ async def run_tasks(
             if _send_response_callback:
                 _send_response_callback("LOG", {"level": "info", "message": log_msg})
 
-            # 记录任务开始状态
-            await _record_task_status(db_manager, task_name, "running", f"开始执行 ({i+1}/{total_tasks})")
-            # 立即刷新任务状态显示
-            await get_all_task_status(db_manager)
-
             # --- 核心重构：使用新的 create_task_instance 工厂方法 ---
             task_init_params = {}
             if exec_mode == "智能增量":
@@ -440,6 +436,17 @@ async def run_tasks(
                     _send_response_callback("LOG", {"level": "error", "message": log_msg})
                 await _record_task_status(db_manager, task_name, "error", f"任务实例创建失败: {factory_e}")
                 failed_task_names.add(task_name)
+                await get_all_task_status(db_manager)
+                continue
+
+            missing_input_reason = missing_excel_input_reason(task_instance)
+            if missing_input_reason:
+                logger.info("任务 %s: %s", task_name, missing_input_reason)
+                if _send_response_callback:
+                    _send_response_callback(
+                        "LOG", {"level": "info", "message": f"任务 {task_name}: {missing_input_reason}"}
+                    )
+                await _record_task_status(db_manager, task_name, "skipped", missing_input_reason)
                 await get_all_task_status(db_manager)
                 continue
             # --- 重构结束 ---
@@ -507,6 +514,8 @@ async def run_tasks(
                 continue
 
             # 将任务添加到运行列表
+            await _record_task_status(db_manager, task_name, "running", f"开始执行 ({i+1}/{total_tasks})")
+            await get_all_task_status(db_manager)
             _current_running_tasks.append(task_name)
 
             try:
