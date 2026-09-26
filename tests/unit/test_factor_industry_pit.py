@@ -31,8 +31,9 @@ def pit(code=CODE, obs_date="2002-04-04", **overrides):
 class IndustryContext:
     db_manager = object()
 
-    def __init__(self, members=(), optimized=(), helper_error=None):
-        self.members, self.optimized, self.helper_error = members, optimized, helper_error
+    def __init__(self, members=(), ci_members=(), optimized=(), helper_error=None):
+        self.members, self.ci_members = members, ci_members
+        self.optimized, self.helper_error = optimized, helper_error
         self.queries = []
 
     def query_dataframe(self, sql, params):
@@ -41,8 +42,12 @@ class IndustryContext:
             if self.helper_error:
                 raise self.helper_error
             return pd.DataFrame(self.optimized)
-        assert "FROM tushare.index_swmember" in sql
-        rows = [row for row in self.members if row["ts_code"] in params[0]]
+        if "FROM tushare.index_swmember" in sql:
+            source_rows = self.members
+        else:
+            assert "FROM tushare.index_cimember" in sql
+            source_rows = self.ci_members
+        rows = [row for row in source_rows if row["ts_code"] in params[0]]
         # Deliberately support the old unbounded query: its future result must
         # never be reached, which reproduces AH-002 through the public reader.
         if "in_date <= %s" in sql:
@@ -87,6 +92,24 @@ def test_latest_past_member_remains_available_with_provenance():
     result = reader(context).industry_classification([CODE], AS_OF)
     assert result.iloc[0]["obs_date"] == "2002-01-01"
     assert result.iloc[0]["source_method"] == "sw_past"
+
+
+def test_dated_ci_membership_fills_gap_without_backdating_sw():
+    context = IndustryContext(
+        members=[member(in_date="2002-04-06")],
+        ci_members=[member(in_date="2002-04-04", industry="汽车")],
+    )
+    result = reader(context).industry_classification([CODE], AS_OF)
+    assert result.iloc[0]["obs_date"] == "2002-04-04"
+    assert result.iloc[0]["source_table"] == "tushare.index_cimember"
+    assert result.iloc[0]["source_method"] == "ci_active"
+    assert not result.iloc[0]["requires_special_gpa_handling"]
+
+
+def test_future_ci_membership_is_not_used():
+    context = IndustryContext(ci_members=[member(in_date="2002-04-06")])
+    with pytest.raises(IndustryDataUnavailable, match="industry_history_missing"):
+        reader(context).industry_classification([CODE], AS_OF)
 
 
 @pytest.mark.parametrize("source_date", ["2002-04-04", date(2002, 4, 5)])

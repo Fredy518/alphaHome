@@ -22,6 +22,7 @@ def financial_input_gap_sql(placeholder="%s"):
                        WHERE b.ts_code=i.ts_code AND b.end_date=i.end_date
                          AND b.ann_date<=i.ann_date AND b.data_source IN ('report','express')
                          AND b.tot_assets IS NOT NULL
+                         AND b.tot_assets::text NOT IN ('NaN', 'Infinity', '-Infinity')
                    ) AS has_balance
             FROM pit.pit_income_quarterly i CROSS JOIN boundary
             LEFT JOIN tushare.stock_basic sb ON sb.ts_code=i.ts_code

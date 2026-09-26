@@ -16,6 +16,12 @@ _SOURCE_TIME_KEYS = {
     "pit.pit_financial_indicators": "ann_date",
     "pit.pit_industry_classification": "obs_date",
     "factors.p_factor": "calc_date",
+    "tushare.index_swmember": "in_date",
+    "tushare.index_cimember": "in_date",
+}
+_SOURCE_UPDATE_KEYS = {
+    "tushare.index_swmember": "update_time",
+    "tushare.index_cimember": "update_time",
 }
 
 
@@ -192,23 +198,24 @@ class FactorRepository:
                 watermarks[source] = STOCK_MASTER_PROJECTION + self.db.fetch_val_sync(STOCK_MASTER_PROJECTION_SQL)
                 continue
             schema, table = source.split(".", 1)
+            update_key = _SOURCE_UPDATE_KEYS.get(source, "updated_at")
             has_updated_at = bool(
                 self.db.fetch_val_sync(
                     """
                     SELECT EXISTS (
                         SELECT 1 FROM information_schema.columns
                         WHERE table_schema = %s AND table_name = %s
-                          AND column_name = 'updated_at'
+                          AND column_name = %s
                     )
                     """,
-                    (schema, table),
+                    (schema, table, update_key),
                 )
             )
             if not has_updated_at:
                 watermarks[source] = None
                 continue
             watermarks[source] = self.db.fetch_val_sync(
-                f"SELECT MAX(updated_at) FROM {self._relation(source)}"
+                f"SELECT MAX({update_key}) FROM {self._relation(source)}"
             )
         return watermarks
 
@@ -242,17 +249,18 @@ class FactorRepository:
             if (not previous and checkpoint is None) or not key:
                 continue
             relation = self._relation(source)
+            update_key = _SOURCE_UPDATE_KEYS.get(source, "updated_at")
             try:
                 if not self.relation_exists(source):
                     raise FactorSourceQueryError(source, "missing_relation")
                 if checkpoint is None:
                     value = self.db.fetch_val_sync(
-                        f"SELECT MIN({key}) FROM {relation} WHERE updated_at > %s", (previous,),
+                        f"SELECT MIN({key}) FROM {relation} WHERE {update_key} > %s", (previous,),
                     )
                 else:
                     with query_timeout(self.db):
                         value = self.db.fetch_val_sync(
-                            f"SELECT MIN({key}) FROM {relation} WHERE updated_at > %s "
+                            f"SELECT MIN({key}) FROM {relation} WHERE {update_key} > %s "
                             "OR age(xmin) <= age(%s::text::xid)",
                             (previous, str(checkpoint % (2**32))),
                         )
@@ -304,11 +312,14 @@ class FactorRepository:
             if not eligible:
                 blockers.append("pit_financial_indicators:no_eligible_rows")
             if "pit_financial_indicators" in contract.readiness_dependencies:
-                report = self.financial_input_gaps(cutoff_date)
-                if report.get("status") != "checked":
-                    blockers.append("pit_input_eligibility:unverified")
-                elif report["eligible_missing"]:
-                    blockers.append(f"pit_input_eligibility:missing={report['eligible_missing']}")
+                for calc_date in sorted(set(planned_dates)):
+                    report = self.financial_input_gaps(calc_date)
+                    if report.get("status") != "checked":
+                        blockers.append(f"pit_input_eligibility:unverified:{calc_date.isoformat()}")
+                    elif report["eligible_missing"]:
+                        blockers.append(
+                            f"pit_input_eligibility:missing={report['eligible_missing']}:{calc_date.isoformat()}"
+                        )
         if contract.task_name == "factor_g":
             p_planned = set(dependency_plans.get("factor_p") or ())
             if self.relation_exists("factors.p_factor"):

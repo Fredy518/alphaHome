@@ -19,6 +19,8 @@ class PFactorTask(FactorTask):
             "pit.pit_financial_indicators",
             "pit.pit_industry_classification",
             "tushare.stock_basic",
+            "tushare.index_swmember",
+            "tushare.index_cimember",
         ),
         output_table="factors.p_factor",
         calc_date_key="calc_date",

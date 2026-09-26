@@ -220,7 +220,10 @@ class PFactorDataRepository:
         active = self._check_industry_evidence(active, stock_codes, as_of_date, "in_date", "sw_active")
         if not active.empty:
             for _, row in active.drop_duplicates("ts_code").iterrows():
-                collected[row["ts_code"]] = {**row.to_dict(), "source_method": "sw_active"}
+                collected[row["ts_code"]] = {
+                    **row.to_dict(), "source_method": "sw_active",
+                    "source_table": "tushare.index_swmember",
+                }
 
         remaining = [code for code in stock_codes if code not in collected]
         if remaining:
@@ -240,7 +243,63 @@ class PFactorDataRepository:
             past = self._check_industry_evidence(past, remaining, as_of_date, "in_date", "sw_past")
             if not past.empty:
                 for _, row in past.iterrows():
-                    collected[row["ts_code"]] = {**row.to_dict(), "source_method": "sw_past"}
+                    collected[row["ts_code"]] = {
+                        **row.to_dict(), "source_method": "sw_past",
+                        "source_table": "tushare.index_swmember",
+                    }
+
+        # CI membership is a dated alternative only when no SW history exists.
+        # Its real in_date remains the observation date; a later first SW row
+        # must never be moved backward to fill the gap.
+        remaining = [code for code in stock_codes if code not in collected]
+        if remaining:
+            ci_active = self.context.query_dataframe(
+                """
+                SELECT ts_code, l1_name AS industry_level1,
+                       l2_name AS industry_level2, l3_name AS industry_level3,
+                       l1_code AS industry_code1, l2_code AS industry_code2,
+                       l3_code AS industry_code3, in_date
+                FROM tushare.index_cimember
+                WHERE ts_code = ANY(%s) AND l1_name IS NOT NULL
+                  AND in_date <= %s AND (out_date IS NULL OR out_date > %s)
+                ORDER BY ts_code, in_date DESC
+                """,
+                (remaining, as_of_date, as_of_date),
+            )
+            ci_active = self._check_industry_evidence(
+                ci_active, remaining, as_of_date, "in_date", "ci_active"
+            )
+            if not ci_active.empty:
+                for _, row in ci_active.drop_duplicates("ts_code").iterrows():
+                    collected[row["ts_code"]] = {
+                        **row.to_dict(), "source_method": "ci_active",
+                        "source_table": "tushare.index_cimember",
+                    }
+
+        remaining = [code for code in stock_codes if code not in collected]
+        if remaining:
+            ci_past = self.context.query_dataframe(
+                """
+                SELECT DISTINCT ON (ts_code)
+                       ts_code, l1_name AS industry_level1,
+                       l2_name AS industry_level2, l3_name AS industry_level3,
+                       l1_code AS industry_code1, l2_code AS industry_code2,
+                       l3_code AS industry_code3, in_date
+                FROM tushare.index_cimember
+                WHERE ts_code = ANY(%s) AND l1_name IS NOT NULL AND in_date <= %s
+                ORDER BY ts_code, in_date DESC
+                """,
+                (remaining, as_of_date),
+            )
+            ci_past = self._check_industry_evidence(
+                ci_past, remaining, as_of_date, "in_date", "ci_past"
+            )
+            if not ci_past.empty:
+                for _, row in ci_past.iterrows():
+                    collected[row["ts_code"]] = {
+                        **row.to_dict(), "source_method": "ci_past",
+                        "source_table": "tushare.index_cimember",
+                    }
 
         if not collected:
             return self._require_industry_coverage(pd.DataFrame(), stock_codes, as_of_date)
@@ -272,7 +331,6 @@ class PFactorDataRepository:
         result["data_source"] = "sw"
         # Membership start is source evidence, not the requested calculation date.
         result["obs_date"] = result["in_date"]
-        result["source_table"] = "tushare.index_swmember"
         columns = [
             "ts_code",
             "obs_date",
