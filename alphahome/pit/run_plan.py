@@ -81,6 +81,19 @@ def build_pit_plan(connection_string, task_names, mode, *, cutoff=None, start_da
                         else:
                             dates = tuple(manager.plan_backfill_months(start_date=start, end_date=end))
                         parameters["planned_months"] = [value.isoformat() for value in dates]
+                        if name == "pit_etf_index_members_monthly" and dates:
+                            source_scope = manager.preview_source_scope(dates)
+                            parameters["source_scope_by_month"] = source_scope
+                            for month, scope in source_scope.items():
+                                if not scope["selected_index_count"]:
+                                    blockers.append(
+                                        f"{name}: no publishable constituent source at {month}"
+                                    )
+                                if scope["previously_published_without_source"]:
+                                    blockers.append(
+                                        f"{name}: published constituents lost their source at {month}: "
+                                        f"{scope['previously_published_without_source']}"
+                                    )
                         start, end = (dates[0], dates[-1]) if dates else (None, None)
                     elif contract.pit_time_key == "obs_date":
                         complete = PITMonthlySnapshotManager.latest_complete_month(cutoff)

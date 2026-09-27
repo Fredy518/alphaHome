@@ -152,3 +152,120 @@ def test_etf_month_commit_records_completion(manager_type, monkeypatch):
     assert len(inserted) == 1
     assert any("DELETE FROM" in sql and "method_version" in sql for sql in statements)
     assert manager._verified_replacement_months == [month]
+
+
+def _source_backed_manager(monkeypatch, *, published_missing=False):
+    manager = PITETFIndexMembersMonthlyManager()
+    manager.logger = SimpleNamespace(info=lambda *_args, **_kwargs: None)
+    month = date(2026, 8, 31)
+    row = {column: None for column in manager.calculator.OUTPUT_COLUMNS}
+    row.update(
+        obs_date=month,
+        index_code="GOOD",
+        ts_code="000001.SZ",
+        weight=1.0,
+        raw_weight=100.0,
+        source_available_date=month,
+        method_version=manager.calculator.METHOD_VERSION,
+    )
+    calculated = pd.DataFrame([row])
+    manager.context = SimpleNamespace(
+        query_dataframe=lambda *_args, **_kwargs: (
+            pd.DataFrame({"index_code": ["MISSING"]})
+            if published_missing
+            else pd.DataFrame(columns=["index_code"])
+        )
+    )
+    monkeypatch.setattr(manager, "_resolve_index_codes", lambda _codes: ["GOOD", "MISSING"])
+    monkeypatch.setattr(manager, "_ensure_table_exists", lambda: None)
+    monkeypatch.setattr(
+        manager,
+        "_load_sources",
+        lambda _months, _codes: {
+            "official_weights": pd.DataFrame(),
+            "fund_holdings": pd.DataFrame(),
+        },
+    )
+
+    def calculate(*_args):
+        manager.calculator.last_audit = {
+            "source_pair_counts": {
+                "official_index_weight": 1,
+                "etf_disclosed_holding": 0,
+                "unavailable": 1,
+            }
+        }
+        return calculated
+
+    monkeypatch.setattr(manager.calculator, "calculate", calculate)
+    monkeypatch.setattr(manager, "_dependency_freshness", lambda _codes: {})
+    return manager, month
+
+
+def test_source_backed_scope_is_visible_in_preview_and_committed_result(monkeypatch):
+    manager, month = _source_backed_manager(monkeypatch)
+    committed = []
+    monkeypatch.setattr(
+        manager,
+        "_atomic_replace_scope",
+        lambda frame, months, codes: committed.append((list(months), list(codes))) or len(frame),
+    )
+
+    preview = manager.preview_source_scope([month])
+    assert preview[month.isoformat()]["selected_index_count"] == 1
+    assert preview[month.isoformat()]["unavailable_index_codes"] == ["MISSING"]
+    manager._planned_source_scope_by_month = preview
+
+    result = manager._run_months(
+        [month], batch_size=None, index_codes=None, result_key="backfilled_records"
+    )
+
+    assert committed == [([month], ["GOOD"])]
+    assert result["backfilled_records"] == 1
+    assert result["source_gap_count"] == 1
+    assert result["coverage_status"] == "source_gaps"
+    assert result["source_scope_by_month"] == preview
+
+
+@pytest.mark.parametrize("fault", ["changed_plan", "published_source_disappeared"])
+def test_source_scope_failure_happens_before_any_replacement(monkeypatch, fault):
+    manager, month = _source_backed_manager(
+        monkeypatch, published_missing=fault == "published_source_disappeared"
+    )
+    committed = []
+    monkeypatch.setattr(
+        manager,
+        "_atomic_replace_scope",
+        lambda *_args: committed.append(True),
+    )
+    if fault == "changed_plan":
+        manager._planned_source_scope_by_month = {
+            month.isoformat(): {"selected_index_count": 2}
+        }
+
+    expected = (
+        "pit_etf_member_source_scope_changed"
+        if fault == "changed_plan"
+        else "pit_published_etf_source_disappeared"
+    )
+    with pytest.raises(ValueError, match=expected):
+        manager._run_months(
+            [month], batch_size=None, index_codes=None, result_key="backfilled_records"
+        )
+    assert committed == []
+
+
+def test_explicit_index_repair_keeps_strict_requested_scope(monkeypatch):
+    manager, month = _source_backed_manager(monkeypatch)
+    scopes = []
+    monkeypatch.setattr(
+        manager,
+        "_atomic_replace_scope",
+        lambda _frame, _months, codes: scopes.append(list(codes)) or 1,
+    )
+
+    manager._run_months(
+        [month], batch_size=None, index_codes=["GOOD", "MISSING"],
+        result_key="backfilled_records",
+    )
+    assert scopes == [["GOOD", "MISSING"]]

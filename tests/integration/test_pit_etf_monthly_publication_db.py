@@ -1,6 +1,7 @@
 """Real-PostgreSQL acceptance tests for scoped ETF monthly publication."""
 
 from datetime import date
+from types import SimpleNamespace
 
 import pandas as pd
 import psycopg2
@@ -148,3 +149,85 @@ def test_scoped_publication_is_atomic_and_records_completed_month(
             (month, index_code),
         )
         assert cursor.fetchall() == rows_after_success
+
+
+def _prepared_source_backed_manager(monkeypatch, connection, month):
+    manager = PITETFIndexMembersMonthlyManager()
+    manager.logger = SimpleNamespace(info=lambda *_args, **_kwargs: None)
+    with connection.cursor() as cursor:
+        replacement = _seed_etf_month(cursor, manager, month, 'GOOD')
+        _seed_etf_month(cursor, manager, month, 'UNRELATED')
+    replacement['index_name'] = 'Replacement Index'
+    monkeypatch.setattr(manager, '_resolve_index_codes', lambda _codes: ['GOOD', 'MISSING'])
+    monkeypatch.setattr(manager, '_load_sources', lambda *_args: {
+        'official_weights': pd.DataFrame(),
+        'fund_holdings': pd.DataFrame(),
+    })
+
+    def calculate(*_args):
+        manager.calculator.last_audit = {'source_pair_counts': {
+            'official_index_weight': 1,
+            'etf_disclosed_holding': 0,
+            'unavailable': 1,
+        }}
+        return replacement
+
+    monkeypatch.setattr(manager.calculator, 'calculate', calculate)
+    monkeypatch.setattr(manager, '_dependency_freshness', lambda _codes: {})
+    return manager
+
+
+def test_source_backed_month_replaces_only_calculated_indices(pit_database, monkeypatch):
+    url, connection = pit_database
+    month = date(2026, 8, 31)
+    manager = _prepared_source_backed_manager(monkeypatch, connection, month)
+
+    with owned_sync_session(url) as db, manager.bind_database(db_manager=db):
+        manager._planned_source_scope_by_month = manager.preview_source_scope([month])
+        result = manager._run_months(
+            [month], batch_size=None, index_codes=None, result_key='backfilled_records'
+        )
+
+    assert result['backfilled_records'] == 1
+    assert result['source_gap_count'] == 1
+    assert result['source_scope_by_month'][month.isoformat()]['unavailable_index_codes'] == [
+        'MISSING'
+    ]
+    assert manager._verified_replacement_months == [month]
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT index_code,index_name FROM pit.pit_etf_index_members_monthly "
+            "WHERE obs_date=%s AND method_version=%s ORDER BY index_code",
+            (month, manager.calculator.METHOD_VERSION),
+        )
+        assert cursor.fetchall() == [
+            ('GOOD', 'Replacement Index'),
+            ('UNRELATED', 'Seed Index'),
+        ]
+
+
+def test_published_index_losing_source_keeps_previous_month(pit_database, monkeypatch):
+    url, connection = pit_database
+    month = date(2026, 8, 31)
+    manager = _prepared_source_backed_manager(monkeypatch, connection, month)
+    with connection.cursor() as cursor:
+        _seed_etf_month(cursor, manager, month, 'MISSING')
+
+    with owned_sync_session(url) as db, manager.bind_database(db_manager=db):
+        with pytest.raises(ValueError, match='pit_published_etf_source_disappeared'):
+            manager._run_months(
+                [month], batch_size=None, index_codes=None, result_key='backfilled_records'
+            )
+
+    assert getattr(manager, '_verified_replacement_months', []) == []
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT index_code,index_name FROM pit.pit_etf_index_members_monthly "
+            "WHERE obs_date=%s AND method_version=%s ORDER BY index_code",
+            (month, manager.calculator.METHOD_VERSION),
+        )
+        assert cursor.fetchall() == [
+            ('GOOD', 'Seed Index'),
+            ('MISSING', 'Seed Index'),
+            ('UNRELATED', 'Seed Index'),
+        ]

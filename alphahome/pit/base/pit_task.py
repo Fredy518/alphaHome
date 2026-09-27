@@ -193,6 +193,9 @@ class PITTask(BaseTask):
         if "planned_months" in self.task_config:
             from datetime import date
             manager._planned_months = [date.fromisoformat(value) for value in self.task_config["planned_months"]]
+        if ("source_scope_by_month" in self.task_config
+                and hasattr(manager, "_planned_source_scope_by_month")):
+            manager._planned_source_scope_by_month = self.task_config["source_scope_by_month"]
         connection_string = getattr(self.db, "connection_string", None)
         if isinstance(connection_string, str) and connection_string:
             manager.bind_database(database_url=connection_string)

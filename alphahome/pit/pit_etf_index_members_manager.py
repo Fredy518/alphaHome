@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import hashlib
 from datetime import date, datetime, timedelta
 from typing import Any, Iterable, Sequence
 
 import pandas as pd
+
+from alphahome.common.run_models import canonical_json
 
 from .base.monthly_snapshot_manager import PITMonthlySnapshotManager
 from .calculators.etf_index_members_calculator import ETFIndexMembersCalculator
@@ -22,6 +25,7 @@ class PITETFIndexMembersMonthlyManager(PITMonthlySnapshotManager):
     def __init__(self) -> None:
         super().__init__("pit_etf_index_members_monthly")
         self.calculator = ETFIndexMembersCalculator()
+        self._planned_source_scope_by_month: dict[str, dict[str, Any]] | None = None
 
     def _ensure_table_exists(self) -> None:
         super()._ensure_table_exists()
@@ -108,6 +112,7 @@ class PITETFIndexMembersMonthlyManager(PITMonthlySnapshotManager):
         total_rows = 0
         processed_months: list[str] = []
         batch_audits: list[dict[str, Any]] = []
+        source_scope_by_month: dict[str, dict[str, Any]] = {}
         total_source_pairs = {
             "official_index_weight": 0,
             "etf_disclosed_holding": 0,
@@ -124,9 +129,40 @@ class PITETFIndexMembersMonthlyManager(PITMonthlySnapshotManager):
                 codes,
             )
             self._validate_output(calculated, months, codes)
-            inserted = self._atomic_replace_scope(calculated, months, codes)
-            total_rows += inserted
-            processed_months.extend(value.isoformat() for value in months)
+            # The contract audits source-backed ETF/index pairs. A current ETF
+            # mapping alone is not evidence that stock constituents exist.
+            # Keep explicitly requested repairs strict; only the automatic
+            # universe may exclude source-less pairs, and always report them.
+            month_scopes = []
+            for month in months:
+                month_rows = calculated.loc[
+                    pd.to_datetime(calculated["obs_date"]).dt.date.eq(month)
+                ] if not calculated.empty else calculated
+                selected = sorted(set(month_rows["index_code"].astype(str)))
+                scope = self._source_scope_descriptor(
+                    month, codes, selected, check_published=index_codes is None
+                )
+                if index_codes is None:
+                    self._validate_planned_scope(month, scope)
+                    if not selected:
+                        raise ValueError(f"pit_no_publishable_etf_member_scope: {month}")
+                    if scope["previously_published_without_source"]:
+                        raise ValueError(
+                            "pit_published_etf_source_disappeared: "
+                            f"{month}: {scope['previously_published_without_source']}"
+                        )
+                    replace_codes = selected
+                else:
+                    replace_codes = codes
+                month_scopes.append((month, month_rows, replace_codes, scope))
+
+            for month, month_rows, replace_codes, scope in month_scopes:
+                inserted = self._atomic_replace_scope(
+                    month_rows, [month], replace_codes
+                )
+                total_rows += inserted
+                processed_months.append(month.isoformat())
+                source_scope_by_month[month.isoformat()] = scope
             audit = {
                 "months": [value.isoformat() for value in months],
                 **self.calculator.last_audit,
@@ -146,12 +182,20 @@ class PITETFIndexMembersMonthlyManager(PITMonthlySnapshotManager):
 
         self.stats["processed_records"] += total_rows
         self.stats["success_records"] += total_rows
+        source_gap_count = sum(
+            len(scope["unavailable_index_codes"])
+            for scope in source_scope_by_month.values()
+        )
         return {
             result_key: total_rows,
             "processed_months": processed_months,
             "processed_index_count": len(codes),
             "method_version": ETFIndexMembersCalculator.METHOD_VERSION,
             "source_pair_counts": total_source_pairs,
+            "publication_scope": "source_backed_etf_indices",
+            "source_scope_by_month": source_scope_by_month,
+            "source_gap_count": source_gap_count,
+            "coverage_status": "source_gaps" if source_gap_count else "complete",
             "dependency_freshness": self._dependency_freshness(codes),
             "run_completed_at": datetime.now().astimezone().isoformat(),
             "batch_audits": batch_audits,
@@ -165,6 +209,72 @@ class PITETFIndexMembersMonthlyManager(PITMonthlySnapshotManager):
                 "a valid official index-weight snapshot"
             ),
         }
+
+    @staticmethod
+    def _selected_index_hash(codes: Sequence[str]) -> str:
+        return hashlib.sha256(canonical_json(sorted(codes)).encode("utf-8")).hexdigest()
+
+    def _source_scope_descriptor(
+        self,
+        month: date,
+        requested_codes: Sequence[str],
+        selected_codes: Sequence[str],
+        *,
+        check_published: bool = True,
+    ) -> dict[str, Any]:
+        selected = sorted(set(selected_codes))
+        unavailable = sorted(set(requested_codes) - set(selected))
+        previously_published: list[str] = []
+        if unavailable and check_published:
+            frame = self.context.query_dataframe(
+                """
+                SELECT DISTINCT index_code
+                FROM pit.pit_etf_index_members_monthly
+                WHERE obs_date = %s AND method_version = %s
+                  AND index_code = ANY(%s)
+                ORDER BY index_code
+                """,
+                (month, self.calculator.METHOD_VERSION, unavailable),
+            )
+            if frame is not None and not frame.empty:
+                previously_published = frame["index_code"].astype(str).tolist()
+        return {
+            "selected_index_count": len(selected),
+            "selected_index_hash": self._selected_index_hash(selected),
+            "unavailable_index_codes": unavailable,
+            "previously_published_without_source": previously_published,
+        }
+
+    def _validate_planned_scope(self, month: date, actual: dict[str, Any]) -> None:
+        planned = self._planned_source_scope_by_month
+        if planned is None:
+            return
+        if planned.get(month.isoformat()) != actual:
+            raise ValueError(f"pit_etf_member_source_scope_changed: {month}")
+
+    def preview_source_scope(
+        self, target_months: Sequence[date], *, batch_size: int | None = None
+    ) -> dict[str, dict[str, Any]]:
+        """Inspect the exact publishable scope without changing PIT output."""
+        codes = self._resolve_index_codes(None)
+        month_batch = max(int(batch_size or self.DEFAULT_BACKFILL_BATCH_MONTHS), 1)
+        scopes: dict[str, dict[str, Any]] = {}
+        for offset in range(0, len(target_months), month_batch):
+            months = list(target_months[offset : offset + month_batch])
+            sources = self._load_sources(months, codes)
+            calculated = self.calculator.calculate(
+                sources["official_weights"], sources["fund_holdings"], months, codes
+            )
+            self._validate_output(calculated, months, codes)
+            for month in months:
+                month_rows = calculated.loc[
+                    pd.to_datetime(calculated["obs_date"]).dt.date.eq(month)
+                ] if not calculated.empty else calculated
+                selected = sorted(set(month_rows["index_code"].astype(str)))
+                scopes[month.isoformat()] = self._source_scope_descriptor(
+                    month, codes, selected
+                )
+        return scopes
 
     def _resolve_index_codes(
         self, index_codes: Sequence[str] | None
