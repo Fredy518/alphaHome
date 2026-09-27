@@ -44,6 +44,14 @@ python scripts/database/split_pgs_factors_schema.py
 | `etf_index_a_share_proxy_fapi` | `pit.pit_etf_index_fapi_monthly` | A股子样本代理的FAPI与预期ROE，独立方法版本 |
 | `all` | 全部 | 按依赖关系执行 |
 
+## ETF 指数成分的发布范围
+
+`etf_index_members` 的自动任务先读取当前纯境内 ETF 的跟踪指数映射，再按月核验是否存在有效的官方指数权重或已披露 ETF 持仓。只有实际算出成分的指数进入该月替换范围；无来源指数记入计划和结果的 `source_scope_by_month.unavailable_index_codes`，结果同时给出 `source_gap_count` 和 `coverage_status=source_gaps`。任务成功表示**有来源范围**完成发布，不表示所有映射指数都有成分。若当前映射范围内的某指数已有同方法版本的月度成分，本次却失去来源，任务在替换前失败，以免保留旧数据却误报为已更新。
+
+明确指定指数的人工修复仍要求所请求的每个指数都有结果，不会自动缩小范围。计划中冻结每月可发布范围；执行时范围变化会失败，需要重新生成计划并检查来源变化。下游 ETF FAPI 依赖成分表，历史月份重算若改变成分，须重新核验并重算受影响的下游月份。
+
+`source_available_date <= obs_date` 仅验证业务披露时间。来源在观察日之后才进入本库时，历史重算属于事后重建；不能据此声称观察日当时已经可用于实时决策，应结合采集时间和任务账本另行核验。
+
 ## Forecast 边界
 
 - `pit.pit_income_quarterly` 可以保留 `forecast` 行，用于记录业绩预告披露本身。
