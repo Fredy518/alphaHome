@@ -114,7 +114,7 @@ def test_validate_payload_rejects_status_permission_mismatch():
 def test_schema_isolated_from_legacy_latest_snapshot():
     assert "etf_candidate_master_latest_batch" in SCHEMA_SQL
     assert "latest_snapshot_batch" not in SCHEMA_SQL
-    assert "features.mv_etf_product_facts_current" in ENRICHED_VIEW_SQL
+    assert "features.exchange_fund_product_facts_current" in ENRICHED_VIEW_SQL
     assert "confirmation_status" in SCHEMA_SQL
     assert "AI_CONFIRMED" in SCHEMA_SQL
     assert "HUMAN_REJECTED" in SCHEMA_SQL

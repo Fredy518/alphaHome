@@ -247,7 +247,7 @@ def _format_group_detail(group: Dict[str, Any]) -> str:
         lines.extend(
             [
                 "",
-                "ETF候选池月度门禁：",
+                "ETF/LOF候选池月度门禁：",
                 f"- 运行月份：{candidate_plan.get('run_month', '--')}",
                 f"- 产品事实截止：{candidate_plan.get('facts_as_of', '--')}",
                 f"- 当前候选数：{candidate_plan.get('current_candidate_count', '--')}",
@@ -261,6 +261,35 @@ def _format_group_detail(group: Dict[str, Any]) -> str:
         if guards:
             lines.append(f"- 数据门禁：{guards}")
     progress = group.get("progress") or {}
+    usable_plan = group.get("usable_pool_plan") or {}
+    if usable_plan:
+        summary = usable_plan.get("summary") or {}
+        counts = summary.get("status_counts") or {}
+        lines.extend(
+            [
+                "",
+                "ETF/LOF可用池筛选预览：",
+                f"- 参与筛选：{summary.get('screened_count', '--')} 只",
+                f"- 产品门槛达标：{summary.get('eligible_count', '--')} 只",
+                f"- 优选保留：{summary.get('selected_count', '--')} 只",
+                f"- 主工具：{counts.get('PRIMARY', 0)}；同指数备份：{counts.get('BACKUP', 0)}",
+                "- 分类疑点单列，全部候选参与客观筛选",
+                "- 实际结果在上游更新完成后重算",
+            ]
+        )
+    monthly_plan = group.get("monthly_pool_plan") or {}
+    if monthly_plan:
+        lines.extend(
+            [
+                "",
+                "ETF/LOF可用池月度快照：",
+                f"- 完整月份截止：{monthly_plan.get('through_month', '--')}",
+                f"- 待维护月份：{monthly_plan.get('missing_months', [])}",
+                "- 指标逐月重算，固定规模、成交额和上市时长门槛",
+                "- 无历史分类依据的达标产品保留为独立工具",
+                "- 历史重建与实际维护分别记录，日常事实变化不抹去月度成员",
+            ]
+        )
     if progress:
         lines[4:4] = [
             (

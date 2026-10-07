@@ -169,6 +169,7 @@ def test_ai_confirmation_refreshes_computed_facts_and_provenance():
     assert manifest_hash == payload["source"]["source_file_sha256"]
     assert payload["governance"]["capital_authority"] is False
     assert payload["governance"]["order_authority"] is False
+    assert output["confirmation_actor"] == "deepseek:deepseek-flash"
 
 
 def test_monthly_copy_preserves_human_confirmation():
@@ -234,6 +235,8 @@ class AutomationConnection:
         self.source_batch["product_facts_as_of"] = "2026-09-04"
         self.trade_dates = [date(2026, 9, 15), date(2026, 9, 14), date(2026, 9, 11)]
         self.last_success = None
+        self.inventory = []
+        self.previous_exclusions = []
         self.write_locked = False
         self.events = []
         self.published = []
@@ -279,8 +282,12 @@ class AutomationCursor:
                 for row in db.records
                 if not row["include_in_candidate_pool"]
             ]
-        elif "FROM features.mv_etf_product_facts_current" in sql:
+        elif "FROM features.exchange_fund_product_facts_current" in sql:
             self.rows = [{"payload": deepcopy(fact)} for fact in db.facts]
+        elif "FROM rawdata.fund_etf_basic" in sql:
+            self.rows = [{"payload": deepcopy(row)} for row in db.inventory]
+        elif "FROM fund_pool_on.etf_candidate_ai_decision" in sql:
+            self.rows = deepcopy(db.previous_exclusions)
         elif "FROM rawdata.others_calendar" in sql:
             self.rows = [{"trade_date": day} for day in db.trade_dates]
         elif "last_facts_as_of" in sql:
@@ -597,6 +604,8 @@ def test_unchanged_plan_revalidates_under_lock_then_publishes_atomically(
     assert len(db.published) == 1
     expected_status = "HUMAN_CONFIRMED" if human_confirmed else "AI_CONFIRMED"
     assert db.published[0]["records"][0]["confirmation_status"] == expected_status
+    if not human_confirmed:
+        assert db.published[0]["records"][0]["confirmation_actor"] == "glms:test-model"
     lock_index = next(
         i for i, event in enumerate(db.events) if "pg_advisory_xact_lock" in event
     )
@@ -607,3 +616,66 @@ def test_unchanged_plan_revalidates_under_lock_then_publishes_atomically(
     )
     assert "commit" not in db.events[lock_index:publish_index]
     assert not db.write_locked
+
+
+@pytest.mark.parametrize("field,value", [
+    ("provider", "deepseek"),
+    ("base_url", "https://models.glms.com.cn/other/v1"),
+    ("model", "different-model"),
+])
+def test_executor_rejects_changed_model_connection_before_writes(
+    automation_db, field, value
+):
+    plan = _build_plan(automation_db)
+    changed = {**plan.plan_payload["llm_config"], field: value}
+    automation_db.events.clear()
+    with pytest.raises(CandidateAutomationError, match="connection"):
+        automation.execute_candidate_automation(
+            automation_db, plan, client=SimpleNamespace(llm_config=changed)
+        )
+    assert automation_db.events == []
+
+
+@pytest.mark.parametrize("part", ["payload", "targets", "taxonomy", "current", "source"])
+def test_executor_rejects_mutated_frozen_content_before_model_or_database(automation_db, part):
+    plan = _build_plan(automation_db)
+    if part == "payload":
+        plan.plan_payload["model_requested"] = "changed"
+    elif part == "targets":
+        plan.target_items = []
+    elif part == "taxonomy":
+        plan.taxonomy = {}
+    elif part == "current":
+        plan.current_records[0]["fund_name"] = "changed"
+    else:
+        plan.source_batch["thresholds"]["minimum_age_months"] = 0
+    automation_db.events.clear()
+    with pytest.raises(CandidateAutomationError, match="frozen hash"):
+        automation.execute_candidate_automation(automation_db, plan, client=None)
+    assert automation_db.events == []
+
+
+def test_connection_changes_plan_hash_and_isolates_checkpoint_cache(
+    monkeypatch, automation_db, tmp_path
+):
+    db = automation_db
+    _capture_publication(monkeypatch, db)
+    first = _build_plan(db, llm_base_url="https://models.glms.com.cn/ucloud/v1")
+    second = _build_plan(db, llm_base_url="https://models.glms.com.cn/other/v1")
+    assert first.plan_hash != second.plan_hash
+    calls = []
+
+    def confirm_batch(*, items, taxonomy):
+        calls.append(1)
+        return _model_result(items)
+
+    for plan in (first, second, first):
+        client = SimpleNamespace(
+            llm_config=plan.plan_payload["llm_config"], confirm_batch=confirm_batch
+        )
+        result = automation.execute_candidate_automation(
+            db, plan, client=client, checkpoint_dir=tmp_path
+        )
+        assert result["llm_config"] == plan.plan_payload["llm_config"]
+    assert len(calls) == 2
+    assert len(list(tmp_path.glob("*.json"))) == 2

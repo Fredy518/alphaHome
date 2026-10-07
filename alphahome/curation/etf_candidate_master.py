@@ -1,7 +1,7 @@
 """ETF 候选母表的版本化入库。
 
 手工候选身份与分类进入 ``fund_pool_on``；可重算产品事实来自
-``features.mv_etf_product_facts_current``。两者在查询视图中对照，但不改写原始快照。
+``features.exchange_fund_product_facts_current``。两者在查询视图中对照，但不改写原始快照。
 """
 
 from __future__ import annotations
@@ -412,7 +412,7 @@ SELECT
     s.include_in_candidate_pool
 FROM fund_pool_on.etf_candidate_master_current s
 JOIN fund_pool_on.etf_candidate_master_latest_batch b USING (snapshot_id)
-LEFT JOIN features.mv_etf_product_facts_current f
+LEFT JOIN features.exchange_fund_product_facts_current f
   ON f.fund_code = s.fund_code;
 
 COMMENT ON VIEW fund_pool_on.etf_candidate_master_current_enriched IS
@@ -680,10 +680,10 @@ def ensure_candidate_master_schema(connection: Any) -> None:
 
     with connection.cursor() as cursor:
         cursor.execute(SCHEMA_SQL)
-        cursor.execute("SELECT to_regclass('features.mv_etf_product_facts_current')")
+        cursor.execute("SELECT to_regclass('features.exchange_fund_product_facts_current')")
         if cursor.fetchone()[0] is None:
             raise RuntimeError(
-                "features.mv_etf_product_facts_current is required before candidate import"
+                "features.exchange_fund_product_facts_current is required before candidate import"
             )
         cursor.execute(ENRICHED_VIEW_SQL)
         cursor.execute(

@@ -9,23 +9,37 @@ from __future__ import annotations
 
 import math
 import re
-from dataclasses import dataclass
+import json
+from copy import deepcopy
+from dataclasses import asdict, dataclass
 from datetime import date, datetime, timezone
-from typing import Any, Iterable
+from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Any, Callable, Iterable
 from uuid import uuid4
 
 from psycopg2.extras import Json, RealDictCursor, execute_values
 
+from alphahome.curation.candidate_llm_config import resolve_candidate_llm_config
 from alphahome.curation.deepseek_candidate_client import (
     PROMPT_SHA256,
     PROMPT_VERSION,
     DeepSeekBatchResult,
-    DeepSeekCandidateClient,
+    CandidateLLMClient,
     canonical_json,
     sha256_json,
+    validate_decisions,
 )
 from alphahome.curation.etf_candidate_confirmation import (
     missing_confirmation_schema,
+)
+from alphahome.curation.etf_candidate_taxonomy import (
+    CLASSIFICATION_FIELDS,
+    CLASSIFICATION_RULES,
+    LEVEL2_BY_LEVEL1,
+    TAXONOMY_VERSION,
+    classification_values,
+    missing_classification_fields,
 )
 from alphahome.curation.etf_candidate_master import (
     CONFIRMATION_STATUS_AI,
@@ -75,6 +89,7 @@ ADD_REQUIRED_FIELDS = {
     "risk_boundary",
     "update_frequency",
     "execution_check",
+    *CLASSIFICATION_FIELDS,
 }
 
 PROMPT_CURRENT_FIELDS = (
@@ -101,12 +116,21 @@ PROMPT_CURRENT_FIELDS = (
 )
 
 PROMPT_FACT_FIELDS = (
+    "product_type",
+    "benchmark",
+    "invest_type",
+    "fund_type",
+    "aum_date",
+    "aum_known_date",
+    "aum_source",
+    "aum_scope",
     "as_of_date",
     "fund_code",
     "fund_name",
     "market",
     "etf_type",
     "tracking_index_code",
+    "tracking_index_name",
     "found_date",
     "list_date",
     "status",
@@ -142,6 +166,40 @@ MIN_AUTOMATIC_CONFIDENCE = 0.75
 # 运维容忍度，不是供应商 SLA；用交易日而非自然日计算，节假日不误报。
 FACT_MAX_LAG_TRADE_DAYS = {"price_date": 0, "nav_date": 2, "share_date": 2}
 REQUIRED_NUMERIC_FACTS = ("aum_100m", "amount_20d_100m", "age_months", "total_fee_pct")
+SCREENING_SCOPES = ("incremental", "full", "lof_initial")
+EXPOSURE_IDENTITY_POLICY = "existing_dictionary_or_index_or_lof_product_v2"
+EXPOSURE_CLASS_FIELDS = (
+    "asset_class",
+    "allocation_module",
+    "allocation_role",
+    "region_market",
+    "level1_group",
+    "level2_group",
+    "budget_scope",
+)
+
+
+def _screening_fingerprint(fact: dict[str, Any], thresholds: dict[str, Any]) -> str:
+    """重筛排除项的业务触发器；不因每日日期/规模的小幅变动反复调用模型。"""
+    return sha256_json(
+        {
+            **_subset(
+                fact,
+                (
+                    "fund_code",
+                    "fund_name",
+                    "tracking_index_code",
+                    "tracking_index_name",
+                    "market",
+                    "etf_type",
+                    "list_date",
+                    "status",
+                    "total_fee_pct",
+                ),
+            ),
+            "product_auxiliary_state": _product_auxiliary_state(fact, thresholds),
+        }
+    )
 
 
 class CandidateAutomationError(RuntimeError):
@@ -152,6 +210,8 @@ class CandidateAutomationError(RuntimeError):
 class DecisionEnvelope:
     decision: dict[str, Any]
     result: DeepSeekBatchResult
+    raw_decision: dict[str, Any] | None = None
+    identity_adjustments: dict[str, Any] | None = None
 
 
 @dataclass
@@ -176,6 +236,8 @@ class CandidateAutomationPlan:
             "plan_hash": self.plan_hash,
             "executable": self.executable,
             "run_month": self.plan_payload["run_month"],
+            "screening_scope": self.plan_payload["screening_scope"],
+            "coverage_counts": self.plan_payload["coverage_counts"],
             "facts_as_of": self.plan_payload["facts_as_of"],
             "source_snapshot_id": self.plan_payload["source_snapshot_id"],
             "current_candidate_count": self.plan_payload["current_candidate_count"],
@@ -187,6 +249,7 @@ class CandidateAutomationPlan:
             "target_reasons": self.plan_payload["target_reasons"],
             "guards": self.plan_payload["guards"],
             "model_requested": self.plan_payload["model_requested"],
+            "llm_config": self.plan_payload.get("llm_config"),
             "prompt_version": self.plan_payload["prompt_version"],
             "prompt_sha256": self.plan_payload["prompt_sha256"],
         }
@@ -224,9 +287,14 @@ def _taxonomy(current_records: list[dict[str, Any]]) -> dict[str, Any]:
             if record.get(field) is not None and str(record[field]).strip()
         }
         enums[field] = sorted(values)
+    for field, values in classification_values().items():
+        enums[field] = sorted(set(enums[field]) | set(values))
 
     exposure_reference: dict[str, dict[str, Any]] = {}
-    for record in current_records:
+    for record in sorted(
+        current_records,
+        key=lambda r: (len(missing_classification_fields(r)), r.get("source_rank", 0)),
+    ):
         exposure_id = str(record.get("exposure_id") or "").strip()
         if not exposure_id or exposure_id in exposure_reference:
             continue
@@ -247,6 +315,10 @@ def _taxonomy(current_records: list[dict[str, Any]]) -> dict[str, Any]:
         "allowed_values": enums,
         "status_permission_mapping": STATUS_PERMISSION,
         "minimum_automatic_confidence": MIN_AUTOMATIC_CONFIDENCE,
+        "classification_taxonomy_version": TAXONOMY_VERSION,
+        "level2_by_level1": LEVEL2_BY_LEVEL1,
+        "classification_rules": list(CLASSIFICATION_RULES),
+        "require_complete_classification_for_confirmation": True,
         "exposure_reference": sorted(
             exposure_reference.values(), key=lambda row: row["exposure_id"]
         ),
@@ -266,6 +338,8 @@ def _target_reason(
         return "reconfirm_all"
     if record.get("confirmation_status") in (None, CONFIRMATION_STATUS_LEGACY):
         return "legacy_unconfirmed"
+    if missing_classification_fields(record):
+        return "classification_incomplete"
     if (record.get("fund_name") or "") != (fact.get("fund_name") or ""):
         return "fund_name_changed"
     if (record.get("tracking_index_code") or "") != (
@@ -302,7 +376,10 @@ def _fact_quality_issues(
         issues.append("core_facts_incomplete")
     if fact.get("amount_20d_days") != 20:
         issues.append("amount_20d_history_incomplete")
+    is_lof = fact.get("product_type") == "LOF"
     for field in FACT_MAX_LAG_TRADE_DAYS:
+        if is_lof and field == "share_date":
+            continue  # LOF shares are periodic; they are not a daily AUM input.
         value = _iso_date(fact.get(field))
         minimum = minimum_fact_dates.get(field)
         if value is None:
@@ -311,6 +388,19 @@ def _fact_quality_issues(
             issues.append(f"{field}_stale")
         elif value > facts_as_of:
             issues.append(f"{field}_after_as_of")
+    if is_lof:
+        from .exchange_fund_sources import LOF_MAX_AUM_AGE_DAYS
+
+        aum_date = _iso_date(fact.get("aum_date"))
+        known_date = _iso_date(fact.get("aum_known_date"))
+        if not aum_date or not known_date:
+            issues.append("lof_aum_availability_missing")
+        elif not aum_date <= known_date <= facts_as_of:
+            issues.append("lof_aum_not_known_as_of")
+        elif (
+            date.fromisoformat(facts_as_of) - date.fromisoformat(aum_date)
+        ).days > LOF_MAX_AUM_AGE_DAYS:
+            issues.append("lof_aum_report_stale")
     for field in REQUIRED_NUMERIC_FACTS:
         value = fact.get(field)
         try:
@@ -332,12 +422,21 @@ def build_candidate_automation_plan(
     connection: Any,
     *,
     model_requested: str,
+    llm_base_url: str | None = None,
     run_date: date | None = None,
     reconfirm_all: bool = False,
     max_new_products: int = 50,
+    screening_scope: str = "incremental",
 ) -> CandidateAutomationPlan:
     """只读生成计划；不调用模型、不写数据库。"""
 
+    if screening_scope not in SCREENING_SCOPES:
+        raise ValueError(f"screening_scope must be one of {SCREENING_SCOPES}")
+    if max_new_products < 0:
+        raise ValueError("max_new_products must be non-negative")
+    llm_config = resolve_candidate_llm_config(
+        model=model_requested, base_url=llm_base_url
+    )
     missing_schema = missing_confirmation_schema(connection)
     if missing_schema:
         raise CandidateAutomationError(
@@ -367,21 +466,70 @@ def build_candidate_automation_plan(
         )
         cursor.execute(
             """
-            SELECT fund_code
-            FROM fund_pool_on.etf_candidate_master_snapshot
-            WHERE snapshot_id = %s AND NOT include_in_candidate_pool
+            SELECT fund_code FROM (
+                SELECT DISTINCT ON (s.fund_code)
+                       s.fund_code, s.include_in_candidate_pool
+                FROM fund_pool_on.etf_candidate_master_snapshot s
+                JOIN fund_pool_on.etf_candidate_master_batch b USING (snapshot_id)
+                WHERE b.load_status = 'loaded'
+                ORDER BY s.fund_code, b.workbook_generated_on DESC, b.loaded_at DESC
+            ) latest_membership
+            WHERE NOT include_in_candidate_pool
             """,
-            (source_batch["snapshot_id"],),
         )
         rejected_codes = {row["fund_code"] for row in cursor.fetchall()}
         facts = _json_rows(
             cursor,
             """
-            SELECT to_jsonb(f) AS payload
-            FROM features.mv_etf_product_facts_current f
+            SELECT to_jsonb(f) || jsonb_build_object(
+                'tracking_index_name', e.benchmark
+            ) AS payload
+            FROM features.exchange_fund_product_facts_current f
+            LEFT JOIN rawdata.fund_etf_basic e ON e.ts_code = f.fund_code
             ORDER BY f.fund_code
             """,
         )
+        # fund_basic 补足尚未同步到 ETF 名录的新上市产品，只用于覆盖/缺数台账。
+        inventory = _json_rows(
+            cursor,
+            """
+            SELECT to_jsonb(u) - 'priority' AS payload FROM (
+                SELECT DISTINCT ON (fund_code) * FROM (
+                    SELECT e.ts_code AS fund_code, e.name AS fund_name, e.list_date,
+                           e.status, b.list_date AS basic_list_date,
+                           b.status AS basic_status, 'ETF'::text AS product_type, 0 AS priority
+                    FROM rawdata.fund_etf_basic e
+                    LEFT JOIN rawdata.fund_basic b ON b.ts_code = e.ts_code
+                    UNION ALL
+                    SELECT ts_code, name, list_date, status, list_date, status, 'ETF', 1
+                    FROM rawdata.fund_basic
+                    WHERE ts_code ~ '[.](SH|SZ)$' AND name ILIKE %s
+                      AND name NOT LIKE %s
+                    UNION ALL
+                    SELECT ts_code,name,list_date,status,list_date,status,'LOF',2
+                    FROM rawdata.fund_basic
+                    WHERE market='E' AND ts_code ~ '^(16[0-9]{4}[.]SZ|50[12][0-9]{3}[.]SH)$'
+                      AND name NOT LIKE '%%分级%%'
+                ) combined ORDER BY fund_code, priority
+            ) u ORDER BY fund_code
+        """,
+            ("%ETF%", "%联接%"),
+        )
+        cursor.execute(
+            """
+            SELECT DISTINCT ON (d.fund_code) d.fund_code, d.decision_action,
+                   d.evidence_payload->>'screening_fingerprint' AS screening_fingerprint
+            FROM fund_pool_on.etf_candidate_ai_decision d
+            JOIN fund_pool_on.etf_candidate_ai_run r USING (ai_run_id)
+            WHERE r.status = 'SUCCEEDED'
+            ORDER BY d.fund_code, r.finished_at DESC, r.ai_run_id DESC
+        """
+        )
+        previous_exclusions = {
+            row["fund_code"]: row["screening_fingerprint"]
+            for row in cursor.fetchall()
+            if row["decision_action"] == "EXCLUDE_NEW"
+        }
         cursor.execute(
             """
             SELECT DISTINCT cal_date::date AS trade_date
@@ -441,7 +589,6 @@ def build_candidate_automation_plan(
     )
     if source_cutoff is None:
         raise CandidateAutomationError("candidate discovery cutoff is unavailable")
-    source_cutoff_date = date.fromisoformat(source_cutoff)
 
     missing_fact_codes = sorted(current_codes - set(facts_by_code))
     minimum_fact_dates = {
@@ -459,16 +606,42 @@ def build_candidate_automation_plan(
             )
         )
     }
-    discovered_new_codes = {
-        code
-        for code, fact in facts_by_code.items()
-        if fact.get("list_date") is not None
-        and date.fromisoformat(_iso_date(fact["list_date"])) > source_cutoff_date
-        and date.fromisoformat(_iso_date(fact["list_date"])) <= facts_as_of_date
-    }
-    discovered_new_codes = (
-        (discovered_new_codes | deferred_codes) - current_codes - rejected_codes
+    inventory_by_code = {row["fund_code"]: row for row in inventory}
+    all_codes = (
+        set(inventory_by_code) | set(facts_by_code) | current_codes | deferred_codes
     )
+    coverage: dict[str, dict[str, Any]] = {}
+    discovered_new_codes: set[str] = set()
+    for code in sorted(all_codes):
+        fact = facts_by_code.get(code)
+        metadata = inventory_by_code.get(code) or fact or {}
+        # 基金总名录更新较及时；ETF 专用名录仍为 P 时不能漏掉已上市产品。
+        listed_on = _iso_date(
+            metadata.get("basic_list_date") or metadata.get("list_date")
+        )
+        listing_status = metadata.get("basic_status") or metadata.get("status")
+        if code in current_codes:
+            state = "current_candidate"
+        elif code in rejected_codes:
+            state = "human_rejected"
+        elif screening_scope == "lof_initial" and metadata.get("product_type") != "LOF":
+            state = "outside_requested_product_type"
+        elif not re.fullmatch(r"[0-9]{6}\.(SH|SZ)", code):
+            state = "out_of_scope_code"
+        elif listing_status in ("D", "P") or (listed_on and listed_on > facts_as_of):
+            state = "not_listed_as_of"
+        elif (
+            screening_scope == "incremental"
+            and fact is not None
+            and previous_exclusions.get(code) is not None
+            and previous_exclusions.get(code)
+            == _screening_fingerprint(fact, source_batch["thresholds"])
+        ):
+            state = "previously_excluded_unchanged"
+        else:
+            state = "pending_screening"
+            discovered_new_codes.add(code)
+        coverage[code] = {"state": state, "fund_name": metadata.get("fund_name")}
     deferred_new_issues = {
         code: issues
         for code in sorted(discovered_new_codes)
@@ -486,10 +659,14 @@ def build_candidate_automation_plan(
         if code not in deferred_new_issues
     ]
     new_facts.sort(key=lambda fact: (str(fact.get("list_date")), fact["fund_code"]))
+    for code, issues in deferred_new_issues.items():
+        coverage[code].update(state="deferred_product_facts", issues=issues)
 
     target_items: list[dict[str, Any]] = []
     target_reasons: dict[str, int] = {}
     for record in current_records:
+        if screening_scope == "lof_initial":
+            continue  # Bootstrap LOFs without reclassifying the existing ETF archive.
         code = str(record["fund_code"]).strip().upper()
         fact = facts_by_code.get(code)
         if fact is None or code in current_fact_issues:
@@ -497,7 +674,7 @@ def build_candidate_automation_plan(
         reason = _target_reason(
             record,
             fact,
-            reconfirm_all=reconfirm_all,
+            reconfirm_all=reconfirm_all or screening_scope == "full",
             thresholds=source_batch["thresholds"],
         )
         if reason is None:
@@ -514,11 +691,16 @@ def build_candidate_automation_plan(
         )
 
     for fact in new_facts:
-        target_reasons["new_listing"] = target_reasons.get("new_listing", 0) + 1
+        reason = (
+            "full_universe"
+            if screening_scope == "full"
+            else "unseen_or_changed_product"
+        )
+        target_reasons[reason] = target_reasons.get(reason, 0) + 1
         target_items.append(
             {
                 "kind": "new",
-                "reason": "new_listing",
+                "reason": reason,
                 "fund_code": str(fact["fund_code"]).strip().upper(),
                 "current_record": None,
                 "live_product_facts": _subset(fact, PROMPT_FACT_FIELDS),
@@ -526,6 +708,33 @@ def build_candidate_automation_plan(
         )
 
     taxonomy = _taxonomy(current_records)
+    # 同指数候选是分类参照，不能仅因批次不同就把同一暴露命名为多个新暴露。
+    for item in target_items:
+        item["same_index_candidates"] = [
+            _subset(
+                row,
+                (
+                    "fund_code",
+                    "fund_name",
+                    "tracking_index_code",
+                    "exposure_id",
+                    "exposure_name",
+                    "product_role",
+                    "candidate_status",
+                ),
+            )
+            for row in current_records
+            if row.get("tracking_index_code")
+            and row["tracking_index_code"]
+            == item["live_product_facts"].get("tracking_index_code")
+        ]
+        if item["kind"] == "new":
+            coverage[item["fund_code"]]["state"] = "model_target_new"
+        else:
+            coverage[item["fund_code"]]["state"] = "model_target_existing"
+    coverage_counts: dict[str, int] = {"total": len(coverage)}
+    for row in coverage.values():
+        coverage_counts[row["state"]] = coverage_counts.get(row["state"], 0) + 1
     expected_date_iso = _iso_date(expected_prior_trade_date)
     guards = {
         "source_snapshot_loaded": True,
@@ -555,14 +764,20 @@ def build_candidate_automation_plan(
         and guards["new_product_count_within_limit"]
     )
     plan_payload = {
-        "contract": "etf_candidate_ai_automation_plan_v1",
+        "contract": "etf_candidate_ai_automation_plan_v2",
+        "exposure_identity_policy": EXPOSURE_IDENTITY_POLICY,
+        "screening_scope": screening_scope,
+        "coverage_counts": coverage_counts,
+        "coverage": coverage,
+        "human_rejected_codes": sorted(rejected_codes),
         "run_month": _first_of_month(effective_run_date).isoformat(),
         "run_date": effective_run_date.isoformat(),
         "facts_as_of": facts_as_of,
         "discovery_cutoff": source_cutoff,
         "source_snapshot_id": source_batch["snapshot_id"],
         "source_batch_fingerprint": sha256_json(source_batch),
-        "model_requested": model_requested,
+        "model_requested": llm_config.model,
+        "llm_config": llm_config.audit(),
         "prompt_version": PROMPT_VERSION,
         "prompt_sha256": PROMPT_SHA256,
         "reconfirm_all": reconfirm_all,
@@ -667,10 +882,13 @@ def _validate_patch(
         raise CandidateAutomationError(f"included candidate has no evidence for {code}")
 
 
-def _decision_confirmation_status(decision: dict[str, Any]) -> str:
+def _decision_confirmation_status(
+    decision: dict[str, Any], record: dict[str, Any] | None = None
+) -> str:
     if (
         decision["confidence"] < MIN_AUTOMATIC_CONFIDENCE
         or decision["requires_human_review"]
+        or (record is not None and missing_classification_fields(record))
     ):
         return CONFIRMATION_STATUS_AI_REVIEW
     return CONFIRMATION_STATUS_AI
@@ -822,6 +1040,7 @@ def build_ai_snapshot_payload(
             "candidate product facts failed validation: " + canonical_json(fact_issues)
         )
     confirmation_time = confirmed_at.astimezone(timezone.utc).isoformat()
+    provider = plan.plan_payload.get("llm_config", {}).get("provider", "deepseek")
     records: list[dict[str, Any]] = []
 
     for current in plan.current_records:
@@ -835,25 +1054,31 @@ def build_ai_snapshot_payload(
         envelope = envelope_by_code.get(code)
         if envelope is not None:
             decision = envelope.decision
-            confirmation_status = _decision_confirmation_status(decision)
+            proposed = {**record, **decision["classification_patch"]}
+            confirmation_status = _decision_confirmation_status(decision, proposed)
             if (
                 decision["action"] == "UPDATE"
                 and confirmation_status == CONFIRMATION_STATUS_AI
             ):
                 record.update(decision["classification_patch"])
-            record["confirmation_status"] = confirmation_status
-            record["confirmation_actor"] = f"deepseek:{envelope.result.actual_model}"
-            record["confirmation_at"] = confirmation_time
-            record["ai_run_id"] = ai_run_id
-            record["ai_model"] = envelope.result.actual_model
-            record["ai_confidence"] = decision["confidence"]
-            record["ai_decision_hash"] = sha256_json(decision)
-            record["human_review_note"] = None
-            record["manual_review_status"] = (
-                "AI待人工复核"
-                if confirmation_status == CONFIRMATION_STATUS_AI_REVIEW
-                else "AI大模型确认"
-            )
+            # A null-field completion is evidence about these fields only. Keep
+            # the original whole-record review status and its supporting audit.
+            if plan.plan_payload.get("screening_scope") != "classification_completion":
+                record["confirmation_status"] = confirmation_status
+                record["confirmation_actor"] = (
+                    f"{provider}:{envelope.result.actual_model}"
+                )
+                record["confirmation_at"] = confirmation_time
+                record["ai_run_id"] = ai_run_id
+                record["ai_model"] = envelope.result.actual_model
+                record["ai_confidence"] = decision["confidence"]
+                record["ai_decision_hash"] = sha256_json(decision)
+                record["human_review_note"] = None
+                record["manual_review_status"] = (
+                    "AI待人工复核"
+                    if confirmation_status == CONFIRMATION_STATUS_AI_REVIEW
+                    else "AI大模型确认"
+                )
         elif record.get("confirmation_status") == CONFIRMATION_STATUS_HUMAN:
             record["manual_review_status"] = "人工确认"
         _refresh_record_facts(
@@ -887,7 +1112,9 @@ def build_ai_snapshot_payload(
         record.update(
             {
                 "confirmation_status": confirmation_status,
-                "confirmation_actor": f"deepseek:{envelope.result.actual_model}",
+                "confirmation_actor": (
+                    f"{provider}:{envelope.result.actual_model}"
+                ),
                 "confirmation_at": confirmation_time,
                 "ai_run_id": ai_run_id,
                 "ai_model": envelope.result.actual_model,
@@ -927,7 +1154,21 @@ def build_ai_snapshot_payload(
         "snapshot_id": snapshot_id,
         "source": {
             "source_version": (
-                "AI_MONTHLY_" + plan.plan_payload["run_month"].replace("-", "")[:6]
+                (
+                    "AI_FULL_"
+                    if plan.plan_payload.get("screening_scope") == "full"
+                    else (
+                        "AI_REVIEW_"
+                        if plan.plan_payload.get("screening_scope") == "review"
+                        else (
+                            "AI_CLASSIFICATION_COMPLETION_"
+                            if plan.plan_payload.get("screening_scope")
+                            == "classification_completion"
+                            else "AI_MONTHLY_"
+                        )
+                    )
+                )
+                + plan.plan_payload["run_month"].replace("-", "")[:6]
             ),
             "source_file_name": f"{snapshot_id}.json",
             "source_file_path": None,
@@ -983,20 +1224,158 @@ def _sum_usage(results: Iterable[DeepSeekBatchResult], field: str) -> int | None
     return sum(present) if present else None
 
 
-def get_existing_month_result(connection: Any, run_month: str) -> dict[str, Any] | None:
+def _resolve_exposure_identities(
+    plan: CandidateAutomationPlan, envelopes: list[DecisionEnvelope]
+) -> list[DecisionEnvelope]:
+    """全批合并时分配稳定身份，保留原模型决定和本地修正，冲突降为待复核。
+
+    既有字典可能有同暴露的不同指数实施变体，模型不能擅自拆分它们。
+    新指数使用代码命名空间，不接受各模型批次独立递增的 IND_063 等编号。
+    """
+    current_by_code = {r["fund_code"]: r for r in plan.current_records}
+    references: dict[str, list[dict[str, Any]]] = {}
+    for row in plan.current_records:
+        if row.get("tracking_index_code"):
+            references.setdefault(row["tracking_index_code"], []).append(row)
+    groups: dict[str, list[DecisionEnvelope]] = {}
+    for envelope in envelopes:
+        if envelope.decision["action"] == "ADD":
+            code = envelope.decision["fund_code"]
+            index_code = plan.facts_by_code[code].get("tracking_index_code")
+            groups.setdefault(index_code or f"NO_INDEX_{code}", []).append(envelope)
+
+    canonical: dict[str, dict[str, Any]] = {}
+    conflicts: set[str] = set()
+    for index_code, group in groups.items():
+        if index_code in references:
+            # 保留同一指数在原字典中的身份，按原候选排序确定参照。
+            canonical[index_code] = references[index_code][0]
+            if len({r["exposure_id"] for r in references[index_code]}) > 1:
+                conflicts.add(index_code)
+            continue
+        best = max(
+            group,
+            key=lambda e: (
+                sum(
+                    bool(e.decision["classification_patch"].get(f))
+                    for f in EXPOSURE_CLASS_FIELDS
+                ),
+                e.decision["confidence"],
+                e.decision["fund_code"],
+            ),
+        )
+        fact = plan.facts_by_code[best.decision["fund_code"]]
+        canonical[index_code] = {
+            **best.decision["classification_patch"],
+            "exposure_id": (
+                "LOF_PRODUCT_" + fact["fund_code"].replace(".", "_")
+                if fact.get("product_type") == "LOF"
+                and not fact.get("tracking_index_code")
+                else "ETF_INDEX_" + re.sub(r"[^A-Za-z0-9_]", "_", index_code)
+            ),
+            "exposure_name": fact.get("tracking_index_name")
+            or best.decision["classification_patch"]["exposure_name"],
+        }
+        signatures = {
+            tuple(
+                e.decision["classification_patch"].get(f) for f in EXPOSURE_CLASS_FIELDS
+            )
+            for e in group
+        }
+        if len(signatures) > 1 or (
+            index_code.startswith("NO_INDEX_") and fact.get("product_type") != "LOF"
+        ):
+            conflicts.add(index_code)
+
+    resolved: list[DecisionEnvelope] = []
+    for envelope in envelopes:
+        raw = envelope.decision
+        decision = deepcopy(raw)
+        patch = decision["classification_patch"]
+        reasons: list[str] = []
+        code = decision["fund_code"]
+        if decision["action"] == "UPDATE":
+            record = current_by_code[code]
+            if any(
+                f in patch
+                and patch[f] != record.get(f)
+                and (f == "exposure_id" or bool(record.get(f)))
+                for f in ("exposure_id", *EXPOSURE_CLASS_FIELDS)
+            ):
+                reasons.append("既有暴露身份或分类调整须人工复核，自动流程保留原字典")
+        elif decision["action"] == "ADD":
+            fact = plan.facts_by_code[code]
+            index_code = fact.get("tracking_index_code") or f"NO_INDEX_{code}"
+            reference = canonical[index_code]
+            if index_code in references:
+                if any(
+                    patch.get(f) and patch[f] != reference.get(f)
+                    for f in ("asset_class", "allocation_module")
+                ):
+                    reasons.append(
+                        "模型大类与已有同指数字典不一致，使用字典并转人工复核"
+                    )
+                patch.update(
+                    product_role="备选工具",
+                    exposure_relationship="同指数备份",
+                    parent_fund_code=reference["fund_code"],
+                )
+            else:
+                # 新指数不可自动把自己挂到不相同的既有指数父工具上。
+                patch["parent_fund_code"] = None
+                patch["exposure_relationship"] = "独立暴露"
+            for field in ("exposure_id", "exposure_name", *EXPOSURE_CLASS_FIELDS):
+                if reference.get(field) or field not in CLASSIFICATION_FIELDS:
+                    patch[field] = reference.get(field)
+            if index_code in conflicts:
+                reasons.append(
+                    "同指数跨批次分类不一致或指数身份不足，合并为一个稳定编号并待人工复核"
+                )
+        if reasons:
+            decision["requires_human_review"] = True
+            decision["uncertainty"] = list(
+                dict.fromkeys(decision["uncertainty"] + reasons)
+            )
+        adjustments = {
+            field: {"model": raw["classification_patch"].get(field), "resolved": value}
+            for field, value in patch.items()
+            if value != raw["classification_patch"].get(field)
+        }
+        if reasons:
+            adjustments["review_reasons"] = reasons
+        resolved.append(
+            DecisionEnvelope(
+                decision=decision,
+                result=envelope.result,
+                raw_decision=deepcopy(raw) if decision != raw else None,
+                identity_adjustments=adjustments or None,
+            )
+        )
+    return resolved
+
+
+def get_existing_month_result(
+    connection: Any,
+    run_month: str,
+    screening_scope: str = "incremental",
+    plan_hash: str | None = None,
+) -> dict[str, Any] | None:
     """返回自然月内最近一次成功结果；只读且不改变事务状态。"""
 
     with connection.cursor(cursor_factory=RealDictCursor) as cursor:
         cursor.execute(
             """
             SELECT ai_run_id, run_month, facts_as_of, output_snapshot_id,
-                   decision_count, finished_at
+                   decision_count, finished_at, model_requested,
+                   plan_payload->'llm_config' AS llm_config
             FROM fund_pool_on.etf_candidate_ai_run
             WHERE run_month = %s AND status = 'SUCCEEDED'
+              AND COALESCE(plan_payload->>'screening_scope', 'incremental') = %s
+              AND (%s IS NULL OR plan_hash = %s)
             ORDER BY finished_at DESC
             LIMIT 1
             """,
-            (run_month,),
+            (run_month, screening_scope, plan_hash, plan_hash),
         )
         row = cursor.fetchone()
     if row is None:
@@ -1011,12 +1390,26 @@ def execute_candidate_automation(
     connection: Any,
     plan: CandidateAutomationPlan,
     *,
-    client: DeepSeekCandidateClient | None,
+    client: CandidateLLMClient | None,
     expected_plan_hash: str | None = None,
     batch_size: int = 12,
+    checkpoint_dir: str | Path | None = None,
+    progress_callback: Callable[[dict[str, Any]], None] | None = None,
+    max_workers: int = 1,
 ) -> dict[str, Any]:
     """执行已生成计划；模型失败或本地验证失败时不写候选快照。"""
 
+    if (
+        sha256_json(plan.plan_payload) != plan.plan_hash
+        or plan.target_items != plan.plan_payload.get("target_items")
+        or plan.taxonomy != plan.plan_payload.get("taxonomy")
+        or sha256_json(plan.source_batch) != plan.plan_payload.get("source_batch_fingerprint")
+        or sha256_json([
+            {key: record.get(key) for key in SNAPSHOT_COLUMNS if key != "snapshot_id"}
+            for record in plan.current_records
+        ]) != plan.plan_payload.get("current_snapshot_fingerprint")
+    ):
+        raise CandidateAutomationError("automation plan content differs from its frozen hash")
     if expected_plan_hash is not None and expected_plan_hash != plan.plan_hash:
         raise CandidateAutomationError(
             "expected plan hash does not match current read-only plan"
@@ -1028,11 +1421,47 @@ def execute_candidate_automation(
         )
     if batch_size < 1 or batch_size > 25:
         raise ValueError("batch_size must be between 1 and 25")
+    if not 1 <= max_workers <= 8:
+        raise ValueError("max_workers must be between 1 and 8")
     if plan.target_items and client is None:
-        raise CandidateAutomationError("DeepSeek client is required for LLM targets")
+        raise CandidateAutomationError("GLMS client is required for LLM targets")
+    frozen_llm_config = plan.plan_payload.get("llm_config")
+    if (
+        client is not None
+        and hasattr(client, "llm_config")
+        and frozen_llm_config is None
+    ):
+        raise CandidateAutomationError(
+            "model connection is missing from the frozen plan; preview again"
+        )
+    if client is not None and frozen_llm_config is not None:
+        if getattr(client, "llm_config", frozen_llm_config) != frozen_llm_config:
+            raise CandidateAutomationError(
+                "model client connection does not match the frozen plan"
+            )
+    if client is not None and getattr(
+        client, "prompt_sha256", plan.plan_payload.get("prompt_sha256")
+    ) != plan.plan_payload.get("prompt_sha256"):
+        raise CandidateAutomationError(
+            "model client prompt does not match the frozen plan"
+        )
 
     run_month = plan.plan_payload["run_month"]
-    existing = get_existing_month_result(connection, run_month)
+    if client is not None and plan.plan_payload.get("generation_settings") is not None:
+        if (
+            getattr(client, "generation_settings", None)
+            != plan.plan_payload["generation_settings"]
+        ):
+            raise CandidateAutomationError(
+                "model generation settings do not match the frozen plan"
+            )
+    screening_scope = plan.plan_payload.get("screening_scope", "incremental")
+    dedup_hash = (
+        plan.plan_hash if screening_scope == "classification_completion" else None
+    )
+    existing = get_existing_month_result(
+        connection, run_month, screening_scope, dedup_hash
+    )
     if existing:
         return existing
 
@@ -1052,7 +1481,9 @@ def execute_candidate_automation(
             )
         connection.commit()
 
-        existing = get_existing_month_result(connection, run_month)
+        existing = get_existing_month_result(
+            connection, run_month, screening_scope, dedup_hash
+        )
         if existing:
             return existing
 
@@ -1074,7 +1505,7 @@ def execute_candidate_automation(
                     plan.plan_hash,
                     Json(plan.plan_payload),
                     plan.plan_payload["model_requested"],
-                    PROMPT_VERSION,
+                    plan.plan_payload["prompt_version"],
                     len(plan.current_records),
                     plan.plan_payload["new_product_count"],
                 ),
@@ -1083,30 +1514,161 @@ def execute_candidate_automation(
 
         envelopes: list[DecisionEnvelope] = []
         batch_results: list[DeepSeekBatchResult] = []
-        for batch in _chunks(plan.target_items, batch_size):
+        cache_dir = Path(checkpoint_dir) if checkpoint_dir is not None else None
+        if cache_dir:
+            cache_dir.mkdir(parents=True, exist_ok=True)
+        batches = list(_chunks(plan.target_items, batch_size))
+
+        def confirm_one(
+            batch: list[dict[str, Any]],
+        ) -> tuple[DeepSeekBatchResult, bool]:
             assert client is not None
-            result = client.confirm_batch(items=batch, taxonomy=plan.taxonomy)
+            cache_key = sha256_json(
+                {
+                    "model": plan.plan_payload["model_requested"],
+                    "llm_config": frozen_llm_config,
+                    "prompt": plan.plan_payload["prompt_sha256"],
+                    "items": batch,
+                    "taxonomy": plan.taxonomy,
+                    **(
+                        {
+                            "generation_settings": plan.plan_payload[
+                                "generation_settings"
+                            ]
+                        }
+                        if "generation_settings" in plan.plan_payload
+                        else {}
+                    ),
+                }
+            )
+            cache_file = cache_dir / (cache_key + ".json") if cache_dir else None
+            cached = bool(cache_file and cache_file.exists())
+            if cached:
+                checkpoint = json.loads(cache_file.read_text(encoding="utf-8"))
+                if checkpoint["cache_key"] != cache_key or checkpoint[
+                    "result_hash"
+                ] != sha256_json(checkpoint["result"]):
+                    raise CandidateAutomationError("batch checkpoint hash mismatch")
+                result = DeepSeekBatchResult(**checkpoint["result"])
+            else:
+                result = client.confirm_batch(items=batch, taxonomy=plan.taxonomy)
+            validate_decisions(
+                {"decisions": result.decisions},
+                input_items=batch,
+                taxonomy=plan.taxonomy,
+            )
+            for decision in result.decisions:
+                _validate_patch(decision, taxonomy=plan.taxonomy)
+            if cache_file and not cached:
+                result_data = asdict(result)
+                temporary_file = cache_file.with_suffix(".tmp")
+                temporary_file.write_text(
+                    canonical_json(
+                        {
+                            "cache_key": cache_key,
+                            "result": result_data,
+                            "result_hash": sha256_json(result_data),
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                temporary_file.replace(cache_file)
+            return result, cached
+
+        completed_batches: dict[int, DeepSeekBatchResult] = {}
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {
+                executor.submit(confirm_one, batch): number
+                for number, batch in enumerate(batches)
+            }
+            try:
+                for future in as_completed(futures):
+                    result, cached = future.result()
+                    completed_batches[futures[future]] = result
+                    if progress_callback:
+                        progress_callback(
+                            {
+                                "batch": len(completed_batches),
+                                "batches": len(batches),
+                                "completed_decisions": sum(
+                                    len(r.decisions) for r in completed_batches.values()
+                                ),
+                                "total_decisions": len(plan.target_items),
+                                "cached": cached,
+                            }
+                        )
+            except Exception:
+                for future in futures:
+                    future.cancel()
+                raise
+        # 并发只用于无写入的模型请求；按原计划顺序合并并一次性提交数据库。
+        for number in sorted(completed_batches):
+            result = completed_batches[number]
             batch_results.append(result)
             envelopes.extend(
                 DecisionEnvelope(decision=decision, result=result)
                 for decision in result.decisions
             )
-
         # 模型调用期间不持候选写锁，允许人工复核；发布前在同一受保护事务中
         # 重读完整计划。任何人工状态、批次或产品事实变化都要求重新生成计划。
         lock_candidate_master(connection)
-        current_plan = build_candidate_automation_plan(
-            connection,
-            model_requested=plan.plan_payload["model_requested"],
-            run_date=date.fromisoformat(plan.plan_payload["run_date"]),
-            reconfirm_all=plan.plan_payload["reconfirm_all"],
-            max_new_products=plan.plan_payload["guards"]["max_new_products"],
-        )
+        if screening_scope == "classification_completion":
+            from alphahome.curation.etf_candidate_classification_completion import (
+                build_candidate_classification_completion_plan,
+            )
+
+            current_plan = build_candidate_classification_completion_plan(
+                connection,
+                model_requested=plan.plan_payload["model_requested"],
+                llm_base_url=(frozen_llm_config or {}).get("base_url"),
+                run_date=date.fromisoformat(plan.plan_payload["run_date"]),
+                web_evidence=plan.plan_payload["web_evidence"],
+                expected_target_count=plan.plan_payload["expected_target_count"],
+            )
+        elif screening_scope == "review":
+            from alphahome.curation.etf_candidate_second_review import (
+                build_candidate_second_review_plan,
+            )
+
+            current_plan = build_candidate_second_review_plan(
+                connection,
+                model_requested=plan.plan_payload["model_requested"],
+                llm_base_url=(frozen_llm_config or {}).get("base_url"),
+                run_date=date.fromisoformat(plan.plan_payload["run_date"]),
+                expected_target_count=plan.plan_payload["expected_target_count"],
+            )
+        else:
+            current_plan = build_candidate_automation_plan(
+                connection,
+                model_requested=plan.plan_payload["model_requested"],
+                llm_base_url=(frozen_llm_config or {}).get("base_url"),
+                run_date=date.fromisoformat(plan.plan_payload["run_date"]),
+                reconfirm_all=plan.plan_payload["reconfirm_all"],
+                max_new_products=plan.plan_payload["guards"]["max_new_products"],
+                screening_scope=screening_scope,
+            )
         if current_plan.plan_hash != plan.plan_hash or not current_plan.executable:
             raise CandidateAutomationError(
                 "candidate automation plan changed before publication; "
                 "regenerate the plan to preserve current human reviews and facts"
             )
+
+        # Publish only the freshly revalidated database snapshot.
+        plan = current_plan
+        if screening_scope == "classification_completion":
+            from alphahome.curation.etf_candidate_classification_completion import (
+                resolve_completion_consistency,
+            )
+
+            envelopes = resolve_completion_consistency(plan, envelopes)
+        elif screening_scope == "review":
+            from alphahome.curation.etf_candidate_second_review import (
+                resolve_review_consistency,
+            )
+
+            envelopes = resolve_review_consistency(plan, envelopes)
+        else:
+            envelopes = _resolve_exposure_identities(plan, envelopes)
 
         confirmed_at = datetime.now(timezone.utc)
         payload, manifest_hash = build_ai_snapshot_payload(
@@ -1124,6 +1686,15 @@ def execute_candidate_automation(
                 "evidence": decision["evidence"],
                 "uncertainty": decision["uncertainty"],
                 "requires_human_review": decision["requires_human_review"],
+                "exposure_identity_policy": plan.plan_payload.get(
+                    "exposure_identity_policy", EXPOSURE_IDENTITY_POLICY
+                ),
+                "model_decision": envelope.raw_decision,
+                "identity_adjustments": envelope.identity_adjustments,
+                "screening_fingerprint": _screening_fingerprint(
+                    plan.facts_by_code[decision["fund_code"]],
+                    plan.source_batch["thresholds"],
+                ),
             }
             decision_rows.append(
                 (
@@ -1196,6 +1767,16 @@ def execute_candidate_automation(
             "ai_run_id": ai_run_id,
             "plan_hash": plan.plan_hash,
             "run_month": run_month,
+            "screening_scope": screening_scope,
+            "llm_config": frozen_llm_config,
+            "coverage_counts": plan.plan_payload.get("coverage_counts", {}),
+            "decision_actions": {
+                action: sum(e.decision["action"] == action for e in envelopes)
+                for action in ("KEEP", "UPDATE", "ADD", "EXCLUDE_NEW")
+            },
+            "identity_adjusted_count": sum(
+                bool(e.identity_adjustments) for e in envelopes
+            ),
             "facts_as_of": plan.plan_payload["facts_as_of"],
             "llm_decision_count": len(envelopes),
             "ai_confirmed_count": sum(

@@ -20,7 +20,7 @@ from alphahome.curation.etf_candidate_master import (
 )
 
 
-MIGRATION_ID = "20260916_etf_candidate_pit_v4"
+MIGRATION_ID = "20260929_etf_candidate_classification_completion_v6"
 
 MIGRATION_SQL = """
 CREATE TABLE IF NOT EXISTS fund_pool_on.etf_candidate_ai_run (
@@ -191,12 +191,22 @@ CREATE INDEX IF NOT EXISTS idx_etf_candidate_confirmation_audit_lookup
     ON fund_pool_on.etf_candidate_confirmation_audit (
         snapshot_id, fund_code, changed_at DESC
     );
-CREATE UNIQUE INDEX IF NOT EXISTS uq_etf_candidate_ai_run_succeeded_month
-    ON fund_pool_on.etf_candidate_ai_run (run_month)
-    WHERE status = 'SUCCEEDED';
+DROP INDEX IF EXISTS fund_pool_on.uq_etf_candidate_ai_run_succeeded_month;
+DROP INDEX IF EXISTS fund_pool_on.uq_etf_candidate_ai_run_succeeded_scope_month;
+CREATE UNIQUE INDEX uq_etf_candidate_ai_run_succeeded_scope_month
+    ON fund_pool_on.etf_candidate_ai_run (
+        run_month, (COALESCE(plan_payload->>'screening_scope', 'incremental'))
+    )
+    WHERE status = 'SUCCEEDED'
+      AND COALESCE(plan_payload->>'screening_scope', 'incremental')
+          <> 'classification_completion';
+CREATE UNIQUE INDEX IF NOT EXISTS uq_etf_candidate_ai_run_completion_plan
+    ON fund_pool_on.etf_candidate_ai_run (run_month, plan_hash)
+    WHERE status = 'SUCCEEDED'
+      AND plan_payload->>'screening_scope' = 'classification_completion';
 
 COMMENT ON TABLE fund_pool_on.etf_candidate_ai_run IS
-    'ETF候选池月度AI确认运行；仅候选研究，无资金和下单权限';
+    'ETF候选池AI筛选运行；普通范围同月最多成功一次，缺项补全按冻结计划去重，仅候选研究';
 COMMENT ON TABLE fund_pool_on.etf_candidate_ai_decision IS
     '逐ETF的LLM结构化判断、证据、置信度及响应哈希';
 COMMENT ON TABLE fund_pool_on.etf_candidate_confirmation_audit IS
@@ -376,6 +386,21 @@ def missing_confirmation_schema(connection: Any) -> list[str]:
 
     missing: list[str] = []
     with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT to_regclass('fund_pool_on.uq_etf_candidate_ai_run_succeeded_scope_month'),
+                   to_regclass('fund_pool_on.uq_etf_candidate_ai_run_succeeded_month'),
+                   to_regclass('fund_pool_on.uq_etf_candidate_ai_run_completion_plan'),
+                   (SELECT pg_get_expr(indpred, indrelid) FROM pg_index
+                    WHERE indexrelid=to_regclass(
+                        'fund_pool_on.uq_etf_candidate_ai_run_succeeded_scope_month'))
+            """
+        )
+        scope_index, legacy_index, completion_index, scope_predicate = cursor.fetchone()
+        if scope_index is None or legacy_index is not None:
+            missing.append("index:etf_candidate_ai_run.succeeded_scope_month")
+        if completion_index is None or "classification_completion" not in (scope_predicate or ""):
+            missing.append("index:etf_candidate_ai_run.completion_plan")
         cursor.execute(
             """
             SELECT table_name

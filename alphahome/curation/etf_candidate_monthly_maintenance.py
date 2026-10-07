@@ -7,21 +7,23 @@
 
 from __future__ import annotations
 
-import os
 from datetime import date
-from typing import Any
+from pathlib import Path
+from typing import Any, Callable
 
 import psycopg2
 
-from alphahome.curation.deepseek_candidate_client import (
-    DEFAULT_MODEL,
-    DeepSeekCandidateClient,
+from alphahome.curation.candidate_llm_config import (
+    get_glms_api_key,
+    resolve_candidate_llm_config,
 )
+from alphahome.curation.deepseek_candidate_client import CandidateLLMClient
 from alphahome.curation.etf_candidate_ai_automation import (
     CandidateAutomationError,
     build_candidate_automation_plan,
     execute_candidate_automation,
     get_existing_month_result,
+    SCREENING_SCOPES,
 )
 
 
@@ -29,6 +31,7 @@ MONTHLY_TASK_NAME = "etf_candidate_ai_monthly"
 DEFAULT_NOT_BEFORE_DAY = 5
 DEFAULT_BATCH_SIZE = 12
 DEFAULT_MAX_NEW_PRODUCTS = 50
+DEFAULT_FULL_MAX_NEW_PRODUCTS = 3000
 
 
 def _validate_not_before_day(value: int) -> None:
@@ -36,15 +39,12 @@ def _validate_not_before_day(value: int) -> None:
         raise ValueError("not_before_day must be between 1 and 28")
 
 
-def _model_name(model_requested: str | None) -> str:
-    return model_requested or os.environ.get("DEEPSEEK_MODEL") or DEFAULT_MODEL
-
-
 def _base_result(
     *,
     run_date: date,
     not_before_day: int,
     model_requested: str,
+    llm_config: dict[str, str],
 ) -> dict[str, Any]:
     return {
         "task_name": MONTHLY_TASK_NAME,
@@ -52,6 +52,7 @@ def _base_result(
         "run_month": run_date.replace(day=1).isoformat(),
         "not_before_day": not_before_day,
         "model_requested": model_requested,
+        "llm_config": llm_config,
         "capital_authority": False,
         "order_authority": False,
     }
@@ -65,46 +66,61 @@ def build_candidate_monthly_maintenance_plan(
     not_before_day: int = DEFAULT_NOT_BEFORE_DAY,
     reconfirm_all: bool = False,
     max_new_products: int = DEFAULT_MAX_NEW_PRODUCTS,
+    screening_scope: str = "incremental",
+    include_plan_payload: bool = False,
 ) -> dict[str, Any]:
     """生成供 GUI/CLI 展示的只读月度计划，不刷新数据、不调用模型。"""
 
     _validate_not_before_day(not_before_day)
-    model = _model_name(model_requested)
+    if screening_scope not in SCREENING_SCOPES:
+        raise ValueError(f"screening_scope must be one of {SCREENING_SCOPES}")
+    config = resolve_candidate_llm_config(model=model_requested)
+    model = config.model
+    api_key_available = bool(get_glms_api_key())
     base = _base_result(
         run_date=run_date,
         not_before_day=not_before_day,
         model_requested=model,
+        llm_config=config.audit(),
     )
-    if run_date.day < not_before_day:
+    base["screening_scope"] = screening_scope
+    if screening_scope == "incremental" and run_date.day < not_before_day:
         return {
             **base,
             "status": "deferred_before_monthly_window",
             "executable_now": False,
-            "api_key_available": bool(os.environ.get("DEEPSEEK_API_KEY")),
+            "api_key_available": api_key_available,
         }
 
     connection = psycopg2.connect(database_url)
     try:
-        existing = get_existing_month_result(connection, base["run_month"])
+        existing = (
+            get_existing_month_result(connection, base["run_month"])
+            if screening_scope == "incremental"
+            else get_existing_month_result(
+                connection, base["run_month"], screening_scope
+            )
+        )
         connection.rollback()
         if existing is not None:
             return {
                 **base,
                 **existing,
                 "executable_now": False,
-                "api_key_available": bool(os.environ.get("DEEPSEEK_API_KEY")),
+                "api_key_available": api_key_available,
             }
 
         plan = build_candidate_automation_plan(
             connection,
             model_requested=model,
+            llm_base_url=config.base_url,
             run_date=run_date,
             reconfirm_all=reconfirm_all,
             max_new_products=max_new_products,
+            screening_scope=screening_scope,
         )
         connection.rollback()
         summary = plan.summary()
-        api_key_available = bool(os.environ.get("DEEPSEEK_API_KEY"))
         missing_api_key = bool(plan.target_items) and not api_key_available
         if missing_api_key:
             status = "blocked_missing_api_key"
@@ -117,6 +133,7 @@ def build_candidate_monthly_maintenance_plan(
         return {
             **base,
             **summary,
+            **({"plan_payload": plan.plan_payload} if include_plan_payload else {}),
             "status": status,
             "executable_now": plan.executable and not missing_api_key,
             "api_key_available": api_key_available,
@@ -135,17 +152,26 @@ def execute_candidate_monthly_maintenance(
     max_new_products: int = DEFAULT_MAX_NEW_PRODUCTS,
     batch_size: int = DEFAULT_BATCH_SIZE,
     expected_plan_hash: str | None = None,
+    screening_scope: str = "incremental",
+    checkpoint_dir: str | Path | None = None,
+    progress_callback: Callable[[dict[str, Any]], None] | None = None,
+    max_workers: int = 1,
 ) -> dict[str, Any]:
-    """在上游更新完成后执行月度维护；每个自然月最多成功一次。"""
+    """在上游完成后执行维护；月度增量和显式全量各自每月最多成功一次。"""
 
     _validate_not_before_day(not_before_day)
-    model = _model_name(model_requested)
+    if screening_scope not in SCREENING_SCOPES:
+        raise ValueError(f"screening_scope must be one of {SCREENING_SCOPES}")
+    config = resolve_candidate_llm_config(model=model_requested)
+    model = config.model
     base = _base_result(
         run_date=run_date,
         not_before_day=not_before_day,
         model_requested=model,
+        llm_config=config.audit(),
     )
-    if run_date.day < not_before_day:
+    base["screening_scope"] = screening_scope
+    if screening_scope == "incremental" and run_date.day < not_before_day:
         return {
             **base,
             "status": "deferred_before_monthly_window",
@@ -153,7 +179,13 @@ def execute_candidate_monthly_maintenance(
 
     connection = psycopg2.connect(database_url)
     try:
-        existing = get_existing_month_result(connection, base["run_month"])
+        existing = (
+            get_existing_month_result(connection, base["run_month"])
+            if screening_scope == "incremental"
+            else get_existing_month_result(
+                connection, base["run_month"], screening_scope
+            )
+        )
         connection.rollback()
         if existing is not None:
             return {**base, **existing}
@@ -161,9 +193,11 @@ def execute_candidate_monthly_maintenance(
         plan = build_candidate_automation_plan(
             connection,
             model_requested=model,
+            llm_base_url=config.base_url,
             run_date=run_date,
             reconfirm_all=reconfirm_all,
             max_new_products=max_new_products,
+            screening_scope=screening_scope,
         )
         connection.rollback()
         if not plan.executable:
@@ -176,20 +210,29 @@ def execute_candidate_monthly_maintenance(
                 "expected plan hash does not match current read-only plan"
             )
 
-        client = DeepSeekCandidateClient(model=model) if plan.target_items else None
+        client = (
+            CandidateLLMClient(
+                model=model,
+                base_url=config.base_url,
+                max_retries=6 if screening_scope == "full" else 3,
+            )
+            if plan.target_items
+            else None
+        )
         result = execute_candidate_automation(
             connection,
             plan,
             client=client,
             expected_plan_hash=plan.plan_hash,
             batch_size=batch_size,
+            checkpoint_dir=checkpoint_dir,
+            progress_callback=progress_callback,
+            max_workers=max_workers,
         )
         result.update(
             {
                 "task_name": MONTHLY_TASK_NAME,
-                "current_candidate_count": plan.plan_payload[
-                    "current_candidate_count"
-                ],
+                "current_candidate_count": plan.plan_payload["current_candidate_count"],
                 "new_product_count": plan.plan_payload["new_product_count"],
                 "llm_target_count": plan.plan_payload["llm_target_count"],
                 "capital_authority": False,

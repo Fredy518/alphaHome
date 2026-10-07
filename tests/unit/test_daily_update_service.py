@@ -99,6 +99,32 @@ def test_collection_updater_loads_without_scripts_package(monkeypatch, tmp_path)
 
 @pytest.fixture
 def discovered_tasks(monkeypatch):
+    monkeypatch.setattr(
+        service.industry_automation, "preview_library",
+        lambda *_args, **_kwargs: {"status": "no_op", "indices": 115},
+    )
+    monkeypatch.setattr(
+        service.industry_automation, "preview_clusters",
+        lambda *_args, **_kwargs: {"status": "no_op", "through_month": "2026-08-01"},
+    )
+    monkeypatch.setattr(
+        service.usable_pool_monthly,
+        "preview_monthly",
+        lambda *_args, **_kwargs: {
+            "status": "no_op",
+            "through_month": "2026-08-01",
+            "missing_months": [],
+        },
+    )
+    monkeypatch.setattr(
+        service.usable_pool,
+        "preview_usable_pool",
+        lambda *_args, **_kwargs: {
+            "status": "planned",
+            "plan_hash": "usable-plan",
+            "summary": {"screened_count": 1418, "selected_count": 200},
+        },
+    )
     monkeypatch.setattr(service.fetcher_tasks, "discover_tasks", lambda: None)
     monkeypatch.setattr(service.pit_tasks, "discover_tasks", lambda: None)
     monkeypatch.setattr(service.factor_tasks, "discover_tasks", lambda: None)
@@ -199,7 +225,7 @@ async def test_weekend_plan_includes_low_frequency_tasks(discovered_tasks):
         for group in plan["groups"]
         if group["key"] not in {"collection", "etf_candidate_monthly"}
     )
-    assert sum(group["run_count"] for group in plan["groups"]) == 12
+    assert sum(group["run_count"] for group in plan["groups"]) == 14
 
 
 @pytest.mark.asyncio
@@ -228,6 +254,7 @@ async def test_candidate_monthly_group_is_due_after_day_five(monkeypatch):
     assert group["task_names"] == ["etf_candidate_ai_monthly"]
     assert group["depends_on"] == ["features"]
     assert "模型目标 2" in group["action"]
+    assert "GLMS" in group["execution_mode"]
 
 
 @pytest.mark.asyncio
@@ -237,9 +264,9 @@ async def test_candidate_monthly_execution_uses_internal_service(monkeypatch):
 
     async def refresh(names, **kwargs):
         refreshes.append((names, kwargs))
-        return {'status': 'success'}
+        return {"status": "success"}
 
-    monkeypatch.setattr(service.feature_service, 'handle_refresh_features', refresh)
+    monkeypatch.setattr(service.feature_service, "handle_refresh_features", refresh)
 
     def execute(database_url, **kwargs):
         calls.append((database_url, kwargs))
@@ -256,8 +283,8 @@ async def test_candidate_monthly_execution_uses_internal_service(monkeypatch):
     )
 
     assert result["status"] == "succeeded"
-    assert refreshes[0][0] == ['etf_exposure_technical_current_universe_daily']
-    assert result['dependent_features']['status'] == 'success'
+    assert refreshes[0][0] == ["etf_exposure_technical_current_universe_daily"]
+    assert result["dependent_features"]["status"] == "success"
     assert calls == [
         (
             "postgresql://unit-test/alphadb",
@@ -461,12 +488,14 @@ async def test_workday_failure_crosses_policy_skipped_factor_domain(
             "pit",
             "features",
             "etf_candidate_monthly",
+            "etf_usable_pool",
+            "industry_index_library",
             "fundpos",
         ]
     else:
         expected = ["collection", "pit", "features"]
         assert calls == expected[: expected.index(failed_domain) + 1]
-        for key in ("etf_candidate_monthly", "fundpos"):
+        for key in ("etf_candidate_monthly", "etf_usable_pool", "fundpos"):
             assert groups[key]["status"] == "blocked"
         if failed_domain != "features":
             assert groups["features"]["status"] == "blocked"
@@ -505,6 +534,17 @@ async def test_candidate_failure_does_not_block_independent_fundpos(monkeypatch)
                 "skip_count": 0,
             },
             {
+                "key": "etf_usable_pool",
+                "label": "ETF可用池筛选",
+                "order": 6,
+                "depends_on": ["features", "etf_candidate_monthly"],
+                "status": "ready",
+                "task_names": ["etf_usable_pool"],
+                "skipped_task_names": [],
+                "run_count": 1,
+                "skip_count": 0,
+            },
+            {
                 "key": "fundpos",
                 "label": "FundPos 估算",
                 "order": 6,
@@ -533,7 +573,8 @@ async def test_candidate_failure_does_not_block_independent_fundpos(monkeypatch)
 
     assert result["status"] == "partial_success"
     assert calls == ["features", "etf_candidate_monthly", "fundpos"]
-    assert plan["groups"][2]["status"] == "success"
+    assert plan["groups"][2]["status"] == "blocked"
+    assert plan["groups"][3]["status"] == "success"
 
 
 @pytest.mark.asyncio
@@ -591,3 +632,29 @@ async def test_plan_failure_restores_running_state_and_notifies_gui(monkeypatch)
 
 async def _async(value):
     return value
+
+
+@pytest.mark.asyncio
+async def test_industry_discovery_rechecks_after_upstream_even_when_preview_noop(discovered_tasks):
+    plan = await service.build_daily_update_plan(CalendarDB(), "2026-09-15")
+    groups = {g["key"]: g for g in plan["groups"]}
+    assert groups["industry_index_library"]["status"] == "ready"
+    assert groups["industry_clusters_monthly"]["status"] == "skipped_policy"
+    assert groups["industry_clusters_monthly"]["depends_on"] == ["pit", "industry_index_library"]
+
+
+@pytest.mark.asyncio
+async def test_industry_price_gate_is_rechecked_after_upstream(discovered_tasks, monkeypatch):
+    monkeypatch.setattr(service.industry_automation, "preview_clusters",
+                        lambda *_args, **_kwargs: {"status": "blocked", "reason": "benchmark_month_end_not_ready"})
+    group = await service._build_industry_group(CalendarDB(), date(2026, 9, 15), order=9, library=False)
+    assert group["status"] == "ready"
+
+
+def test_industry_library_failure_blocks_clusters_but_not_fundpos():
+    groups = {"industry_index_library": {"depends_on": ["features"]},
+              "features": {"depends_on": []}, "pit": {"depends_on": []}}
+    failed = {"industry_index_library": "行业指数母库维护"}
+    assert service._failed_dependency_labels(
+        {"depends_on": ["pit", "industry_index_library"]}, groups, failed) == ["行业指数母库维护"]
+    assert service._failed_dependency_labels({"depends_on": ["features"]}, groups, failed) == []

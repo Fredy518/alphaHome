@@ -15,6 +15,9 @@ from ...common.logging_utils import get_logger
 from ...common.run_models import fingerprint
 from ...common.task_system import UnifiedTaskFactory
 from ...curation import etf_candidate_monthly_maintenance as candidate_maintenance
+from ...curation import etf_usable_pool as usable_pool
+from ...curation import etf_usable_pool_monthly as usable_pool_monthly
+from ...curation.industry_clusters import automation as industry_automation
 from ...features import FeatureRegistry
 from ...factors import tasks as factor_tasks
 from ...fetchers import tasks as fetcher_tasks
@@ -282,10 +285,10 @@ async def _build_candidate_monthly_group(
     task_name = candidate_maintenance.MONTHLY_TASK_NAME
     base = {
         "key": "etf_candidate_monthly",
-        "label": "ETF候选池月度维护",
+        "label": "ETF/LOF候选池月度维护",
         "order": order,
         "task_count": 1,
-        "execution_mode": "AlphaHome 内部计算 + DeepSeek确认",
+        "execution_mode": "AlphaHome 内部计算 + GLMS确认",
         "schedule": "每月5日起检查；每月最多成功一次",
         "description": (
             "在产品事实刷新后重算候选快照；保护人工确认/拒绝，"
@@ -314,7 +317,7 @@ async def _build_candidate_monthly_group(
             run_date=day,
         )
     except Exception as exc:  # noqa: BLE001 - isolate this optional monthly domain
-        logger.error("生成 ETF 候选池月度计划失败: %s", exc, exc_info=True)
+        logger.error("生成 ETF/LOF 候选池月度计划失败: %s", exc, exc_info=True)
         return {
             **base,
             "run_count": 0,
@@ -366,7 +369,7 @@ async def _build_candidate_monthly_group(
             "skip_count": 0,
             "task_names": [],
             "skipped_task_names": [],
-            "action": "配置阻断：需要 DEEPSEEK_API_KEY",
+            "action": "配置阻断：需要 GLMS_API_KEY",
             "description": f"{base['description']}；当前有模型目标但未读取到密钥",
             "status": "blocked",
         }
@@ -386,6 +389,138 @@ async def _build_candidate_monthly_group(
         "action": action,
         "status": "ready",
     }
+
+
+async def _build_usable_pool_group(
+    db_manager: Any, day: date, *, order: int
+) -> Dict[str, Any]:
+    base = {
+        "key": "etf_usable_pool",
+        "label": "ETF/LOF可用池筛选",
+        "order": order,
+        "task_count": 1,
+        "execution_mode": "产品门槛 + 同类优选",
+        "schedule": "每日上游完成后重算",
+        "description": "全候选参与筛选；每暴露一主一同指数备份，分类疑点单列",
+        "depends_on": ["features", "etf_candidate_monthly"],
+        "manual_only_task_names": [],
+        "skipped_task_names": [],
+        "skip_count": 0,
+        "result": None,
+    }
+    try:
+        database_url = _database_url(db_manager)
+        if not database_url:
+            raise RuntimeError("数据库连接不可用")
+        preview = await asyncio.to_thread(
+            usable_pool.preview_usable_pool, database_url, run_date=day
+        )
+        if preview.get("status") == "migration_required":
+            raise RuntimeError("可用池需要先执行独立数据库迁移")
+        summary = preview["summary"]
+        return {
+            **base,
+            "status": "ready",
+            "run_count": 1,
+            "task_names": [usable_pool.TASK_NAME],
+            "usable_pool_plan": preview,
+            "plan_hash": preview["plan_hash"],
+            "action": f"上游完成后重算；当前预览 {summary['screened_count']} 只中选 {summary['selected_count']} 只",
+        }
+    except Exception as exc:
+        return {
+            **base,
+            "status": "blocked",
+            "run_count": 0,
+            "task_names": [],
+            "action": f"配置阻断：{exc}",
+        }
+
+
+async def _build_usable_pool_monthly_group(
+    db_manager: Any, day: date, *, order: int
+) -> Dict[str, Any]:
+    base = {
+        "key": "etf_usable_pool_monthly",
+        "label": "ETF/LOF可用池月度快照",
+        "order": order,
+        "task_count": 1,
+        "execution_mode": "完整月份增量维护",
+        "schedule": "月末后首个交易日披露窗口结束后",
+        "description": "历史事实独立计算，保留真实生成时间；月内成员稳定",
+        "depends_on": ["features"],
+        "manual_only_task_names": [],
+        "skipped_task_names": [],
+        "skip_count": 0,
+        "result": None,
+    }
+    try:
+        database_url = _database_url(db_manager)
+        if not database_url:
+            raise RuntimeError("数据库连接不可用")
+        preview = await asyncio.to_thread(
+            usable_pool_monthly.preview_monthly, database_url, run_date=day
+        )
+        if preview["status"] in ("migration_required", "backfill_required"):
+            raise RuntimeError("月度可用池需要先执行独立迁移或历史基线回补")
+        due = preview["status"] == "ready"
+        return {
+            **base,
+            "status": "ready" if due else "skipped_policy",
+            "run_count": int(due),
+            "task_names": [usable_pool_monthly.TASK_NAME] if due else [],
+            "monthly_pool_plan": preview,
+            "action": (
+                f"补建 {preview['through_month'][:7]} 月度快照"
+                if due
+                else "完整月份已覆盖，或尚未结束首个交易日披露窗口"
+            ),
+        }
+    except Exception as exc:
+        return {
+            **base,
+            "status": "blocked",
+            "run_count": 0,
+            "task_names": [],
+            "action": f"配置阻断：{exc}",
+        }
+
+
+async def _build_industry_group(db_manager: Any, day: date, *, order: int,
+                                library: bool) -> Dict[str, Any]:
+    base = {
+        "key": industry_automation.LIBRARY_TASK if library else industry_automation.CLUSTER_TASK,
+        "label": "行业指数母库维护" if library else "行业代表簇月度维护",
+        "order": order, "task_count": 1, "skip_count": 0, "result": None,
+        "execution_mode": "稳定母库增量发现" if library else "继承上期状态增量聚类",
+        "schedule": "已发布月度可用池增量准入" if library else "完整月末数据齐备后、首日开盘前发布",
+        "description": "达标可用ETF对应的行业指数准入；已合法入库指数保留维护状态" if library else "月内固定结果，保留簇身份与数据不足回退",
+        "depends_on": ["features", "etf_candidate_monthly", "etf_usable_pool_monthly"] if library else ["pit", industry_automation.LIBRARY_TASK],
+        "manual_only_task_names": [], "skipped_task_names": [],
+    }
+    try:
+        url = _database_url(db_manager)
+        if not url:
+            raise RuntimeError("数据库连接不可用")
+        preview = await asyncio.to_thread(
+            industry_automation.preview_library if library else industry_automation.preview_clusters,
+            url, run_date=day)
+        if preview["status"] == "blocked" and preview.get("reason") in {
+            "benchmark_month_end_not_ready", "library_pool_month_not_ready"
+        }:
+            preview = {**preview, "status": "ready_after_upstream_refresh"}
+        if preview["status"] in {"migration_required", "blocked"}:
+            raise RuntimeError(preview.get("reason", preview["status"]))
+        # Recheck after monthly usable-pool publication, even if preview has no additions.
+        due = library or preview["status"] in {"ready", "bootstrap_required", "ready_after_upstream_refresh"}
+        return {**base, "status": "ready" if due else "skipped_policy",
+                "run_count": int(due), "task_names": [base["key"]] if due else [],
+                "industry_preview": preview,
+                "action": ("上游完成后重新核对并执行" if due else
+                           "母库无新增" if library else "完整月份已覆盖，或尚未到发布窗口")}
+    except Exception as exc:
+        return {**base, "status": "blocked", "run_count": 0, "task_names": [],
+                "action": f"配置阻断：{exc}"}
 
 
 async def build_daily_update_plan(
@@ -462,6 +597,10 @@ async def build_daily_update_plan(
     ]
 
     groups.append(await _build_candidate_monthly_group(db_manager, day, order=5))
+    groups.append(await _build_usable_pool_group(db_manager, day, order=6))
+    groups.append(await _build_usable_pool_monthly_group(db_manager, day, order=7))
+    groups.append(await _build_industry_group(db_manager, day, order=8, library=True))
+    groups.append(await _build_industry_group(db_manager, day, order=9, library=False))
 
     fundpos = fundpos_service.get_fundpos_snapshot()
     if fundpos.get("status") == "ready":
@@ -469,7 +608,7 @@ async def build_daily_update_plan(
             _make_group(
                 key="fundpos",
                 label="FundPos 估算",
-                order=6,
+                order=10,
                 items=((row["name"], "daily") for row in fundpos.get("families", [])),
                 is_workday=is_workday,
                 execution_mode="影子估算",
@@ -482,7 +621,7 @@ async def build_daily_update_plan(
             {
                 "key": "fundpos",
                 "label": "FundPos 估算",
-                "order": 6,
+                "order": 10,
                 "task_count": 0,
                 "run_count": 0,
                 "skip_count": 0,
@@ -524,7 +663,7 @@ async def build_daily_update_plan(
         "policy_hash": fingerprint(policy_payload),
         "groups": groups,
         "publication_note": (
-            "ETF候选池仅研究候选且无资金/下单权限；"
+            "ETF/LOF候选池仅研究候选且无资金/下单权限；"
             "FundPos 固定影子估算；一键更新不执行正式发布"
         ),
     }
@@ -671,20 +810,30 @@ async def _run_candidate_monthly(
         database_url,
         run_date=day,
     )
-    if result.get('status') in {'succeeded', 'skipped_already_succeeded'}:
-        candidate_status = result['status']
+    if result.get("status") in {"succeeded", "skipped_already_succeeded"}:
+        candidate_status = result["status"]
         # This product depends on the newly committed candidate set, not merely
         # on the earlier Features phase. A retry can repair it without another LLM call.
         try:
             refresh = await feature_service.handle_refresh_features(
-                ['etf_exposure_technical_current_universe_daily'], strategy='full',
-                as_of_date=day.isoformat(), stop_event=stop_event,
+                ["etf_exposure_technical_current_universe_daily"],
+                strategy="full",
+                as_of_date=day.isoformat(),
+                stop_event=stop_event,
             )
         except Exception as exc:
-            refresh = {'status': 'error', 'error': str(exc), 'fail_count': 1}
-        result = {**result, 'candidate_status': candidate_status, 'dependent_features': refresh}
-        if refresh.get('status') not in GOOD_TASK_STATUSES:
-            result['status'] = 'cancelled' if refresh.get('status') == 'cancelled' else 'partial_success'
+            refresh = {"status": "error", "error": str(exc), "fail_count": 1}
+        result = {
+            **result,
+            "candidate_status": candidate_status,
+            "dependent_features": refresh,
+        }
+        if refresh.get("status") not in GOOD_TASK_STATUSES:
+            result["status"] = (
+                "cancelled"
+                if refresh.get("status") == "cancelled"
+                else "partial_success"
+            )
     return result
 
 
@@ -705,8 +854,36 @@ async def _execute_group(
         return await _run_features(names, stop_event, day)
     if group["key"] == "etf_candidate_monthly":
         return await _run_candidate_monthly(db_manager, stop_event, day)
+    if group["key"] == "etf_usable_pool":
+        if stop_event.is_set():
+            return {"status": "cancelled", "cancelled_count": 1}
+        database_url = _database_url(db_manager)
+        if not database_url:
+            raise RuntimeError("AlphaHome 数据库连接不可用")
+        return await asyncio.to_thread(
+            usable_pool.refresh_usable_pool, database_url, run_date=day
+        )
+    if group["key"] == "etf_usable_pool_monthly":
+        if stop_event.is_set():
+            return {"status": "cancelled", "cancelled_count": 1}
+        database_url = _database_url(db_manager)
+        if not database_url:
+            raise RuntimeError("AlphaHome 数据库连接不可用")
+        return await asyncio.to_thread(
+            usable_pool_monthly.refresh_monthly, database_url, run_date=day
+        )
     if group["key"] == "fundpos":
         return await _run_fundpos(names, day)
+    if group["key"] in {industry_automation.LIBRARY_TASK, industry_automation.CLUSTER_TASK}:
+        if stop_event.is_set():
+            return {"status": "cancelled"}
+        url = _database_url(db_manager)
+        if not url:
+            raise RuntimeError("AlphaHome 数据库连接不可用")
+        if group["key"] == industry_automation.LIBRARY_TASK:
+            return await asyncio.to_thread(industry_automation.refresh_library, url, run_date=day)
+        return await asyncio.to_thread(industry_automation.refresh_clusters, url, run_date=day,
+                                       stop_requested=stop_event.is_set)
     raise ValueError(f"未知日常更新域: {group['key']}")
 
 
@@ -907,6 +1084,8 @@ def _format_result(group: Dict[str, Any], result: Dict[str, Any]) -> str:
         "success": "成功",
         "succeeded": "成功",
         "passed": "成功",
+        "no_op": "已覆盖",
+        "expected_no_data": "未到运行窗口",
         "skipped_already_succeeded": "本月已完成",
         "deferred_before_monthly_window": "未到月度窗口",
         "partial_success": "部分成功",
@@ -917,6 +1096,16 @@ def _format_result(group: Dict[str, Any], result: Dict[str, Any]) -> str:
     error = result.get("error") or result.get("error_message")
     if error:
         return f"{status_label}：{str(error)[:180]}；策略跳过 {group['skip_count']}"
+    if group["key"] == industry_automation.LIBRARY_TASK and "indices" in result:
+        correction = f"，撤回{result['retracted']}个不合格准入" if result.get("retracted") else ""
+        return f"{status_label}：母库{result['indices']}个指数，新增{result.get('added', 0)}个{correction}"
+    if group["key"] == industry_automation.CLUSTER_TASK:
+        months = result.get("completed_months") or []
+        if months:
+            return f"{status_label}：更新{len(months)}个月，最新{months[-1].get('maintenance_month', '')[:7]}"
+        through = result.get("preview", {}).get("through_month", "")
+        if through:
+            return f"{status_label}：覆盖至{through[:7]}"
     success_count = result.get("success_count")
     fail_count = result.get("fail_count")
     skip_count = result.get("skip_count")

@@ -1,0 +1,26 @@
+name: lof_product_facts_current
+version: "1.0"
+status: active
+description: LOF当前产品事实；规模按披露日期或实际快照日期取值，不具有历史PIT含义。
+sources:
+  - table: rawdata.fund_basic
+    usage: 场内LOF身份、上市退市日期、费率、基金类型及业绩基准
+  - table: rawdata.fund_daily
+    usage: 最近20个交易所交易日成交额与收盘价
+  - table: rawdata.fund_nav
+    usage: 已公告净值与有披露日期的净资产
+  - table: rawdata.fund_overview_em
+    usage: 以实际快照日期约束的份额类别规模
+  - table: rawdata.others_calendar
+    usage: 交易所日历
+migration:
+  original_fetchers: []
+  replacement: features.mv_lof_product_facts_current
+meta:
+  frequency: daily
+  grain: fund_code current snapshot
+  refresh: full after raw fund updates
+  pit_safe_for_history: false
+  authority: facts_only_no_capital_no_orders
+  created_at: 2026-09-29
+  created_by: Codex
