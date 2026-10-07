@@ -52,6 +52,10 @@ alphahome = "alphahome.gui.main_window:run_gui" # 当用户安装后，可以运
 # refresh-materialized-view, ah, alphahome-cli
 
 [project.optional-dependencies]
+massive = [
+    "exchange-calendars>=4.10,<5",
+    "tzdata>=2024.1",
+]
 backtest = [
     "zipline-reloaded>=3.0.0",
 ]

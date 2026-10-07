@@ -22,6 +22,7 @@
         }
     },
     "api": {
+        "_glms_comment": "候选分类统一走公司 GLMS；密钥仅从 GLMS_API_KEY 进程/Windows用户环境读取。默认 https://models.glms.com.cn/ucloud/v1、deepseek-v4-flash；可用 GLMS_BASE_URL/GLMS_MODEL 覆盖，勿在此文件填写 token。",
         "tushare_token": "your_tushare_token_here",
         "ifind": {
             "base_url": "https://quantapi.51ifind.com/api/v1/",
@@ -57,6 +58,27 @@
     },
     "tasks": {
         "_comment": "在此处为特定任务覆盖默认设置",
+        "massive_stock_us_basic": {
+            "_comment": "密钥只读 MASSIVE_KEY 环境变量；首次 SMART/FULL 获取最近完整美股交易日的全市场证券快照，MANUAL 可指定历史快照日期。",
+            "request_interval": 13,
+            "history_years": 2,
+            "min_basic_records": 1000
+        },
+        "massive_stock_us_daily": {
+            "_comment": "未复权全市场日线（不含 OTC）；SMART 首次仅最近7个自然日，FULL 回补免费权限内约两年；所有 Massive 任务共享进程内限速。",
+            "request_interval": 13,
+            "history_years": 2,
+            "smart_initial_lookback_days": 7,
+            "smart_lookback_days": 3,
+            "min_daily_records": 1000
+        },
+        "massive_stock_us_split": {
+            "_comment": "拆股/并股/送股事件，按事件ID更新；现金分红不在本任务范围。",
+            "request_interval": 13,
+            "history_years": 2,
+            "smart_initial_lookback_days": 30,
+            "smart_lookback_days": 30
+        },
         "tushare_stock_daily": {
             "save_batch_size": 5000,
             "concurrent_limit": 10,
