@@ -11,12 +11,12 @@ def identifier(value: str) -> str:
 
 
 @asynccontextmanager
-async def table_refresh_transaction(connection, schema: str, table: str, *, lock_timeout_ms=30000):
+async def table_refresh_transaction(connection, schema: str, table: str, *, lock_timeout_ms=30000, isolation=None):
     identifier(schema)
     identifier(table)
     if int(lock_timeout_ms) <= 0:
         raise ValueError("lock_timeout_ms must be positive")
-    async with connection.transaction():
+    async with connection.transaction(**({"isolation": isolation} if isolation else {})):
         await connection.execute("SELECT set_config('lock_timeout', $1, true)", f"{int(lock_timeout_ms)}ms")
         await connection.execute(
             "SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))",

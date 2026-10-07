@@ -3,7 +3,11 @@ from datetime import date
 import pandas as pd
 import pytest
 
-from alphahome.factors.persistence import FactorSnapshotWriter, P_FACTOR_COLUMNS, factor_frame_checksum
+from alphahome.factors.persistence import (
+    FactorSnapshotWriter,
+    P_FACTOR_COLUMNS,
+    factor_frame_checksum,
+)
 
 
 def _frame():
@@ -13,6 +17,9 @@ def _frame():
             "ts_code": "000001.SZ",
             "calc_date": "2026-09-11",
             "ann_date": "2026-08-31",
+            "source_available_date": "2026-08-31",
+            "availability_basis": "public_disclosure_reconstructed",
+            "pit_contract_version": "public_disclosure_v2",
             "end_date": "2026-06-30",
             "data_source": "report",
             "p_rank": 1,
@@ -129,4 +136,28 @@ def test_checksum_is_stable_across_integer_and_database_numeric_representations(
     integer, decimal = _frame(), _frame()
     integer["p_score"] = [50]
     decimal["p_score"] = [Decimal("50.000000")]
-    assert factor_frame_checksum(integer, P_FACTOR_COLUMNS) == factor_frame_checksum(decimal, P_FACTOR_COLUMNS)
+    assert factor_frame_checksum(integer, P_FACTOR_COLUMNS) == factor_frame_checksum(
+        decimal, P_FACTOR_COLUMNS
+    )
+
+
+@pytest.mark.parametrize(
+    "column,calculated,persisted",
+    [
+        ("p_score", 40.8203125, "40.820313"),
+        ("p_score", -40.8203125, "-40.820313"),
+        ("gpa", 1.23445, "1.2345"),
+        ("gpa", -1.23445, "-1.2345"),
+        ("rank_rm", 40.8203125, "40.820313"),
+        ("g_efficiency_momentum", -0.0000001, "0.000000"),
+    ],
+)
+def test_checksum_matches_numeric_ties_and_unsigned_zero(column, calculated, persisted):
+    from decimal import Decimal
+
+    frame = pd.DataFrame(
+        [{"ts_code": "000001.SZ", "calc_date": "2026-09-11", column: calculated}]
+    )
+    saved = frame.copy()
+    saved[column] = [Decimal(persisted)]
+    assert factor_frame_checksum(frame) == factor_frame_checksum(saved)

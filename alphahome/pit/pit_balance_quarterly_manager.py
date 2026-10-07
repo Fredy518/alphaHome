@@ -25,6 +25,7 @@ import pandas as pd
 
 from .base.pit_table_manager import PITTableManager
 from .base.pit_config import PITConfig
+from .disclosure import DISCLOSURE_COLUMNS, normalize_disclosure_events, public_date_sql, require_disclosure_columns
 from .financial_code_utils import normalize_tushare_financial_ts_codes
 
 class PITBalanceQuarterlyManager(PITTableManager):
@@ -116,7 +117,7 @@ class PITBalanceQuarterlyManager(PITTableManager):
         return self.resolve_incremental_date_range(
             days,
             (
-                (f"{PITConfig.TUSHARE_SCHEMA}.fina_balancesheet", ("ann_date",), "update_time"),
+                (f"{PITConfig.TUSHARE_SCHEMA}.fina_balancesheet", ("f_ann_date", "ann_date"), "update_time"),
                 (f"{PITConfig.TUSHARE_SCHEMA}.fina_express", ("ann_date",), "update_time"),
             ),
         )
@@ -202,26 +203,35 @@ class PITBalanceQuarterlyManager(PITTableManager):
         """
 
         # 构建查询字段 - 使用tushare表的字段名（快报与报表字段名不完全一致）
-        bs_fields = self.key_fields + [
+        bs_fields = ['ts_code', 'end_date', f'{public_date_sql()} AS ann_date',
+                     'ann_date AS source_ann_date', 'f_ann_date AS source_f_ann_date',
+                     'update_time AS source_update_time',
+                     'md5(row_to_json(source)::text) AS source_version_hash'] + [
             'total_assets',
             'total_liab',
             'total_hldr_eqy_exc_min_int',
             'total_hldr_eqy_inc_min_int',
         ]
-        ex_fields = self.key_fields + ['total_assets', 'total_hldr_eqy_exc_min_int']  # fina_express 无 total_liab
+        ex_fields = self.key_fields + [
+            'ann_date AS source_ann_date', 'NULL::date AS source_f_ann_date',
+            'update_time AS source_update_time',
+            'md5(row_to_json(source)::text) AS source_version_hash',
+            'total_assets', 'total_hldr_eqy_exc_min_int',
+        ]  # fina_express 无 total_liab
         bs_field_list = ', '.join(bs_fields)
         ex_field_list = ', '.join(ex_fields)
 
         # 统一从两个数据表读取：fina_balancesheet(报告) + fina_express(快报)
         bs_query = f"""
         SELECT {bs_field_list}
-        FROM {PITConfig.TUSHARE_SCHEMA}.fina_balancesheet
-        WHERE ann_date >= %s AND ann_date <= %s
+        FROM {PITConfig.TUSHARE_SCHEMA}.fina_balancesheet source
+        WHERE {public_date_sql()} >= %s AND {public_date_sql()} <= %s
+          AND (report_type = 1 OR report_type IS NULL)
           AND ts_code IS NOT NULL AND end_date IS NOT NULL
         """
         ex_query = f"""
         SELECT {ex_field_list}
-        FROM {PITConfig.TUSHARE_SCHEMA}.fina_express
+        FROM {PITConfig.TUSHARE_SCHEMA}.fina_express source
         WHERE ann_date >= %s AND ann_date <= %s
           AND ts_code IS NOT NULL AND end_date IS NOT NULL
         """
@@ -266,7 +276,7 @@ class PITBalanceQuarterlyManager(PITTableManager):
 
         self.logger.info(f"开始数据预处理: {len(data)} 条记录")
 
-        processed_data = normalize_tushare_financial_ts_codes(data, self.logger)
+        processed_data = normalize_disclosure_events(normalize_tushare_financial_ts_codes(data, self.logger))
 
         # 1. 字段映射 (tushare字段名 -> PIT表字段名)
         field_mapping = {
@@ -395,9 +405,10 @@ class PITBalanceQuarterlyManager(PITTableManager):
 
         # 构建UPSERT SQL（动态扩展可选列：total_cur_assets/total_cur_liab/inventories/year/quarter）
         pit_cols = self._get_table_columns(PITConfig.PIT_SCHEMA, self.table_name)
+        require_disclosure_columns(pit_cols)
         extra_candidates = ['total_cur_assets', 'total_cur_liab', 'inventories', 'year', 'quarter']
         extras = [c for c in extra_candidates if c in pit_cols and c in data.columns]
-        all_fields = self.key_fields + self.data_fields + extras + ['data_source']
+        all_fields = self.key_fields + self.data_fields + extras + list(DISCLOSURE_COLUMNS) + ['data_source']
         field_list = ', '.join(all_fields)
         placeholder_list = ', '.join([f'%({field})s' for field in all_fields])
 
@@ -411,6 +422,10 @@ class PITBalanceQuarterlyManager(PITTableManager):
         ON CONFLICT (ts_code, end_date, ann_date, data_source) DO UPDATE SET
         {update_list},
         updated_at = CURRENT_TIMESTAMP
+        WHERE {self.table_name}.pit_contract_version IS DISTINCT FROM 'public_disclosure_v2'
+           OR (COALESCE(EXCLUDED.source_update_time, '-infinity'::timestamp), EXCLUDED.source_version_hash)
+              >= (COALESCE({self.table_name}.source_update_time, '-infinity'::timestamp),
+                  COALESCE({self.table_name}.source_version_hash, ''))
         """
 
         # 分批处理（确保依赖顺序：report -> express -> other）
@@ -630,51 +645,39 @@ class PITBalanceQuarterlyManager(PITTableManager):
                 sub = keys.iloc[i:i+batch_size]
                 ts_list = sorted(sub['ts_code'].unique().tolist())
                 min_ann = sub['ann_date'].min(); max_ann = sub['ann_date'].max()
-                # 查询 report 候选
+                # Reuse the same bounded, version-aware selection as normal
+                # preprocessing; this repair entrypoint must not reintroduce
+                # an announcement-only merge_asof tie.
                 pit_cols = self._get_table_columns(PITConfig.PIT_SCHEMA, self.table_name)
                 fill_cols = [c for c in ['tot_liab','total_cur_assets','total_cur_liab','inventories'] if c in pit_cols]
-                select_cols = ', '.join(['ts_code','ann_date'] + fill_cols)
-                ref_sql = (
-                    f"SELECT {select_cols} FROM {PITConfig.PIT_SCHEMA}.{self.table_name} "
-                    f"WHERE data_source='report' AND ts_code=ANY(%s) AND ann_date <= %s ORDER BY ts_code, ann_date"
+                original = self.context.query_dataframe(
+                    f"SELECT * FROM {PITConfig.PIT_SCHEMA}.{self.table_name} "
+                    "WHERE data_source='express' AND ts_code=ANY(%s) AND ann_date BETWEEN %s AND %s",
+                    (ts_list, min_ann, max_ann),
                 )
-                ref = self.context.query_dataframe(ref_sql, (ts_list, max_ann))
-                if ref is None or ref.empty:
+                if original is None or original.empty:
                     continue
-                # merge_asof 逐股回填（逐个 ts_code 保证排序要求）
-                r = ref.copy(); r['ann_dt'] = pd.to_datetime(r['ann_date']); r.sort_values(['ts_code','ann_dt'], inplace=True)
-                e = sub.copy(); e['ann_dt'] = pd.to_datetime(e['ann_date']); e.sort_values(['ts_code','ann_dt'], inplace=True)
-                updated_batch = 0
-                for code, e_sub in e.groupby('ts_code'):
-                    r_sub = r[r['ts_code'] == code]
-                    if r_sub.empty:
+                original = original.merge(sub, on=['ts_code','end_date','ann_date'], how='inner')
+                filled = self._fill_express_missing_fields(original.copy())
+                for index, row in filled.iterrows():
+                    sets, params = [], []
+                    for column in fill_cols:
+                        old_value = original.loc[index, column]
+                        value = row.get(column)
+                        if pd.isna(old_value) and pd.notna(value):
+                            # Protect each field independently, including a
+                            # value received concurrently after this read.
+                            sets.append(f"{column}=COALESCE({column}, %s)")
+                            params.append(value)
+                    if not sets:
                         continue
-                    e_keep = e_sub[['ts_code','end_date','ann_date','ann_dt']].sort_values('ann_dt')
-                    r_keep = r_sub[['ann_dt'] + fill_cols].sort_values('ann_dt')
-                    merged = pd.merge_asof(e_keep, r_keep, on='ann_dt', direction='backward', allow_exact_matches=True)
-                    for _, row in merged.iterrows():
-                        sets = []
-                        params = []
-                        for c in fill_cols:
-                            val = row.get(c)
-                            if pd.notna(val):
-                                sets.append(f"{c} = %s")
-                                params.append(val)
-                        if not sets:
-                            continue
-                        # 数据保护：只更新 express 且目标字段当前为 NULL 的记录，防止误覆盖 report
-                        safe_predicates = []
-                        for c in fill_cols:
-                            safe_predicates.append(f"({c} IS NULL)")
-                        safe_where_extra = " AND (" + " OR ".join(safe_predicates) + ")" if safe_predicates else ""
-                        upd_sql = (
-                            f"UPDATE {PITConfig.PIT_SCHEMA}.{self.table_name} SET " + ', '.join(sets) +
-                            f" WHERE ts_code=%s AND end_date=%s AND ann_date=%s AND data_source='express'" + safe_where_extra
-                        )
-                        params.extend([row['ts_code'], row['end_date'], row['ann_date']])
-                        self.context.db_manager.execute_sync(upd_sql, tuple(params))
-                        updated_batch += 1
-                updated_total += updated_batch
+                    params.extend([row['ts_code'],row['end_date'],row['ann_date']])
+                    self.context.db_manager.execute_sync(
+                        f"UPDATE {PITConfig.PIT_SCHEMA}.{self.table_name} SET "+', '.join(sets)+
+                        " WHERE ts_code=%s AND end_date=%s AND ann_date=%s AND data_source='express'",
+                        tuple(params),
+                    )
+                    updated_total += 1
             # 事后校验：report 记录非空统计不应下降（如下降则报警）
             post = self.context.query_dataframe(baseline_sql, (start_date, end_date))
             if post is not None and not post.empty:
@@ -751,11 +754,17 @@ class PITBalanceQuarterlyManager(PITTableManager):
                 # 从 tushare 源按精确键读取
                 # 注意：字段名与目标列对齐
                 sel = (
-                    "ts_code, end_date, ann_date, total_liab, total_cur_assets, total_cur_liab, inventories"
+                    f"ts_code, end_date, {public_date_sql()} AS ann_date, "
+                    "total_liab, total_cur_assets, total_cur_liab, inventories"
                 )
                 src_sql = (
-                    f"SELECT {sel} FROM {PITConfig.TUSHARE_SCHEMA}.fina_balancesheet "
-                    f"WHERE (ts_code, end_date, ann_date) IN (" + ",".join(["(%s,%s,%s)"]*len(batch)) + ")"
+                    f"SELECT DISTINCT ON (ts_code, end_date, {public_date_sql()}) {sel} "
+                    f"FROM {PITConfig.TUSHARE_SCHEMA}.fina_balancesheet source "
+                    f"WHERE (ts_code, end_date, {public_date_sql()}) IN ("
+                    + ",".join(["(%s,%s,%s)"]*len(batch)) + ") "
+                    + f"AND (report_type = 1 OR report_type IS NULL) "
+                    + f"ORDER BY ts_code, end_date, {public_date_sql()}, update_time DESC NULLS LAST, "
+                    + "md5(row_to_json(source)::text) DESC"
                 )
                 params = []
                 for _, r in batch.iterrows():
@@ -828,95 +837,93 @@ class PITBalanceQuarterlyManager(PITTableManager):
 
 
     def _fill_express_missing_fields(self, df: pd.DataFrame) -> pd.DataFrame:
-        """当 express 数据缺失关键字段时，按 PIT 原则使用最近的 report 数据进行填充。
-        机制：
-        1) 先尝试使用当前批次内的 report 记录（零查询开销）
-        2) 如仍不足，再扩展查询数据库历史 report 数据（默认回看 9 个月 ≈ 3 个季度）
-        3) 严格 PIT：每条 express 仅匹配 ann_date 之前或当日的 report
+        """Use one deterministic, publicly eligible report snapshot per express.
+
+        Batch and persisted references compete under the same ordering:
+        announcement, report period, source update witness, stable content hash.
+        A NULL in the winning report stays NULL; older report periods are not
+        mixed into that snapshot. Receipt/update timestamps do not establish
+        public availability. The configured lookback applies to both sources.
         """
         if df is None or df.empty:
             return df
-        work = df.copy()
-        # 目标列
+        from dateutil.relativedelta import relativedelta
+
+        work = self._exclude_industry_inapplicable_fields(df.copy())
         fill_cols = ['tot_liab', 'total_cur_assets', 'total_cur_liab', 'inventories']
-        for c in fill_cols:
-            if c not in work.columns:
-                work[c] = None
-        # 仅选择 express 且任一字段缺失的行
-        express_mask = work.get('data_source').eq('express') if 'data_source' in work.columns else pd.Series([False]*len(work))
+        for column in fill_cols:
+            if column not in work:
+                work[column] = None
+        express_mask = (work['data_source'].eq('express') if 'data_source' in work
+                        else pd.Series(False, index=work.index))
         need_fill_mask = express_mask & work[fill_cols].isna().any(axis=1)
         if not need_fill_mask.any():
             return work
-        targets = work.loc[need_fill_mask, ['ts_code', 'ann_date']].dropna()
+        target_keys = ['ts_code', 'ann_date', 'end_date']
+        if not set(target_keys) <= set(work):
+            raise ValueError('PIT express fill requires ts_code, ann_date and end_date')
+        targets = work.loc[need_fill_mask, target_keys].dropna()
         if targets.empty:
             return work
-        # 辅助：逐组后向匹配并回填
-        def _backward_fill_from_ref(ref_df: pd.DataFrame, label: str) -> int:
-            if ref_df is None or ref_df.empty:
-                return 0
-            r = ref_df.copy()
-            r['ann_dt'] = pd.to_datetime(r['ann_date'])
-            r.sort_values(['ts_code', 'ann_dt'], inplace=True)
-            t = work.loc[need_fill_mask, ['ts_code', 'ann_date']].copy()
-            t['orig_idx'] = t.index
-            t['ann_dt'] = pd.to_datetime(t['ann_date'])
-            t.sort_values(['ts_code', 'ann_dt'], inplace=True)
-            local_filled = 0
-            for code, e_sub in t.groupby('ts_code'):
-                r_sub = r[r['ts_code'] == code]
-                if r_sub.empty:
-                    continue
-                e_keep = e_sub[['orig_idx', 'ann_dt']].sort_values('ann_dt')
-                r_keep = r_sub[['ann_dt'] + [c for c in fill_cols if c in r_sub.columns]].sort_values('ann_dt')
-                merged = pd.merge_asof(e_keep, r_keep, on='ann_dt', direction='backward', allow_exact_matches=True)
-                for _, mrow in merged.iterrows():
-                    row_idx = mrow['orig_idx']
-                    for c in fill_cols:
-                        if c in merged.columns:
-                            val = mrow.get(c)
-                            if pd.isna(work.at[row_idx, c]) and pd.notna(val):
-                                work.at[row_idx, c] = val
-                                local_filled += 1
-            if local_filled > 0:
-                self.logger.info(f"PIT填充（{label}）完成：共填充 {local_filled} 个字段值（express缺失修复）")
-            return local_filled
-        total_filled = 0
-        # 预处理：行业不适用字段屏蔽（银行）
-        work = self._exclude_industry_inapplicable_fields(work)
 
-        # Phase 1: 使用批次内的 report 记录
-        batch_report = work[work.get('data_source').eq('report')] if 'data_source' in work.columns else pd.DataFrame()
-        if not batch_report.empty:
-            # 仅保留需要的列
-            cols = ['ts_code', 'ann_date'] + [c for c in fill_cols if c in batch_report.columns]
-            total_filled += _backward_fill_from_ref(batch_report[cols], label='批次内report')
-        # Phase 2: 若仍有缺失，扩展查询数据库历史 report（默认 9 个月回看）
-        remaining_mask = express_mask & work[fill_cols].isna().any(axis=1)
-        if remaining_mask.any():
-            from dateutil.relativedelta import relativedelta
-            ts_list = sorted(work.loc[remaining_mask, 'ts_code'].dropna().unique().tolist())
-            if ts_list:
-                min_ann = work.loc[remaining_mask, 'ann_date'].min()
-                max_ann = work.loc[remaining_mask, 'ann_date'].max()
-                lookback_months = getattr(PITConfig, 'BALANCE_EXPRESS_FILL_LOOKBACK_MONTHS', 9)
-                lower_bound = (pd.to_datetime(min_ann) - relativedelta(months=lookback_months)).date()
-                # 动态选择存在的列，避免列不存在导致查询失败
-                pit_cols = self._get_table_columns(PITConfig.PIT_SCHEMA, 'pit_balance_quarterly')
-                db_fill_cols = [c for c in fill_cols if c in pit_cols]
-                select_cols = ', '.join(['ts_code', 'ann_date'] + db_fill_cols)
-                sql = (
-                    f"SELECT {select_cols} "
-                    f"FROM {PITConfig.PIT_SCHEMA}.pit_balance_quarterly "
-                    f"WHERE data_source = 'report' AND ts_code = ANY(%s) "
-                    f"AND ann_date >= %s AND ann_date <= %s "
-                    f"ORDER BY ts_code, ann_date"
-                )
-                self.logger.info(
-                    f"扩展查询历史report用于PIT填充：ts={len(ts_list)}，窗口={lower_bound}~{max_ann}，lookback={lookback_months}个月"
-                )
-                ref = self.context.query_dataframe(sql, (ts_list, lower_bound, max_ann))
-                total_filled += _backward_fill_from_ref(ref, label='历史report')
+        lookback_months = self.table_config.get(
+            'BALANCE_EXPRESS_FILL_LOOKBACK_MONTHS',
+            getattr(PITConfig, 'BALANCE_EXPRESS_FILL_LOOKBACK_MONTHS', 9),
+        )
+        min_ann = pd.to_datetime(targets['ann_date']).min()
+        max_ann = pd.to_datetime(targets['ann_date']).max().date()
+        lower_bound = (min_ann - relativedelta(months=lookback_months)).date()
+        ts_list = sorted(targets['ts_code'].unique().tolist())
+
+        # Always compare persisted and batch snapshots: batch boundaries must
+        # not make an older in-memory reference win over a newer stored one.
+        pit_cols = self._get_table_columns(PITConfig.PIT_SCHEMA, 'pit_balance_quarterly')
+        reference_cols = target_keys + [
+            c for c in list(DISCLOSURE_COLUMNS) + fill_cols if c in pit_cols
+        ]
+        sql = (
+            f"SELECT {', '.join(reference_cols)} "
+            f"FROM {PITConfig.PIT_SCHEMA}.pit_balance_quarterly "
+            "WHERE data_source = 'report' AND pit_contract_version='public_disclosure_v2' "
+            "AND ts_code = ANY(%s) AND ann_date >= %s AND ann_date <= %s "
+            "ORDER BY ts_code, ann_date, end_date"
+        )
+        history = self.context.query_dataframe(sql, (ts_list, lower_bound, max_ann))
+        batch = work.loc[work['data_source'].eq('report')] if 'data_source' in work else pd.DataFrame()
+        frames = [frame for frame in (batch, history) if frame is not None and not frame.empty]
+        if not frames:
             return work
+        references = pd.concat(frames, ignore_index=True)
+        references['data_source'] = 'report'
+        references = normalize_disclosure_events(references)
+        references = references.sort_values(
+            ['ts_code', 'ann_date', 'end_date', 'source_update_time', 'source_version_hash'],
+            kind='mergesort', na_position='first',
+        )
+        reference_groups = {code: group for code, group in references.groupby('ts_code', sort=False)}
+        filled = 0
+        for row_index, target in targets.iterrows():
+            ann_date = pd.Timestamp(target['ann_date']).date()
+            end_date = pd.Timestamp(target['end_date']).date()
+            earliest = (pd.Timestamp(ann_date) - relativedelta(months=lookback_months)).date()
+            stock_references = reference_groups.get(target['ts_code'])
+            if stock_references is None:
+                continue
+            eligible = stock_references.loc[
+                stock_references['ann_date'].between(earliest, ann_date)
+                & stock_references['end_date'].le(end_date)
+            ]
+            if eligible.empty:
+                continue
+            winner = eligible.iloc[-1]
+            for column in fill_cols:
+                value = winner.get(column)
+                if pd.isna(work.at[row_index, column]) and pd.notna(value):
+                    work.at[row_index, column] = value
+                    filled += 1
+        if filled:
+            self.logger.info(f"PIT express fill: {filled} fields from deterministic report snapshots")
+        return work
 
     def _get_bank_ts_codes(self) -> set:
         """获取申万一级行业=银行 的股票代码集合（优先 PIT 行业表，失败时回退 Tushare stock_basic）。"""
@@ -992,7 +999,7 @@ class PITBalanceQuarterlyManager(PITTableManager):
         for _, row in batch_data.iterrows():
             try:
                 # 准备参数
-                params = {field: row[field] for field in all_fields}
+                params = {field: None if pd.isna(row[field]) else row[field] for field in all_fields}
 
                 # 检查是否为更新操作
                 existing_check = self.context.query_dataframe(
@@ -1004,7 +1011,9 @@ class PITBalanceQuarterlyManager(PITTableManager):
                 is_update = existing_check is not None and not existing_check.empty
 
                 # 执行UPSERT
-                self.context.db_manager.execute_sync(upsert_sql, params)
+                affected_rows = self.context.db_manager.execute_sync(upsert_sql, params)
+                if affected_rows == 0:
+                    continue
 
                 if is_update:
                     updated_count += 1

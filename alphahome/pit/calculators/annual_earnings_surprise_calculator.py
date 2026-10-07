@@ -27,6 +27,12 @@ class AnnualEarningsSurpriseCalculator:
     """
 
     FORMULA_VERSION = "annual_actual_yuan_to_10k_vs_prior_month_consensus_v1"
+    CONSENSUS_INPUT_COLUMNS = [
+        "obs_date", "ts_code", "target_year", "np_consensus_median",
+        "eps_consensus_median", "org_count", "np_org_count",
+        "np_dispersion_rate", "is_eligible", "availability_basis",
+        "source_max_report_date",
+    ]
     OUTPUT_COLUMNS = [
         "ts_code",
         "end_date",
@@ -181,21 +187,9 @@ class AnnualEarningsSurpriseCalculator:
         self.last_audit["duplicate_actual_event_row_count"] = duplicate_events
         return actual.drop_duplicates(["ts_code", "end_date"], keep="first")
 
-    @staticmethod
-    def _prepare_consensus(frame: pd.DataFrame) -> pd.DataFrame:
-        required = {
-            "obs_date",
-            "ts_code",
-            "target_year",
-            "np_consensus_median",
-            "eps_consensus_median",
-            "org_count",
-            "np_org_count",
-            "np_dispersion_rate",
-            "is_eligible",
-            "availability_basis",
-            "source_max_report_date",
-        }
+    @classmethod
+    def _prepare_consensus(cls, frame: pd.DataFrame) -> pd.DataFrame:
+        required = set(cls.CONSENSUS_INPUT_COLUMNS)
         missing = sorted(required - set(frame.columns))
         if missing:
             raise ValueError(f"固定财年一致预期缺少字段: {missing}")

@@ -11,6 +11,10 @@ from typing import Any, Mapping
 from zoneinfo import ZoneInfo
 
 
+class ExecutionPlanChanged(RuntimeError):
+    """Revalidation rejected a plan before any execution work began."""
+
+
 def canonical_json(value: Any) -> str:
     def encode(item):
         if isinstance(item, (date, datetime)):
@@ -146,7 +150,7 @@ class RunPlan:
 
     def require_matching(self, expected_hash: str) -> None:
         if expected_hash != self.plan_hash:
-            raise RuntimeError("Execution plan changed; refresh the preview before executing")
+            raise ExecutionPlanChanged("Execution plan changed; refresh the preview before executing")
         if self.blockers:
             raise RuntimeError("Execution plan is blocked: " + "; ".join(self.blockers))
 

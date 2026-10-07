@@ -29,6 +29,7 @@ from typing import Any, Dict, List
 
 from alphahome.features.registry import feature_register
 from alphahome.features.storage.base_view import BaseFeatureView
+from .financial_pit_sql import financial_statement_sql
 
 
 @feature_register
@@ -46,7 +47,7 @@ class StockBalanceQuarterlyMV(BaseFeatureView):
 
     quality_checks: Dict[str, Any] = {
         "null_check": {
-            "columns": ["ts_code", "ann_date", "end_date"],
+            "columns": ["ts_code", "ann_date", "report_period"],
             "threshold": 0.01,
         },
         "row_count_change": {
@@ -55,102 +56,15 @@ class StockBalanceQuarterlyMV(BaseFeatureView):
     }
 
     def get_create_sql(self) -> str:
-        sql = """
-        CREATE MATERIALIZED VIEW features.mv_stock_balance_quarterly AS
-        WITH 
-        -- 1. 正式报告数据 (report)
-        report_data AS (
-            SELECT
-                ts_code,
-                COALESCE(f_ann_date, ann_date) AS pit_ann_date,
-                end_date,
-                total_assets,
-                total_liab,
-                total_hldr_eqy_exc_min_int AS tot_equity,
-                total_cur_assets,
-                total_cur_liab,
-                inventories,
-                'report' AS data_source
-            FROM rawdata.fina_balancesheet
-            WHERE
-                ts_code IS NOT NULL
-                AND COALESCE(f_ann_date, ann_date) IS NOT NULL
-                AND end_date IS NOT NULL
-        ),
-        -- 2. 业绩快报数据 (express)
-        -- fina_express 只有 total_assets 和 total_hldr_eqy_exc_min_int
-        express_data AS (
-            SELECT
-                ts_code,
-                ann_date AS pit_ann_date,
-                end_date,
-                total_assets,
-                NULL::numeric AS total_liab,
-                total_hldr_eqy_exc_min_int AS tot_equity,
-                NULL::numeric AS total_cur_assets,
-                NULL::numeric AS total_cur_liab,
-                NULL::numeric AS inventories,
-                'express' AS data_source
-            FROM rawdata.fina_express
-            WHERE
-                ts_code IS NOT NULL
-                AND ann_date IS NOT NULL
-                AND end_date IS NOT NULL
-        ),
-        -- 3. 合并所有数据源
-        all_data AS (
-            SELECT * FROM report_data
-            UNION ALL
-            SELECT * FROM express_data
-        ),
-        -- 4. 获取每个股票的所有不同公告日期（跨所有 data_source）
-        distinct_pit_ann_dates AS (
-            SELECT DISTINCT ts_code, pit_ann_date
-            FROM all_data
-        ),
-        -- 5. 计算下一个不同的公告日期
-        next_dates AS (
-            SELECT
-                ts_code,
-                pit_ann_date,
-                LEAD(pit_ann_date) OVER (
-                    PARTITION BY ts_code
-                    ORDER BY pit_ann_date
-                ) AS next_ann_date
-            FROM distinct_pit_ann_dates
-        )
-        SELECT
-            a.ts_code,
+        fields = ('tot_assets', 'tot_liab', 'tot_equity', 'total_cur_assets', 'total_cur_liab', 'inventories')
+        sources = [
+            ('report', 'rawdata.fina_balancesheet', ('total_assets', 'total_liab', 'total_hldr_eqy_exc_min_int',
+                                                   'total_cur_assets', 'total_cur_liab', 'inventories')),
+            ('express', 'rawdata.fina_express', ('total_assets', 'NULL::numeric', 'total_hldr_eqy_exc_min_int',
+                                               'NULL::numeric', 'NULL::numeric', 'NULL::numeric')),
+        ]
+        return financial_statement_sql(self.full_name, sources, fields)
 
-            -- PIT 时间范围（D-1 验收要求）
-            a.pit_ann_date AS query_start_date,
-            COALESCE(n.next_ann_date - INTERVAL '1 day', '2099-12-31'::date)::date AS query_end_date,
-            a.end_date AS report_period,
-            a.pit_ann_date AS ann_date,
-
-            -- 核心资产负债指标（对标 PIT 表字段）
-            a.total_assets AS tot_assets,
-            a.total_liab AS tot_liab,
-            a.tot_equity,
-            a.total_cur_assets,
-            a.total_cur_liab,
-            a.inventories,
-
-            -- 数据来源标识（对标 PIT 表）
-            a.data_source,
-
-            -- 血缘元数据（D-3 验收要求）
-            CASE a.data_source
-                WHEN 'report' THEN 'rawdata.fina_balancesheet'
-                WHEN 'express' THEN 'rawdata.fina_express'
-            END AS _source_table,
-            NOW() AS _processed_at,
-            CURRENT_DATE AS _data_version
-        FROM all_data a
-        LEFT JOIN next_dates n ON a.ts_code = n.ts_code AND a.pit_ann_date = n.pit_ann_date
-        ORDER BY a.ts_code, a.pit_ann_date DESC, a.data_source;
-        """
-        return sql.strip()
 
     def get_post_create_sqls(self) -> list[str]:
         return [

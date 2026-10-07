@@ -251,7 +251,7 @@ class PITEarningsSurpriseAnnualManager(PITTableManager):
         ts_codes = events["ts_code"].astype(str).tolist()
         target_years = events["target_year"].astype(int).tolist()
         ann_dates = pd.to_datetime(events["ann_date"]).dt.date.tolist()
-        return self.context.query_dataframe(
+        consensus = self.context.query_dataframe(
             f"""
             WITH events AS (
                 SELECT *
@@ -283,6 +283,12 @@ class PITEarningsSurpriseAnnualManager(PITTableManager):
             """,
             (ts_codes, target_years, ann_dates),
         )
+        # The DB context returns a columnless frame for an empty query. Older
+        # annual events legitimately predate every available consensus snapshot.
+        # Keep those actuals and let the calculator mark them ineligible.
+        if consensus is None or consensus.empty:
+            return pd.DataFrame(columns=self.calculator.CONSENSUS_INPUT_COLUMNS)
+        return consensus
 
     def _atomic_replace_ann_range(
         self,

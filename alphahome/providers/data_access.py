@@ -19,6 +19,8 @@ from datetime import date
 from typing import Dict, List, Optional, Union
 import pandas as pd
 import logging
+from alphahome.common.price_quality import validate_ohlc
+from alphahome.providers.availability import require_historical_evidence
 
 logger = logging.getLogger(__name__)
 
@@ -162,6 +164,8 @@ class AlphaDataTool:
             for col in numeric_cols:
                 if col in df.columns:
                     df[col] = pd.to_numeric(df[col], errors='coerce')
+
+            validate_ohlc(df)
             
             if fields is not None:
                 df = df.loc[:, selected]
@@ -470,6 +474,33 @@ class AlphaDataTool:
     # ========================================================================
     # 扩展方法: 处理 20% 的特殊需求
     # ========================================================================
+
+    def get_feature_data(self, feature: str, as_of_date: Union[str, date],
+                         symbols: Optional[List[str]] = None) -> pd.DataFrame:
+        """Read a qualified daily/event feature with an explicit as-of bound.
+
+        Arbitrary SQL remains descriptive and is never automatically PIT
+        certified. Sources lacking vintage evidence fail this historical API.
+        Announcement-day values are not exposed before that day has ended.
+        """
+        require_historical_evidence(feature)
+        dates={'ah_premium_daily':'trade_date', 'fund_holdings_quarterly':'ann_date',
+               'stock_shareholder_concentration':'ann_date', 'stock_industry_monthly_snapshot':'obs_date'}
+        if feature not in dates:
+            raise ValidationError('Unsupported historical feature')
+        cutoff=pd.Timestamp(as_of_date).date()
+        column=dates[feature]
+        operator='<' if column=='ann_date' else '<='
+        query=f'SELECT * FROM features.mv_{feature} WHERE {column} {operator} %s'
+        params=[cutoff]
+        if symbols:
+            query+=' AND ts_code=ANY(%s)';params.append(list(symbols))
+        query+=f' ORDER BY ts_code,{column}'
+        frame=pd.DataFrame(self.db_manager.fetch_sync(query,tuple(params)))
+        frame.attrs.update(temporal_scope='retained_public_date_reconstruction',
+                           system_first_receipt_verified=False, source_vintages_verified=False,
+                           as_of_date=str(cutoff))
+        return frame
 
     def custom_query(
         self,

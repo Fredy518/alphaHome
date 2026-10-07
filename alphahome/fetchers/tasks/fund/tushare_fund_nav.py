@@ -91,6 +91,7 @@ class TushareFundNavTask(TushareTask):
 
     # 6. 自定义索引
     indexes = [
+        {"name": "idx_fund_nav_nav_date", "columns": "nav_date"},
         # 可以考虑在 ann_date 上添加索引，如果经常按公告日期查询
         {"name": "idx_fund_nav_ann_date", "columns": "ann_date"},
         {

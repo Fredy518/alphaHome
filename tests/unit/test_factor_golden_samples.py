@@ -23,6 +23,9 @@ def _p_inputs():
             "ts_code": ["A", "B", "C", "D"],
             "end_date": ["2025-12-31"] * 4,
             "ann_date": ["2026-03-01"] * 4,
+            "source_available_date": ["2026-03-01"] * 4,
+            "availability_basis": ["public_disclosure_reconstructed"] * 4,
+            "pit_contract_version": ["public_disclosure_v2"] * 4,
             "data_source": ["report"] * 4,
             "gpa_ttm": [10.0, 20.0, 30.0, 40.0],
             "roe_excl_ttm": [5.0, 10.0, 15.0, 20.0],
@@ -66,6 +69,9 @@ def _g_history():
                     "p_score": score,
                     "data_source": "report",
                     "ann_date": calc_date,
+                    "source_available_date": calc_date,
+                    "availability_basis": "public_disclosure_reconstructed",
+                    "pit_contract_version": "public_disclosure_v2",
                     "gpa": 1,
                     "roe_excl": 2,
                     "roa_excl": 3,
@@ -96,8 +102,22 @@ def test_p_v2_golden_sample_is_stable_at_database_precision():
     assert result["p_rank"].tolist() == [4, 3, 2, 1]
     assert pd.isna(result.loc[result["ts_code"] == "C", "gpa"]).all()
     assert (
-        factor_frame_checksum(result, P_FACTOR_COLUMNS)
-        == "7d282014e3fdcde14ad0746aa9c5fb4e5a7df4ef89f91ba314dcb1251e993517"
+        factor_frame_checksum(
+            result,
+            [
+                c
+                for c in P_FACTOR_COLUMNS
+                if c
+                not in {
+                    "source_available_date",
+                    "availability_basis",
+                    "pit_contract_version",
+                }
+            ],
+        )
+        # Fixed-scale NUMERIC checksum encoding; numerical expectations above
+        # retain the frozen P formula.
+        == "b5a050f29acac2afc816c3484612e22fc3f267437f3384c0ff027c9066da8a8e"
     )
 
 
@@ -116,8 +136,20 @@ def test_g_v1_1_golden_sample_is_stable_at_database_precision():
         83.333333,
     ]
     assert (
-        factor_frame_checksum(result, G_FACTOR_COLUMNS)
-        == "977be3ff0367535843967e1febb091eb1e9bfbed6cf0e15999ae6a0a1b7eef0f"
+        factor_frame_checksum(
+            result,
+            [
+                c
+                for c in G_FACTOR_COLUMNS
+                if c
+                not in {
+                    "source_available_date",
+                    "availability_basis",
+                    "pit_contract_version",
+                }
+            ],
+        )
+        == "bc58e6b62b65267b8f0dad56bfff2449c258613cfeb719c1d672e75ced56363d"
     )
 
 

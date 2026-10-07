@@ -47,6 +47,7 @@ Date: 2025-08-11 (v2.0 - 标准化连续评分制)
 
 import logging
 import pandas as pd
+from alphahome.pit.disclosure import validate_public_inputs
 import numpy as np
 from typing import List, Optional, Dict, Any
 import time
@@ -54,7 +55,7 @@ import time
 from alphahome.common.schema_names import FACTOR_SCHEMA, PIT_SCHEMA
 from alphahome.factors.core.computation import compute_p_snapshot
 from alphahome.factors.core.context import ensure_factor_context
-from alphahome.factors.core.data_repository import PFactorDataRepository
+from alphahome.factors.core.data_repository import IndustryDataUnavailable, PFactorDataRepository
 from alphahome.factors.persistence import FactorSnapshotWriter
 
 
@@ -486,6 +487,8 @@ class PFactorCalculator:
         if indicators_data.empty:
             return pd.DataFrame()
 
+        validate_public_inputs(indicators_data, as_of_date, available_column="source_available_date")
+
         # 复制数据避免修改原始数据
         df = indicators_data.copy()
 
@@ -564,6 +567,7 @@ class PFactorCalculator:
             "ts_code",
             "calc_date",
             "ann_date",
+            "source_available_date", "availability_basis", "pit_contract_version",
             "end_date",
             "data_source",
             # P因子核心指标
@@ -636,9 +640,13 @@ class PFactorCalculator:
                     stock_codes, as_of_date
                 )
 
-            if industry_info.empty:
-                self.logger.warning("未找到股票的行业分类信息，跳过特殊处理")
-                return df
+            industry_info = self.data_repository._require_industry_coverage(
+                industry_info, stock_codes, as_of_date
+            )
+            if "data_quality" in industry_info and not industry_info["data_quality"].isin(
+                ("normal", "high")
+            ).all():
+                raise IndustryDataUnavailable(f"{as_of_date} industry_quality_invalid:handling")
 
             # 合并行业信息
             df_with_industry = df.merge(
@@ -680,9 +688,11 @@ class PFactorCalculator:
 
             return df_result
 
+        except IndustryDataUnavailable:
+            raise
         except Exception as e:
-            self.logger.error(f"应用行业特殊处理失败: {e}")
-            return df
+            self.logger.error("应用行业特殊处理失败: %s", type(e).__name__)
+            raise IndustryDataUnavailable(f"{as_of_date} industry_handling_failed") from e
 
     def _get_industry_classification_pit(
         self, stock_codes: List[str], as_of_date: str

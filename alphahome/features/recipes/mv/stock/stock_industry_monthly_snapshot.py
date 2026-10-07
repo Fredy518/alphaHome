@@ -51,13 +51,15 @@ class StockIndustryMonthlySnapshotMV(BaseFeatureView):
         sql = """
         CREATE MATERIALIZED VIEW features.mv_stock_industry_monthly_snapshot AS
         WITH
-        -- 生成月度序列（从 2000-01 到当前月份月末）
+        -- 仅生成已结束的月末；月中不得生成未来观察日。
         month_series AS (
             SELECT
                 (DATE_TRUNC('month', generate_series) + INTERVAL '1 month' - INTERVAL '1 day')::date AS obs_date
             FROM generate_series(
                 '2000-01-01'::date,
-                DATE_TRUNC('month', CURRENT_DATE) + INTERVAL '1 month' - INTERVAL '1 day',
+                CASE WHEN CURRENT_DATE = (DATE_TRUNC('month', CURRENT_DATE) + INTERVAL '1 month' - INTERVAL '1 day')::date
+                     THEN CURRENT_DATE
+                     ELSE DATE_TRUNC('month', CURRENT_DATE) - INTERVAL '1 day' END,
                 '1 month'::interval
             ) AS generate_series
         ),
@@ -109,59 +111,54 @@ class StockIndustryMonthlySnapshotMV(BaseFeatureView):
 
         -- 月度快照展开：每个月末检查每只股票的有效行业分类
         monthly_snapshot_raw AS (
-            SELECT
-                i.ts_code,
-                m.obs_date,
-                i.data_source,
-                i.industry_level1,
-                i.industry_level2,
-                i.industry_level3,
-                i.industry_code1,
-                i.industry_code2,
-                i.industry_code3,
-                i.in_date,
-                ROW_NUMBER() OVER (
-                    PARTITION BY i.ts_code, m.obs_date, i.data_source
-                    ORDER BY i.in_date DESC
-                ) AS rn
-            FROM month_series m
-            CROSS JOIN (SELECT DISTINCT ts_code, data_source FROM all_industry) stocks
-            JOIN all_industry i
-              ON i.ts_code = stocks.ts_code
-             AND i.data_source = stocks.data_source
-             AND i.in_date <= m.obs_date
-             AND i.out_date > m.obs_date
+            SELECT i.ts_code,m.obs_date,i.data_source,
+                   i.industry_level1,i.industry_level2,i.industry_level3,
+                   i.industry_code1,i.industry_code2,i.industry_code3,i.in_date,
+                   DENSE_RANK() OVER(
+                       PARTITION BY i.ts_code,m.obs_date,i.data_source
+                       ORDER BY i.in_date DESC
+                   ) AS start_rank
+            FROM month_series m JOIN all_industry i
+              ON i.in_date<=m.obs_date AND i.out_date>m.obs_date
         ),
-
+        monthly_latest AS (
+            SELECT ts_code,obs_date,data_source,MAX(in_date) AS in_date,
+                   MIN(industry_level1) AS industry_level1,
+                   MIN(industry_level2) AS industry_level2,
+                   MIN(industry_level3) AS industry_level3,
+                   MIN(industry_code1) AS industry_code1,
+                   MIN(industry_code2) AS industry_code2,
+                   MIN(industry_code3) AS industry_code3,
+                   COUNT(DISTINCT ROW(industry_level1,industry_level2,industry_level3,
+                                      industry_code1,industry_code2,industry_code3))>1 AS ambiguous
+            FROM monthly_snapshot_raw WHERE start_rank=1
+            GROUP BY ts_code,obs_date,data_source
+        ),
         monthly_snapshot AS (
-            SELECT
-                ts_code,
-                obs_date,
-                data_source,
-                industry_level1,
-                industry_level2,
-                industry_level3,
-                industry_code1,
-                industry_code2,
-                industry_code3,
-                in_date
-            FROM monthly_snapshot_raw
-            WHERE rn = 1
+            SELECT ts_code,obs_date,data_source,in_date,ambiguous,
+                   CASE WHEN NOT ambiguous THEN industry_level1 END AS industry_level1,
+                   CASE WHEN NOT ambiguous THEN industry_level2 END AS industry_level2,
+                   CASE WHEN NOT ambiguous THEN industry_level3 END AS industry_level3,
+                   CASE WHEN NOT ambiguous THEN industry_code1 END AS industry_code1,
+                   CASE WHEN NOT ambiguous THEN industry_code2 END AS industry_code2,
+                   CASE WHEN NOT ambiguous THEN industry_code3 END AS industry_code3
+            FROM monthly_latest
         )
 
         SELECT
-            ts_code,
+            ts_code::VARCHAR(30) AS ts_code,
             obs_date,
             data_source,
 
-            industry_level1,
-            industry_level2,
-            industry_level3,
-            industry_code1,
-            industry_code2,
-            industry_code3,
+            industry_level1::VARCHAR(50) AS industry_level1,
+            industry_level2::VARCHAR(50) AS industry_level2,
+            industry_level3::VARCHAR(100) AS industry_level3,
+            industry_code1::VARCHAR(20) AS industry_code1,
+            industry_code2::VARCHAR(20) AS industry_code2,
+            industry_code3::VARCHAR(20) AS industry_code3,
 
             CASE
+                WHEN ambiguous THEN TRUE
                 WHEN industry_level1 IN ('银行', '非银金融', '金融', '银行业')
                      OR industry_level2 LIKE '%银行%'
                      OR industry_level2 LIKE '%证券%'
@@ -172,6 +169,7 @@ class StockIndustryMonthlySnapshotMV(BaseFeatureView):
             END AS requires_special_gpa_handling,
 
             CASE
+                WHEN ambiguous THEN 'null'
                 WHEN industry_level1 IN ('银行', '非银金融', '金融', '银行业')
                      OR industry_level2 LIKE '%银行%'
                      OR industry_level2 LIKE '%证券%'
@@ -182,6 +180,7 @@ class StockIndustryMonthlySnapshotMV(BaseFeatureView):
             END AS gpa_calculation_method,
 
             CASE
+                WHEN ambiguous THEN 'same_start_classification_conflict_public_vintage_unverified'
                 WHEN industry_level1 IN ('银行', '银行业') OR industry_level2 LIKE '%银行%'
                 THEN '银行业营业成本为0导致GPA=100%，需要特殊处理'
                 WHEN industry_level2 LIKE '%证券%'
@@ -193,7 +192,7 @@ class StockIndustryMonthlySnapshotMV(BaseFeatureView):
                 ELSE NULL
             END AS special_handling_reason,
 
-            'normal' AS data_quality,
+            CASE WHEN ambiguous THEN 'ambiguous_same_start_classification' ELSE 'normal' END AS data_quality,
 
             in_date AS original_in_date,
             'rawdata.index_swmember,rawdata.index_cimember' AS _source_table,
@@ -203,7 +202,18 @@ class StockIndustryMonthlySnapshotMV(BaseFeatureView):
         FROM monthly_snapshot
         ORDER BY ts_code, obs_date, data_source;
         """
-        return sql.strip()
+        target, query = sql.strip().split(' AS', 1)
+        for source in ('index_swmember', 'index_cimember'):
+            original = 'FROM rawdata.' + source + '\n            WHERE ts_code IS NOT NULL'
+            bounded = 'FROM rawdata.' + source + '\n            WHERE ts_code = repair_stock.ts_code AND ts_code IS NOT NULL'
+            if query.count(original) != 1:
+                raise ValueError('industry_source_projection_contract_changed')
+            query = query.replace(original, bounded, 1)
+        return target + ' AS SELECT result.* FROM (' + (
+            'SELECT ts_code FROM rawdata.index_swmember WHERE ts_code IS NOT NULL '
+            'UNION SELECT ts_code FROM rawdata.index_cimember WHERE ts_code IS NOT NULL'
+        ) + ') repair_stock CROSS JOIN LATERAL (' + query.rstrip(';') + ') result'
+
 
     def get_post_create_sqls(self) -> list[str]:
         return [

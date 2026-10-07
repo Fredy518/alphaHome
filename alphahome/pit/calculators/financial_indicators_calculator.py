@@ -16,6 +16,12 @@ from functools import lru_cache
 from decimal import Decimal
 
 from alphahome.pit.base.pit_config import PITConfig
+from alphahome.pit.disclosure import (
+    FINANCIAL_PIT_CONTRACT,
+    PUBLIC_AVAILABILITY_BASIS,
+    INDICATOR_DISCLOSURE_COLUMNS,
+    validate_public_inputs,
+)
 
 
 class FinancialIndicatorsCalculator:
@@ -209,6 +215,10 @@ class FinancialIndicatorsCalculator:
         use_parallel: bool = False,
     ) -> Dict[str, Any]:
         self.stats['start_time'] = time.time()
+        # A reused manager may see late-arriving public versions on a later run.
+        # Date/stock cache keys alone cannot certify that the source is unchanged.
+        if self.enable_cache:
+            self.clear_cache()
 
         if stock_codes is None:
             stock_codes = self._get_active_stocks()
@@ -317,7 +327,9 @@ class FinancialIndicatorsCalculator:
                 except Exception:
                     pass
 
-                current_rows = work[work['ann_date'] == as_of_dt]
+                # This stock was selected by an income OR balance event. Recompute
+                # all available periods at the event date, including TTM/yoy dependents.
+                current_rows = work
                 if current_rows.empty:
                     # 当天该股票无公告，跳过入库，仅用于他股的基期上下文
                     continue
@@ -384,38 +396,17 @@ class FinancialIndicatorsCalculator:
             if latest.get('conversion_status') == 'RPT_ORIG':
                 return None
 
-            # 修复TTM计算：使用基于当前报告期的最近4个季度数据，而不是最早的4条记录
-            # 1. 按end_date降序排序，确保最新的数据在前
-            sorted_data = financial_data.sort_values('end_date', ascending=False).reset_index(drop=True)
-
-            # 2. 找到当前记录在排序后的位置
-            current_idx = None
-            for idx, row in sorted_data.iterrows():
-                if (row['end_date'] == latest['end_date'] and
-                    row['ann_date'] == latest['ann_date'] and
-                    row['data_source'] == latest['data_source']):
-                    current_idx = idx
-                    break
-
-            # 3. 获取当前记录之后（更早的）的3条记录，加上当前记录，共4条记录用于TTM计算
-            if current_idx is not None:
-                # 获取当前记录之后的数据（按时间倒序，所以之后的数据是更早的报告期）
-                ttm_candidates = sorted_data.iloc[current_idx:]
-                ttm_data = ttm_candidates.head(4)  # 取最近的4个报告期（包括当前）
-            else:
-                # 回退方案：如果找不到当前记录，使用最旧的4条记录
-                ttm_data = sorted_data.tail(4)
-                self.logger.warning(f"[{latest['ts_code']}] 无法精确定位当前记录，使用回退TTM计算方案")
-
-            self.logger.debug(f"[{latest['ts_code']}] TTM计算使用 {len(ttm_data)} 条记录，日期范围: {ttm_data['end_date'].min()} 到 {ttm_data['end_date'].max()}")
-
-            # 特殊年份的调试信息（仅在需要诊断时启用）
-            # if latest['end_date'].year in [1997, 1998, 1999]:
-            #     self.logger.info(f"[{ts_code}] 计算 {latest['end_date']} (报告期: {latest['ann_date']})")
-            #     self.logger.info(f"[{ts_code}] TTM数据包含 {len(ttm_data)} 条记录")
-            #     if len(ttm_data) > 0:
-            #         date_range = f"{ttm_data['end_date'].min()} 到 {ttm_data['end_date'].max()}"
-            #         self.logger.info(f"[{ts_code}] TTM数据日期范围: {date_range}")
+            financial_data = financial_data[
+                pd.to_datetime(financial_data['end_date']).le(pd.Timestamp(latest['end_date']))
+                & pd.to_datetime(financial_data['ann_date']).le(pd.Timestamp(as_of_date))
+            ].sort_values('end_date', ascending=False, kind='mergesort').reset_index(drop=True)
+            validate_public_inputs(financial_data, as_of_date)
+            validate_public_inputs(financial_data, as_of_date, available_column='balance_ann_date')
+            ttm_data = financial_data.head(4)
+            available = pd.concat([
+                pd.to_datetime(financial_data['ann_date']),
+                pd.to_datetime(financial_data['balance_ann_date']),
+            ]).max().date()
 
             if force_data_source:
                 original_data_source = force_data_source
@@ -426,7 +417,12 @@ class FinancialIndicatorsCalculator:
             indicators: Dict[str, Any] = {
                 'ts_code': ts_code,
                 'end_date': latest['end_date'],
-                'ann_date': latest['ann_date'],
+                'ann_date': pd.Timestamp(as_of_date).date(),
+                'income_ann_date': latest['ann_date'],
+                'balance_ann_date': latest['balance_ann_date'],
+                'source_available_date': available,
+                'pit_contract_version': FINANCIAL_PIT_CONTRACT,
+                'availability_basis': PUBLIC_AVAILABILITY_BASIS,
                 'data_source': unified_data_source,
                 'data_completeness': latest.get('data_completeness', 'complete'),
                 'balance_sheet_lag': self._safe_numeric_for_calc(latest.get('balance_sheet_lag', 0), 0),
@@ -859,6 +855,7 @@ class FinancialIndicatorsCalculator:
         query = f"""
         WITH latest_income AS (
             SELECT ts_code, end_date, ann_date, data_source,
+                   pit_contract_version, availability_basis,
                    revenue, n_income_attr_p, oper_cost, operate_profit,
                    conversion_status,
                    ROW_NUMBER() OVER (
@@ -872,14 +869,20 @@ class FinancialIndicatorsCalculator:
         ),
         latest_balance AS (
             SELECT ts_code, end_date, ann_date, tot_assets, tot_equity,
+                   pit_contract_version, availability_basis,
                    ROW_NUMBER() OVER (
                        PARTITION BY ts_code, end_date
-                       ORDER BY ann_date DESC
+                       ORDER BY ann_date DESC,
+                                CASE data_source WHEN 'report' THEN 1 WHEN 'express' THEN 2 ELSE 9 END
                    ) as rn
             FROM {PITConfig.PIT_SCHEMA}.pit_balance_quarterly
             WHERE ann_date <= %s AND data_source IN ('report','express') AND ts_code = ANY(%s)
         )
         SELECT i.ts_code, i.end_date, i.ann_date, i.data_source,
+               i.pit_contract_version, i.availability_basis,
+               b.ann_date AS balance_ann_date,
+               b.pit_contract_version AS balance_pit_contract_version,
+               b.availability_basis AS balance_availability_basis,
                i.revenue, i.n_income_attr_p, i.oper_cost, i.operate_profit,
                i.conversion_status,
                b.tot_assets, b.tot_equity, b.end_date as balance_end_date,
@@ -895,7 +898,16 @@ class FinancialIndicatorsCalculator:
         """
         params = (as_of_date, as_of_date, stock_codes, list(target_sources), as_of_date, stock_codes)
         results = self.db_manager.fetch_sync(query, params)
-        return pd.DataFrame(results)
+        frame = pd.DataFrame(results)
+        validate_public_inputs(frame, as_of_date)
+        if not frame.empty:
+            balance = pd.DataFrame({
+                'ann_date': frame['balance_ann_date'],
+                'pit_contract_version': frame['balance_pit_contract_version'],
+                'availability_basis': frame['balance_availability_basis'],
+            })
+            validate_public_inputs(balance, as_of_date)
+        return frame
 
     def _save_indicators_batch(self, indicators_list: List[Dict[str, Any]]) -> None:
         """
@@ -929,7 +941,8 @@ class FinancialIndicatorsCalculator:
             'debt_to_asset_ratio', 'equity_ratio',
             'revenue_yoy_growth', 'n_income_yoy_growth', 'operate_profit_yoy_growth',
             'data_quality', 'calculation_status',
-            'data_completeness', 'balance_sheet_lag'
+            'data_completeness', 'balance_sheet_lag',
+            *INDICATOR_DISCLOSURE_COLUMNS
         ]
 
         for col in required_columns:
@@ -1029,7 +1042,8 @@ class FinancialIndicatorsCalculator:
             'debt_to_asset_ratio', 'equity_ratio',
             'revenue_yoy_growth', 'n_income_yoy_growth', 'operate_profit_yoy_growth',
             'data_quality', 'calculation_status',
-            'data_completeness', 'balance_sheet_lag'
+            'data_completeness', 'balance_sheet_lag',
+            *INDICATOR_DISCLOSURE_COLUMNS
         ]
 
         # 构建 INSERT 语句（使用命名占位符）
@@ -1061,6 +1075,11 @@ class FinancialIndicatorsCalculator:
             data_quality = EXCLUDED.data_quality,
             calculation_status = EXCLUDED.calculation_status,
             data_completeness = EXCLUDED.data_completeness,
+            income_ann_date = EXCLUDED.income_ann_date,
+            balance_ann_date = EXCLUDED.balance_ann_date,
+            source_available_date = EXCLUDED.source_available_date,
+            availability_basis = EXCLUDED.availability_basis,
+            pit_contract_version = EXCLUDED.pit_contract_version,
             balance_sheet_lag = EXCLUDED.balance_sheet_lag,
             updated_at = CURRENT_TIMESTAMP
         """
@@ -1079,7 +1098,7 @@ class FinancialIndicatorsCalculator:
                 self.context.db_manager.execute_sync(insert_sql, params)
                 success += 1
             except Exception as e:
-                self.logger.error(f"插入指标失败 {row['ts_code']}: {e}")
+                raise RuntimeError("Financial indicator persistence failed") from e
 
         # 只在有失败或批量处理时才输出详细信息
         if success != len(df) or len(df) >= 10:
@@ -1123,7 +1142,9 @@ class FinancialIndicatorsCalculator:
                 data_quality VARCHAR(20),
                 calculation_status VARCHAR(20),
                 data_completeness VARCHAR(20),
-                balance_sheet_lag INTEGER
+                balance_sheet_lag INTEGER,
+                income_ann_date DATE, balance_ann_date DATE, source_available_date DATE,
+                availability_basis VARCHAR(64), pit_contract_version VARCHAR(64)
             )
             """
             self.context.db_manager.execute_sync(create_temp_sql)
@@ -1138,7 +1159,8 @@ class FinancialIndicatorsCalculator:
                 'debt_to_asset_ratio', 'equity_ratio',
                 'revenue_yoy_growth', 'n_income_yoy_growth', 'operate_profit_yoy_growth',
                 'data_quality', 'calculation_status',
-                'data_completeness', 'balance_sheet_lag'
+                'data_completeness', 'balance_sheet_lag',
+            *INDICATOR_DISCLOSURE_COLUMNS
             ]
 
             # 使用批量命名参数插入
@@ -1175,7 +1197,9 @@ class FinancialIndicatorsCalculator:
                 debt_to_asset_ratio, equity_ratio,
                 revenue_yoy_growth, n_income_yoy_growth, operate_profit_yoy_growth,
                 data_quality, calculation_status,
-                data_completeness, balance_sheet_lag
+                data_completeness, balance_sheet_lag,
+                income_ann_date, balance_ann_date, source_available_date,
+                availability_basis, pit_contract_version
             )
             SELECT * FROM {temp_table_name}
             ON CONFLICT (ts_code, ann_date, end_date, data_source)
@@ -1198,7 +1222,12 @@ class FinancialIndicatorsCalculator:
                 data_quality = EXCLUDED.data_quality,
                 calculation_status = EXCLUDED.calculation_status,
                 data_completeness = EXCLUDED.data_completeness,
-                balance_sheet_lag = EXCLUDED.balance_sheet_lag
+                income_ann_date = EXCLUDED.income_ann_date,
+            balance_ann_date = EXCLUDED.balance_ann_date,
+            source_available_date = EXCLUDED.source_available_date,
+            availability_basis = EXCLUDED.availability_basis,
+            pit_contract_version = EXCLUDED.pit_contract_version,
+            balance_sheet_lag = EXCLUDED.balance_sheet_lag
             """
 
             self.context.db_manager.execute_sync(upsert_sql)

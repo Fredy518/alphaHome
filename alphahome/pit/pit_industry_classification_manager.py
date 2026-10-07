@@ -27,6 +27,9 @@ import pandas as pd
 from .base.pit_table_manager import PITTableManager
 from .base.pit_config import PITConfig
 from .base.monthly_snapshot_manager import PITMonthlySnapshotManager
+from .industry_evidence import (
+    AMBIGUOUS_REASON, select_latest_classification,
+)
 
 class PITIndustryClassificationManager(PITTableManager):
     """PIT行业分类管理器"""
@@ -303,32 +306,41 @@ class PITIndustryClassificationManager(PITTableManager):
             self.logger.warning(f"未找到 {data_source} 在 {snapshot_date} 的行业数据")
             return []
         
-        # 每只股票取最新的行业分类
-        latest_data = industry_data.groupby('ts_code').first().reset_index()
+        canonical = industry_data.rename(columns={
+            **{f'l{i}_name': f'industry_level{i}' for i in (1, 2, 3)},
+            **{f'l{i}_code': f'industry_code{i}' for i in (1, 2, 3)},
+        })
+        latest_data = select_latest_classification(canonical, snapshot_date)
         
         # 转换为PIT格式
         pit_records = []
         
         for _, row in latest_data.iterrows():
             # 确定特殊处理标识
-            requires_special_gpa = self._is_financial_industry(row['l1_name'], row['l2_name'])
+            ambiguous = bool(row['classification_ambiguous'])
+            requires_special_gpa = ambiguous or self._is_financial_industry(
+                row['industry_level1'], row['industry_level2']
+            )
             gpa_method = 'null' if requires_special_gpa else 'standard'
-            special_reason = self._get_special_handling_reason(row['l1_name'], row['l2_name']) if requires_special_gpa else None
+            special_reason = AMBIGUOUS_REASON if ambiguous else (
+                self._get_special_handling_reason(row['industry_level1'], row['industry_level2'])
+                if requires_special_gpa else None
+            )
             
             pit_record = {
                 'ts_code': row['ts_code'],
                 'obs_date': snapshot_date,
                 'data_source': data_source,
-                'industry_level1': row['l1_name'],
-                'industry_level2': row['l2_name'],
-                'industry_level3': row['l3_name'],
-                'industry_code1': row['l1_code'],
-                'industry_code2': row['l2_code'],
-                'industry_code3': row['l3_code'],
+                'industry_level1': row['industry_level1'],
+                'industry_level2': row['industry_level2'],
+                'industry_level3': row['industry_level3'],
+                'industry_code1': row['industry_code1'],
+                'industry_code2': row['industry_code2'],
+                'industry_code3': row['industry_code3'],
                 'requires_special_gpa_handling': requires_special_gpa,
                 'gpa_calculation_method': gpa_method,
                 'special_handling_reason': special_reason,
-                'data_quality': 'normal',
+                'data_quality': row['data_quality'],
                 'snapshot_version': f"backfill_{snapshot_date.strftime('%Y-%m')}"
             }
             pit_records.append(pit_record)

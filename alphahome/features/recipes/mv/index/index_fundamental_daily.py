@@ -1,42 +1,21 @@
-"""
-指数加权基本面（日频）物化视图定义
+"""Descriptive index valuation from retained statistical-date weights.
 
-设计思路：
-- 用 PIT 风格处理权重，正确计算"当时应该看到的权重"
-- 使用个股 PE/PB/股息率，按权重加权得到指数层面估值
-
-数据来源：
-- tushare.index_weight: 指数权重（月末披露，需 PIT 处理）
-- tushare.stock_dailybasic: 个股 PE/PB/股息率
-
-输出指标：
-- 加权 PE (ttm)
-- 加权 PB
-- 加权股息率
-
-命名规范：
-- 文件名: index_fundamental_daily.py
-- 类名: IndexFundamentalDailyMV
-- recipe.name: index_fundamental_daily
-- 输出表名: features.mv_index_fundamental_daily
-
-注意：
-- 权重 PIT 处理逻辑：
-  - index_weight 按月末发布，但实际披露有延迟
-  - 采用"用发布日期之前最近一期权重"的 PIT 方式
-  - 这里简化为：取 trade_date 当日或之前最近的权重
+Weight trade_date is NOT verified publication time. Historical membership and
+revision vintages are not certified by this recipe; do not use its output as a
+PIT backtest input without separate official publication evidence.
 """
 
 from alphahome.features.storage.base_view import BaseFeatureView
 from alphahome.features.registry import feature_register
+from alphahome.features.recipes.mv.bounded_pit_sql import index_daily_sql
 
 
 @feature_register
 class IndexFundamentalDailyMV(BaseFeatureView):
-    """指数加权基本面物化视图（日频，PIT 权重）"""
+    """Descriptive index valuations using retained statistical-date weights."""
 
     name = "index_fundamental_daily"
-    description = "指数加权 PE/PB/股息率（PIT 权重）（日频）"
+    description = "指数加权 PE/PB/股息率（日频；统计日权重，历史发布与修订未认证）"
     source_tables = [
         "tushare.index_weight",
         "tushare.stock_dailybasic",
@@ -169,7 +148,9 @@ class IndexFundamentalDailyMV(BaseFeatureView):
             -- 血缘
             'tushare.index_weight,tushare.stock_dailybasic' AS _source_table,
             NOW() AS _processed_at,
-            CURRENT_DATE AS _data_version
+            CURRENT_DATE AS _data_version,
+            FALSE AS _pit_eligible,
+            'weight_statistical_date_only;publication_and_vintages_unverified'::text AS _pit_limitations
         FROM weighted
         GROUP BY trade_date, index_code
         ORDER BY trade_date, index_code
@@ -177,7 +158,7 @@ class IndexFundamentalDailyMV(BaseFeatureView):
     """
 
     def get_create_sql(self) -> str:
-        return self.create_sql
+        return index_daily_sql(self.create_sql)
 
     def get_post_create_sqls(self) -> list[str]:
         return [

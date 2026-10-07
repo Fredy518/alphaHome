@@ -1,12 +1,15 @@
 """Refresh and validate a materialized view before committing its replacement."""
 
 from time import monotonic
+from datetime import datetime, timezone
 
 import asyncpg
 
 from .atomic import table_refresh_transaction
+from .definition_drift import definition_drift, recipe_signature
 from .quality import validate_quality
 from .refresh_log import log_mv_refresh
+from .financial_consumption import FINANCIAL_RECIPES, certify_financial_snapshot
 from alphahome.common.plan_inspection import qualified_relation
 
 
@@ -17,9 +20,25 @@ async def refresh_validated_mv(recipe, strategy, allow_blocking_fallback=False):
     started = monotonic()
     target = qualified_relation(recipe.full_name)
     effective, fallback = strategy, None
+    financial = recipe.name in FINANCIAL_RECIPES
+    consumption = None
+    receipt_recorded = False
+    started_at = datetime.now(timezone.utc)
     try:
-        connection = await asyncpg.connect(recipe._db_manager.connection_string, command_timeout=7200)
-        async with table_refresh_transaction(connection, recipe.schema, recipe.view_name):
+        connection = await asyncpg.connect(recipe._db_manager.connection_string,
+                                           command_timeout=60 if financial else 7200)
+        async with table_refresh_transaction(connection, recipe.schema, recipe.view_name,
+                                             isolation="repeatable_read" if financial else None,
+                                             lock_timeout_ms=1000 if financial else 30000):
+            if financial:
+                # Per-transaction limits protect collection; never change server defaults.
+                await connection.execute("""SELECT
+                    set_config('statement_timeout', '60000', true),
+                    set_config('transaction_timeout', '120000', true),
+                    set_config('idle_in_transaction_session_timeout', '15000', true),
+                    set_config('max_parallel_workers_per_gather', '0', true),
+                    set_config('work_mem', '16MB', true),
+                    set_config('temp_file_limit', '512MB', true)""")
             row = await connection.fetchrow(
                 """SELECT relkind::text, relispopulated, EXISTS(
                      SELECT 1 FROM pg_index i WHERE i.indrelid=c.oid AND i.indisvalid AND i.indisunique
@@ -28,6 +47,14 @@ async def refresh_validated_mv(recipe, strategy, allow_blocking_fallback=False):
             )
             if not row or row['relkind'] != 'm':
                 raise RuntimeError('migration_required: expected a materialized view')
+            if recipe_signature(recipe):
+                installed = await connection.fetchrow(
+                    "SELECT pg_get_viewdef(to_regclass($1), true) AS definition, "
+                    "obj_description(to_regclass($1), 'pg_class') AS comment", recipe.full_name,
+                )
+                drift = definition_drift(recipe, installed['definition'], installed['comment'])
+                if drift:
+                    raise RuntimeError(drift)
             if strategy == 'concurrent':
                 fallback = 'unpopulated' if not row['relispopulated'] else 'missing_qualifying_unique_index' if not row['unique_index'] else None
                 if fallback and not allow_blocking_fallback:
@@ -41,6 +68,22 @@ async def refresh_validated_mv(recipe, strategy, allow_blocking_fallback=False):
             empty_reason = await recipe.expected_empty_view_reason(connection) if count == 0 else None
             quality = await validate_quality(connection, recipe.quality_checks, recipe.full_name, old_count,
                                              expected_empty=bool(empty_reason))
+            if financial:
+                consumption = await certify_financial_snapshot(connection, recipe)
+
+                class RefreshLedgerSession:
+                    async def execute(self, sql, *params):
+                        return await connection.execute(sql, *params)
+
+                receipt_recorded = await log_mv_refresh(
+                    RefreshLedgerSession(), view_name=recipe.view_name, schema_name=recipe.schema,
+                    refresh_strategy=effective, success=True, duration_seconds=monotonic()-started,
+                    row_count=count, started_at=started_at, finished_at=datetime.now(timezone.utc),
+                    details={"source_consumption": "verified", "consumption_evidence": consumption,
+                             "quality": quality, "requested_strategy": strategy, "effective_strategy": effective},
+                )
+                if not receipt_recorded:
+                    raise RuntimeError("Financial refresh audit receipt failed; refresh rolled back")
     except Exception as exc:
         await log_mv_refresh(recipe._db_manager, view_name=recipe.view_name, schema_name=recipe.schema,
                              refresh_strategy=effective, success=False, duration_seconds=monotonic()-started,
@@ -55,8 +98,12 @@ async def refresh_validated_mv(recipe, strategy, allow_blocking_fallback=False):
               'full_name': recipe.full_name, 'row_count': count, 'committed_rows': count,
               'duration_seconds': duration, 'requested_strategy': strategy,
               'effective_strategy': effective, 'refresh_strategy': effective, 'strategy': effective,
-              'fallback_reason': fallback, 'quality': quality, 'source_consumption': 'unverified'}
-    await log_mv_refresh(recipe._db_manager, view_name=recipe.view_name, schema_name=recipe.schema,
-                         refresh_strategy=effective, success=True, duration_seconds=duration,
-                         row_count=count, details=result)
+              'fallback_reason': fallback, 'quality': quality,
+              'source_consumption': 'verified' if consumption else 'unverified',
+              'consumption_evidence': consumption, 'audit_receipt_recorded': receipt_recorded}
+    if not financial:
+        result['audit_receipt_recorded'] = await log_mv_refresh(
+            recipe._db_manager, view_name=recipe.view_name, schema_name=recipe.schema,
+            refresh_strategy=effective, success=True, duration_seconds=duration,
+            row_count=count, details=result)
     return result

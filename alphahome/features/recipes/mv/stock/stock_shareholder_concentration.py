@@ -19,22 +19,41 @@ class StockShareholderConcentrationMV(BaseFeatureView):
 
     create_sql = """
         CREATE MATERIALIZED VIEW features.mv_stock_shareholder_concentration AS
-        WITH base AS (
+        WITH observations AS NOT MATERIALIZED (
             SELECT
                 ts_code,
                 ann_date,
                 end_date,
-                holder_num,
-                -- 环比（上一期）
-                LAG(holder_num) OVER (
-                    PARTITION BY ts_code ORDER BY end_date
-                ) AS holder_num_prev,
-                -- 同比（去年同期）
-                LAG(holder_num, 4) OVER (
-                    PARTITION BY ts_code ORDER BY end_date
-                ) AS holder_num_yoy
+                holder_num
             FROM rawdata.stock_holdernumber
             WHERE holder_num IS NOT NULL AND holder_num > 0
+              AND ann_date IS NOT NULL AND end_date IS NOT NULL
+        ),
+        base AS (
+            SELECT current.*,
+                   previous.holder_num AS holder_num_prev,
+                   year_ago.holder_num AS holder_num_yoy
+            FROM observations current
+            -- 先限定公告日可得性，再选最近统计期及其当时已公开的版本。
+            LEFT JOIN LATERAL (
+                SELECT prior.holder_num
+                FROM observations prior
+                WHERE prior.ts_code = current.ts_code
+                  AND prior.ann_date <= current.ann_date
+                  AND prior.end_date < current.end_date
+                ORDER BY prior.end_date DESC, prior.ann_date DESC
+                LIMIT 1
+            ) previous ON TRUE
+            -- 户数包含不规则统计期；同比必须匹配去年同日，不能按四行偏移。
+            LEFT JOIN LATERAL (
+                SELECT prior.holder_num
+                FROM observations prior
+                WHERE prior.ts_code = current.ts_code
+                  AND prior.ann_date <= current.ann_date
+                  AND prior.end_date = (current.end_date - INTERVAL '1 year')::DATE
+                ORDER BY prior.ann_date DESC
+                LIMIT 1
+            ) year_ago ON TRUE
         )
         SELECT
             ts_code,

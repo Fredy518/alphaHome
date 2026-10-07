@@ -56,8 +56,14 @@ async def test_gui_and_cli_share_plan_hash_and_reject_drift(pit_schema, monkeypa
     monkeypatch.setattr(PITDataUpdateCoordinator, "_registered_contracts", staticmethod(lambda: {contract.task_name: contract}))
     manager = SimpleNamespace(connection_string=url)
     coordinator = PITDataUpdateCoordinator(db_manager=manager)
-    gui_plan = await plan_pit_execution(manager, [contract.task_name], "incremental", cutoff="2026-09-14")
-    cli_plan = await coordinator.plan(["stock_fttm"], "incremental", cutoff="2026-09-14")
+    # Plans intentionally freeze the cluster-wide MVCC snapshot. Background
+    # transactions can advance it even in an otherwise unused test schema.
+    # Retry the read-only pair; never weaken a supplied plan's execution guard.
+    for _ in range(3):
+        gui_plan = await plan_pit_execution(manager, [contract.task_name], "incremental", cutoff="2026-09-14")
+        cli_plan = await coordinator.plan(["stock_fttm"], "incremental", cutoff="2026-09-14")
+        if gui_plan.source_fingerprint == cli_plan.source_fingerprint:
+            break
     assert gui_plan.plan_hash == cli_plan.plan_hash
     assert RunPlan.from_dict(gui_plan.to_dict()) == gui_plan
     assert gui_plan.units[0].dates[-1] == date(2026,8,31)

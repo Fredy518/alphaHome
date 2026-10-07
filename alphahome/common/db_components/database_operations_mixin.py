@@ -561,7 +561,8 @@ class DatabaseOperationsMixin:
         df_columns = list(df.columns)
 
         # 检查时间戳列是否存在于DataFrame中
-        if timestamp_column and timestamp_column not in df_columns:
+        generated_timestamp = bool(timestamp_column and timestamp_column not in df_columns)
+        if generated_timestamp:
             self.logger.debug( # type: ignore
                 f"COPY_FROM_DATAFRAME (表: {resolved_table_name}): 时间戳列 '{timestamp_column}' 未在DataFrame列中找到，自动添加当前时间。"
             )
@@ -591,6 +592,10 @@ class DatabaseOperationsMixin:
 
         # --- 使用生成器准备记录以减少内存占用 ---
         async def _df_to_records_generator(df_internal: pd.DataFrame):
+            datetime_positions = {
+                index for index, dtype in enumerate(df_internal.dtypes)
+                if pd.api.types.is_datetime64_any_dtype(dtype)
+            }
             for row_tuple in df_internal.itertuples(index=False, name=None):
                 processed_values = []
                 for i, val in enumerate(row_tuple):
@@ -608,7 +613,7 @@ class DatabaseOperationsMixin:
                             # 与 BaseTask 保存前主键去重共享同一套清洗规则。
                             # 不要替换双引号，让 asyncpg 自己处理。
                             processed_values.append(normalize_database_string(val))
-                    elif pd.api.types.is_datetime64_any_dtype(pd.Series([val])):
+                    elif i in datetime_positions or isinstance(val, (datetime, pd.Timestamp)):
                         # 处理pandas datetime对象
                         if pd.isnull(val): # type: ignore
                             processed_values.append(None)
@@ -672,8 +677,24 @@ class DatabaseOperationsMixin:
 
                     self.logger.debug(f"已复制 {copy_count} 条记录到 {temp_table}") # type: ignore
 
+                    from ..source_observations import record_financial_observations
+                    await record_financial_observations(
+                        conn, target=target, resolved_table=resolved_table_name,
+                        temp_table=temp_table, columns=df_columns,
+                        primary_keys=conflict_columns,
+                        timestamp_column=timestamp_column,
+                    )
+
                     # 3. 从临时表插入/更新到目标表
                     target_col_str = ", ".join([f'"{col}"' for col in df_columns])
+                    # 自动落库时间统一使用数据库时钟；客户端 datetime.now()
+                    # 仅供临时 COPY 占位，不能与冲突更新的数据库时区混用。
+                    # 调用方显式提供的时间戳继续原样用于新增行。
+                    select_col_str = ", ".join(
+                        f'CURRENT_TIMESTAMP AS "{col}"'
+                        if generated_timestamp and col == timestamp_column else f'"{col}"'
+                        for col in df_columns
+                    )
 
                     if replace_existing:
                         # 完整快照替换：先把所有新数据复制到事务内临时表，成功后再短暂
@@ -688,7 +709,7 @@ class DatabaseOperationsMixin:
                         )
                         replace_sql = f'''
                         INSERT INTO {resolved_table_name} ({target_col_str})
-                        SELECT {target_col_str} FROM "{temp_table}";
+                        SELECT {select_col_str} FROM "{temp_table}";
                         '''
                         await conn.execute(
                             replace_sql,
@@ -702,6 +723,13 @@ class DatabaseOperationsMixin:
                         if update_columns is None:
                             # 如果未指定更新列，则更新所有非冲突列
                             update_columns = [col for col in df_columns if col not in conflict_columns]
+                        elif update_columns and timestamp_column and timestamp_column not in conflict_columns:
+                            # 调用方可能在自动补时间戳之前计算显式更新列。
+                            # 更新业务值时仍须维护时间戳；不要修改调用方的列表，
+                            # 也不要改变显式空列表的 DO NOTHING 语义。
+                            update_columns = list(update_columns)
+                            if timestamp_column not in update_columns:
+                                update_columns.append(timestamp_column)
 
                         if update_columns:
                             # 构建更新子句，处理时间戳列的特殊逻辑
@@ -729,17 +757,31 @@ class DatabaseOperationsMixin:
 
                             update_clause_str = ", ".join(update_clauses)
 
+                            select_order = ""
+                            if getattr(self, "sort_bulk_conflict_keys", False):
+                                select_order = f" ORDER BY {conflict_col_str}"
+                            unchanged_guard = ""
+                            if getattr(self, "skip_unchanged_upserts", False):
+                                comparison_columns = [
+                                    col for col in update_columns if col != timestamp_column
+                                ]
+                                changes = " OR ".join(
+                                    f'{resolved_table_name}."{col}" IS DISTINCT FROM EXCLUDED."{col}"'
+                                    for col in comparison_columns
+                                )
+                                unchanged_guard = f" WHERE ({changes})" if changes else " WHERE FALSE"
+
                             upsert_sql = f'''
                             INSERT INTO {resolved_table_name} ({target_col_str})
-                            SELECT {target_col_str} FROM "{temp_table}"
+                            SELECT {select_col_str} FROM "{temp_table}"{select_order}
                             ON CONFLICT ({conflict_col_str}) DO UPDATE SET
-                                {update_clause_str};
+                                {update_clause_str}{unchanged_guard};
                             '''
                         else:
                             # 没有要更新的列，只执行插入（忽略冲突）
                             upsert_sql = f'''
                             INSERT INTO {resolved_table_name} ({target_col_str})
-                            SELECT {target_col_str} FROM "{temp_table}"
+                            SELECT {select_col_str} FROM "{temp_table}"
                             ON CONFLICT ({conflict_col_str}) DO NOTHING;
                             '''
 
@@ -749,7 +791,7 @@ class DatabaseOperationsMixin:
                         # --- 简单插入 ---
                         insert_sql = f'''
                         INSERT INTO {resolved_table_name} ({target_col_str})
-                        SELECT {target_col_str} FROM "{temp_table}";
+                        SELECT {select_col_str} FROM "{temp_table}";
                         '''
                         self.logger.debug(f"执行INSERT: {insert_sql[:200]}...") # type: ignore
                         await conn.execute(insert_sql, timeout=bulk_execute_timeout_seconds)

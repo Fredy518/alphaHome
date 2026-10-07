@@ -36,7 +36,7 @@ class StockFinaIndicatorMV(BaseFeatureView):
 
     quality_checks: Dict[str, Any] = {
         "null_check": {
-            "columns": ["ts_code", "ann_date", "end_date"],
+            "columns": ["ts_code", "ann_date", "report_period"],
             "threshold": 0.01,
         },
         "row_count_change": {

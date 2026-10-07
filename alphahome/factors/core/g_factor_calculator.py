@@ -38,6 +38,7 @@ Date: 2025-09-01 (v1.1 - 简化权重系统)
 
 import logging
 import pandas as pd
+from alphahome.pit.disclosure import validate_public_inputs
 import numpy as np
 from typing import List, Optional, Dict, Any
 import time
@@ -228,6 +229,11 @@ class GFactorCalculator:
         if p_factor_data.empty:
             return pd.DataFrame()
 
+        validate_public_inputs(p_factor_data, as_of_date, available_column="source_available_date")
+        if pd.to_datetime(p_factor_data["calc_date"]).gt(pd.Timestamp(as_of_date)).any():
+            raise ValueError("P history includes snapshots later than as_of_date")
+        if (pd.to_datetime(p_factor_data["source_available_date"]) > pd.to_datetime(p_factor_data["calc_date"])).any():
+            raise ValueError("P source event is later than its historical snapshot")
         self.logger.info(f"开始计算G因子，基于 {len(p_factor_data)} 条P因子记录")
 
         # 转换日期列
@@ -350,7 +356,13 @@ class GFactorCalculator:
                 "g_efficiency_momentum": efficiency_momentum,
                 "g_revenue_momentum": revenue_momentum,
                 "g_profit_momentum": profit_momentum,
-                "ann_date": latest_record["ann_date"],
+                # G consumes the P history for its change/dispersion inputs.
+                # The current P observation can fall back to an older valid
+                # financial event, so it cannot bound every consumed event.
+                "ann_date": pd.to_datetime(group["ann_date"]).max().date(),
+                "source_available_date": pd.to_datetime(group["source_available_date"]).max().date(),
+                "availability_basis": latest_record["availability_basis"],
+                "pit_contract_version": latest_record["pit_contract_version"],
                 "calculation_status": "success",
             }
 

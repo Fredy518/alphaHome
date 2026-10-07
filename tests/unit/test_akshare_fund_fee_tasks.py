@@ -3,6 +3,7 @@
 
 import pandas as pd
 import pytest
+from datetime import datetime
 
 from alphahome.common.constants import UpdateTypes
 from alphahome.fetchers.tasks.fund.akshare_fund_fee_em import AkShareFundFeeEmTask
@@ -266,6 +267,33 @@ async def test_fund_fee_smart_batches_skip_existing_month_pairs_and_anchor_snaps
     assert len(batches) == 4
     assert {batch["snapshot_date"] for batch in batches} == {str(anchor)}
     assert hasattr(db.month_args[0], "toordinal")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("task_class,table_name", [
+    (AkShareFundFeeEmTask, "fund_fee_em"),
+    (AkShareFundOverviewEmTask, "fund_overview_em"),
+])
+async def test_monthly_snapshot_resumes_missing_keys_after_a_recent_partial_save(task_class, table_name):
+    class RecentPartialDB(_ResumeMockDB):
+        async def get_latest_update_time(self, target):
+            return datetime.now()
+
+        async def get_latest_date(self, target, date_column):
+            return pd.to_datetime(current_snapshot_date()).date()
+
+    anchor = _current_month_anchor()
+    row = {"fund_code": "000001", "first_snapshot_date": anchor}
+    if table_name == "fund_fee_em":
+        row["indicator"] = "申购费率（前端）"
+    db = RecentPartialDB(existing_rows_by_table={table_name: [row]})
+    task = task_class(db_connection=db, update_type=UpdateTypes.SMART)
+
+    batches = await task._get_effective_batch_list()
+
+    assert any(batch["fund_code"] == "000003" for batch in batches)
+    assert all(batch["snapshot_date"] == str(anchor) for batch in batches)
+    assert len(batches) == (5 if table_name == "fund_fee_em" else 1)
 
 
 def test_fund_fee_process_data_uses_snapshot_date_override():

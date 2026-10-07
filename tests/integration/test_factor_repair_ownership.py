@@ -29,9 +29,9 @@ def database(isolated_database_url):
     try:
         for kind, columns in (("p", P_FACTOR_COLUMNS), ("g", G_FACTOR_COLUMNS)):
             def column_type(name):
-                if name in {"calc_date", "ann_date", "end_date"}:
+                if name in {"calc_date", "ann_date", "end_date", "source_available_date"}:
                     return "date"
-                if name in {"ts_code", "data_source", "data_quality", "calculation_status"}:
+                if name in {"ts_code", "data_source", "data_quality", "calculation_status", "availability_basis", "pit_contract_version"}:
                     return "text"
                 return "numeric"
             declarations = ", ".join(f'{column} {column_type(column)}' for column in columns)

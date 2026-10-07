@@ -23,6 +23,8 @@ class TushareFinaCashflowTask(TushareTask):
     description = "获取上市公司现金流量表数据"
     table_name = "fina_cashflow"
     primary_keys = ["ts_code", "end_date", "f_ann_date"]
+    reject_conflicting_primary_keys = True
+    archive_source_versions = True
     date_column = "f_ann_date"
     default_start_date = "19901231"  # 最早的财报日期
 

@@ -9,10 +9,16 @@ from typing import Any, List
 import pandas as pd
 
 from alphahome.common.schema_names import FACTOR_SCHEMA, PIT_SCHEMA
+from alphahome.pit.disclosure import validate_public_inputs
+from alphahome.pit.industry_evidence import select_latest_classification
 
 
 class IndustryDataUnavailable(RuntimeError):
     """Historical industry evidence is missing or violates the as-of boundary."""
+
+
+class PHistoryUnavailable(RuntimeError):
+    """A known incomplete market P snapshot falls inside G's history window."""
 
 
 class PFactorDataRepository:
@@ -81,6 +87,7 @@ class PFactorDataRepository:
                         pit.revenue_yoy_growth, pit.n_income_yoy_growth,
                         pit.operate_profit_yoy_growth, pit.data_quality,
                         pit.calculation_status,
+                        pit.source_available_date, pit.availability_basis, pit.pit_contract_version,
                         ROW_NUMBER() OVER (
                             PARTITION BY pit.ts_code
                             ORDER BY pit.ann_date DESC, pit.end_date DESC,
@@ -110,7 +117,8 @@ class PFactorDataRepository:
                     asset_turnover_ttm, equity_multiplier,
                     debt_to_asset_ratio, equity_ratio,
                     revenue_yoy_growth, n_income_yoy_growth,
-                    operate_profit_yoy_growth, data_quality, calculation_status
+                    operate_profit_yoy_growth, data_quality, calculation_status,
+                    source_available_date, availability_basis, pit_contract_version
                 FROM latest_indicators
                 WHERE rn = 1
                 ORDER BY ts_code
@@ -123,6 +131,12 @@ class PFactorDataRepository:
                     as_of_date,
                 ),
             )
+            if result is not None:
+                validate_public_inputs(result, as_of_date, available_column="source_available_date")
+                if not result.empty and (
+                    pd.to_datetime(result["source_available_date"]) > pd.to_datetime(result["ann_date"])
+                ).any():
+                    raise ValueError("Indicator observation precedes a consumed source event")
             return result if result is not None else pd.DataFrame()
         except Exception as exc:
             self.logger.error(
@@ -137,7 +151,11 @@ class PFactorDataRepository:
             return pd.DataFrame()
         try:
             result = self.context.query_dataframe(
-                "SELECT * FROM get_industry_classification_batch_pit_optimized(%s, %s, 'sw')",
+                """SELECT r.*, c.data_quality
+                FROM get_industry_classification_batch_pit_optimized(%s, %s, 'sw') r
+                LEFT JOIN pit.pit_industry_classification c
+                  ON c.ts_code=r.ts_code AND c.obs_date=r.obs_date
+                 AND c.data_source=r.data_source""",
                 (stock_codes, as_of_date),
             )
         except Exception as exc:
@@ -178,6 +196,10 @@ class PFactorDataRepository:
             raise IndustryDataUnavailable(f"{as_of_date} industry_date_invalid:{source}:{date_column}")
         if not frame["ts_code"].isin(stock_codes).all():
             raise IndustryDataUnavailable(f"{as_of_date} industry_universe_invalid:{source}")
+        if source == "pit" and "data_quality" not in frame:
+            raise IndustryDataUnavailable(f"{as_of_date} industry_quality_missing:{source}")
+        if "data_quality" in frame and not frame["data_quality"].isin(("normal", "high")).all():
+            raise IndustryDataUnavailable(f"{as_of_date} industry_quality_invalid:{source}")
         if frame["industry_level1"].isna().any() or frame["industry_level1"].eq("").any():
             raise IndustryDataUnavailable(f"{as_of_date} industry_classification_unknown:{source}")
         return frame.copy()
@@ -208,7 +230,7 @@ class PFactorDataRepository:
             SELECT ts_code, l1_name AS industry_level1,
                    l2_name AS industry_level2, l3_name AS industry_level3,
                    l1_code AS industry_code1, l2_code AS industry_code2,
-                   l3_code AS industry_code3, in_date
+                    l3_code AS industry_code3, in_date, out_date
             FROM tushare.index_swmember
             WHERE ts_code = ANY(%s) AND l1_name IS NOT NULL
               AND in_date <= %s AND (out_date IS NULL OR out_date > %s)
@@ -219,7 +241,9 @@ class PFactorDataRepository:
         collected: dict[str, dict] = {}
         active = self._check_industry_evidence(active, stock_codes, as_of_date, "in_date", "sw_active")
         if not active.empty:
-            for _, row in active.drop_duplicates("ts_code").iterrows():
+            active = select_latest_classification(active, as_of_date)
+            active = self._check_industry_evidence(active, stock_codes, as_of_date, "in_date", "sw_active")
+            for _, row in active.iterrows():
                 collected[row["ts_code"]] = {
                     **row.to_dict(), "source_method": "sw_active",
                     "source_table": "tushare.index_swmember",
@@ -229,11 +253,11 @@ class PFactorDataRepository:
         if remaining:
             past = self.context.query_dataframe(
                 """
-                SELECT DISTINCT ON (ts_code)
+                SELECT
                        ts_code, l1_name AS industry_level1,
                        l2_name AS industry_level2, l3_name AS industry_level3,
                        l1_code AS industry_code1, l2_code AS industry_code2,
-                       l3_code AS industry_code3, in_date
+                       l3_code AS industry_code3, in_date, out_date
                 FROM tushare.index_swmember
                 WHERE ts_code = ANY(%s) AND l1_name IS NOT NULL AND in_date <= %s
                 ORDER BY ts_code, in_date DESC
@@ -242,6 +266,8 @@ class PFactorDataRepository:
             )
             past = self._check_industry_evidence(past, remaining, as_of_date, "in_date", "sw_past")
             if not past.empty:
+                past = select_latest_classification(past, as_of_date, active_only=False)
+                past = self._check_industry_evidence(past, remaining, as_of_date, "in_date", "sw_past")
                 for _, row in past.iterrows():
                     collected[row["ts_code"]] = {
                         **row.to_dict(), "source_method": "sw_past",
@@ -258,7 +284,7 @@ class PFactorDataRepository:
                 SELECT ts_code, l1_name AS industry_level1,
                        l2_name AS industry_level2, l3_name AS industry_level3,
                        l1_code AS industry_code1, l2_code AS industry_code2,
-                       l3_code AS industry_code3, in_date
+                       l3_code AS industry_code3, in_date, out_date
                 FROM tushare.index_cimember
                 WHERE ts_code = ANY(%s) AND l1_name IS NOT NULL
                   AND in_date <= %s AND (out_date IS NULL OR out_date > %s)
@@ -270,7 +296,9 @@ class PFactorDataRepository:
                 ci_active, remaining, as_of_date, "in_date", "ci_active"
             )
             if not ci_active.empty:
-                for _, row in ci_active.drop_duplicates("ts_code").iterrows():
+                ci_active = select_latest_classification(ci_active, as_of_date)
+                ci_active = self._check_industry_evidence(ci_active, remaining, as_of_date, "in_date", "ci_active")
+                for _, row in ci_active.iterrows():
                     collected[row["ts_code"]] = {
                         **row.to_dict(), "source_method": "ci_active",
                         "source_table": "tushare.index_cimember",
@@ -280,11 +308,11 @@ class PFactorDataRepository:
         if remaining:
             ci_past = self.context.query_dataframe(
                 """
-                SELECT DISTINCT ON (ts_code)
+                SELECT
                        ts_code, l1_name AS industry_level1,
                        l2_name AS industry_level2, l3_name AS industry_level3,
                        l1_code AS industry_code1, l2_code AS industry_code2,
-                       l3_code AS industry_code3, in_date
+                       l3_code AS industry_code3, in_date, out_date
                 FROM tushare.index_cimember
                 WHERE ts_code = ANY(%s) AND l1_name IS NOT NULL AND in_date <= %s
                 ORDER BY ts_code, in_date DESC
@@ -295,6 +323,8 @@ class PFactorDataRepository:
                 ci_past, remaining, as_of_date, "in_date", "ci_past"
             )
             if not ci_past.empty:
+                ci_past = select_latest_classification(ci_past, as_of_date, active_only=False)
+                ci_past = self._check_industry_evidence(ci_past, remaining, as_of_date, "in_date", "ci_past")
                 for _, row in ci_past.iterrows():
                     collected[row["ts_code"]] = {
                         **row.to_dict(), "source_method": "ci_past",
@@ -328,7 +358,9 @@ class PFactorDataRepository:
         result["gpa_calculation_method"] = result["requires_special_gpa_handling"].map(
             {True: "null", False: "standard"}
         )
-        result["data_source"] = "sw"
+        result["data_source"] = result["source_table"].map({
+            "tushare.index_swmember": "sw", "tushare.index_cimember": "ci",
+        })
         # Membership start is source evidence, not the requested calculation date.
         result["obs_date"] = result["in_date"]
         columns = [
@@ -338,6 +370,7 @@ class PFactorDataRepository:
             "source_table",
             "source_method",
             "data_source",
+            "data_quality",
             "industry_level1",
             "industry_level2",
             "industry_level3",
@@ -381,9 +414,29 @@ class GFactorDataRepository:
             start_date = (
                 datetime.strptime(as_of_date, "%Y-%m-%d") - timedelta(days=730)
             ).strftime("%Y-%m-%d")
+            gaps = self.context.query_dataframe(
+                f"""
+                SELECT calc_date, status
+                FROM {FACTOR_SCHEMA}.factor_run_date
+                WHERE task_name = 'factor_p' AND is_current
+                  AND calc_date BETWEEN %s AND %s
+                  AND status NOT IN ('success', 'expected_no_data')
+                ORDER BY calc_date
+                LIMIT 1
+                """,
+                (start_date, as_of_date),
+            )
+            if gaps is not None and not gaps.empty:
+                if not {"calc_date", "status"}.issubset(gaps.columns):
+                    raise ValueError("P history coverage evidence is malformed")
+                gap = gaps.iloc[0]
+                raise PHistoryUnavailable(
+                    f"{as_of_date} incomplete_P_history:{gap['calc_date']}:{gap['status']}"
+                )
             result = self.context.query_dataframe(
                 f"""
                 SELECT ts_code, calc_date, p_score, data_source, ann_date,
+                       source_available_date, availability_basis, pit_contract_version,
                        gpa, roe_excl, roa_excl,
                        revenue_yoy_growth, n_income_yoy_growth
                 FROM {FACTOR_SCHEMA}.p_factor
@@ -395,7 +448,15 @@ class GFactorDataRepository:
                 """,
                 (stock_codes, start_date, as_of_date),
             )
+            if result is not None:
+                validate_public_inputs(result, as_of_date, available_column="source_available_date")
+                if not result.empty and (
+                    pd.to_datetime(result["source_available_date"]) > pd.to_datetime(result["calc_date"])
+                ).any():
+                    raise ValueError("P history includes a source event later than its snapshot")
             return result if result is not None else pd.DataFrame()
+        except PHistoryUnavailable:
+            raise
         except Exception as exc:
             self.logger.error(
                 "查询P因子历史数据失败 (PIT时点: %s): %s", as_of_date, exc
@@ -403,4 +464,4 @@ class GFactorDataRepository:
             raise RuntimeError(f"{as_of_date} G因子P历史查询失败") from exc
 
 
-__all__ = ["GFactorDataRepository", "PFactorDataRepository"]
+__all__ = ["GFactorDataRepository", "PFactorDataRepository", "PHistoryUnavailable"]

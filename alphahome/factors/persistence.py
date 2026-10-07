@@ -6,6 +6,7 @@ import csv
 import hashlib
 import io
 from datetime import date
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Any, Iterable, Mapping, Optional, Sequence
 from uuid import UUID, uuid4
 
@@ -17,10 +18,16 @@ from .locks import snapshot_gate
 from .validation import FactorValidationResult, validate_factor_frame
 
 
+FACTOR_CHECKSUM_CONTRACT = "postgres_numeric_v1"
+
+
 P_FACTOR_COLUMNS: Sequence[str] = (
     "ts_code",
     "calc_date",
     "ann_date",
+    "source_available_date",
+    "availability_basis",
+    "pit_contract_version",
     "end_date",
     "data_source",
     "p_score",
@@ -46,6 +53,9 @@ G_FACTOR_COLUMNS: Sequence[str] = (
     "ts_code",
     "calc_date",
     "ann_date",
+    "source_available_date",
+    "availability_basis",
+    "pit_contract_version",
     "data_source",
     "g_efficiency_surprise",
     "g_efficiency_momentum",
@@ -77,12 +87,30 @@ _P_FOUR_DECIMAL = {
     "operate_profit_yoy_growth",
 }
 _G_SIX_DECIMAL = set(G_FACTOR_COLUMNS) - {
+    "source_available_date",
+    "availability_basis",
+    "pit_contract_version",
     "ts_code",
     "calc_date",
     "ann_date",
     "data_source",
     "calculation_status",
 }
+
+
+def _checksum_numeric(value: Any, places: int) -> Optional[str]:
+    """Match PostgreSQL NUMERIC rounding of the value serialized for COPY."""
+    if pd.isna(value):
+        return None
+    try:
+        numeric = Decimal(str(value))
+    except (InvalidOperation, ValueError):
+        return None
+    if not numeric.is_finite():
+        return None
+    rounded = numeric.quantize(Decimal(1).scaleb(-places), rounding=ROUND_HALF_UP)
+    # NUMERIC does not preserve the sign of zero.
+    return format(abs(rounded) if rounded.is_zero() else rounded, f".{places}f")
 
 
 def factor_frame_checksum(
@@ -94,12 +122,12 @@ def factor_frame_checksum(
         if pd.api.types.is_datetime64_any_dtype(canonical[column]):
             canonical[column] = canonical[column].dt.strftime("%Y-%m-%d")
         elif column in _P_SIX_DECIMAL or column in _G_SIX_DECIMAL:
-            canonical[column] = pd.to_numeric(canonical[column], errors="coerce").astype("float64").round(
-                6
+            canonical[column] = canonical[column].map(
+                lambda value: _checksum_numeric(value, 6)
             )
         elif column in _P_FOUR_DECIMAL:
-            canonical[column] = pd.to_numeric(canonical[column], errors="coerce").astype("float64").round(
-                4
+            canonical[column] = canonical[column].map(
+                lambda value: _checksum_numeric(value, 4)
             )
         elif column == "p_rank":
             canonical[column] = pd.to_numeric(
@@ -208,7 +236,10 @@ class FactorSnapshotWriter:
                         output_checksum=checksum,
                         duration_ms=duration_ms,
                         is_current=True,
-                        details=details,
+                        details={
+                            **dict(details or {}),
+                            "checksum_contract": FACTOR_CHECKSUM_CONTRACT,
+                        },
                     )
             connection.commit()
         except Exception:
@@ -263,6 +294,7 @@ class FactorSnapshotWriter:
 
 
 __all__ = [
+    "FACTOR_CHECKSUM_CONTRACT",
     "G_FACTOR_COLUMNS",
     "P_FACTOR_COLUMNS",
     "FactorSnapshotWriter",

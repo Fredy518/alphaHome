@@ -173,6 +173,27 @@ async def test_legacy_create_facade_uses_same_dependency_chain(feature_plan_db):
     assert await connection.fetchval("SELECT to_regclass($1)", parent().full_name)
 
 
+async def test_internal_preview_rebuilds_after_unrelated_transaction(feature_plan_db, monkeypatch):
+    connection, db, parent, child, source = feature_plan_db
+    original = FeatureCoordinator.plan
+    calls = []
+
+    async def plan(self, *args, **kwargs):
+        result = await original(self, *args, **kwargs)
+        calls.append(result.plan_hash)
+        if len(calls) == 1:
+            # Consumes an XID without changing any planned source relation.
+            await connection.fetchval("SELECT pg_current_xact_id()")
+        return result
+
+    monkeypatch.setattr(FeatureCoordinator, "plan", plan)
+    result = await execute_feature_request(db, [child.name], operation="create", as_of_date=CUTOFF)
+    assert result["status"] == "success"
+    assert 4 <= len(calls) <= 6
+    assert calls[0] != calls[1]
+    assert await connection.fetchval("SELECT to_regclass($1)", parent().full_name)
+
+
 @pytest.mark.parametrize("fault", ["index", "metadata"])
 async def test_creation_failure_rolls_back_table_and_metadata(feature_plan_db, monkeypatch, fault):
     connection, db, parent, child, source = feature_plan_db

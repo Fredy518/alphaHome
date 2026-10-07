@@ -76,6 +76,29 @@ def test_missing_prior_consensus_is_retained_but_ineligible():
     assert "missing_consensus_np" in row.quality_reasons
 
 
+def test_manager_empty_consensus_query_retains_actual_event_as_ineligible():
+    from types import SimpleNamespace
+    from alphahome.pit.pit_earnings_surprise_annual_manager import PITEarningsSurpriseAnnualManager
+
+    manager = PITEarningsSurpriseAnnualManager()
+    manager.context = SimpleNamespace(query_dataframe=lambda *args: pd.DataFrame())
+    consensus = manager._load_consensus(_actual())
+    row = manager.calculator.calculate(_actual(), consensus).iloc[0]
+
+    assert list(consensus.columns) == manager.calculator.CONSENSUS_INPUT_COLUMNS
+    assert row.ts_code == "000001.SZ"
+    assert pd.isna(row.consensus_np_10k)
+    assert bool(row.is_eligible) is False
+    assert "missing_prior_consensus" in row.quality_reasons
+
+
+def test_nonempty_consensus_with_missing_columns_still_fails():
+    with pytest.raises(ValueError, match="固定财年一致预期缺少字段"):
+        AnnualEarningsSurpriseCalculator().calculate(
+            _actual(), pd.DataFrame([{"ts_code": "000001.SZ"}])
+        )
+
+
 def test_np_sign_change_is_explicit_and_rate_uses_absolute_denominator():
     consensus = _consensus().iloc[[0]].copy()
     consensus["np_consensus_median"] = -100.0

@@ -17,6 +17,7 @@ def member(code=CODE, in_date="2002-04-04", industry="纺织服饰", out_date=No
     return {
         "ts_code": code, "in_date": in_date, "out_date": out_date,
         "industry_level1": industry, "industry_level2": industry, "industry_level3": industry,
+        "industry_code1": industry, "industry_code2": industry, "industry_code3": industry,
     }
 
 
@@ -24,7 +25,7 @@ def pit(code=CODE, obs_date="2002-04-04", **overrides):
     return {
         "ts_code": code, "obs_date": obs_date, "data_source": "sw",
         "industry_level1": "纺织服饰", "requires_special_gpa_handling": False,
-        "gpa_calculation_method": "standard", **overrides,
+        "gpa_calculation_method": "standard", "data_quality": "normal", **overrides,
     }
 
 
@@ -103,6 +104,7 @@ def test_dated_ci_membership_fills_gap_without_backdating_sw():
     assert result.iloc[0]["obs_date"] == "2002-04-04"
     assert result.iloc[0]["source_table"] == "tushare.index_cimember"
     assert result.iloc[0]["source_method"] == "ci_active"
+    assert result.iloc[0]["data_source"] == "ci"
     assert not result.iloc[0]["requires_special_gpa_handling"]
 
 
@@ -188,3 +190,44 @@ def test_empty_universe_needs_no_industry_read():
     context = IndustryContext()
     assert reader(context).industry_classification([], AS_OF).empty
     assert context.queries == []
+
+
+@pytest.mark.parametrize("source", ["sw", "ci"])
+@pytest.mark.parametrize("active", [False, True])
+@pytest.mark.parametrize("reverse", [False, True])
+def test_raw_same_start_conflict_blocks_before_falling_back(source, active, reverse):
+    end = None if active else "2002-04-04"
+    rows = [member(industry="汽车", out_date=end), member(industry="银行", out_date=end)]
+    rows = rows[::-1] if reverse else rows
+    context = IndustryContext(members=rows if source == "sw" else (), ci_members=rows if source == "ci" else ())
+    with pytest.raises(IndustryDataUnavailable, match="industry_quality_invalid"):
+        reader(context).industry_classification([CODE], AS_OF)
+
+
+def test_identical_raw_classifications_are_not_ambiguous():
+    assert len(reader(IndustryContext(members=[member(), member()])).industry_classification([CODE], AS_OF)) == 1
+
+
+def test_pit_quality_is_checked_before_membership_fallback():
+    context = IndustryContext(members=[member()], optimized=[pit(data_quality="ambiguous")])
+    with pytest.raises(IndustryDataUnavailable, match="industry_quality_invalid:pit"):
+        reader(context).industry_classification([CODE], AS_OF)
+    assert len(context.queries) == 1
+
+
+@pytest.mark.parametrize("failure", [None, RuntimeError("memory failure")])
+def test_private_gpa_processing_fails_closed_for_missing_industry(failure):
+    calculator = PFactorCalculator(context=IndustryContext())
+    if failure is not None:
+        calculator._get_industry_classification_pit = Mock(side_effect=failure)
+    with pytest.raises(IndustryDataUnavailable):
+        calculator._apply_industry_special_handling(pd.DataFrame([{"ts_code":CODE,"gpa_ttm":30.0}]), AS_OF)
+
+
+def test_private_supplied_partial_or_flagged_coverage_is_not_accepted():
+    calculator = PFactorCalculator(context=IndustryContext())
+    frame = pd.DataFrame([{"ts_code":CODE,"gpa_ttm":30.0}])
+    with pytest.raises(IndustryDataUnavailable, match="industry_quality_invalid"):
+        calculator._apply_industry_special_handling(frame, AS_OF, industry_info=pd.DataFrame([pit(data_quality="ambiguous")]))
+    with pytest.raises(IndustryDataUnavailable, match="industry_handling_unknown"):
+        calculator._apply_industry_special_handling(frame, AS_OF, industry_info=pd.DataFrame([pit(gpa_calculation_method=None)]))

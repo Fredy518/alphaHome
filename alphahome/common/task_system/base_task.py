@@ -27,6 +27,9 @@ class BaseTask(ABC):
 
     # 可选属性（有合理默认值）
     primary_keys = []
+    # Sources without a verified version order must not choose a conflicting
+    # financial payload from the supplier's incidental response order.
+    reject_conflicting_primary_keys = False
     date_column = None
     description = ""
     auto_add_update_time = True  # 是否自动添加更新时间
@@ -576,6 +579,8 @@ class BaseTask(ABC):
             # 否则包含回车、换行等字符的两个不同 Python 字符串可能在
             # 入库时变成同一个键，导致 PostgreSQL CardinalityViolation。
             valid_primary_keys = [pk for pk in self.primary_keys if pk in data.columns]
+            if getattr(self, 'reject_conflicting_primary_keys', False) and len(valid_primary_keys) != len(self.primary_keys):
+                raise ValueError('financial_source_key_incomplete')
             if valid_primary_keys:
                 data = data.copy()
                 for pk_col in valid_primary_keys:
@@ -584,6 +589,14 @@ class BaseTask(ABC):
             initial_rows = len(data)
             # 确保主键列存在
             if valid_primary_keys:
+                if getattr(self, 'reject_conflicting_primary_keys', False):
+                    payload_columns = [column for column in data.columns
+                                       if column != self.timestamp_column_name]
+                    unique_payloads = data.drop_duplicates(subset=payload_columns)
+                    if unique_payloads.duplicated(subset=valid_primary_keys, keep=False).any():
+                        # Abort the entire response before any write. A hash or
+                        # row order is not evidence of revision publication.
+                        raise ValueError('financial_source_conflicting_versions_unverified')
                 data = data.drop_duplicates(subset=valid_primary_keys, keep='last').copy()
                 dropped_rows = initial_rows - len(data)
                 if dropped_rows > 0:

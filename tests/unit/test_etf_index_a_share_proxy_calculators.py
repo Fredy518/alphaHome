@@ -162,7 +162,7 @@ def test_proxy_fapi_preserves_scope_metadata_and_method_version():
     assert bool(row["is_eligible"])
 
 
-def test_proxy_fapi_manager_clears_months_with_no_proxy_members():
+def test_proxy_fapi_manager_preserves_months_without_publishable_source_scope():
     manager = PITETFIndexAShareProxyFAPIMonthlyManager()
     manager.logger = logging.getLogger(__name__)
     manager._ensure_table_exists = lambda: None
@@ -183,14 +183,11 @@ def test_proxy_fapi_manager_clears_months_with_no_proxy_members():
     manager._atomic_replace_scope = replace
     manager._dependency_freshness = lambda: {}
 
-    result = manager._run_months(
-        [date(2022, 12, 31)],
-        batch_size=1,
-        index_codes=None,
-        result_key="backfilled_records",
-    )
-
-    assert result["backfilled_records"] == 0
-    assert len(captured) == 1 and captured[0].empty
-    assert set(captured[0].columns) == set(manager.calculator.INDEX_OUTPUT_COLUMNS)
-    assert result["batch_audits"][0]["missing_member_pair_count"] == 1
+    with pytest.raises(ValueError, match="pit_no_publishable_etf_fapi_scope"):
+        manager._run_months(
+            [date(2022, 12, 31)],
+            batch_size=1,
+            index_codes=None,
+            result_key="backfilled_records",
+        )
+    assert captured == []

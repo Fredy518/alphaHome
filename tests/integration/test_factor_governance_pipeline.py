@@ -17,6 +17,7 @@ from alphahome.factors.governance import FactorGovernanceStore
 from alphahome.factors.persistence import FactorSnapshotWriter, P_FACTOR_COLUMNS
 from alphahome.factors.repair import FactorRepairService
 from alphahome.common.db_manager import DBManager
+from alphahome.pit.disclosure import FINANCIAL_PIT_CONTRACT
 
 
 pytestmark = [pytest.mark.integration, pytest.mark.requires_db]
@@ -55,6 +56,9 @@ def _p_frame(data_source="report", score=50.0):
             "ts_code": "000001.SZ",
             "calc_date": "2026-09-11",
             "ann_date": "2026-08-31",
+            "source_available_date": "2026-08-31",
+            "availability_basis": "public_disclosure_reconstructed",
+            "pit_contract_version": FINANCIAL_PIT_CONTRACT,
             "end_date": "2026-06-30",
             "data_source": data_source,
             "p_score": score,
@@ -143,6 +147,8 @@ def test_postgresql_staging_governance_views_and_friday_constraint(isolated_data
                 CREATE TABLE factors.p_factor (
                     ts_code text NOT NULL, calc_date date NOT NULL,
                     ann_date date NOT NULL, end_date date, data_source varchar(6),
+                    source_available_date date, availability_basis text,
+                    pit_contract_version text,
                     p_score numeric, p_rank integer, gpa numeric,
                     roe_excl numeric, roa_excl numeric, net_margin_ttm numeric,
                     operating_margin_ttm numeric, roi_ttm numeric,
@@ -157,6 +163,8 @@ def test_postgresql_staging_governance_views_and_friday_constraint(isolated_data
                 CREATE TABLE factors.g_factor (
                     ts_code text NOT NULL, calc_date date NOT NULL,
                     ann_date date NOT NULL, data_source text NOT NULL,
+                    source_available_date date, availability_basis text,
+                    pit_contract_version text,
                     g_efficiency_surprise numeric, g_efficiency_momentum numeric,
                     g_revenue_momentum numeric, g_profit_momentum numeric,
                     rank_es numeric, rank_em numeric, rank_rm numeric,

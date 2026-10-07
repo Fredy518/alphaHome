@@ -1,7 +1,7 @@
 # 入库卡片：股东户数与筹码集中度
 
 name: stock_shareholder_concentration
-version: "1.0"
+version: "1.1"
 status: pending
 
 sources:
@@ -14,7 +14,12 @@ migration:
 
 meta:
   frequency: quarterly
-  grain: ts_code × end_date
+  grain: ts_code × end_date × ann_date
   refresh: T+1
   created_at: 2026-01-30
   created_by: AI Assistant
+
+pit_contract:
+  previous: "当前公告日已公开、统计期早于当前期的最近一期及其最新公开版本"
+  year_over_year: "上年同一统计日的最新可得版本；闰年2月29日映射上年2月28日；缺失时为空"
+  availability: "按公告日期判断，日内发布时间和首次采集时间不由此卡片证明"

@@ -13,12 +13,13 @@ from alphahome.common.db_session import owned_sync_session, query_timeout
 from alphahome.common.plan_inspection import (
     inspect_relation, observed_relation_boundary, package_fingerprint, qualified_relation,
 )
-from alphahome.common.run_models import RunPlan, RunRequest, RunUnit, canonical_json, fingerprint, target_fingerprint
+from alphahome.common.run_models import ExecutionPlanChanged, RunPlan, RunRequest, RunUnit, canonical_json, fingerprint, target_fingerprint
 from .registry import FeatureRegistry
 from .storage.atomic import identifier, table_refresh_transaction
 from .storage.incremental_view import IncrementalTableView
 from .storage.python_feature import PythonFeatureTable
 from .storage.recovery import plan_recovery
+from .storage.definition_drift import definition_drift, recipe_signature, seal_comment_sql
 
 
 GOOD = {"success", "no_op", "expected_no_data"}
@@ -124,6 +125,16 @@ def build_feature_plan(connection_string, names, strategy="default", *, operatio
             exists = bool(columns)
             if exists and columns[0]["relkind"] != ("r" if table else "m"):
                 blockers.append(f"migration_required: {recipe.full_name} has an incompatible storage kind")
+            if exists and not table and recipe_signature(recipe):
+                definition = db.fetch_one_sync(
+                    "SELECT pg_get_viewdef(to_regclass(%s), true) AS definition, "
+                    "obj_description(to_regclass(%s), 'pg_class') AS comment",
+                    (recipe.full_name, recipe.full_name),
+                )
+                structures[recipe.full_name]['definition'] = dict(definition)
+                drift = definition_drift(recipe, definition['definition'], definition['comment'])
+                if drift:
+                    blockers.append(drift)
             keys = tuple(recipe.primary_keys) if table else ()
             if table and exists:
                 key_columns = {row["attname"]: row["attnotnull"] for row in columns}
@@ -234,6 +245,11 @@ class FeatureCoordinator:
             async with table_refresh_transaction(connection, recipe.schema, recipe.view_name):
                 adapter = _CreationSession(connection)
                 await adapter.execute(recipe.get_create_sql())
+                if recipe_signature(recipe):
+                    definition = await connection.fetchval(
+                        "SELECT pg_get_viewdef(to_regclass($1), true)", recipe.full_name,
+                    )
+                    await adapter.execute(seal_comment_sql(recipe, definition))
                 for sql in recipe.get_post_create_sqls() or ():
                     if isinstance(sql, str) and sql.strip():
                         await adapter.execute(sql)
@@ -339,6 +355,27 @@ async def execute_feature_request(db_manager, names, strategy="default", *, oper
                                   expected_plan_hash=None, as_of_date=None, allow_blocking_fallback=False,
                                   approve_initial_baseline_growth=False, inspection_timeout_ms=30000,
                                   stop_event=None):
+    options = dict(operation=operation, submitted_plan=submitted_plan,
+                   expected_plan_hash=expected_plan_hash, as_of_date=as_of_date,
+                   allow_blocking_fallback=allow_blocking_fallback,
+                   approve_initial_baseline_growth=approve_initial_baseline_growth,
+                   inspection_timeout_ms=inspection_timeout_ms, stop_event=stop_event)
+    # A cluster-wide snapshot can advance while an internally generated preview
+    # is inspected. Rebuild only these unfrozen requests, before any writes.
+    # Explicit previews and row-growth approvals must retain their exact scope.
+    attempts = 1 if submitted_plan is not None or expected_plan_hash is not None or approve_initial_baseline_growth else 3
+    for attempt in range(attempts):
+        try:
+            return await _execute_feature_request_once(db_manager, names, strategy, **options)
+        except ExecutionPlanChanged:
+            if attempt == attempts - 1 or (stop_event is not None and stop_event.is_set()):
+                raise
+
+
+async def _execute_feature_request_once(db_manager, names, strategy="default", *, operation="refresh", submitted_plan=None,
+                                       expected_plan_hash=None, as_of_date=None, allow_blocking_fallback=False,
+                                       approve_initial_baseline_growth=False, inspection_timeout_ms=30000,
+                                       stop_event=None):
     coordinator = FeatureCoordinator(db_manager)
     plan = submitted_plan or await coordinator.plan(names, strategy, operation=operation, as_of_date=as_of_date,
                                                     allow_blocking_fallback=allow_blocking_fallback,

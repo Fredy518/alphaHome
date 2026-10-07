@@ -63,7 +63,9 @@ class AkShareFundCodeBatchMixin:
     default_continue_on_stream_batch_failure = True
     default_stream_save_batch_size = 2000
     default_stream_update_types = (UpdateTypes.FULL, UpdateTypes.SMART)
-    smart_refresh_interval_days = 1
+    # Completeness is checked by current-month business keys. A recent partial
+    # stream save must not suppress the missing batches on the next SMART run.
+    smart_refresh_interval_days = None
 
     async def _resolve_fund_codes(self, **kwargs: Any) -> List[str]:
         configured = (

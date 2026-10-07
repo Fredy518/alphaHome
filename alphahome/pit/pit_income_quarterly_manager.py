@@ -19,6 +19,7 @@ Date: 2025-08-11
 import sys
 import os
 import argparse
+from bisect import bisect_right
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any
 import pandas as pd
@@ -26,6 +27,7 @@ from functools import lru_cache
 
 from .base.pit_table_manager import PITTableManager
 from .base.pit_config import PITConfig
+from .disclosure import DISCLOSURE_COLUMNS, normalize_disclosure_events, public_date_sql, require_disclosure_columns
 from .financial_code_utils import normalize_tushare_financial_ts_codes
 
 class PITIncomeQuarterlyManager(PITTableManager):
@@ -49,7 +51,7 @@ class PITIncomeQuarterlyManager(PITTableManager):
         'report_source_value_conflict': 'boolean',
         'report_source_selection_basis': 'varchar(64)',
     }
-    REPORT_SOURCE_SELECTION_BASIS = 'latest_update_fann_stable_hash_v1'
+    REPORT_SOURCE_SELECTION_BASIS = 'public_event_update_hash_v2'
 
     def __init__(self):
         super().__init__('pit_income_quarterly')
@@ -150,7 +152,7 @@ class PITIncomeQuarterlyManager(PITTableManager):
         return self.resolve_incremental_date_range(
             days,
             (
-                (f"{PITConfig.TUSHARE_SCHEMA}.fina_income", ("ann_date",), "update_time"),
+                (f"{PITConfig.TUSHARE_SCHEMA}.fina_income", ("f_ann_date", "ann_date"), "update_time"),
                 (f"{PITConfig.TUSHARE_SCHEMA}.fina_express", ("ann_date",), "update_time"),
                 (f"{PITConfig.TUSHARE_SCHEMA}.fina_forecast", ("ann_date",), "update_time"),
             ),
@@ -400,7 +402,13 @@ class PITIncomeQuarterlyManager(PITTableManager):
         if 'n_income' in src_cols:
             extra_take.append('n_income')
         fields = self.key_fields + self.data_fields + extra_take
-        select_parts = [f'ranked.{field}' for field in fields]
+        select_parts = [f'ranked.{field}' for field in fields if field != 'ann_date']
+        select_parts.extend([
+            f"{public_date_sql('ranked')} AS ann_date",
+            'ranked.ann_date AS source_ann_date', 'ranked.f_ann_date AS source_f_ann_date',
+            'ranked.update_time AS source_update_time',
+            'ranked.source_payload_hash AS source_version_hash',
+        ])
         select_parts.extend([
             (
                 'ranked.n_income_attr_p AS n_income_attr_p_ytd'
@@ -429,38 +437,39 @@ class PITIncomeQuarterlyManager(PITTableManager):
         base_sql = f"""
         WITH ranked AS (
             SELECT source.*,
+                   md5(row_to_json(source)::text) AS source_payload_hash,
                    COUNT(*) OVER (
-                       PARTITION BY ts_code, end_date, ann_date
+                       PARTITION BY ts_code, end_date, {public_date_sql()}
                    )::integer AS report_source_row_count,
                    (
                        MIN(n_income_attr_p) OVER (
-                           PARTITION BY ts_code, end_date, ann_date
+                           PARTITION BY ts_code, end_date, {public_date_sql()}
                        ) IS DISTINCT FROM
                        MAX(n_income_attr_p) OVER (
-                           PARTITION BY ts_code, end_date, ann_date
+                           PARTITION BY ts_code, end_date, {public_date_sql()}
                        )
                        OR MIN(basic_eps) OVER (
-                           PARTITION BY ts_code, end_date, ann_date
+                           PARTITION BY ts_code, end_date, {public_date_sql()}
                        ) IS DISTINCT FROM
                        MAX(basic_eps) OVER (
-                           PARTITION BY ts_code, end_date, ann_date
+                           PARTITION BY ts_code, end_date, {public_date_sql()}
                        )
                        OR MIN(diluted_eps) OVER (
-                           PARTITION BY ts_code, end_date, ann_date
+                           PARTITION BY ts_code, end_date, {public_date_sql()}
                        ) IS DISTINCT FROM
                        MAX(diluted_eps) OVER (
-                           PARTITION BY ts_code, end_date, ann_date
+                           PARTITION BY ts_code, end_date, {public_date_sql()}
                        )
                    ) AS report_source_value_conflict,
                    ROW_NUMBER() OVER (
-                       PARTITION BY ts_code, end_date, ann_date
+                       PARTITION BY ts_code, end_date, {public_date_sql()}
                        ORDER BY update_time DESC NULLS LAST,
-                                f_ann_date DESC NULLS LAST,
                                 md5(row_to_json(source)::text) DESC
                    ) AS report_source_rank
             FROM {PITConfig.TUSHARE_SCHEMA}.fina_income source
-            WHERE ann_date >= %s AND ann_date <= %s
+            WHERE {public_date_sql()} >= %s AND {public_date_sql()} <= %s
               AND ts_code IS NOT NULL AND end_date IS NOT NULL
+              AND (report_type = 1 OR report_type IS NULL)
         """
         params = [start_date, end_date]
         if ts_code:
@@ -506,6 +515,9 @@ class PITIncomeQuarterlyManager(PITTableManager):
         # 构建 SELECT 列表（不存在的列用 NULL 占位）
         select_parts = [
             'ts_code', 'end_date', 'ann_date',
+            'ann_date AS source_ann_date', 'NULL::date AS source_f_ann_date',
+            ('update_time AS source_update_time' if 'update_time' in cols else 'NULL::timestamp AS source_update_time'),
+            'md5(row_to_json(source)::text) AS source_version_hash',
             (f"{rev_col} as revenue" if rev_col else "NULL::numeric as revenue"),
             (f"{op_col} as operate_profit" if op_col else "NULL::numeric as operate_profit"),
             (f"{par_col} as n_income_attr_p" if par_col else "NULL::numeric as n_income_attr_p"),
@@ -514,7 +526,7 @@ class PITIncomeQuarterlyManager(PITTableManager):
         ]
         base_sql = f"""
         SELECT {', '.join(select_parts)}
-        FROM {PITConfig.TUSHARE_SCHEMA}.fina_express
+        FROM {PITConfig.TUSHARE_SCHEMA}.fina_express source
         WHERE ann_date >= %s AND ann_date <= %s
           AND ts_code IS NOT NULL AND end_date IS NOT NULL
         """
@@ -537,6 +549,7 @@ class PITIncomeQuarterlyManager(PITTableManager):
         df['conversion_status'] = df['conversion_status'].fillna('EXP_ORIG')
         df['data_source'] = 'express'
         base_cols = self.key_fields + self.data_fields + ['data_source']
+        base_cols += [column for column in DISCLOSURE_COLUMNS if column in df.columns]
         # 将可能用于保底与评估的扩展列一并保留，后续UPSERT按目标表存在性写入
         for extra in ['total_profit','n_income']:
             if extra in df.columns:
@@ -564,7 +577,12 @@ class PITIncomeQuarterlyManager(PITTableManager):
         pct_max_col = self._choose_column(cols, pct_max_cands)
         base_col = self._choose_column(cols, base_cands)
 
-        select_parts = ['ts_code','end_date','ann_date']
+        select_parts = [
+            'ts_code', 'end_date', 'ann_date',
+            'ann_date AS source_ann_date', 'NULL::date AS source_f_ann_date',
+            ('update_time AS source_update_time' if 'update_time' in cols else 'NULL::timestamp AS source_update_time'),
+            'md5(row_to_json(source)::text) AS source_version_hash',
+        ]
         if min_col:
             select_parts += [f"{min_col} AS net_profit_min"]
         if max_col:
@@ -580,7 +598,7 @@ class PITIncomeQuarterlyManager(PITTableManager):
 
         base_sql = f"""
         SELECT {', '.join(select_parts)}
-        FROM {PITConfig.TUSHARE_SCHEMA}.fina_forecast
+        FROM {PITConfig.TUSHARE_SCHEMA}.fina_forecast source
         WHERE ann_date >= %s AND ann_date <= %s
           AND ts_code IS NOT NULL AND end_date IS NOT NULL
         """
@@ -605,20 +623,36 @@ class PITIncomeQuarterlyManager(PITTableManager):
             base_col = 'n_income_attr_p' if 'n_income_attr_p' in inc_cols else ('n_income' if 'n_income' in inc_cols else None)
             if base_col is not None:
                 base_query = f"""
-                SELECT ts_code, end_date, ann_date, {base_col} AS yoy_base
-                FROM {PITConfig.TUSHARE_SCHEMA}.fina_income
+                SELECT ts_code, end_date, {public_date_sql()} AS ann_date, {base_col} AS yoy_base,
+                       update_time, md5(row_to_json(source)::text) AS source_version_hash
+                FROM {PITConfig.TUSHARE_SCHEMA}.fina_income source
                 WHERE end_date >= %s AND end_date <= %s
                   AND ts_code IS NOT NULL AND end_date IS NOT NULL AND ann_date IS NOT NULL
+                  AND (report_type = 1 OR report_type IS NULL)
                 ORDER BY ts_code, end_date, ann_date
                 """
                 base_df = self.context.query_dataframe(base_query, (str(base_start), str(base_end)))
                 if base_df is not None and not base_df.empty:
                     base_df = base_df.copy()
                     base_df['end_date'] = pd.to_datetime(base_df['end_date']).dt.date
-                    base_df.sort_values(['ts_code','end_date','ann_date'], inplace=True)
-                    base_df = base_df.drop_duplicates(['ts_code','end_date'], keep='last')
-                    yoy_base = base_df[['ts_code','end_date','yoy_base']].rename(columns={'end_date':'prev_year_end'})
-                    work = work.merge(yoy_base, on=['ts_code','prev_year_end'], how='left')
+                    base_df['ann_date'] = pd.to_datetime(base_df['ann_date']).dt.date
+                    base_df = base_df.sort_values(['ann_date', 'update_time', 'source_version_hash'], kind='mergesort')
+                    # Preserve the sorted event winner, without scanning every
+                    # stock/period for every forecast in a full-history rebuild.
+                    public_bases = {
+                        key: (rows['ann_date'].tolist(), rows['yoy_base'].tolist())
+                        for key, rows in base_df.groupby(['ts_code', 'end_date'], sort=False)
+                    }
+                    chosen = []
+                    for row in work.itertuples(index=False):
+                        events = public_bases.get((row.ts_code, row.prev_year_end))
+                        value = None
+                        if events is not None:
+                            position = bisect_right(events[0], pd.Timestamp(row.ann_date).date()) - 1
+                            if position >= 0:
+                                value = events[1][position]
+                        chosen.append(value)
+                    work['yoy_base'] = pd.Series(chosen, index=work.index, dtype=object)
         except Exception as e:
             self.logger.debug(f"FC-YOY-BASE: failed to build yoy base: {e}")
 
@@ -684,7 +718,8 @@ class PITIncomeQuarterlyManager(PITTableManager):
                     mid = mid.where(mid.notna(), s)
 
         # 构造输出（包含所有行），并携带 fc_hint 便于后续不过度过滤
-        out = work[['ts_code','end_date','ann_date']].copy()
+        source_columns = [column for column in DISCLOSURE_COLUMNS if column in work.columns]
+        out = work[['ts_code','end_date','ann_date'] + source_columns].copy()
         # 线索标记：是否存在任何一个 forecast 数值线索
         has_min = work['net_profit_min'].notna() if 'net_profit_min' in work.columns else pd.Series(False, index=work.index)
         has_max = work['net_profit_max'].notna() if 'net_profit_max' in work.columns else pd.Series(False, index=work.index)
@@ -721,7 +756,7 @@ class PITIncomeQuarterlyManager(PITTableManager):
 
         self.logger.info(f"开始数据预处理: {len(data)} 条记录")
 
-        processed_data = normalize_tushare_financial_ts_codes(data, self.logger)
+        processed_data = normalize_disclosure_events(normalize_tushare_financial_ts_codes(data, self.logger))
 
         # 1. data_source 已在各自_fetch_*阶段固定为 report/express/forecast
         # 若缺失则默认为 report（保守回退），但会记录告警
@@ -922,41 +957,42 @@ class PITIncomeQuarterlyManager(PITTableManager):
         WITH ranked AS (
             SELECT source.ts_code,
                    source.end_date,
-                   source.ann_date,
+                   GREATEST(source.ann_date, COALESCE(source.f_ann_date, source.ann_date)) AS ann_date,
                    source.n_income_attr_p,
                    source.basic_eps,
                    source.diluted_eps,
                    source.update_time,
                    COUNT(*) OVER (
-                       PARTITION BY source.ts_code, source.end_date, source.ann_date
+                       PARTITION BY source.ts_code, source.end_date, GREATEST(source.ann_date, COALESCE(source.f_ann_date, source.ann_date))
                    )::integer AS source_row_count,
                    (
                        MIN(source.n_income_attr_p) OVER (
-                           PARTITION BY source.ts_code, source.end_date, source.ann_date
+                           PARTITION BY source.ts_code, source.end_date, GREATEST(source.ann_date, COALESCE(source.f_ann_date, source.ann_date))
                        ) IS DISTINCT FROM
                        MAX(source.n_income_attr_p) OVER (
-                           PARTITION BY source.ts_code, source.end_date, source.ann_date
+                           PARTITION BY source.ts_code, source.end_date, GREATEST(source.ann_date, COALESCE(source.f_ann_date, source.ann_date))
                        )
                        OR MIN(source.basic_eps) OVER (
-                           PARTITION BY source.ts_code, source.end_date, source.ann_date
+                           PARTITION BY source.ts_code, source.end_date, GREATEST(source.ann_date, COALESCE(source.f_ann_date, source.ann_date))
                        ) IS DISTINCT FROM
                        MAX(source.basic_eps) OVER (
-                           PARTITION BY source.ts_code, source.end_date, source.ann_date
+                           PARTITION BY source.ts_code, source.end_date, GREATEST(source.ann_date, COALESCE(source.f_ann_date, source.ann_date))
                        )
                        OR MIN(source.diluted_eps) OVER (
-                           PARTITION BY source.ts_code, source.end_date, source.ann_date
+                           PARTITION BY source.ts_code, source.end_date, GREATEST(source.ann_date, COALESCE(source.f_ann_date, source.ann_date))
                        ) IS DISTINCT FROM
                        MAX(source.diluted_eps) OVER (
-                           PARTITION BY source.ts_code, source.end_date, source.ann_date
+                           PARTITION BY source.ts_code, source.end_date, GREATEST(source.ann_date, COALESCE(source.f_ann_date, source.ann_date))
                        )
                    ) AS source_value_conflict,
                    ROW_NUMBER() OVER (
-                       PARTITION BY source.ts_code, source.end_date, source.ann_date
+                       PARTITION BY source.ts_code, source.end_date, GREATEST(source.ann_date, COALESCE(source.f_ann_date, source.ann_date))
                        ORDER BY source.update_time DESC NULLS LAST,
                                 source.f_ann_date DESC NULLS LAST,
                                 md5(row_to_json(source)::text) DESC
                    ) AS source_rank
             FROM {PITConfig.TUSHARE_SCHEMA}.fina_income source
+            WHERE report_type = 1 OR report_type IS NULL
         ), selected AS (
             SELECT * FROM ranked WHERE source_rank = 1
         )
@@ -1038,7 +1074,7 @@ class PITIncomeQuarterlyManager(PITTableManager):
         SELECT ts_code, end_date, ann_date, revenue, oper_cost, operate_profit,
                total_profit, n_income, n_income_attr_p
         FROM {pit_schema}.pit_income_quarterly
-        WHERE data_source='report' AND ts_code = ANY(%s)
+        WHERE data_source='report' AND pit_contract_version='public_disclosure_v2' AND ts_code = ANY(%s)
           AND ann_date >= %s AND ann_date <= %s
         ORDER BY ts_code, end_date, ann_date
         """
@@ -1050,22 +1086,22 @@ class PITIncomeQuarterlyManager(PITTableManager):
             VALUES {values_placeholder}
         ), joined AS (
             SELECT r.ts_code,
-                   r.target_end_date,
+                   r.target_end_date, r.target_ann_date,
                    b.end_date AS bs_end_date,
-                   b.ann_date AS bs_ann_date,
+                   GREATEST(b.ann_date, COALESCE(b.f_ann_date, b.ann_date)) AS bs_ann_date,
                    b.total_hldr_eqy_exc_min_int,
-                   b.minority_int
+                   b.minority_int, b.update_time AS bs_update_time, md5(row_to_json(b)::text) AS bs_hash
             FROM {tushare_schema}.fina_balancesheet b
             JOIN req r ON r.ts_code=b.ts_code
             WHERE b.end_date < r.target_end_date::date
-              AND b.ann_date <= r.target_ann_date::date
+              AND GREATEST(b.ann_date, COALESCE(b.f_ann_date, b.ann_date)) <= r.target_ann_date::date
         ), ranked AS (
-            SELECT ts_code, target_end_date,
+            SELECT ts_code, target_end_date, target_ann_date,
                    total_hldr_eqy_exc_min_int, minority_int,
-                   ROW_NUMBER() OVER (PARTITION BY ts_code, target_end_date ORDER BY bs_end_date DESC, bs_ann_date DESC) AS rn
+                   ROW_NUMBER() OVER (PARTITION BY ts_code, target_end_date, target_ann_date ORDER BY bs_end_date DESC, bs_ann_date DESC, bs_update_time DESC NULLS LAST, bs_hash DESC) AS rn
             FROM joined
         )
-        SELECT ts_code, target_end_date AS end_date, total_hldr_eqy_exc_min_int, minority_int
+        SELECT ts_code, target_end_date AS end_date, target_ann_date AS ann_date, total_hldr_eqy_exc_min_int, minority_int
         FROM ranked WHERE rn=1
         """
 
@@ -1155,6 +1191,10 @@ class PITIncomeQuarterlyManager(PITTableManager):
                 return df
         # 仅处理 express 且 n_income_attr_p 为空，且存在可能的总净利润列
         mask_express = work['data_source'] == 'express'
+        if not mask_express.any():
+            return work
+        if 'n_income' not in work.columns:
+            work['n_income'] = None
         if 'n_income_attr_p' not in work.columns:
             work['n_income_attr_p'] = None
         need_rows = mask_express & work['n_income_attr_p'].isna() & work['n_income'].notna()
@@ -1169,30 +1209,23 @@ class PITIncomeQuarterlyManager(PITTableManager):
 
         fill_count = 0
 
-        # 1) REPORT_RATIO（批次内）
-        try:
-            report_df = work[work.get('data_source') == 'report'][['ts_code','end_date','ann_date','n_income_attr_p','n_income']].copy()
-            if not report_df.empty and 'n_income' in report_df.columns:
-                report_df.sort_values(['ts_code','end_date','ann_date'], inplace=True)
-                report_df = report_df.drop_duplicates(['ts_code','end_date'], keep='last')
-                report_df['report_ratio'] = pd.to_numeric(report_df['n_income_attr_p'], errors='coerce') / pd.to_numeric(report_df['n_income'], errors='coerce')
-                report_df.loc[(report_df['report_ratio'] <= 0) | (report_df['report_ratio'] > 1), 'report_ratio'] = None
-                merge_cols = ['ts_code','end_date']
-                tmp = work.loc[need_rows, merge_cols + ['n_income']].merge(
-                    report_df[merge_cols + ['report_ratio']], on=merge_cols, how='left'
-                )
-                n_total = pd.to_numeric(tmp['n_income'], errors='coerce')
-                r_ratio = pd.to_numeric(tmp['report_ratio'], errors='coerce')
-                est = n_total.astype(float) * r_ratio.astype(float)
-                est_valid = est.notna()
-                if est_valid.any():
-                    upd_idx = work.loc[need_rows].index[est_valid]
-                    work.loc[upd_idx, 'n_income_attr_p'] = est[est_valid]
-                    if 'conversion_status' in work.columns:
-                        work.loc[upd_idx, 'conversion_status'] = 'EST_RPT_RATIO'
-                    fill_count += len(upd_idx)
-        except Exception as e:
-            self.logger.warning(f"批次内report比例估算失败: {e}")
+        # 1) REPORT_RATIO: select separately at each express event.
+        report_df = work[work['data_source'].eq('report')]
+        for idx, row in work.loc[need_rows].iterrows():
+            available = report_df[
+                report_df['ts_code'].eq(row['ts_code'])
+                & report_df['end_date'].eq(row['end_date'])
+                & report_df['ann_date'].le(row['ann_date'])
+            ].sort_values('ann_date', kind='mergesort')
+            if available.empty:
+                continue
+            ref = available.iloc[-1]
+            parent = pd.to_numeric(ref.get('n_income_attr_p'), errors='coerce')
+            total = pd.to_numeric(ref.get('n_income'), errors='coerce')
+            if pd.notna(parent) and pd.notna(total) and total != 0 and 0 < parent / total <= 1:
+                work.loc[idx, 'n_income_attr_p'] = float(row['n_income']) * float(parent / total)
+                work.loc[idx, 'conversion_status'] = 'EST_RPT_RATIO'
+                fill_count += 1
 
         # 1b) REPORT_RATIO（历史 PIT 回看，PIT 原则 + lookback）【优化：批量查询】
         remaining = mask_express & work['n_income_attr_p'].isna() & work['n_income'].notna()
@@ -1275,7 +1308,7 @@ class PITIncomeQuarterlyManager(PITTableManager):
 
                 if snap is not None and not snap.empty:
                     merged = work.loc[remaining, ['ts_code','end_date','ann_date','n_income']].merge(
-                        snap, on=['ts_code','end_date'], how='left'
+                        snap, on=['ts_code','end_date','ann_date'], how='left'
                     )
                     parent = pd.to_numeric(merged.get('total_hldr_eqy_exc_min_int'), errors='coerce')
                     minority = pd.to_numeric(merged.get('minority_int'), errors='coerce')
@@ -1334,390 +1367,70 @@ class PITIncomeQuarterlyManager(PITTableManager):
         return work
 
     def _quarterize_to_single(self, df: pd.DataFrame) -> pd.DataFrame:
-        """
-        将年度累计值转换为单季度值（季度化）。
-        规则：单季(Qn) = 累计(Qn) - 累计(Qn-1)，其中 Q1 直接等于 累计(Q1)。
-        分层顺序：先 report（自足），再 express（依赖 report 上期累计），最后 forecast（依赖 report 上期累计）。
-        额外：上市前仅年报（仅Q4）标注为 ANNUAL_ONLY，且不进行季度差分。
-        【优化】使用向量化操作和预计算映射替代循环查询，大幅提升性能。
+        """Quarterize using the previous cumulative version public at THIS event.
+
+        Later revisions are retained as separate events and cannot alter an
+        earlier event's baseline. A missing prior disclosure produces NULL,
+        rather than leaving a cumulative value mislabeled as a single quarter.
         """
         if df is None or df.empty:
             return df
         work = df.copy()
-        # 统一日期类型（防止 end_date/ann_date 类型不一致导致等值比较失败）
-        if 'end_date' in work.columns:
-            work['end_date'] = pd.to_datetime(work['end_date']).dt.date
-        if 'ann_date' in work.columns:
-            work['ann_date'] = pd.to_datetime(work['ann_date']).dt.date
-        target_mask = (
-            ~work['is_extended'].eq(True)
-            if 'is_extended' in work.columns
-            else pd.Series(True, index=work.index)
-        )
-        # 基础累计值快照（不被后续覆盖），并统一日期类型
-        base = df.copy()
-        if 'end_date' in base.columns:
-            base['end_date'] = pd.to_datetime(base['end_date']).dt.date
-        if 'ann_date' in base.columns:
-            base['ann_date'] = pd.to_datetime(base['ann_date']).dt.date
-        # 需要季度化的字段集合（仅对存在于当前数据框中的累计性指标进行）
-        candidate_fields = ['revenue', 'oper_cost', 'operate_profit', 'total_profit', 'n_income', 'n_income_attr_p']
-        q_fields = [c for c in candidate_fields if c in work.columns]
-        if not q_fields:
+        for column in ('end_date', 'ann_date'):
+            work[column] = pd.to_datetime(work[column]).dt.date
+        end_dt = pd.to_datetime(work['end_date'])
+        work['year'] = end_dt.dt.year
+        work['quarter'] = end_dt.dt.quarter
+        fields = [c for c in ('revenue', 'oper_cost', 'operate_profit',
+                              'total_profit', 'n_income', 'n_income_attr_p') if c in work]
+        if not fields:
             return work
-        # 确保辅助字段存在
-        if 'year' not in work.columns or 'quarter' not in work.columns:
-            end_dt = pd.to_datetime(work['end_date'])
-            work['year'] = end_dt.dt.year
-            work['quarter'] = end_dt.dt.month.map({1:1,2:1,3:1,4:2,5:2,6:2,7:3,8:3,9:3,10:4,11:4,12:4})
-        # 计算上一季度季末日期（用于严格匹配 Qn-1）
-        work['prev_end_date'] = work['end_date'].apply(lambda d: self._prev_quarter_end(d, 1))
-        # 基础累计值快照（不被后续覆盖）
-        base = df.copy()
-
-        # 初始化统计信息
-        quarterly_stats = {
-            'report': {
-                'total_records': 0,
-                'q2q4_records': 0,
-                'missing_prev_cumulative': 0,
-                'affected_single_calculation': 0,
-                'field_affected_breakdown': {field: 0 for field in q_fields},
-                'annual_only_records': 0
-            },
-            'express': {
-                'total_records': 0,
-                'q2q4_records': 0,
-                'missing_prev_cumulative': 0,
-                'affected_single_calculation': 0
-            },
-            'forecast': {
-                'total_records': 0,
-                'q2q4_records': 0,
-                'missing_prev_cumulative': 0,
-                'affected_single_calculation': 0
-            }
+        base = work.copy()
+        report_groups = {
+            key: rows.sort_values('ann_date', kind='mergesort')
+            for key, rows in base[base['data_source'].eq('report')].groupby(['ts_code', 'end_date'])
         }
-
-        # ---------- 1) 处理 report 【优化：向量化处理】----------
-        mask_r = work.get('data_source').eq('report') if 'data_source' in work.columns else pd.Series([False]*len(work), index=work.index)
-        if mask_r.any():
-            quarterly_stats['report']['total_records'] = int((mask_r & target_mask).sum())
-            self.logger.info(f"开始处理 report 季度化: {mask_r.sum()} 条记录")
-
-            # 检测"仅Q4"的上市前年报情况：同(ts_code,year)只有Q4
-            r = work.loc[mask_r].copy()
-            grp = r.groupby(['ts_code','year'])
-            annual_only_idx = []
-            for (ts, _), g in grp:
-                qs = set(g['quarter'].dropna().astype(int).unique().tolist())
-                if qs == {4}:
-                    annual_only_idx.extend(g.index.tolist())
-            if annual_only_idx:
-                quarterly_stats['report']['annual_only_records'] = int(
-                    target_mask.reindex(annual_only_idx, fill_value=False).sum()
-                )
-                work.loc[annual_only_idx, 'conversion_status'] = 'ANNUAL_ONLY'
-                for c in q_fields:
-                    work.loc[annual_only_idx, c] = None
-
-            # 创建 report 数据映射【优化：预先构建】
-            r_data = work.loc[mask_r & ~work.index.isin(annual_only_idx)].copy()
-            if not r_data.empty:
-                r_lookup = {}
-                for idx, row in r_data.iterrows():
-                    key = (row['ts_code'], row['end_date'])
-                    r_lookup[key] = {c: row.get(c) for c in q_fields}
-
-                # 处理 Q1（直接等于累计）
-                mask_r_q1 = mask_r & work['quarter'].eq(1) & ~work.index.isin(annual_only_idx)
-                if mask_r_q1.any():
-                    for c in q_fields:
-                        if c in base.columns:
-                            work.loc[mask_r_q1, c] = pd.to_numeric(base.loc[mask_r_q1, c], errors='coerce')
-                    work.loc[mask_r_q1, 'conversion_status'] = 'QTR_DIFF_RPT'
-
-                # 处理 Q2-Q4（需要差分计算）【优化：向量化处理】
-                mask_r_q2q4 = mask_r & work['quarter'].ne(1) & ~work.index.isin(annual_only_idx)
-                if mask_r_q2q4.any():
-                    quarterly_stats['report']['q2q4_records'] = int(
-                        (mask_r_q2q4 & target_mask).sum()
-                    )
-                    r_q2q4_data = work.loc[mask_r_q2q4].copy()
-
-                    # 为每个 report 记录找到对应的上一季度 report 记录
-                    prev_values = []
-                    missing_prev_count = 0
-                    for idx, row in r_q2q4_data.iterrows():
-                        ts = row['ts_code']
-                        prev_end = row['prev_end_date']
-
-                        # 查找对应的上一季度 report 数据
-                        prev_data = r_lookup.get((ts, prev_end))
-                        if prev_data:
-                            prev_values.append(prev_data)
-                        else:
-                            if bool(target_mask.loc[idx]):
-                                missing_prev_count += 1
-                            prev_values.append({c: None for c in q_fields})
-
-                    quarterly_stats['report']['missing_prev_cumulative'] = missing_prev_count
-
-                    # 批量更新差分结果
-                    affected_calculation = 0
-                    for c in q_fields:
-                        if c in base.columns:
-                            cur_vals = pd.to_numeric(base.loc[mask_r_q2q4, c], errors='coerce')
-                            prev_vals = pd.Series([pv.get(c) for pv in prev_values], index=mask_r_q2q4[mask_r_q2q4].index)
-
-                            # 计算差分
-                            diff_vals = cur_vals - pd.to_numeric(prev_vals, errors='coerce')
-                            valid_diff = diff_vals.notna()
-
-                            if valid_diff.any():
-                                work.loc[mask_r_q2q4 & valid_diff, c] = diff_vals[valid_diff]
-                                work.loc[mask_r_q2q4 & valid_diff, 'conversion_status'] = 'QTR_DIFF_RPT'
-                            else:
-                                work.loc[mask_r_q2q4, c] = None
-                            affected_for_target = int(
-                                ((~valid_diff) & target_mask.reindex(valid_diff.index, fill_value=False)).sum()
-                            )
-                            affected_calculation += affected_for_target
-                            quarterly_stats['report']['field_affected_breakdown'][c] = affected_for_target
-
-                    if affected_calculation > 0:
-                        quarterly_stats['report']['affected_single_calculation'] = affected_calculation
-
-            self.logger.info(f"report 季度化处理完成")
-        # 【优化】不再需要这些映射，因为已经在向量化处理中构建了 r_lookup
-        # 【优化】预先构建 report 数据映射，避免循环查询（在所有处理前构建一次）
-        r_lookup = {}
-        if mask_r.any():
-            r_data = work.loc[mask_r, ['ts_code','end_date','ann_date'] + q_fields].copy()
-            r_data['ann_dt'] = pd.to_datetime(r_data['ann_date'])
-
-            # 按 ts_code 和 end_date 分组，找到每个分组中最近的记录
-            r_data = r_data.sort_values(['ts_code','end_date','ann_dt'])
-            r_data = r_data.drop_duplicates(['ts_code','end_date'], keep='last')
-
-            # 创建映射字典
-            for idx, row in r_data.iterrows():
-                key = (row['ts_code'], row['end_date'])
-                r_lookup[key] = {c: row.get(c) for c in q_fields}
-
-        # 【关键修复】为季度化准备report累计值映射（从base获取原始累计值）
-        r_cumulative_lookup = {}
-        if mask_r.any():
-            # 从base中获取report的原始累计值（未季度化的）
-            base_report = base[base['data_source'] == 'report'].copy()
-            if not base_report.empty:
-                # 按ts_code和end_date分组，取最新的ann_date记录
-                base_report = base_report.sort_values(['ts_code','end_date','ann_date'])
-                base_report = base_report.drop_duplicates(['ts_code','end_date'], keep='last')
-
-                # 创建累计值映射字典
-                for idx, row in base_report.iterrows():
-                    key = (row['ts_code'], row['end_date'])
-                    r_cumulative_lookup[key] = {c: row.get(c) for c in q_fields}
-
-                self.logger.info(f"构建了 {len(r_cumulative_lookup)} 个report累计值映射")
-
-        # 【数据质量分析】使用独立脚本进行分析，避免主脚本膨胀
-        # 数据质量分析已移至独立的 pit_data_quality_analyzer.py 脚本
-        # 这里只保留简化的基础统计
-        if mask_r.any():
-            self.logger.info(f"数据质量基础统计：Report记录总数 {mask_r.sum()} 条")
-
-        # ---------- 2) 处理 express（依赖 report 上一季累计；缺失回填同季 report 单季）【优化：向量化处理】----------
-        mask_e = work.get('data_source').eq('express') if 'data_source' in work.columns else pd.Series([False]*len(work), index=work.index)
-        if mask_e.any():
-            quarterly_stats['express']['total_records'] = int((mask_e & target_mask).sum())
-            self.logger.info(f"开始处理 express 季度化: {mask_e.sum()} 条记录")
-
-            # 处理 Q1（直接等于累计）
-            mask_e_q1 = mask_e & work['quarter'].eq(1)
-            if mask_e_q1.any():
-                for c in q_fields:
-                    if c in base.columns:
-                        work.loc[mask_e_q1, c] = pd.to_numeric(base.loc[mask_e_q1, c], errors='coerce')
-                work.loc[mask_e_q1, 'conversion_status'] = 'QTR_DIFF_EXP'
-
-            # 处理 Q2-Q4（需要差分计算）【优化：向量化处理】
-            mask_e_q2q4 = mask_e & work['quarter'].ne(1)
-            if mask_e_q2q4.any() and mask_r.any():
-                quarterly_stats['express']['q2q4_records'] = int(
-                    (mask_e_q2q4 & target_mask).sum()
-                )
-                e_data = work.loc[mask_e_q2q4].copy()
-
-                # 【关键修复】为每个 express 记录找到对应的 report 累计值，而不是单季值
-                prev_cum_values = []
-
-                # 收集所有需要的(ts_code, end_date)组合
-                needed_report_keys = []
-                for idx, row in e_data.iterrows():
-                    ts = row['ts_code']
-                    prev_end = row['prev_end_date']
-                    needed_report_keys.append((idx, ts, prev_end))
-
-                # 【关键修复】使用预构建的累计值映射
-                missing_cumulative_warnings = []
-                for idx, ts, prev_end in needed_report_keys:
-                    # 首先尝试从累计值映射中获取
-                    prev_cum_data = r_cumulative_lookup.get((ts, prev_end))
-                    if prev_cum_data:
-                        prev_cum_values.append(prev_cum_data)
-                    else:
-                        # 如果累计值映射中没有，尝试从base中查找
-                        base_lookup = base.loc[
-                            (base['ts_code'] == ts) & (base['end_date'] == prev_end) & (base['data_source'] == 'report')
-                        ]
-                        if not base_lookup.empty:
-                            prev_cum_values.append(base_lookup.iloc[0][q_fields].to_dict())
-                        else:
-                            # 记录缺失的累计数据，但继续处理
-                            if bool(target_mask.loc[idx]):
-                                missing_cumulative_warnings.append((ts, prev_end))
-                            prev_cum_values.append({c: None for c in q_fields})
-
-                # 更新统计信息
-                quarterly_stats['express']['missing_prev_cumulative'] = len(missing_cumulative_warnings)
-
-                # 批量记录累计数据缺失警告
-                if missing_cumulative_warnings:
-                    self.logger.warning(f"Express累计数据缺失: {len(missing_cumulative_warnings)} 条记录受影响")
-                    for ts, prev_end in missing_cumulative_warnings[:3]:  # 只显示前3个示例
-                        self.logger.warning(f"  示例: {ts} {prev_end}")
-                    if len(missing_cumulative_warnings) > 3:
-                        self.logger.warning(f"  ... 还有 {len(missing_cumulative_warnings) - 3} 条类似记录")
-
-                # 批量更新差分结果
-                affected_calculation = 0
-                for c in q_fields:
-                    if c in base.columns:
-                        # 当前累计值（从base获取）
-                        cur_cum_vals = pd.to_numeric(base.loc[mask_e_q2q4, c], errors='coerce')
-                        # 前一季度累计值
-                        prev_cum_vals_series = pd.Series([pv.get(c) for pv in prev_cum_values], index=mask_e_q2q4[mask_e_q2q4].index)
-
-                        # 正确的季度化计算：当前累计值 - 前一季度累计值 = 当季单季值
-                        single_vals = cur_cum_vals - pd.to_numeric(prev_cum_vals_series, errors='coerce')
-                        valid_single = single_vals.notna()
-
-                        if valid_single.any():
-                            work.loc[mask_e_q2q4 & valid_single, c] = single_vals[valid_single]
-                            work.loc[mask_e_q2q4 & valid_single, 'conversion_status'] = 'QTR_DIFF_EXP'
-                        else:
-                            work.loc[mask_e_q2q4, c] = None
-                        affected_calculation += int(
-                            ((~valid_single) & target_mask.reindex(valid_single.index, fill_value=False)).sum()
-                        )
-
-                quarterly_stats['express']['affected_single_calculation'] = affected_calculation
-
-            self.logger.info(f"express 季度化处理完成")
-        # ---------- 3) 处理 forecast（同 express 策略）【优化：向量化处理】----------
-        mask_f = work.get('data_source').eq('forecast') if 'data_source' in work.columns else pd.Series([False]*len(work), index=work.index)
-        if mask_f.any():
-            quarterly_stats['forecast']['total_records'] = int((mask_f & target_mask).sum())
-            self.logger.info(f"开始处理 forecast 季度化: {mask_f.sum()} 条记录")
-
-            # 处理 Q1（直接等于累计）
-            mask_f_q1 = mask_f & work['quarter'].eq(1)
-            if mask_f_q1.any():
-                for c in q_fields:
-                    if c in base.columns:
-                        work.loc[mask_f_q1, c] = pd.to_numeric(base.loc[mask_f_q1, c], errors='coerce')
-                work.loc[mask_f_q1, 'conversion_status'] = 'QTR_DIFF_FC'
-
-            # 处理 Q2-Q4（需要差分计算）【修复：使用累计值进行季度化】
-            mask_f_q2q4 = mask_f & work['quarter'].ne(1)
-            if mask_f_q2q4.any() and mask_r.any():
-                quarterly_stats['forecast']['q2q4_records'] = int(
-                    (mask_f_q2q4 & target_mask).sum()
-                )
-                f_data = work.loc[mask_f_q2q4].copy()
-
-                # 【关键修复】为每个 forecast 记录找到对应的 report 累计值，而不是单季值
-                prev_cum_values = []
-
-                # 收集所有需要的(ts_code, end_date)组合
-                needed_report_keys = []
-                for idx, row in f_data.iterrows():
-                    ts = row['ts_code']
-                    prev_end = row['prev_end_date']
-                    needed_report_keys.append((idx, ts, prev_end))
-
-                # 【关键修复】使用预构建的累计值映射
-                missing_cumulative_warnings = []
-                for idx, ts, prev_end in needed_report_keys:
-                    # 首先尝试从累计值映射中获取
-                    prev_cum_data = r_cumulative_lookup.get((ts, prev_end))
-                    if prev_cum_data:
-                        prev_cum_values.append(prev_cum_data)
-                    else:
-                        # 如果累计值映射中没有，尝试从base中查找
-                        base_lookup = base.loc[
-                            (base['ts_code'] == ts) & (base['end_date'] == prev_end) & (base['data_source'] == 'report')
-                        ]
-                        if not base_lookup.empty:
-                            prev_cum_values.append(base_lookup.iloc[0][q_fields].to_dict())
-                        else:
-                            # 记录缺失的累计数据，但继续处理
-                            if bool(target_mask.loc[idx]):
-                                missing_cumulative_warnings.append((ts, prev_end))
-                            prev_cum_values.append({c: None for c in q_fields})
-
-                # 更新统计信息
-                quarterly_stats['forecast']['missing_prev_cumulative'] = len(missing_cumulative_warnings)
-
-                # 批量记录累计数据缺失警告
-                if missing_cumulative_warnings:
-                    self.logger.warning(f"Forecast累计数据缺失: {len(missing_cumulative_warnings)} 条记录受影响")
-                    for ts, prev_end in missing_cumulative_warnings[:3]:  # 只显示前3个示例
-                        self.logger.warning(f"  示例: {ts} {prev_end}")
-                    if len(missing_cumulative_warnings) > 3:
-                        self.logger.warning(f"  ... 还有 {len(missing_cumulative_warnings) - 3} 条类似记录")
-
-                # 批量更新差分结果
-                affected_calculation = 0
-                for c in q_fields:
-                    if c in base.columns:
-                        # 当前累计值（从base获取）
-                        cur_cum_vals = pd.to_numeric(base.loc[mask_f_q2q4, c], errors='coerce')
-                        # 前一季度累计值
-                        prev_cum_vals_series = pd.Series([pv.get(c) for pv in prev_cum_values], index=mask_f_q2q4[mask_f_q2q4].index)
-
-                        # 正确的季度化计算：当前累计值 - 前一季度累计值 = 当季单季值
-                        single_vals = cur_cum_vals - pd.to_numeric(prev_cum_vals_series, errors='coerce')
-                        valid_single = single_vals.notna()
-
-                        if valid_single.any():
-                            work.loc[mask_f_q2q4 & valid_single, c] = single_vals[valid_single]
-                            work.loc[mask_f_q2q4 & valid_single, 'conversion_status'] = 'QTR_DIFF_FC'
-                        invalid_for_target = int(
-                            ((~valid_single) & target_mask.reindex(valid_single.index, fill_value=False)).sum()
-                        )
-                        if not valid_single.any():
-                            # 对 forecast，当无法获得上一季报告累计时，保留中值（仅限净利润归母）
-                            if c == 'n_income_attr_p':
-                                work.loc[mask_f_q2q4, c] = cur_cum_vals
-                                work.loc[mask_f_q2q4, 'conversion_status'] = 'FC_MID_KEEP'
-                            else:
-                                work.loc[mask_f_q2q4, c] = None
-                        if c != 'n_income_attr_p':
-                            affected_calculation += invalid_for_target
-
-                quarterly_stats['forecast']['affected_single_calculation'] = affected_calculation
-
-            self.logger.info(f"forecast 季度化处理完成")
-
-        # 清理临时列
-        work.drop(columns=['prev_end_date'], inplace=True, errors='ignore')
-
-        # 打印季度化统计信息汇总
-        self._print_quarterly_stats_summary(quarterly_stats)
-
+        stats = {
+            source: dict(total_records=0, q2q4_records=0, missing_prev_cumulative=0,
+                         affected_single_calculation=0, annual_only_records=0,
+                         field_affected_breakdown={field: 0 for field in fields})
+            for source in ('report', 'express', 'forecast')
+        }
+        for idx, row in base.iterrows():
+            source = row['data_source']
+            target = not bool(row.get('is_extended', False))
+            stat = stats[source]
+            stat['total_records'] += int(target)
+            suffix = {'report': 'RPT', 'express': 'EXP', 'forecast': 'FC'}[source]
+            if row['quarter'] == 1:
+                work.loc[idx, 'conversion_status'] = 'QTR_DIFF_' + suffix
+                continue
+            stat['q2q4_records'] += int(target)
+            prev_end = self._prev_quarter_end(row['end_date'], 1)
+            candidates = report_groups.get((row['ts_code'], prev_end))
+            previous = None
+            if candidates is not None:
+                available = candidates[candidates['ann_date'] <= row['ann_date']]
+                if not available.empty:
+                    previous = available.iloc[-1]
+            stat['missing_prev_cumulative'] += int(target and previous is None)
+            valid = False
+            for field in fields:
+                current_value = pd.to_numeric(row[field], errors='coerce')
+                previous_value = pd.to_numeric(previous[field], errors='coerce') if previous is not None else None
+                if pd.notna(current_value) and pd.notna(previous_value):
+                    work.loc[idx, field] = current_value - previous_value
+                    valid = True
+                elif source == 'forecast' and field == 'n_income_attr_p':
+                    work.loc[idx, field] = current_value
+                else:
+                    work.loc[idx, field] = None
+                    stat['field_affected_breakdown'][field] += int(target)
+                    stat['affected_single_calculation'] += int(target)
+            work.loc[idx, 'conversion_status'] = (
+                'QTR_DIFF_' + suffix if valid else 'FC_MID_KEEP' if source == 'forecast' else 'RPT_ORIG'
+            )
+        self._print_quarterly_stats_summary(stats)
         return work
 
     def _print_quarterly_stats_summary(self, quarterly_stats: Dict[str, Dict[str, Any]]) -> None:
@@ -1833,7 +1546,8 @@ class PITIncomeQuarterlyManager(PITTableManager):
             # 这是合理的近似，因为在业绩预告中通常只披露归母净利
             for field in proxy_fields:
                 # 仅填充空值
-                work.loc[mask_target, field] = work.loc[mask_target, field].fillna(work.loc[mask_target, 'n_income_attr_p'])
+                values = work.loc[mask_target, field]
+                work.loc[mask_target, field] = values.where(values.notna(), work.loc[mask_target, 'n_income_attr_p'])
 
             # 更新状态标记
             if 'conversion_status' in work.columns:
@@ -2100,22 +1814,22 @@ class PITIncomeQuarterlyManager(PITTableManager):
             VALUES {values_rows}
         ), joined AS (
             SELECT r.ts_code,
-                   r.target_end_date,
+                   r.target_end_date, r.target_ann_date,
                    b.end_date AS bs_end_date,
-                   b.ann_date AS bs_ann_date,
+                   GREATEST(b.ann_date, COALESCE(b.f_ann_date, b.ann_date)) AS bs_ann_date,
                    b.total_hldr_eqy_exc_min_int,
-                   b.minority_int
+                   b.minority_int, b.update_time AS bs_update_time, md5(row_to_json(b)::text) AS bs_hash
             FROM {PITConfig.TUSHARE_SCHEMA}.fina_balancesheet b
             JOIN req r ON r.ts_code=b.ts_code
             WHERE b.end_date < r.target_end_date::date
-              AND b.ann_date <= r.target_ann_date::date
+              AND GREATEST(b.ann_date, COALESCE(b.f_ann_date, b.ann_date)) <= r.target_ann_date::date
         ), ranked AS (
-            SELECT ts_code, target_end_date,
+            SELECT ts_code, target_end_date, target_ann_date,
                    total_hldr_eqy_exc_min_int, minority_int,
-                   ROW_NUMBER() OVER (PARTITION BY ts_code, target_end_date ORDER BY bs_end_date DESC, bs_ann_date DESC) AS rn
+                   ROW_NUMBER() OVER (PARTITION BY ts_code, target_end_date, target_ann_date ORDER BY bs_end_date DESC, bs_ann_date DESC, bs_update_time DESC NULLS LAST, bs_hash DESC) AS rn
             FROM joined
         )
-        SELECT ts_code, target_end_date AS end_date, total_hldr_eqy_exc_min_int, minority_int
+        SELECT ts_code, target_end_date AS end_date, target_ann_date AS ann_date, total_hldr_eqy_exc_min_int, minority_int
         FROM ranked WHERE rn=1
         """
         try:
@@ -2171,6 +1885,7 @@ class PITIncomeQuarterlyManager(PITTableManager):
 
         # 构建UPSERT SQL（动态扩展 year/quarter/net_profit_mid/total_profit/n_income 等额外列）
         pit_cols = self._get_table_columns(PITConfig.PIT_SCHEMA, self.table_name)
+        require_disclosure_columns(pit_cols)
         # conversion_status 为可选持久化字段：若目标表缺列则记录告警但不中断
         if 'conversion_status' in data.columns and 'conversion_status' not in pit_cols:
             self.logger.warning("目标表缺少 conversion_status 列，转换标记将不会被持久化。建议为 %s.%s 添加该列以便追踪数据转换状态。", PITConfig.PIT_SCHEMA, self.table_name)
@@ -2195,7 +1910,7 @@ class PITIncomeQuarterlyManager(PITTableManager):
             'report_source_selection_basis',
         ]
         extras = [c for c in extra_candidates if c in pit_cols and c in data.columns]
-        all_fields = self.key_fields + self.data_fields + extras + ['data_source']
+        all_fields = self.key_fields + self.data_fields + extras + list(DISCLOSURE_COLUMNS) + ['data_source']
         field_list = ', '.join(all_fields)
         placeholder_list = ', '.join([f'%({field})s' for field in all_fields])
 
@@ -2209,6 +1924,10 @@ class PITIncomeQuarterlyManager(PITTableManager):
         ON CONFLICT (ts_code, end_date, ann_date, data_source) DO UPDATE SET
         {update_list},
         updated_at = CURRENT_TIMESTAMP
+        WHERE {self.table_name}.pit_contract_version IS DISTINCT FROM 'public_disclosure_v2'
+           OR (COALESCE(EXCLUDED.source_update_time, '-infinity'::timestamp), EXCLUDED.source_version_hash)
+              >= (COALESCE({self.table_name}.source_update_time, '-infinity'::timestamp),
+                  COALESCE({self.table_name}.source_version_hash, ''))
         """
 
         # 【优化】分批处理（顺序：report -> express -> forecast），使用动态批次大小
@@ -2359,7 +2078,9 @@ class PITIncomeQuarterlyManager(PITTableManager):
                 is_update = existing_check is not None and not existing_check.empty
 
                 # 执行UPSERT
-                self.context.db_manager.execute_sync(upsert_sql, params)
+                affected_rows = self.context.db_manager.execute_sync(upsert_sql, params)
+                if affected_rows == 0:
+                    continue
 
                 if is_update:
                     updated_count += 1

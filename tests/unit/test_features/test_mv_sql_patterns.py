@@ -37,6 +37,7 @@ class TestPITPatterns:
             or "weight_date <" in sql.lower()
             or "w.trade_date < d.trade_date" in sql
             or "w.trade_date <= d.trade_date" in sql
+            or "trade_date<=repair_day.trade_date" in sql.replace(" ", "")
         )
         assert has_pit_condition, \
             "应使用 weight_date <= trade_date 确保 PIT 权重"
@@ -44,7 +45,9 @@ class TestPITPatterns:
         # 验证使用最近一期权重（通过 MAX(weight_date) 实现）
         has_latest_weight_logic = (
             "MAX(" in sql.upper() and "weight_date" in sql.lower()
-        ) or "ROW_NUMBER()" in sql.upper() or "DISTINCT ON" in sql.upper()
+        ) or "ROW_NUMBER()" in sql.upper() or "DISTINCT ON" in sql.upper() or (
+            "ORDER BY trade_date DESC LIMIT 1" in sql and "CROSS JOIN LATERAL" in sql
+        )
         
         assert has_latest_weight_logic, \
             "应有逻辑选取最近一期可用权重（MAX/ROW_NUMBER/DISTINCT ON）"

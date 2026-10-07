@@ -9,6 +9,25 @@ from alphahome.pit.calculators.industry_fttm_calculator import (
 )
 
 
+def test_quarantined_delisted_members_only_change_structural_count():
+    classifications = _classification()
+    basics = _stock_basic()
+    baseline = IndustryFTTMCalculator().calculate(classifications, basics, _weights(), _fttm())
+    extra = classifications.loc[classifications["ts_code"].eq("000001.SZ")].copy()
+    extra["ts_code"] = "000003.SZ"
+    before = pd.concat([classifications, extra], ignore_index=True)
+    basics = pd.concat([basics, pd.DataFrame([{"ts_code":"000003.SZ","list_date":"2000-01-01","delist_date":"2010-01-01","exchange":"SZSE","curr_type":"CNY"}])], ignore_index=True)
+    wrong = IndustryFTTMCalculator().calculate(before, basics, _weights(), _fttm())
+    after = before.copy()
+    mask = after["ts_code"].eq("000003.SZ")
+    after.loc[mask, ["industry_code1", "industry_level1", "industry_code2", "industry_level2"]] = None
+    after.loc[mask, "data_quality"] = "ambiguous"
+    corrected = IndustryFTTMCalculator().calculate(after, basics, _weights(), _fttm())
+    pd.testing.assert_frame_equal(baseline, corrected)
+    assert (wrong["structural_member_count"] - corrected["structural_member_count"]).eq(1).all()
+    pd.testing.assert_frame_equal(wrong.drop(columns="structural_member_count"), corrected.drop(columns="structural_member_count"))
+
+
 def _classification(dates=("2024-01-31", "2024-02-29")):
     rows = []
     for obs_date in dates:

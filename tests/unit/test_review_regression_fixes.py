@@ -79,7 +79,10 @@ def test_financial_indicator_cleaning_preserves_missing_values():
 
 
 def test_p_factor_special_industry_blanks_gpa_ttm_before_standardization():
+    from alphahome.factors.core.data_repository import PFactorDataRepository
+
     calculator = PFactorCalculator.__new__(PFactorCalculator)
+    calculator.data_repository = PFactorDataRepository
     calculator.logger = logging.getLogger("test_p_factor_special_industry")
     calculator._get_industry_classification_pit = lambda stock_codes, as_of_date: pd.DataFrame(
         {

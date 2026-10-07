@@ -10,6 +10,7 @@ import json
 import logging
 from datetime import datetime
 from typing import Any, Optional
+from zoneinfo import ZoneInfo
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +28,7 @@ async def log_mv_refresh(
     details: Optional[dict[str, Any]] = None,
     started_at: Optional[datetime] = None,
     finished_at: Optional[datetime] = None,
-) -> None:
+) -> bool:
     """
     写入刷新日志到 features.mv_refresh_log。
 
@@ -36,9 +37,15 @@ async def log_mv_refresh(
     - 否则使用数据库 NOW() 结合 duration_seconds 推导 started_at（适用于增量/表刷新）。
     """
     if not db_manager:
-        return
+        return False
 
     if started_at is not None and finished_at is not None:
+        # Legacy callers pass Shanghai wall times; make that interpretation explicit
+        # before asyncpg encodes timestamptz, independently of the server timezone.
+        if started_at.tzinfo is None:
+            started_at = started_at.replace(tzinfo=ZoneInfo("Asia/Shanghai"))
+        if finished_at.tzinfo is None:
+            finished_at = finished_at.replace(tzinfo=ZoneInfo("Asia/Shanghai"))
         sql = """
         INSERT INTO features.mv_refresh_log (
             view_name,
@@ -53,8 +60,8 @@ async def log_mv_refresh(
             details
         ) VALUES (
             $1, $2, $3,
-            $4 AT TIME ZONE 'Asia/Shanghai',
-            $5 AT TIME ZONE 'Asia/Shanghai',
+            $4::timestamptz,
+            $5::timestamptz,
             $6, $7, $8, $9, $10::jsonb
         );
         """.strip()
@@ -90,8 +97,8 @@ async def log_mv_refresh(
             details
         ) VALUES (
             $1, $2, $3,
-            (NOW() - INTERVAL '1 second' * $4) AT TIME ZONE 'Asia/Shanghai',
-            NOW() AT TIME ZONE 'Asia/Shanghai',
+            NOW() - INTERVAL '1 second' * $4,
+            NOW(),
             $4, $5, $6, $7, $8::jsonb
         );
         """.strip()
@@ -112,6 +119,8 @@ async def log_mv_refresh(
 
     try:
         await db_manager.execute(sql, *params)
+        return True
     except Exception as e:
         # 日志写入失败不应阻断主流程
-        logger.warning(f"Failed to log refresh to features.mv_refresh_log: {e}")
+        logger.warning("Failed to log refresh to features.mv_refresh_log (%s)", type(e).__name__)
+        return False

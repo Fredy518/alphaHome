@@ -65,6 +65,25 @@ class PITFinancialIndicatorsManager(PITTableManager):
             self.logger.warning(f"清理 forecast 财务指标遗留记录失败: {e}")
             return 0
 
+    def _disclosure_events(self, start_date, end_date, ts_code=None):
+        """Income AND balance revisions trigger a new indicator observation."""
+        stock_filter = 'AND ts_code = %s' if ts_code else ''
+        sql = f"""
+        WITH source_events AS (
+            SELECT ts_code, end_date, ann_date, data_source
+            FROM {PITConfig.PIT_SCHEMA}.pit_income_quarterly
+            WHERE ann_date BETWEEN %s AND %s AND data_source IN ('report', 'express') {stock_filter}
+            UNION
+            SELECT ts_code, end_date, ann_date, data_source
+            FROM {PITConfig.PIT_SCHEMA}.pit_balance_quarterly
+            WHERE ann_date BETWEEN %s AND %s AND data_source IN ('report', 'express') {stock_filter}
+        )
+        SELECT DISTINCT ts_code, end_date, ann_date, data_source
+        FROM source_events ORDER BY ann_date, ts_code, end_date, data_source
+        """
+        part = (start_date, end_date) + ((ts_code,) if ts_code else ())
+        return self.context.query_dataframe(sql, part + part)
+
     def plan_incremental_range(self, days=None):
         return self.resolve_incremental_date_range(
             days,
@@ -105,14 +124,7 @@ class PITFinancialIndicatorsManager(PITTableManager):
 
         try:
             # 1. 获取最近days天内所有利润表记录，按公告日期分组
-            q = f"""
-            SELECT DISTINCT ts_code, end_date, ann_date, data_source
-            FROM {PITConfig.PIT_SCHEMA}.pit_income_quarterly
-            WHERE ann_date BETWEEN %s AND %s
-              AND data_source IN ('report', 'express')
-            ORDER BY ann_date ASC, ts_code, end_date ASC, data_source
-            """
-            df = self.context.query_dataframe(q, (start_date, end_date))
+            df = self._disclosure_events(start_date, end_date)
 
             if df is None or df.empty:
                 self.logger.info("近期无新披露的利润表数据")
@@ -143,7 +155,7 @@ class PITFinancialIndicatorsManager(PITTableManager):
                     date_records = df[df['ann_date'] == ann_date]
 
                     # 按报告期分组处理（处理同一天发布多份财报的情况）
-                    report_periods = date_records.groupby('end_date')
+                    report_periods = [(None, date_records)]
                     self.logger.debug(f"增量更新公告日期 {ann_date}: 发现 {len(report_periods)} 个报告期")
 
                     for end_date, period_records in report_periods:
@@ -245,14 +257,7 @@ class PITFinancialIndicatorsManager(PITTableManager):
             removed_forecast_records = self._remove_forecast_indicator_rows()
 
             # 1. 获取所有股票的所有历史利润表记录
-            q = f"""
-            SELECT ts_code, end_date, ann_date, data_source
-            FROM {PITConfig.PIT_SCHEMA}.pit_income_quarterly
-            WHERE ann_date BETWEEN %s AND %s
-              AND data_source IN ('report', 'express')
-            ORDER BY ann_date ASC, ts_code, end_date ASC, data_source
-            """
-            df = self.context.query_dataframe(q, (start_date, end_date))
+            df = self._disclosure_events(start_date, end_date)
 
             if df is None or df.empty:
                 self.logger.warning("未找到需要回填的历史利润表数据")
@@ -285,7 +290,7 @@ class PITFinancialIndicatorsManager(PITTableManager):
                     self.logger.debug(f"分析公告日期 {ann_date} 的数据结构...")
 
                     # 按报告期分组处理（处理同一天发布多份财报的情况）
-                    report_periods = date_records.groupby('end_date')
+                    report_periods = [(None, date_records)]
                     self.logger.info(f"公告日期 {ann_date}: 发现 {len(report_periods)} 个报告期")
 
                     for end_date, period_records in report_periods:
@@ -401,14 +406,7 @@ class PITFinancialIndicatorsManager(PITTableManager):
             removed_forecast_records = self._remove_forecast_indicator_rows()
 
             # 1. 获取该股票的所有历史利润表记录
-            q = f"""
-            SELECT DISTINCT ts_code, end_date, ann_date, data_source
-            FROM {PITConfig.PIT_SCHEMA}.pit_income_quarterly
-            WHERE ts_code = %s AND ann_date BETWEEN %s AND %s
-              AND data_source IN ('report', 'express')
-            ORDER BY ann_date ASC, end_date ASC, data_source
-            """
-            df = self.context.query_dataframe(q, (ts_code, start_date, end_date))
+            df = self._disclosure_events(start_date, end_date, ts_code=ts_code)
 
             if df is None or df.empty:
                 self.logger.warning("该股票在指定日期范围内无利润表数据")
@@ -436,7 +434,7 @@ class PITFinancialIndicatorsManager(PITTableManager):
                     date_records = df[df['ann_date'] == ann_date]
 
                     # 按报告期分组处理（处理同一天发布多份财报的情况）
-                    report_periods = date_records.groupby('end_date')
+                    report_periods = [(None, date_records)]
                     self.logger.debug(f"处理股票 {ts_code} 公告日期 {ann_date}: 发现 {len(report_periods)} 个报告期")
 
                     for end_date, period_records in report_periods:

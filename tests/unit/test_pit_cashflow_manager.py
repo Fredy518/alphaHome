@@ -3,6 +3,7 @@ import logging
 import pandas as pd
 
 from alphahome.pit.pit_cashflow_quarterly_manager import PITCashflowQuarterlyManager
+from alphahome.pit.disclosure import DISCLOSURE_COLUMNS
 
 
 def test_pit_cashflow_preprocess_adds_report_source_and_deduplicates():
@@ -56,6 +57,7 @@ def test_pit_cashflow_upsert_uses_source_aware_primary_key():
                             "n_cashflow_act",
                             "year",
                             "quarter",
+                            *DISCLOSURE_COLUMNS,
                         ]
                     }
                 )

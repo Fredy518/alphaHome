@@ -131,6 +131,7 @@ class PITETFIndexFAPIMonthlyManager(PITMonthlySnapshotManager):
         total_rows = 0
         processed_months: list[str] = []
         batch_audits: list[dict[str, Any]] = []
+        source_scope_by_month: dict[str, dict[str, Any]] = {}
         for offset in range(0, len(target_months), month_batch):
             months = target_months[offset : offset + month_batch]
             anchor = self.previous_month_end(min(months))
@@ -156,7 +157,51 @@ class PITETFIndexFAPIMonthlyManager(PITMonthlySnapshotManager):
                     obs_dates=months,
                 )
             self._validate_output(calculated, months, codes)
-            inserted = self._atomic_replace_scope(calculated, months, codes)
+            # The member task publishes only index/month pairs backed by a
+            # visible constituent source. A newly covered index must not be
+            # required in earlier months where no such source existed.
+            scopes = []
+            for month in months:
+                member_rows = sources["members"]
+                member_rows = member_rows.loc[
+                    pd.to_datetime(member_rows["obs_date"]).dt.date.eq(month)
+                ] if not member_rows.empty else member_rows
+                selected = sorted(set(member_rows["index_code"].astype(str))) if not member_rows.empty else []
+                unavailable = sorted(set(codes) - set(selected))
+                if index_codes is None:
+                    if not selected:
+                        raise ValueError(f"pit_no_publishable_etf_fapi_scope: {month}")
+                    if unavailable:
+                        published = self.context.query_dataframe(
+                            """SELECT DISTINCT index_code
+                               FROM pit.pit_etf_index_fapi_monthly
+                               WHERE obs_date = %s AND method_version = %s
+                                 AND index_code = ANY(%s) ORDER BY index_code""",
+                            (month, self.calculator.METHOD_VERSION, unavailable),
+                        )
+                        if published is not None and not published.empty:
+                            raise ValueError(
+                                f"pit_published_etf_fapi_source_disappeared: {month}: "
+                                f"{published['index_code'].astype(str).tolist()}"
+                            )
+                    replace_codes = selected
+                else:
+                    replace_codes = codes
+                month_rows = calculated.loc[
+                    pd.to_datetime(calculated["obs_date"]).dt.date.eq(month)
+                ] if not calculated.empty else calculated
+                # Validate every selected source pair before the first write
+                # in this batch. Calculator omissions remain blocking.
+                if set(replace_codes) - set(month_rows["index_code"].astype(str)):
+                    raise ValueError(f"pit_incomplete_scope: {month}: missing calculated ETF indices")
+                scopes.append((month, month_rows, replace_codes, unavailable))
+            inserted = 0
+            for month, month_rows, replace_codes, unavailable in scopes:
+                inserted += self._atomic_replace_scope(month_rows, [month], replace_codes)
+                source_scope_by_month[month.isoformat()] = {
+                    "selected_index_codes": replace_codes,
+                    "unavailable_index_codes": unavailable,
+                }
             total_rows += inserted
             processed_months.extend(value.isoformat() for value in months)
             batch_audits.append(
@@ -189,6 +234,9 @@ class PITETFIndexFAPIMonthlyManager(PITMonthlySnapshotManager):
             "dependency_freshness": self._dependency_freshness(),
             "run_completed_at": datetime.now().astimezone().isoformat(),
             "batch_audits": batch_audits,
+            "publication_scope": "etf_index_member_source_pairs",
+            "source_scope_by_month": source_scope_by_month,
+            "source_gap_count": sum(len(scope["unavailable_index_codes"]) for scope in source_scope_by_month.values()),
             "pit_semantics": self.PIT_SEMANTICS,
             "weight_limit": self.WEIGHT_LIMIT,
         }

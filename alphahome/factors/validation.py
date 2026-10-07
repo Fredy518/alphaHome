@@ -9,6 +9,7 @@ from typing import Iterable, Optional, Set
 import pandas as pd
 
 from .date_policy import FactorDatePolicy
+from alphahome.pit.disclosure import validate_public_inputs
 
 
 class FactorValidationError(ValueError):
@@ -60,6 +61,14 @@ def validate_factor_frame(
     ann_dates = pd.to_datetime(frame["ann_date"], errors="coerce").dt.date
     if ann_dates.isnull().any() or (ann_dates > target_date).any():
         raise FactorValidationError("结果存在空ann_date或ann_date晚于calc_date")
+
+    try:
+        validate_public_inputs(frame, target_date.isoformat(), available_column="source_available_date")
+    except ValueError as exc:
+        raise FactorValidationError(str(exc)) from exc
+    source_dates = pd.to_datetime(frame["source_available_date"], errors="coerce").dt.date
+    if (source_dates > ann_dates).any():
+        raise FactorValidationError("Factor observation precedes a consumed financial source event")
 
     if not (frame["calculation_status"].astype(str) == "success").all():
         raise FactorValidationError("结果包含非success计算状态")

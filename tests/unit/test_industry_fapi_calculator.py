@@ -11,6 +11,26 @@ from alphahome.pit.calculators.industry_fapi_calculator import (
 )
 
 
+def test_quarantined_structural_only_members_do_not_change_fapi_values():
+    classifications, equity, benchmark, forecasts = _sources()
+    baseline = IndustryFAPICalculator().calculate(classifications, equity, benchmark, forecasts)
+    bad = [dict(classifications.iloc[0], ts_code=f"BAD{i}.SZ") for i in range(3)]
+    before = pd.concat([classifications, pd.DataFrame(bad)], ignore_index=True)
+    wrong = IndustryFAPICalculator().calculate(before, equity, benchmark, forecasts)
+    after = before.copy()
+    mask = after["ts_code"].str.startswith("BAD")
+    after.loc[mask, ["industry_code1", "industry_level1", "industry_code2", "industry_level2"]] = None
+    after.loc[mask, "data_quality"] = "ambiguous"
+    corrected = IndustryFAPICalculator().calculate(after, equity, benchmark, forecasts)
+    pd.testing.assert_frame_equal(baseline, corrected)
+    keys = ["obs_date", "classification_source", "industry_level", "industry_code"]
+    old = wrong.set_index(keys).sort_index()
+    new = corrected.set_index(keys).sort_index()
+    delta = old["structural_member_count"] - new["structural_member_count"]
+    assert sorted(delta.tolist()) == [0, 0, 0, 0, 3, 3]
+    pd.testing.assert_frame_equal(old.drop(columns="structural_member_count"), new.drop(columns="structural_member_count"))
+
+
 JAN = pd.Timestamp("2026-01-31")
 FEB = pd.Timestamp("2026-02-28")
 

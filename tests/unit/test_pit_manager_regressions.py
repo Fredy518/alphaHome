@@ -7,6 +7,7 @@ import pandas as pd
 import time_machine
 
 from alphahome.pit.base.pit_config import PITConfig
+from alphahome.pit.disclosure import DISCLOSURE_COLUMNS
 from alphahome.pit.financial_code_utils import normalize_tushare_financial_ts_code
 from alphahome.pit.pit_balance_quarterly_manager import PITBalanceQuarterlyManager
 from alphahome.pit.pit_cashflow_quarterly_manager import PITCashflowQuarterlyManager
@@ -51,7 +52,7 @@ def test_income_upsert_batches_stay_on_context_owner_thread(monkeypatch):
     monkeypatch.setattr(
         manager,
         "_get_table_columns",
-        lambda schema, table: set(manager.key_fields + manager.data_fields + ["data_source"]),
+        lambda schema, table: set(manager.key_fields + manager.data_fields + ["data_source"] + list(DISCLOSURE_COLUMNS)),
     )
 
     def fake_upsert(sql, batch, fields):

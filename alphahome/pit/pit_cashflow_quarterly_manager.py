@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional
 import pandas as pd
 
 from .base.pit_config import PITConfig
+from .disclosure import DISCLOSURE_COLUMNS, normalize_disclosure_events, public_date_sql, require_disclosure_columns
 from .base.pit_table_manager import PITTableManager
 from .financial_code_utils import normalize_tushare_financial_ts_codes
 
@@ -176,7 +177,10 @@ class PITCashflowQuarterlyManager(PITTableManager):
         select_parts = [
             "ts_code",
             "end_date",
-            "COALESCE(f_ann_date, ann_date) AS ann_date",
+            f"{public_date_sql()} AS ann_date",
+            "ann_date AS source_ann_date", "f_ann_date AS source_f_ann_date",
+            "update_time AS source_update_time",
+            "md5(row_to_json(source)::text) AS source_version_hash",
         ]
         for field in self.data_fields:
             if field in source_cols:
@@ -187,9 +191,9 @@ class PITCashflowQuarterlyManager(PITTableManager):
         report_filter = "AND (report_type = 1 OR report_type IS NULL)" if "report_type" in source_cols else ""
         sql = f"""
         SELECT {', '.join(select_parts)}
-        FROM {PITConfig.TUSHARE_SCHEMA}.{self.tushare_table}
-        WHERE COALESCE(f_ann_date, ann_date) >= %s
-          AND COALESCE(f_ann_date, ann_date) <= %s
+        FROM {PITConfig.TUSHARE_SCHEMA}.{self.tushare_table} source
+        WHERE {public_date_sql()} >= %s
+          AND {public_date_sql()} <= %s
           AND ts_code IS NOT NULL
           AND end_date IS NOT NULL
           AND COALESCE(f_ann_date, ann_date) IS NOT NULL
@@ -222,7 +226,7 @@ class PITCashflowQuarterlyManager(PITTableManager):
         if data is None or data.empty:
             return pd.DataFrame()
 
-        work = normalize_tushare_financial_ts_codes(data, self.logger)
+        work = normalize_disclosure_events(normalize_tushare_financial_ts_codes(data, self.logger))
         work["data_source"] = "report"
         work["end_date"] = pd.to_datetime(work["end_date"], errors="coerce").dt.date
         work["ann_date"] = pd.to_datetime(work["ann_date"], errors="coerce").dt.date
@@ -256,9 +260,11 @@ class PITCashflowQuarterlyManager(PITTableManager):
             return {"inserted": 0, "updated": 0, "errors": 0}
 
         pit_cols = self._get_table_columns(PITConfig.PIT_SCHEMA, self.table_name)
+
+        require_disclosure_columns(pit_cols)
         extra_candidates = ["year", "quarter"]
         extras = [field for field in extra_candidates if field in pit_cols and field in data.columns]
-        all_fields = self.key_fields + self.data_fields + extras + ["data_source"]
+        all_fields = self.key_fields + self.data_fields + extras + list(DISCLOSURE_COLUMNS) + ["data_source"]
         field_list = ", ".join(all_fields)
         placeholder_list = ", ".join([f"%({field})s" for field in all_fields])
         update_fields = [field for field in all_fields if field not in ["ts_code", "end_date", "ann_date"]]
@@ -269,6 +275,10 @@ class PITCashflowQuarterlyManager(PITTableManager):
         ON CONFLICT (ts_code, end_date, ann_date, data_source) DO UPDATE SET
             {update_list},
             updated_at = CURRENT_TIMESTAMP
+        WHERE {self.table_name}.pit_contract_version IS DISTINCT FROM 'public_disclosure_v2'
+           OR (COALESCE(EXCLUDED.source_update_time, '-infinity'::timestamp), EXCLUDED.source_version_hash)
+              >= (COALESCE({self.table_name}.source_update_time, '-infinity'::timestamp),
+                  COALESCE({self.table_name}.source_version_hash, ''))
         """
 
         inserted = 0
@@ -291,7 +301,9 @@ class PITCashflowQuarterlyManager(PITTableManager):
                         """,
                         (params["ts_code"], params["end_date"], params["ann_date"], params["data_source"]),
                     )
-                    self.context.db_manager.execute_sync(upsert_sql, params)
+                    affected_rows = self.context.db_manager.execute_sync(upsert_sql, params)
+                    if affected_rows == 0:
+                        continue
                     if exists is not None and not exists.empty:
                         updated += 1
                     else:

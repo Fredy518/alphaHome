@@ -35,6 +35,7 @@ ETF 资金流特征（日频）物化视图定义
 
 from alphahome.features.storage.base_view import BaseFeatureView
 from alphahome.features.registry import feature_register
+from alphahome.features.recipes.mv.bounded_pit_sql import etf_bounded_fund_sql
 
 
 @feature_register
@@ -79,7 +80,8 @@ class ETFFlowDailyMV(BaseFeatureView):
                 e.list_date
             FROM tushare.fund_etf_basic e
             WHERE e.index_code IN (SELECT index_code FROM target_indexes)
-              AND (e.status IS NULL OR e.status = 'L')  -- 仅在市 ETF
+              -- Current index mappings define an explicitly descriptive
+              -- universe. Do not remove historical shares on delisting.
         ),
         
         -- 份额数据
@@ -100,6 +102,7 @@ class ETFFlowDailyMV(BaseFeatureView):
             SELECT 
                 ts_code,
                 nav_date AS trade_date,
+                ann_date,
                 unit_nav  -- 单位净值
             FROM tushare.fund_nav
             WHERE unit_nav IS NOT NULL AND unit_nav > 0
@@ -111,18 +114,21 @@ class ETFFlowDailyMV(BaseFeatureView):
                 s.ts_code,
                 s.trade_date,
                 s.fd_share,
-                COALESCE(n.unit_nav, 1.0) AS unit_nav,
-                s.fd_share * COALESCE(n.unit_nav, 1.0) / 10000 AS aum,  -- 规模（亿元）
+                n.unit_nav AS unit_nav,
+                s.fd_share * n.unit_nav / 10000 AS aum,  -- 缺公开净值保持NULL
                 LAG(s.fd_share) OVER (PARTITION BY s.ts_code ORDER BY s.trade_date) AS prev_share,
-                LAG(s.fd_share * COALESCE(n.unit_nav, 1.0) / 10000) OVER (PARTITION BY s.ts_code ORDER BY s.trade_date) AS prev_aum
+                LAG(s.fd_share * n.unit_nav / 10000) OVER (PARTITION BY s.ts_code ORDER BY s.trade_date) AS prev_aum
             FROM shares s
             -- as-of join：用最近一个 <= trade_date 的 NAV（避免 NAV 缺失导致大面积 NULL）
             LEFT JOIN LATERAL (
                 SELECT n2.unit_nav
                 FROM navs n2
                 WHERE n2.ts_code = s.ts_code
-                  AND n2.trade_date <= s.trade_date
-                ORDER BY n2.trade_date DESC
+                   AND n2.trade_date <= s.trade_date
+                   -- Daily announcement dates do not prove availability
+                   -- before the day's decision. Use a prior public day.
+                   AND n2.ann_date < s.trade_date
+                ORDER BY n2.trade_date DESC, n2.ann_date DESC
                 LIMIT 1
             ) n ON TRUE
         ),
@@ -135,7 +141,7 @@ class ETFFlowDailyMV(BaseFeatureView):
                 fd_share,
                 unit_nav,
                 aum,
-                (fd_share - COALESCE(prev_share, fd_share)) * COALESCE(unit_nav, 1) / 10000 AS net_flow  -- 净申赎（亿元）
+                (fd_share - prev_share) * unit_nav / 10000 AS net_flow
             FROM merged
         ),
         
@@ -143,11 +149,11 @@ class ETFFlowDailyMV(BaseFeatureView):
         daily_agg AS (
             SELECT 
                 trade_date,
-                SUM(aum) AS total_aum,
-                SUM(net_flow) AS total_net_flow,
+                CASE WHEN COUNT(aum)=COUNT(*) THEN SUM(aum) END AS total_aum,
+                CASE WHEN COUNT(net_flow)=COUNT(*) THEN SUM(net_flow) END AS total_net_flow,
                 COUNT(*) AS etf_count,
-                SUM(CASE WHEN net_flow > 0 THEN net_flow ELSE 0 END) AS total_inflow,
-                SUM(CASE WHEN net_flow < 0 THEN net_flow ELSE 0 END) AS total_outflow
+                CASE WHEN COUNT(net_flow)=COUNT(*) THEN COALESCE(SUM(net_flow) FILTER (WHERE net_flow > 0),0) END AS total_inflow,
+                CASE WHEN COUNT(net_flow)=COUNT(*) THEN COALESCE(SUM(net_flow) FILTER (WHERE net_flow < 0),0) END AS total_outflow
             FROM flows
             WHERE trade_date IS NOT NULL
             GROUP BY trade_date
@@ -163,13 +169,17 @@ class ETFFlowDailyMV(BaseFeatureView):
                 total_inflow,
                 total_outflow,
                 -- 5/20 日累计
-                SUM(total_net_flow) OVER (ORDER BY trade_date ROWS BETWEEN 4 PRECEDING AND CURRENT ROW) AS net_flow_5d,
-                SUM(total_net_flow) OVER (ORDER BY trade_date ROWS BETWEEN 19 PRECEDING AND CURRENT ROW) AS net_flow_20d,
+                CASE WHEN COUNT(total_net_flow) OVER (ORDER BY trade_date ROWS BETWEEN 4 PRECEDING AND CURRENT ROW)=5
+                     THEN SUM(total_net_flow) OVER (ORDER BY trade_date ROWS BETWEEN 4 PRECEDING AND CURRENT ROW) END AS net_flow_5d,
+                CASE WHEN COUNT(total_net_flow) OVER (ORDER BY trade_date ROWS BETWEEN 19 PRECEDING AND CURRENT ROW)=20
+                     THEN SUM(total_net_flow) OVER (ORDER BY trade_date ROWS BETWEEN 19 PRECEDING AND CURRENT ROW) END AS net_flow_20d,
                 -- 净流入占比
                 total_net_flow / NULLIF(total_aum, 0) * 100 AS net_flow_ratio,
                 -- 均值（动量基准）
-                AVG(total_net_flow) OVER (ORDER BY trade_date ROWS BETWEEN 19 PRECEDING AND 1 PRECEDING) AS net_flow_avg20,
-                STDDEV(total_net_flow) OVER (ORDER BY trade_date ROWS BETWEEN 19 PRECEDING AND 1 PRECEDING) AS net_flow_std20
+                CASE WHEN COUNT(total_net_flow) OVER (ORDER BY trade_date ROWS BETWEEN 20 PRECEDING AND 1 PRECEDING)=20
+                     THEN AVG(total_net_flow) OVER (ORDER BY trade_date ROWS BETWEEN 20 PRECEDING AND 1 PRECEDING) END AS net_flow_avg20,
+                CASE WHEN COUNT(total_net_flow) OVER (ORDER BY trade_date ROWS BETWEEN 20 PRECEDING AND 1 PRECEDING)=20
+                     THEN STDDEV(total_net_flow) OVER (ORDER BY trade_date ROWS BETWEEN 20 PRECEDING AND 1 PRECEDING) END AS net_flow_std20
             FROM daily_agg
         )
         
@@ -201,13 +211,15 @@ class ETFFlowDailyMV(BaseFeatureView):
             'tushare.fund_share,tushare.fund_nav,tushare.fund_etf_basic' AS _source_table,
             NOW() AS _processed_at,
             CURRENT_DATE AS _data_version
+            , FALSE AS _pit_eligible
+            , 'current_mapping_descriptive_universe;share_publication_and_nav_vintages_unverified'::text AS _pit_limitations
         FROM with_momentum
         ORDER BY trade_date
         WITH NO DATA
     """
 
     def get_create_sql(self) -> str:
-        return self.create_sql
+        return etf_bounded_fund_sql(self.create_sql)
 
     def get_post_create_sqls(self) -> list[str]:
         return [

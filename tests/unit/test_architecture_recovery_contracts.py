@@ -99,7 +99,7 @@ def test_public_provider_rejects_unimplemented_financial_semantics_before_query(
 
 @pytest.mark.parametrize('has_rows', [False, True])
 def test_provider_fields_and_price_semantics_are_consistent_for_empty_results(has_rows):
-    rows = [{'ts_code': 'A', 'trade_date': '2026-09-21', 'close': '10', 'open': '9'}] if has_rows else []
+    rows = [{'ts_code': 'A', 'trade_date': '2026-09-21', 'close': '10', 'open': '9', 'high': '11', 'low': '8'}] if has_rows else []
     tool = AlphaDataTool(SimpleNamespace(fetch_sync=lambda *args: rows))
     result = tool.get_stock_data('A', '2026-09-01', '2026-09-22', fields=['close'])
     assert list(result.columns) == ['ts_code', 'trade_date', 'close']

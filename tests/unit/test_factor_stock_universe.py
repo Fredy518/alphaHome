@@ -127,7 +127,10 @@ def test_g_factor_history_query_filters_to_fridays():
 
     calculator._get_p_factor_historical_data_pit("2026-05-08", ["000001.SZ"])
 
-    assert "EXTRACT(ISODOW FROM calc_date) = 5" in context.queries[0][0]
+    history_queries = [query for query, _params in context.queries
+                       if f"FROM {FACTOR_SCHEMA}.p_factor" in query]
+    assert len(history_queries) == 1
+    assert "EXTRACT(ISODOW FROM calc_date) = 5" in history_queries[0]
 
 
 def test_p_factor_filter_missing_dates_accepts_python_date_values(caplog):

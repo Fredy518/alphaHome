@@ -179,8 +179,18 @@ class BaseFeatureView(ABC):
             raise RuntimeError("db_manager 未设置")
 
         try:
+            from .definition_drift import definition_drift, recipe_signature, seal_comment_sql
+
             # 检查是否已存在
             if if_not_exists and await self.exists():
+                if recipe_signature(self):
+                    installed = await self._db_manager.fetch(
+                        f"SELECT pg_get_viewdef('{self.full_name}'::regclass, true) AS definition, "
+                        f"obj_description('{self.full_name}'::regclass, 'pg_class') AS comment"
+                    )
+                    drift = definition_drift(self, installed[0]['definition'], installed[0]['comment'])
+                    if drift:
+                        raise RuntimeError(drift)
                 self.logger.info(f"物化视图 {self.full_name} 已存在，跳过创建")
                 # 仍然更新元数据
                 await self._upsert_metadata()
@@ -198,6 +208,12 @@ class BaseFeatureView(ABC):
 
             # 执行创建
             await self._db_manager.execute(create_sql)
+
+            if recipe_signature(self):
+                installed = await self._db_manager.fetch(
+                    f"SELECT pg_get_viewdef('{self.full_name}'::regclass, true) AS definition"
+                )
+                await self._db_manager.execute(seal_comment_sql(self, installed[0]['definition']))
 
             # 可选：执行创建后的附加 SQL（如索引）
             post_sqls = self.get_post_create_sqls() or []

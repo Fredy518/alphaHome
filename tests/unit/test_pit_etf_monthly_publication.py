@@ -154,6 +154,64 @@ def test_etf_month_commit_records_completion(manager_type, monkeypatch):
     assert manager._verified_replacement_months == [month]
 
 
+def _fapi_varying_month_scope(monkeypatch, *, published_missing=False, omit_output=False):
+    manager = PITETFIndexFAPIMonthlyManager()
+    manager.logger = SimpleNamespace(info=lambda *args: None)
+    feb, mar = date(2026, 2, 28), date(2026, 3, 31)
+    members = pd.DataFrame([
+        {"obs_date": feb, "index_code": "IDX"},
+        {"obs_date": mar, "index_code": "IDX"},
+        {"obs_date": mar, "index_code": "NEW_IDX"},
+    ])
+    output = pd.concat([
+        _valid_frame(manager, feb), _valid_frame(manager, mar),
+        _valid_frame(manager, mar).assign(index_code="NEW_IDX"),
+    ], ignore_index=True)
+    output["is_eligible"] = False
+    if omit_output:
+        output = output.loc[output.index_code.ne("NEW_IDX")]
+    manager.context = SimpleNamespace(query_dataframe=lambda *args: (
+        pd.DataFrame([{"index_code": "NEW_IDX"}]) if published_missing else pd.DataFrame()
+    ))
+    monkeypatch.setattr(manager, "_resolve_index_codes", lambda codes: ["IDX", "NEW_IDX"])
+    monkeypatch.setattr(manager, "_ensure_table_exists", lambda: None)
+    monkeypatch.setattr(manager, "_load_sources", lambda *args: {
+        "members": members, "equity": pd.DataFrame(),
+        "benchmark_members": pd.DataFrame(), "stock_fttm": pd.DataFrame(),
+    })
+    monkeypatch.setattr(manager, "_validate_dependencies", lambda *args: None)
+    monkeypatch.setattr(manager, "_validate_output", lambda *args: None)
+    monkeypatch.setattr(manager, "_dependency_freshness", lambda: {})
+    monkeypatch.setattr(manager.calculator, "calculate", lambda *args, **kwargs: output)
+    writes = []
+    monkeypatch.setattr(manager, "_atomic_replace_scope", lambda frame, months, codes: (
+        writes.append((months, codes, sorted(frame.index_code.tolist()))) or len(frame)
+    ))
+    return manager, [feb, mar], writes
+
+
+def test_automatic_fapi_uses_each_months_visible_member_pairs(monkeypatch):
+    manager, months, writes = _fapi_varying_month_scope(monkeypatch)
+    result = manager._run_months(months, batch_size=3, index_codes=None, result_key="updated_records")
+
+    assert result["updated_records"] == 3
+    assert writes == [([months[0]], ["IDX"], ["IDX"]),
+                      ([months[1]], ["IDX", "NEW_IDX"], ["IDX", "NEW_IDX"])]
+    assert result["source_scope_by_month"]["2026-02-28"]["unavailable_index_codes"] == ["NEW_IDX"]
+
+
+@pytest.mark.parametrize("kind", ["explicit", "source_disappeared", "calculator_omission"])
+def test_fapi_missing_required_pair_fails_before_any_batch_write(monkeypatch, kind):
+    manager, months, writes = _fapi_varying_month_scope(
+        monkeypatch, published_missing=kind == "source_disappeared", omit_output=kind == "calculator_omission"
+    )
+    with pytest.raises(ValueError, match="pit_(incomplete_scope|published_etf_fapi_source_disappeared)"):
+        manager._run_months(months, batch_size=3,
+                           index_codes=["IDX", "NEW_IDX"] if kind == "explicit" else None,
+                           result_key="updated_records")
+    assert writes == []
+
+
 def _source_backed_manager(monkeypatch, *, published_missing=False):
     manager = PITETFIndexMembersMonthlyManager()
     manager.logger = SimpleNamespace(info=lambda *_args, **_kwargs: None)

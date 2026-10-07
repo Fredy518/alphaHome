@@ -24,13 +24,15 @@ python scripts/production/data_updaters/tushare/data_collection_smart_update_pro
 
 import argparse
 import asyncio
+import hashlib
 import logging
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Dict, Any, Callable, Optional
 from concurrent.futures import ThreadPoolExecutor
+from uuid import uuid4
 
 # 添加项目根目录到 Python 路径
 PROJECT_ROOT = Path(__file__).resolve().parents[4]
@@ -43,6 +45,8 @@ from alphahome.common.constants import UpdateTypes  # noqa: E402
 from alphahome.common.config_manager import get_database_url  # noqa: E402
 from alphahome.fetchers.tasks import discover_tasks  # noqa: E402
 from alphahome.fetchers.sources.excel.input_file import missing_excel_input_reason  # noqa: E402
+from alphahome.common.collection_receipt import task_receipt, write_receipt  # noqa: E402
+from alphahome.common.run_models import target_fingerprint  # noqa: E402
 
 logger = get_logger(__name__)
 
@@ -60,7 +64,9 @@ class DataCollectionProductionUpdater:
                  db_manager: Any = None,
                  manage_factory_lifecycle: bool = True,
                  stop_event: Optional[asyncio.Event] = None,
-                 progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None):
+                 progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
+                 receipt_dir: Optional[Path] = PROJECT_ROOT / 'logs' / 'collection_runs',
+                 trigger_origin: str = "unspecified"):
         self.max_workers = max_workers
         self.max_retries = max_retries
         self.retry_delay = retry_delay
@@ -74,6 +80,18 @@ class DataCollectionProductionUpdater:
         self.manage_factory_lifecycle = manage_factory_lifecycle
         self.stop_event = stop_event
         self.progress_callback = progress_callback
+        if trigger_origin not in {"manual", "scheduled", "unspecified"}:
+            raise ValueError("Unknown collection trigger origin")
+        self.trigger_origin = trigger_origin
+        self.receipt_dir = Path(receipt_dir) if receipt_dir is not None else None
+        self.receipt_recorded = False
+        self.receipt_error = None
+        self.run_id = None
+        self.receipt_path = None
+        self._receipt_started_at = None
+        self._receipt_finished_at = None
+        self._receipt_task_names = []
+        self._receipt_error_type = None
         self._owns_factory = False
         self.last_results: List[Dict[str, Any]] = []
         self.executor = ThreadPoolExecutor(max_workers=max_workers)
@@ -537,9 +555,63 @@ class DataCollectionProductionUpdater:
         }
         return not blocking
 
+    def _record_receipt(self, *, terminal: bool, collection_success: bool = False):
+        if self.receipt_dir is None:
+            return
+        target = None
+        connection_string = getattr(self.db_manager, "connection_string", None)
+        if isinstance(connection_string, str) and not self.dry_run:
+            try:
+                target = target_fingerprint(connection_string)
+            except ValueError:
+                pass
+        record = {
+            "contract_version": "collection_receipt_v1",
+            "run_id": self.run_id,
+            "trigger_origin": self.trigger_origin,
+            "trigger_origin_verified": False,
+            "started_at": self._receipt_started_at,
+            "finished_at": self._receipt_finished_at if terminal else None,
+            "terminal": terminal,
+            "dry_run": self.dry_run,
+            "collection_success": bool(terminal and collection_success and not self.dry_run),
+            "exit_code": (0 if collection_success else 1) if terminal else None,
+            "target_fingerprint": target,
+            "entrypoint_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+            "requested_tasks": list(self.requested_task_names) if self.requested_task_names is not None else None,
+            "selected_tasks": list(self._receipt_task_names),
+            "max_workers": self.max_workers,
+            "max_retries": self.max_retries,
+            "retry_delay": self.retry_delay,
+            "batch_outcome": self.batch_outcome,
+            "results": [task_receipt(result) for result in self.last_results if isinstance(result, dict)],
+            "error_type": self._receipt_error_type,
+            "source_consumption": "unverified",
+            "system_first_receipt_verified": False,
+        }
+        try:
+            write_receipt(self.receipt_path, record)
+            self.receipt_recorded = terminal
+            self.receipt_error = None
+        except Exception as error:
+            # Receipt failure must never stop or roll back source collection.
+            self.receipt_recorded = False
+            self.receipt_error = type(error).__name__
+            logger.warning("Collection receipt could not be persisted (%s)", self.receipt_error)
+
     async def run_production_update(self) -> bool:
         """运行生产级更新"""
         self.stats['start_time'] = datetime.now()
+        self.run_id = str(uuid4())
+        self.receipt_path = self.receipt_dir / (self.run_id + ".json") if self.receipt_dir is not None else None
+        self._receipt_started_at = datetime.now(timezone.utc).isoformat()
+        self._receipt_finished_at = None
+        self.last_results = []
+        self._receipt_task_names = []
+        self._receipt_error_type = None
+        self.batch_outcome = {"status": "running"}
+        batch_success = False
+        self._record_receipt(terminal=False)
 
         try:
             # 初始化
@@ -548,6 +620,7 @@ class DataCollectionProductionUpdater:
 
             # 获取所有数据采集任务列表
             fetch_tasks = await self.get_fetch_tasks()
+            self._receipt_task_names = list(fetch_tasks)
             if not fetch_tasks:
                 logger.error("[ERROR] 未发现任何数据采集任务")
                 return False
@@ -619,20 +692,35 @@ class DataCollectionProductionUpdater:
             self.stats['end_time'] = datetime.now()
             self.print_execution_summary(results)
 
-            return batch_success
-
+        except asyncio.CancelledError:
+            batch_success = False
+            self.batch_outcome = {"status": "cancelled"}
+            self._receipt_error_type = "CancelledError"
+            raise
         except Exception as e:
+            batch_success = False
+            self._receipt_error_type = type(e).__name__
             logger.error(f"[ERROR] 生产级更新执行失败: {e}")
             return False
         finally:
-            # 清理资源
-            if self.executor:
-                self.executor.shutdown(wait=True)
-            if self.db_manager and self.manage_factory_lifecycle and self._owns_factory:
-                if self.db_manager is UnifiedTaskFactory._db_manager:
-                    await UnifiedTaskFactory.shutdown()
-                else:
-                    await self.db_manager.close()
+            try:
+                if self.executor:
+                    self.executor.shutdown(wait=True)
+                if self.db_manager and self.manage_factory_lifecycle and self._owns_factory:
+                    if self.db_manager is UnifiedTaskFactory._db_manager:
+                        await UnifiedTaskFactory.shutdown()
+                    else:
+                        await self.db_manager.close()
+            except Exception as error:
+                batch_success = False
+                self.batch_outcome = {"status": "failed", "reason_code": "cleanup_failed"}
+                self._receipt_error_type = type(error).__name__
+                logger.warning("Collection cleanup failed (%s)", type(error).__name__)
+            if self.batch_outcome.get("status") == "running":
+                self.batch_outcome = {"status": "failed"}
+            self._receipt_finished_at = datetime.now(timezone.utc).isoformat()
+            self._record_receipt(terminal=True, collection_success=batch_success)
+        return batch_success
 
 
 async def main():
@@ -652,6 +740,10 @@ async def main():
                        help='明确声明可选任务，可重复；未列出的任务全部必需')
     parser.add_argument('--task', action='append', default=None,
                        help='仅运行指定采集任务，可重复；默认运行全部已注册采集任务')
+    parser.add_argument('--trigger-origin', choices=['manual', 'scheduled', 'unspecified'],
+                       default='unspecified', help='调用方声明的触发来源；不据此认证自然调度')
+    parser.add_argument('--receipt-dir', type=Path, default=PROJECT_ROOT / 'logs' / 'collection_runs',
+                       help='原子保存运行回执的目录；不包含凭据或原始 API 返回')
 
     args = parser.parse_args()
 
@@ -676,6 +768,8 @@ async def main():
         dry_run=args.dry_run,
         optional_tasks=args.optional_task,
         task_names=args.task,
+        trigger_origin=args.trigger_origin,
+        receipt_dir=args.receipt_dir,
     )
     print(updater.api_concurrency_note)
     print()
@@ -687,6 +781,9 @@ async def main():
     success = await updater.run_production_update()
 
     # 返回退出码
+    if updater.receipt_dir is not None and not updater.receipt_recorded:
+        logger.error("Collection completed without a terminal receipt; operational acceptance is unverified")
+        success = False
     sys.exit(0 if success else 1)
 
 
